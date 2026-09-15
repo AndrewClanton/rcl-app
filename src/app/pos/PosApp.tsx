@@ -63,12 +63,14 @@ export default function PosApp({
   members,
   heldOrders,
   openTabs,
+  readerAvailable,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
   members: Member[];
   heldOrders: DraftOrderSummary[];
   openTabs: DraftOrderSummary[];
+  readerAvailable: boolean;
 }) {
   const router = useRouter();
   const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({
@@ -673,7 +675,9 @@ export default function PosApp({
         </div>
       )}
 
-      {payOpen && <PaymentModal total={totals.total + tip} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />}
+      {payOpen && (
+        <PaymentModal total={totals.total + tip} readerAvailable={readerAvailable} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
+      )}
 
       {cancelTabId && (
         <ManagerPinModal

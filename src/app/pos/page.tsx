@@ -3,6 +3,7 @@ import { getActiveEmployees } from "@/lib/data/employees";
 import { getMembers } from "@/lib/data/members";
 import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
+import { terminalConfigured } from "./terminal-config";
 import PosApp from "./PosApp";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,14 @@ export default async function PosPage() {
         <h1 className="text-xl font-semibold">Royale Cinema Lounge — POS</h1>
         <span className="text-sm text-neutral-500">{new Date().toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
       </div>
-      <PosApp categories={orderableCategories} employees={employees} members={members} heldOrders={heldOrders} openTabs={openTabs} />
+      <PosApp
+        categories={orderableCategories}
+        employees={employees}
+        members={members}
+        heldOrders={heldOrders}
+        openTabs={openTabs}
+        readerAvailable={terminalConfigured()}
+      />
     </div>
   );
 }

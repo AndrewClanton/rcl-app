@@ -26,6 +26,7 @@ export interface CheckoutPayment {
   method: "cash" | "card" | "split";
   cash: number;
   card: number;
+  stripePaymentIntentId?: string | null;
 }
 
 export interface DraftFields {
@@ -105,6 +106,7 @@ export async function completeOrder(params: DraftFields & {
     payment_method: params.payment.method,
     payment_cash_amount: params.payment.cash,
     payment_card_amount: params.payment.card,
+    stripe_payment_intent_id: params.payment.stripePaymentIntentId ?? null,
     points_redeemed: params.pointsRedeemed,
     age_verified: params.ageVerified,
     completed_at: new Date().toISOString(),
