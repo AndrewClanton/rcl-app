@@ -15,6 +15,9 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/menu" className="hover:underline">
               Menu
             </Link>
+            <Link href="/events" className="hover:underline">
+              Private events
+            </Link>
           </nav>
         </div>
       </header>

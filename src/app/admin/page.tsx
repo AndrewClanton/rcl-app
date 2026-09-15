@@ -25,6 +25,13 @@ export default function AdminDashboardPage() {
         <div className="mt-1 text-sm text-neutral-500">Loyalty tiers, points, monthly membership.</div>
       </Link>
       <Link
+        href="/admin/events"
+        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="text-base font-medium">Event bookings</div>
+        <div className="mt-1 text-sm text-neutral-500">Deposits, balances, and venue rentals.</div>
+      </Link>
+      <Link
         href="/pos"
         className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
       >
