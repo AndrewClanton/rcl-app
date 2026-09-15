@@ -1,6 +1,8 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { verifyPin } from "@/lib/pin";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -26,7 +28,7 @@ export interface CheckoutPayment {
   card: number;
 }
 
-export async function completeOrder(params: {
+export interface DraftFields {
   employeeId: string;
   memberId: string | null;
   orderName: string;
@@ -34,56 +36,104 @@ export async function completeOrder(params: {
   monthlyMember: boolean;
   pointsRedeemed: boolean;
   lines: CheckoutLine[];
+}
+
+export interface DraftOrderSummary {
+  id: string;
+  order_name: string | null;
+  item_count: number;
+  total: number;
+}
+
+export interface DraftOrderFull {
+  id: string;
+  order_name: string | null;
+  member_id: string | null;
+  tax_free: boolean;
+  monthly_member: boolean;
+  points_redeemed: boolean;
+  lines: (CheckoutLine & { unit: number })[];
+}
+
+function revalidate() {
+  revalidatePath("/pos");
+}
+
+async function replaceOrderItems(supabase: ReturnType<typeof createAdminClient>, orderId: string, lines: CheckoutLine[]) {
+  await supabase.from("order_items").delete().eq("order_id", orderId);
+  if (lines.length === 0) return;
+  await supabase.from("order_items").insert(
+    lines.map((l) => ({
+      order_id: orderId,
+      menu_item_id: l.menu_item_id,
+      name: l.name,
+      unit_price: l.unit_price,
+      quantity: l.quantity,
+      modifiers: l.modifiers,
+      is_alcohol: l.is_alcohol,
+    }))
+  );
+}
+
+export async function completeOrder(params: DraftFields & {
   totals: CheckoutTotals;
   payment: CheckoutPayment;
   ageVerified: boolean;
+  tip?: number;
+  draftOrderId?: string | null;
 }): Promise<{ orderNumber: number }> {
   if (params.lines.length === 0) throw new Error("Cart is empty");
 
   const supabase = createAdminClient();
+  const tip = params.tip ?? 0;
 
-  const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
-  if (numberErr) throw numberErr;
+  const orderFields = {
+    source: "pos" as const,
+    status: "completed" as const,
+    employee_id: params.employeeId,
+    member_id: params.memberId,
+    order_name: params.orderName || null,
+    subtotal: params.totals.subtotal,
+    tier_discount: params.totals.tier_discount,
+    monthly_discount: params.totals.monthly_discount,
+    redemption_discount: params.totals.redemption_discount,
+    tax_free: params.taxFree,
+    monthly_member: params.monthlyMember,
+    tax: params.totals.tax,
+    tip,
+    total: params.totals.total + tip,
+    payment_method: params.payment.method,
+    payment_cash_amount: params.payment.cash,
+    payment_card_amount: params.payment.card,
+    points_redeemed: params.pointsRedeemed,
+    age_verified: params.ageVerified,
+    completed_at: new Date().toISOString(),
+  };
 
-  const { data: order, error: orderErr } = await supabase
-    .from("orders")
-    .insert({
-      order_number: orderNumber,
-      source: "pos",
-      status: "completed",
-      employee_id: params.employeeId,
-      member_id: params.memberId,
-      order_name: params.orderName || null,
-      subtotal: params.totals.subtotal,
-      tier_discount: params.totals.tier_discount,
-      monthly_discount: params.totals.monthly_discount,
-      redemption_discount: params.totals.redemption_discount,
-      tax_free: params.taxFree,
-      tax: params.totals.tax,
-      tip: 0,
-      total: params.totals.total,
-      payment_method: params.payment.method,
-      payment_cash_amount: params.payment.cash,
-      payment_card_amount: params.payment.card,
-      points_redeemed: params.pointsRedeemed,
-      age_verified: params.ageVerified,
-      completed_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
-  if (orderErr) throw orderErr;
+  let orderId: string;
+  let orderNumber: number;
 
-  const itemRows = params.lines.map((l) => ({
-    order_id: order.id,
-    menu_item_id: l.menu_item_id,
-    name: l.name,
-    unit_price: l.unit_price,
-    quantity: l.quantity,
-    modifiers: l.modifiers,
-    is_alcohol: l.is_alcohol,
-  }));
-  const { error: itemsErr } = await supabase.from("order_items").insert(itemRows);
-  if (itemsErr) throw itemsErr;
+  if (params.draftOrderId) {
+    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number").eq("id", params.draftOrderId).single();
+    if (fetchErr || !existing) throw new Error("Tab no longer exists");
+    orderId = params.draftOrderId;
+    orderNumber = Number(existing.order_number);
+    const { error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId);
+    if (updateErr) throw updateErr;
+    await replaceOrderItems(supabase, orderId, params.lines);
+  } else {
+    const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
+    if (numberErr) throw numberErr;
+    orderNumber = Number(newNumber);
+    const { data: order, error: orderErr } = await supabase
+      .from("orders")
+      .insert({ order_number: orderNumber, ...orderFields })
+      .select("id")
+      .single();
+    if (orderErr) throw orderErr;
+    orderId = order.id;
+    await replaceOrderItems(supabase, orderId, params.lines);
+  }
 
   if (params.memberId) {
     const { data: member } = await supabase.from("members").select("points").eq("id", params.memberId).single();
@@ -95,5 +145,119 @@ export async function completeOrder(params: {
     }
   }
 
-  return { orderNumber: Number(orderNumber) };
+  revalidate();
+  return { orderNumber };
+}
+
+// ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------
+
+export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields): Promise<string> {
+  const supabase = createAdminClient();
+  const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
+  if (numberErr) throw numberErr;
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .insert({
+      order_number: orderNumber,
+      source: "pos",
+      status,
+      employee_id: fields.employeeId,
+      member_id: fields.memberId,
+      order_name: fields.orderName || null,
+      tab_name: status === "tab" ? fields.orderName || null : null,
+      tax_free: fields.taxFree,
+      monthly_member: fields.monthlyMember,
+      points_redeemed: fields.pointsRedeemed,
+      subtotal: 0,
+      tax: 0,
+      total: 0,
+    })
+    .select("id")
+    .single();
+  if (error) throw error;
+
+  await replaceOrderItems(supabase, order.id, fields.lines);
+  revalidate();
+  return order.id;
+}
+
+export async function updateDraftOrder(id: string, fields: DraftFields): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("orders")
+    .update({
+      employee_id: fields.employeeId,
+      member_id: fields.memberId,
+      order_name: fields.orderName || null,
+      tab_name: fields.orderName || null,
+      tax_free: fields.taxFree,
+      monthly_member: fields.monthlyMember,
+      points_redeemed: fields.pointsRedeemed,
+    })
+    .eq("id", id);
+  await replaceOrderItems(supabase, id, fields.lines);
+  revalidate();
+}
+
+export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrderSummary[]> {
+  const supabase = createAdminClient();
+  const { data: orders, error } = await supabase
+    .from("orders")
+    .select("id, order_name, items:order_items(unit_price, quantity)")
+    .eq("status", status)
+    .order("created_at");
+  if (error) throw error;
+  return (orders ?? []).map((o) => {
+    const items = o.items as { unit_price: number; quantity: number }[];
+    return {
+      id: o.id,
+      order_name: o.order_name,
+      item_count: items.reduce((s, i) => s + i.quantity, 0),
+      total: items.reduce((s, i) => s + i.unit_price * i.quantity, 0),
+    };
+  });
+}
+
+export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
+  const supabase = createAdminClient();
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol)")
+    .eq("id", id)
+    .single();
+  if (error || !order) throw new Error("Order not found");
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean }[];
+  return {
+    id: order.id,
+    order_name: order.order_name,
+    member_id: order.member_id,
+    tax_free: order.tax_free,
+    monthly_member: order.monthly_member,
+    points_redeemed: order.points_redeemed,
+    lines: items.map((i) => ({
+      menu_item_id: i.menu_item_id,
+      name: i.name,
+      unit_price: i.unit_price,
+      unit: i.unit_price,
+      quantity: i.quantity,
+      modifiers: i.modifiers,
+      is_alcohol: i.is_alcohol,
+    })),
+  };
+}
+
+export async function discardDraftOrder(id: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase.from("orders").delete().eq("id", id);
+  revalidate();
+}
+
+export async function cancelTab(id: string, pin: string): Promise<void> {
+  const supabase = createAdminClient();
+  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin"]).eq("active", true);
+  const ok = (managers ?? []).some((m) => verifyPin(pin, m.pin_hash));
+  if (!ok) throw new Error("Incorrect manager PIN.");
+  await supabase.from("orders").delete().eq("id", id);
+  revalidate();
 }

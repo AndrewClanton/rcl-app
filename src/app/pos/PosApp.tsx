@@ -1,10 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Member } from "@/lib/types";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
-import { completeOrder, type CheckoutPayment } from "./actions";
+import TipModal from "./TipModal";
+import ManagerPinModal from "@/components/ManagerPinModal";
+import PromptModal from "@/components/PromptModal";
+import ConfirmModal from "@/components/ConfirmModal";
+import {
+  completeOrder,
+  saveDraftOrder,
+  updateDraftOrder,
+  loadDraftOrder,
+  discardDraftOrder,
+  cancelTab,
+  type CheckoutPayment,
+  type DraftOrderSummary,
+  type DraftFields,
+} from "./actions";
 
 const TAX_RATE = 0.08;
 const POINTS_REDEEM_COST = 100;
@@ -42,7 +57,20 @@ function computeTotals(cart: CartLine[], member: Member | null, monthlyMember: b
   return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
 }
 
-export default function PosApp({ categories, employees, members }: { categories: MenuCategory[]; employees: Employee[]; members: Member[] }) {
+export default function PosApp({
+  categories,
+  employees,
+  members,
+  heldOrders,
+  openTabs,
+}: {
+  categories: MenuCategory[];
+  employees: Employee[];
+  members: Member[];
+  heldOrders: DraftOrderSummary[];
+  openTabs: DraftOrderSummary[];
+}) {
+  const router = useRouter();
   const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({
     categoryId: categories[0]?.id ?? null,
     subcategoryId: null,
@@ -56,8 +84,18 @@ export default function PosApp({ categories, employees, members }: { categories:
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [payOpen, setPayOpen] = useState(false);
+  const [tipOpen, setTipOpen] = useState(false);
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
+  const [tip, setTip] = useState(0);
+  const [heldListOpen, setHeldListOpen] = useState(false);
+  const [tabsListOpen, setTabsListOpen] = useState(false);
+  const [cancelTabId, setCancelTabId] = useState<string | null>(null);
+  const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
+  const [confirmState, setConfirmState] = useState<{ title: string; description?: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void } | null>(
+    null
+  );
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -78,6 +116,45 @@ export default function PosApp({ categories, employees, members }: { categories:
   const memberMatches = memberQuery.trim()
     ? members.filter((m) => m.name.toLowerCase().includes(memberQuery.trim().toLowerCase()))
     : [];
+  const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
+
+  function currentFields(): DraftFields {
+    return {
+      employeeId,
+      memberId,
+      orderName,
+      taxFree,
+      monthlyMember,
+      pointsRedeemed,
+      lines: cart.map((l) => ({
+        menu_item_id: l.menuItemId,
+        name: l.name,
+        unit_price: l.unit,
+        quantity: l.qty,
+        modifiers: l.mods,
+        is_alcohol: l.isAlcohol,
+      })),
+    };
+  }
+
+  function loadFields(id: string, f: Awaited<ReturnType<typeof loadDraftOrder>>) {
+    setCart(
+      f.lines.map((l) => ({
+        key: `${Date.now()}-${Math.random()}`,
+        menuItemId: l.menu_item_id,
+        name: l.name,
+        unit: l.unit,
+        qty: l.quantity,
+        mods: l.modifiers,
+        isAlcohol: l.is_alcohol,
+      }))
+    );
+    setOrderName(f.order_name ?? "");
+    setMemberId(f.member_id);
+    setTaxFree(f.tax_free);
+    setMonthlyMember(f.monthly_member);
+    setPointsRedeemed(f.points_redeemed);
+  }
 
   function addLine(line: BuiltLine) {
     setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, ...line }]);
@@ -99,10 +176,132 @@ export default function PosApp({ categories, employees, members }: { categories:
     setTaxFree(false);
     setMonthlyMember(false);
     setPointsRedeemed(false);
+    setActiveTabId(null);
+  }
+
+  async function stashCurrentWork() {
+    if (activeTabId) {
+      await updateDraftOrder(activeTabId, currentFields());
+      return;
+    }
+    if (cart.length > 0) {
+      // Auto-hold rather than asking -- never silently lose an in-progress
+      // order; it'll sit in the held list for the cashier to clean up.
+      const fields = currentFields();
+      fields.orderName = fields.orderName || `Held ${new Date().toLocaleTimeString()}`;
+      await saveDraftOrder("held", fields);
+    }
+  }
+
+  async function handleHold() {
+    if (cart.length === 0) return;
+    setBusy(true);
+    try {
+      const fields = currentFields();
+      fields.orderName = fields.orderName || `Held ${new Date().toLocaleTimeString()}`;
+      await saveDraftOrder("held", fields);
+      resetOrder();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doResumeHeld(id: string) {
+    setBusy(true);
+    try {
+      const full = await loadDraftOrder(id);
+      loadFields(id, full);
+      await discardDraftOrder(id);
+      setHeldListOpen(false);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleResumeHeld(id: string) {
+    if (cart.length > 0) {
+      setConfirmState({
+        title: "Replace current order?",
+        description: "This will replace the current unsaved order.",
+        onConfirm: () => {
+          setConfirmState(null);
+          doResumeHeld(id);
+        },
+      });
+    } else {
+      doResumeHeld(id);
+    }
+  }
+
+  function handleDiscardHeld(id: string) {
+    setConfirmState({
+      title: "Discard this held order?",
+      danger: true,
+      confirmLabel: "Discard",
+      onConfirm: async () => {
+        setConfirmState(null);
+        setBusy(true);
+        try {
+          await discardDraftOrder(id);
+          router.refresh();
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  }
+
+  async function handleOpenTab(name: string) {
+    setOpenTabPromptOpen(false);
+    setBusy(true);
+    try {
+      await stashCurrentWork();
+      const id = await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
+      resetOrder();
+      setActiveTabId(id);
+      setOrderName(name);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSwitchTab(id: string) {
+    setBusy(true);
+    try {
+      await stashCurrentWork();
+      const full = await loadDraftOrder(id);
+      loadFields(id, full);
+      setActiveTabId(id);
+      setTabsListOpen(false);
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCancelTab(pin: string) {
+    if (!cancelTabId) return;
+    await cancelTab(cancelTabId, pin);
+    if (activeTabId === cancelTabId) resetOrder();
+    setCancelTabId(null);
+    router.refresh();
   }
 
   function startCheckout() {
     if (!employeeId || cart.length === 0) return;
+    if (activeTabId) {
+      setTipOpen(true);
+    } else {
+      continueAfterTip(0);
+    }
+  }
+
+  function continueAfterTip(tipAmount: number) {
+    setTip(tipAmount);
+    setTipOpen(false);
     const hasAlcohol = cart.some((l) => l.isAlcohol);
     if (hasAlcohol) setAgeConfirmOpen(true);
     else setPayOpen(true);
@@ -113,20 +312,7 @@ export default function PosApp({ categories, employees, members }: { categories:
     setBusy(true);
     try {
       const { orderNumber } = await completeOrder({
-        employeeId,
-        memberId,
-        orderName,
-        taxFree,
-        monthlyMember,
-        pointsRedeemed,
-        lines: cart.map((l) => ({
-          menu_item_id: l.menuItemId,
-          name: l.name,
-          unit_price: l.unit,
-          quantity: l.qty,
-          modifiers: l.mods,
-          is_alcohol: l.isAlcohol,
-        })),
+        ...currentFields(),
         totals: {
           subtotal: totals.subtotal,
           tier_discount: totals.tierDiscount,
@@ -137,10 +323,16 @@ export default function PosApp({ categories, employees, members }: { categories:
         },
         payment,
         ageVerified: cart.some((l) => l.isAlcohol),
+        tip,
+        draftOrderId: activeTabId,
       });
-      setToast(`Order #${orderNumber} complete — ${money(totals.total)} charged (${payment.method})`);
+      const parts = [`Order #${orderNumber} complete — ${money(totals.total + tip)} charged (${payment.method})`];
+      if (tip > 0) parts.push(`${money(tip)} tip`);
+      setToast(parts.join(" — "));
       resetOrder();
-      setTimeout(() => setToast(null), 6000);
+      setTip(0);
+      router.refresh();
+      setTimeout(() => setToast(null), 7000);
     } catch (e) {
       setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
     } finally {
@@ -171,6 +363,12 @@ export default function PosApp({ categories, employees, members }: { categories:
         <div className="mb-2 flex items-center justify-between text-sm text-neutral-500">
           <span>Items: {itemCount}</span>
         </div>
+
+        {activeTab && (
+          <div className="mb-2 inline-block rounded-full border border-neutral-400 px-2.5 py-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+            Tab: {activeTab.order_name}
+          </div>
+        )}
 
         <input
           className="mb-3 w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
@@ -253,15 +451,99 @@ export default function PosApp({ categories, employees, members }: { categories:
         >
           Complete order
         </button>
-        <button
-          className="mt-2 w-full rounded-lg border border-neutral-300 py-2 text-sm text-red-600 dark:border-neutral-700"
-          disabled={cart.length === 0}
-          onClick={() => {
-            if (confirm("Clear the current order?")) resetOrder();
-          }}
-        >
-          Clear order
+        <div className="mt-2 flex gap-2">
+          <button
+            className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm text-red-600 dark:border-neutral-700"
+            disabled={cart.length === 0 || busy}
+            onClick={() =>
+              setConfirmState({
+                title: activeTabId ? "Leave this tab?" : "Clear the current order?",
+                description: activeTabId ? "Your changes will be saved and you can switch back to it later." : undefined,
+                danger: true,
+                confirmLabel: activeTabId ? "Leave tab" : "Clear",
+                onConfirm: async () => {
+                  setConfirmState(null);
+                  if (activeTabId) await stashCurrentWork();
+                  resetOrder();
+                  router.refresh();
+                },
+              })
+            }
+          >
+            Clear order
+          </button>
+          <button className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" disabled={cart.length === 0 || busy} onClick={handleHold}>
+            Hold order
+          </button>
+        </div>
+        <button className="mt-2 w-full rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" onClick={() => setHeldListOpen((v) => !v)}>
+          Held orders ({heldOrders.length})
         </button>
+        <div className="mt-2 flex gap-2">
+          <button
+            className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700"
+            disabled={!employeeId || busy}
+            onClick={() => setOpenTabPromptOpen(true)}
+          >
+            Open a tab
+          </button>
+          <button className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" onClick={() => setTabsListOpen((v) => !v)}>
+            Tabs ({openTabs.length})
+          </button>
+        </div>
+
+        {heldListOpen && (
+          <div className="mt-2 rounded-lg border border-neutral-300 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Held orders</div>
+            {heldOrders.length === 0 ? (
+              <div className="text-sm text-neutral-500">No held orders.</div>
+            ) : (
+              heldOrders.map((h) => (
+                <div key={h.id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-1.5 text-sm last:border-0 dark:border-neutral-800">
+                  <span>
+                    {h.order_name || "Held order"} ({h.item_count} item{h.item_count === 1 ? "" : "s"})
+                  </span>
+                  <div className="flex gap-1">
+                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleResumeHeld(h.id)}>
+                      Resume
+                    </button>
+                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleDiscardHeld(h.id)}>
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {tabsListOpen && (
+          <div className="mt-2 rounded-lg border border-neutral-300 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Open tabs</div>
+            {openTabs.length === 0 ? (
+              <div className="text-sm text-neutral-500">No open tabs.</div>
+            ) : (
+              openTabs.map((t) => (
+                <div key={t.id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-1.5 text-sm last:border-0 dark:border-neutral-800">
+                  <span>
+                    {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"})
+                    {t.id === activeTabId ? " · active now" : ""}
+                  </span>
+                  <div className="flex gap-1">
+                    {t.id !== activeTabId && (
+                      <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleSwitchTab(t.id)}>
+                        Switch to
+                      </button>
+                    )}
+                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => setCancelTabId(t.id)}>
+                      Cancel tab
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
         {toast && (
           <div className="mt-3 rounded-lg border border-green-400 bg-green-50 p-2 text-xs text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
@@ -364,6 +646,10 @@ export default function PosApp({ categories, employees, members }: { categories:
         )}
       </div>
 
+      {tipOpen && (
+        <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={continueAfterTip} onCancel={() => setTipOpen(false)} />
+      )}
+
       {ageConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
@@ -387,7 +673,36 @@ export default function PosApp({ categories, employees, members }: { categories:
         </div>
       )}
 
-      {payOpen && <PaymentModal total={totals.total} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />}
+      {payOpen && <PaymentModal total={totals.total + tip} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />}
+
+      {cancelTabId && (
+        <ManagerPinModal
+          description="Manager approval is required to cancel this tab."
+          onCancel={() => setCancelTabId(null)}
+          onSubmit={handleCancelTab}
+        />
+      )}
+
+      {openTabPromptOpen && (
+        <PromptModal
+          title="Name this tab"
+          placeholder="Customer name, seat, etc."
+          confirmLabel="Open tab"
+          onCancel={() => setOpenTabPromptOpen(false)}
+          onSubmit={handleOpenTab}
+        />
+      )}
+
+      {confirmState && (
+        <ConfirmModal
+          title={confirmState.title}
+          description={confirmState.description}
+          danger={confirmState.danger}
+          confirmLabel={confirmState.confirmLabel}
+          onCancel={() => setConfirmState(null)}
+          onConfirm={confirmState.onConfirm}
+        />
+      )}
     </div>
   );
 }
