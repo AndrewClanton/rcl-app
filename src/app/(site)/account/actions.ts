@@ -7,12 +7,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMember } from "@/lib/member-auth";
 import { getStripe } from "@/lib/stripe";
 
-// Called by the account/callback page right after the browser client
-// establishes a session from the magic-link email. Links that auth user to
-// a `members` row -- claiming an existing row by email if one exists (e.g.
-// someone who signed up for Insiders or bought a ticket before this account
-// system existed), or creating a fresh free-Insiders row otherwise.
-export async function linkMemberAccount(): Promise<{ ok: true } | { ok: false; error: string }> {
+// Called right after the browser client establishes a session (sign-up or
+// sign-in). Links that auth user to a `members` row -- claiming an existing
+// row by email if one exists (e.g. someone who signed up for Insiders or
+// bought a ticket before this account system existed), or creating a fresh
+// free-Insiders row otherwise. `name` is only used when creating a new row
+// (a returning member keeps whatever name is already on file).
+export async function linkMemberAccount(name?: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,7 +27,9 @@ export async function linkMemberAccount(): Promise<{ ok: true } | { ok: false; e
     if (existingByEmail) {
       await admin.from("members").update({ auth_user_id: user.id }).eq("id", existingByEmail.id);
     } else {
-      await admin.from("members").insert({ auth_user_id: user.id, name: user.email.split("@")[0], email: user.email, tier: "Insiders", points: 0 });
+      await admin
+        .from("members")
+        .insert({ auth_user_id: user.id, name: name?.trim() || user.email.split("@")[0], email: user.email, tier: "Insiders", points: 0 });
     }
   }
   return { ok: true };
