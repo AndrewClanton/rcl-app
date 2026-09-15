@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Member, MemberTier } from "@/lib/types";
+import type { Member, MemberPriceTier, MemberTier } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addMember, updateMember, deleteMember } from "./actions";
 
@@ -72,6 +72,25 @@ function MemberRow({ member }: { member: Member }) {
         <option value="Insiders">Insiders</option>
         <option value="Insiders+">Insiders+</option>
       </select>
+      {member.tier === "Insiders+" && (
+        <select
+          className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          value={member.price_tier ?? ""}
+          disabled={pending}
+          title="Price tier -- set to 'student' for an in-person counter upgrade (not sold online)"
+          onChange={(e) => run(() => updateMember(member.id, { price_tier: (e.target.value || null) as MemberPriceTier | null }))}
+        >
+          <option value="">Price tier...</option>
+          <option value="adult">Adult ($15/mo)</option>
+          <option value="senior">Senior ($12/mo)</option>
+          <option value="student">Student ($10/mo, in-person)</option>
+        </select>
+      )}
+      {member.stripe_subscription_id && (
+        <span className="text-xs text-neutral-500" title="Managed by Stripe -- syncs automatically on renewal/cancellation">
+          Stripe: {member.subscription_status}
+        </span>
+      )}
       <input
         type="number"
         className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"

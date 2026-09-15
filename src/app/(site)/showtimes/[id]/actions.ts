@@ -43,6 +43,34 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     throw new Error(`Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.`);
   }
 
+  // Insiders+ members get unlimited free entry (their own ticket) --
+  // matching the old site's booking flow, which separated "free tickets"
+  // (covered by membership) from "additional passes" (always charged).
+  // Any guest seats beyond the member's own still cost full price.
+  const { data: member } = await supabase.from("members").select("tier").eq("email", email).maybeSingle();
+  const freeQuantity = member?.tier === "Insiders+" ? Math.min(1, fields.quantity) : 0;
+  const paidQuantity = fields.quantity - freeQuantity;
+
+  const origin = await siteOrigin();
+
+  if (paidQuantity === 0) {
+    // Fully covered by membership -- no payment needed, confirm immediately.
+    const { data: booking, error: insertErr } = await supabase
+      .from("bookings")
+      .insert({
+        screening_id: fields.screeningId,
+        customer_name: name,
+        customer_email: email,
+        quantity: fields.quantity,
+        unit_price: 0,
+        status: "confirmed",
+      })
+      .select("id")
+      .single();
+    if (insertErr) throw insertErr;
+    return { url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
+  }
+
   const { data: booking, error: insertErr } = await supabase
     .from("bookings")
     .insert({
@@ -57,7 +85,6 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     .single();
   if (insertErr) throw insertErr;
 
-  const origin = await siteOrigin();
   const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
     weekday: "short",
     month: "short",
@@ -66,22 +93,34 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     minute: "2-digit",
   });
 
+  const lineItems = [
+    {
+      price_data: {
+        currency: "usd",
+        unit_amount: Math.round(screening.ticket_price * 100),
+        product_data: { name: `${movie.title} — ${showtime}` },
+      },
+      quantity: paidQuantity,
+    },
+  ];
+  if (freeQuantity > 0) {
+    lineItems.push({
+      price_data: {
+        currency: "usd",
+        unit_amount: 0,
+        product_data: { name: `${movie.title} — ${showtime} (Insiders+ free entry)` },
+      },
+      quantity: freeQuantity,
+    });
+  }
+
   const stripe = getStripe();
   let session;
   try {
     session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            unit_amount: Math.round(screening.ticket_price * 100),
-            product_data: { name: `${movie.title} — ${showtime}` },
-          },
-          quantity: fields.quantity,
-        },
-      ],
+      line_items: lineItems,
       metadata: { booking_id: booking.id, screening_id: fields.screeningId },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
       success_url: `${origin}/showtimes/${fields.screeningId}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,

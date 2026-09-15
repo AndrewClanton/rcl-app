@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getScreeningById } from "@/lib/data/screening-detail";
 import { getStripe } from "@/lib/stripe";
+import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
 import TicketReservation from "./TicketReservation";
 
@@ -15,10 +16,10 @@ export default async function ScreeningDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ checkout?: string; session_id?: string }>;
+  searchParams: Promise<{ checkout?: string; session_id?: string; booking_id?: string }>;
 }) {
   const { id } = await params;
-  const { checkout, session_id } = await searchParams;
+  const { checkout, session_id, booking_id } = await searchParams;
   const screening = await getScreeningById(id);
   if (!screening) notFound();
 
@@ -37,6 +38,20 @@ export default async function ScreeningDetailPage({
     } catch {
       paymentConfirmed = false;
     }
+  }
+
+  // Insiders+ free-entry bookings skip Stripe entirely, so confirm those by
+  // checking the booking's own DB status (already written server-side by
+  // startCheckout) rather than a URL param.
+  let freeEntryConfirmed = false;
+  if (checkout === "free" && booking_id) {
+    const { data: booking } = await createAdminClient()
+      .from("bookings")
+      .select("status")
+      .eq("id", booking_id)
+      .eq("screening_id", id)
+      .maybeSingle();
+    freeEntryConfirmed = booking?.status === "confirmed";
   }
 
   return (
@@ -66,6 +81,11 @@ export default async function ScreeningDetailPage({
           <div className="notice notice-success">
             <h2 className="text-lg font-semibold">Payment received!</h2>
             <p className="mt-2 text-sm opacity-90">Your tickets are confirmed. A receipt was sent to your email by Stripe.</p>
+          </div>
+        ) : freeEntryConfirmed ? (
+          <div className="notice notice-success">
+            <h2 className="text-lg font-semibold">You&apos;re in!</h2>
+            <p className="mt-2 text-sm opacity-90">Your Insiders+ membership covered this ticket — no charge. See you at the show.</p>
           </div>
         ) : (
           <>

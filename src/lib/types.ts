@@ -93,6 +93,8 @@ export interface Screening {
   room: Room;
 }
 
+export type MemberPriceTier = "adult" | "senior" | "student";
+
 export interface Member {
   id: string;
   name: string;
@@ -101,6 +103,10 @@ export interface Member {
   tier: MemberTier;
   points: number;
   monthly_member: boolean;
+  price_tier: MemberPriceTier | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  subscription_status: string | null;
 }
 
 export interface Employee {

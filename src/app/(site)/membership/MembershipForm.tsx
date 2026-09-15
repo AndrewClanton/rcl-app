@@ -1,9 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { submitMembershipSignup } from "./actions";
+import { submitMembershipSignup, startMembershipCheckout } from "./actions";
+
+type Plan = "free" | "adult" | "senior";
 
 export default function MembershipForm() {
+  const [plan, setPlan] = useState<Plan>("free");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -18,11 +21,15 @@ export default function MembershipForm() {
     setSubmitting(true);
     setError(null);
     try {
-      await submitMembershipSignup({ name, email, phone });
-      setDone(true);
+      if (plan === "free") {
+        await submitMembershipSignup({ name, email, phone });
+        setDone(true);
+      } else {
+        const { url } = await startMembershipCheckout({ name, email, phone, priceTier: plan });
+        window.location.href = url;
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-    } finally {
       setSubmitting(false);
     }
   }
@@ -38,6 +45,24 @@ export default function MembershipForm() {
 
   return (
     <div className="card">
+      <div className="mb-4">
+        <div className="label-xs">Plan</div>
+        <div className="flex flex-wrap gap-2">
+          <button className={`chip ${plan === "free" ? "chip-selected" : ""}`} onClick={() => setPlan("free")}>
+            Insiders (free)
+          </button>
+          <button className={`chip ${plan === "adult" ? "chip-selected" : ""}`} onClick={() => setPlan("adult")}>
+            Insiders+ Adult ($15/mo)
+          </button>
+          <button className={`chip ${plan === "senior" ? "chip-selected" : ""}`} onClick={() => setPlan("senior")}>
+            Insiders+ Senior ($12/mo)
+          </button>
+        </div>
+        {plan !== "free" && (
+          <div className="mt-2 text-xs text-[var(--muted)]">You&apos;ll be redirected to Stripe to set up your recurring monthly payment.</div>
+        )}
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="block">
           <div className="label-xs">Name</div>
@@ -56,8 +81,12 @@ export default function MembershipForm() {
       {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
       <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-        {submitting ? "Signing up..." : "Join Insiders — it's free"}
+        {submitting ? "Please wait..." : plan === "free" ? "Join Insiders — it's free" : "Continue to payment"}
       </button>
+
+      <div className="mt-3 text-xs text-[var(--muted)]">
+        Want the discounted Student rate ($10/mo)? Visit the counter in person with a valid student ID.
+      </div>
     </div>
   );
 }
