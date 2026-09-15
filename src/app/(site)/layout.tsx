@@ -25,6 +25,9 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/about" className="transition-colors hover:text-[var(--accent)]">
               About
             </Link>
+            <Link href="/account" className="transition-colors hover:text-[var(--accent)]">
+              My Account
+            </Link>
           </nav>
         </div>
       </header>
