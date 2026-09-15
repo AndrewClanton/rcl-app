@@ -51,7 +51,7 @@ export default function AboutPage() {
         </div>
       </div>
 
-      <div>
+      <div id="faq">
         <h2 className="font-display mb-4 text-2xl font-semibold">Frequently asked questions</h2>
         <div className="space-y-3">
           <FaqItem q="What films will you be screening?">
