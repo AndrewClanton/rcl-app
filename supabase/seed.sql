@@ -165,14 +165,15 @@ begin
     (cat_tickets, 'Pay for an event', 0, true, 'full', 4);
 end $$;
 
--- ---------- sample employees (PIN "9999" for all, bcrypt hash placeholder) ----------
--- Replace pin_hash values via the real employee-management screen once it
--- exists; these are for local dev only. Real hashing happens server-side.
+-- ---------- sample employees (PIN "9999" for all) ----------
+-- pin_hash is a real scrypt hash (src/lib/pin.ts) of "9999" with a fixed
+-- seed-only salt -- replace via a real employee-management screen once one
+-- exists. Fine for local dev; never reuse a fixed salt for production data.
 insert into employees (name, pin_hash, role) values
-  ('Jordan', '$dev$9999', 'cashier'),
-  ('Casey', '$dev$9999', 'cashier'),
-  ('Taylor', '$dev$9999', 'cashier'),
-  ('Riley', '$dev$9999', 'manager');
+  ('Jordan', 'scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f', 'cashier'),
+  ('Casey', 'scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f', 'cashier'),
+  ('Taylor', 'scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f', 'cashier'),
+  ('Riley', 'scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f', 'manager');
 
 -- ---------- sample members ----------
 insert into members (name, tier, points) values
