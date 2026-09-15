@@ -18,6 +18,9 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/events" className="hover:underline">
               Private events
             </Link>
+            <Link href="/membership" className="hover:underline">
+              Insiders
+            </Link>
           </nav>
         </div>
       </header>
