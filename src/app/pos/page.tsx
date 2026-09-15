@@ -1,12 +1,15 @@
 import { getMenuTree } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getMembers } from "@/lib/data/members";
+import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import PosApp from "./PosApp";
 
 export const dynamic = "force-dynamic";
 
 export default async function PosPage() {
+  await requireStaff();
+
   const [categories, employees, members, heldOrders, openTabs] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),

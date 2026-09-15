@@ -1,11 +1,15 @@
 import Link from "next/link";
+import { requireStaff } from "@/lib/auth";
+import { signOut } from "@/app/login/actions";
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
+export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  const staff = await requireStaff();
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
         <h1 className="text-xl font-semibold">Royale Cinema Lounge — Back office</h1>
-        <nav className="flex gap-4 text-sm">
+        <nav className="flex flex-wrap items-center gap-4 text-sm">
           <Link href="/admin" className="hover:underline">
             Dashboard
           </Link>
@@ -27,6 +31,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <Link href="/" className="text-neutral-500 hover:underline">
             View site
           </Link>
+          <span className="text-neutral-400">|</span>
+          <span className="text-neutral-500">{staff.name}</span>
+          <form action={signOut}>
+            <button type="submit" className="text-neutral-500 hover:underline">
+              Sign out
+            </button>
+          </form>
         </nav>
       </div>
       {children}
