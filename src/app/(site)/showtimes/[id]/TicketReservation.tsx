@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { reserveTickets } from "./actions";
+import { startCheckout } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -13,7 +13,6 @@ export default function TicketReservation({ screeningId, ticketPrice, seatsLeft 
   const [email, setEmail] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
 
   const canSubmit = quantity > 0 && quantity <= seatsLeft && name.trim() && email.includes("@");
 
@@ -22,24 +21,12 @@ export default function TicketReservation({ screeningId, ticketPrice, seatsLeft 
     setSubmitting(true);
     setError(null);
     try {
-      await reserveTickets({ screeningId, quantity, customerName: name, customerEmail: email });
-      setDone(true);
+      const { url } = await startCheckout({ screeningId, quantity, customerName: name, customerEmail: email });
+      window.location.href = url;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-    } finally {
       setSubmitting(false);
     }
-  }
-
-  if (done) {
-    return (
-      <div className="rounded-xl border border-green-300 bg-green-50 p-6 dark:border-green-800 dark:bg-green-950">
-        <h2 className="text-lg font-semibold text-green-900 dark:text-green-300">Seats reserved!</h2>
-        <p className="mt-2 text-sm text-green-800 dark:text-green-400">
-          {quantity} ticket{quantity === 1 ? "" : "s"} held under {name}. Online payment isn&apos;t live yet — pay at the door when you arrive, or call ahead.
-        </p>
-      </div>
-    );
   }
 
   if (seatsLeft <= 0) {
@@ -90,10 +77,10 @@ export default function TicketReservation({ screeningId, ticketPrice, seatsLeft 
           disabled={!canSubmit || submitting}
           onClick={handleSubmit}
         >
-          {submitting ? "Reserving..." : "Reserve — pay at the door"}
+          {submitting ? "Redirecting to checkout..." : "Buy tickets — pay now"}
         </button>
       </div>
-      <div className="mt-2 text-xs text-neutral-500">Online payment is coming soon. This holds your seats without charging you now.</div>
+      <div className="mt-2 text-xs text-neutral-500">You&apos;ll be redirected to Stripe to pay securely. Your seats are held for 30 minutes.</div>
     </div>
   );
 }

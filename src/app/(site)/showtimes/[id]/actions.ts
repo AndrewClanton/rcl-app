@@ -1,9 +1,20 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getStripe } from "@/lib/stripe";
 
-export async function reserveTickets(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<void> {
+// Vercel/Next set these on the incoming request; falls back to localhost
+// for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
+// would have to differ between local/preview/production.
+async function siteOrigin(): Promise<string> {
+  const h = await headers();
+  const host = h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  return `${proto}://${host}`;
+}
+
+export async function startCheckout(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<{ url: string }> {
   const name = fields.customerName.trim();
   const email = fields.customerEmail.trim();
   if (!name) throw new Error("Enter your name.");
@@ -12,8 +23,13 @@ export async function reserveTickets(fields: { screeningId: string; quantity: nu
 
   const supabase = createAdminClient();
 
-  const { data: screening, error: screeningErr } = await supabase.from("screenings").select("id, ticket_price, capacity").eq("id", fields.screeningId).single();
+  const { data: screening, error: screeningErr } = await supabase
+    .from("screenings")
+    .select("id, ticket_price, capacity, starts_at, movie:movies(title)")
+    .eq("id", fields.screeningId)
+    .single();
   if (screeningErr || !screening) throw new Error("Screening not found.");
+  const movie = screening.movie as unknown as { title: string };
 
   const { data: existingBookings, error: bookingsErr } = await supabase
     .from("bookings")
@@ -27,15 +43,57 @@ export async function reserveTickets(fields: { screeningId: string; quantity: nu
     throw new Error(`Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.`);
   }
 
-  const { error } = await supabase.from("bookings").insert({
-    screening_id: fields.screeningId,
-    customer_name: name,
-    customer_email: email,
-    quantity: fields.quantity,
-    unit_price: screening.ticket_price,
-    status: "pending",
-  });
-  if (error) throw error;
+  const { data: booking, error: insertErr } = await supabase
+    .from("bookings")
+    .insert({
+      screening_id: fields.screeningId,
+      customer_name: name,
+      customer_email: email,
+      quantity: fields.quantity,
+      unit_price: screening.ticket_price,
+      status: "pending",
+    })
+    .select("id")
+    .single();
+  if (insertErr) throw insertErr;
 
-  revalidatePath(`/showtimes/${fields.screeningId}`);
+  const origin = await siteOrigin();
+  const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  const stripe = getStripe();
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            unit_amount: Math.round(screening.ticket_price * 100),
+            product_data: { name: `${movie.title} — ${showtime}` },
+          },
+          quantity: fields.quantity,
+        },
+      ],
+      metadata: { booking_id: booking.id, screening_id: fields.screeningId },
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
+      success_url: `${origin}/showtimes/${fields.screeningId}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/showtimes/${fields.screeningId}?checkout=cancelled`,
+    });
+  } catch (e) {
+    // Release the seat hold if Stripe session creation failed.
+    await supabase.from("bookings").delete().eq("id", booking.id);
+    throw e;
+  }
+
+  await supabase.from("bookings").update({ stripe_checkout_session_id: session.id }).eq("id", booking.id);
+
+  return { url: session.url! };
 }
