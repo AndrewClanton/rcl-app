@@ -38,7 +38,14 @@
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
+  /* A soft warm glow near the top plus a tiled film-grain texture (pure
+     CSS/SVG, no image asset) -- the flat solid color read as too empty
+     on pages without a photo. */
+  background-image: radial-gradient(120% 60% at 15% -10%, rgba(211, 162, 74, 0.07), transparent 60%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, repeat;
+  background-size: 100% 640px, 180px 180px;
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
