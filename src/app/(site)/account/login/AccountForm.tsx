@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, createImplicitFlowClient } from "@/lib/supabase/client";
 import { linkMemberAccount } from "../actions";
 
 type Mode = "signin" | "signup";
@@ -59,7 +59,7 @@ export default function AccountForm() {
     }
     setSubmitting(true);
     setError(null);
-    const supabase = createClient();
+    const supabase = createImplicitFlowClient();
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/account/reset-password`,
     });
