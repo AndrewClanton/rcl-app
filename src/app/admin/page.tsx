@@ -45,6 +45,20 @@ export default function AdminDashboardPage() {
         <div className="text-base font-medium">Reports</div>
         <div className="mt-1 text-sm text-neutral-500">Sales, top sellers, tips, order history.</div>
       </Link>
+      <Link
+        href="/display/kitchen"
+        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="text-base font-medium">Kitchen display</div>
+        <div className="mt-1 text-sm text-neutral-500">Live prep tickets as POS orders complete.</div>
+      </Link>
+      <Link
+        href="/display/box-office"
+        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="text-base font-medium">Box office signage</div>
+        <div className="mt-1 text-sm text-neutral-500">Lobby showtimes display.</div>
+      </Link>
     </div>
   );
 }
