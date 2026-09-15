@@ -64,9 +64,9 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
 
   if (result !== null) {
     return (
-      <div className="rounded-xl border border-green-300 bg-green-50 p-6 dark:border-green-800 dark:bg-green-950">
-        <h2 className="text-lg font-semibold text-green-900 dark:text-green-300">Request sent!</h2>
-        <p className="mt-2 text-sm text-green-800 dark:text-green-400">
+      <div className="notice notice-success">
+        <h2 className="text-lg font-semibold">Request sent!</h2>
+        <p className="mt-2 text-sm opacity-90">
           Estimated total: {money(result)}. We&apos;ll follow up by email at {organizerEmail} to confirm details and arrange your deposit.
         </p>
       </div>
@@ -74,25 +74,23 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-      <h2 className="mb-4 text-lg font-semibold">Request a booking</h2>
+    <div className="card">
+      <h2 className="font-display mb-4 text-lg font-semibold">Request a booking</h2>
 
       <div className="mb-4">
-        <div className="mb-1 text-xs text-neutral-500">Space</div>
+        <div className="label-xs">Space</div>
         <div className="grid gap-2 sm:grid-cols-2">
           {rooms.map((r) => (
             <button
               key={r.id}
-              className={`rounded-lg border p-3 text-left text-sm ${
-                roomId === r.id ? "border-neutral-900 dark:border-neutral-100" : "border-neutral-200 dark:border-neutral-800"
-              }`}
+              className={`rounded-lg border p-3 text-left text-sm transition-colors ${roomId === r.id ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)]"}`}
               onClick={() => {
                 setRoomId(r.id);
                 setAddonIds([]);
               }}
             >
               <div className="font-medium">{r.name}</div>
-              <div className="text-neutral-500">
+              <div className="text-[var(--muted)]">
                 {money(r.hourly_rate ?? 0)}/hr · capacity {r.capacity}
               </div>
             </button>
@@ -102,22 +100,14 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
 
       {room && (
         <>
-          <div className="mb-2 text-xs text-neutral-500">
-            Cleaning fee {money(room.cleaning_fee ?? 0)} added once, regardless of hours.
-          </div>
+          <div className="mb-2 text-xs text-[var(--muted)]">Cleaning fee {money(room.cleaning_fee ?? 0)} added once, regardless of hours.</div>
 
           {room.addons.length > 0 && (
             <div className="mb-4">
-              <div className="mb-1 text-xs text-neutral-500">Add-ons (optional)</div>
+              <div className="label-xs">Add-ons (optional)</div>
               <div className="flex flex-wrap gap-2">
                 {room.addons.map((a) => (
-                  <button
-                    key={a.id}
-                    className={`rounded-full border px-3 py-1 text-xs ${
-                      addonIds.includes(a.id) ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"
-                    }`}
-                    onClick={() => toggleAddon(a.id)}
-                  >
+                  <button key={a.id} className={`chip ${addonIds.includes(a.id) ? "chip-selected" : ""}`} onClick={() => toggleAddon(a.id)}>
                     {a.name} (+{money(a.hourly_rate)}/hr)
                   </button>
                 ))}
@@ -133,7 +123,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         </Field>
         <Field label="Expected guests">
           <input type="number" min="0" step="1" className="input" value={guests} onChange={(e) => setGuests(e.target.value)} />
-          {overCapacity && <div className="mt-1 text-xs text-red-600">Over capacity for {room?.name} (max {room?.capacity}).</div>}
+          {overCapacity && <div className="mt-1 text-xs text-[var(--danger-text)]">Over capacity for {room?.name} (max {room?.capacity}).</div>}
         </Field>
         <Field label="Event date">
           <input type="date" className="input" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
@@ -159,19 +149,15 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
       </div>
 
       {room && (
-        <div className="mt-4 rounded-lg bg-neutral-100 p-3 text-sm dark:bg-neutral-900">
-          Estimated total: <strong>{money(estimate)}</strong>
-          <div className="text-xs text-neutral-500">A deposit will be arranged with staff to confirm the booking.</div>
+        <div className="mt-4 rounded-lg p-3 text-sm" style={{ background: "var(--accent-soft)" }}>
+          Estimated total: <strong className="text-[var(--accent)]">{money(estimate)}</strong>
+          <div className="text-xs text-[var(--muted)]">A deposit will be arranged with staff to confirm the booking.</div>
         </div>
       )}
 
-      {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
+      {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
-      <button
-        className="mt-4 w-full rounded-lg bg-neutral-900 py-2.5 text-sm font-semibold text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
-        disabled={!canSubmit || submitting}
-        onClick={handleSubmit}
-      >
+      <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
         {submitting ? "Sending..." : "Request this booking"}
       </button>
     </div>
@@ -181,7 +167,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <div className="mb-1 text-xs text-neutral-500">{label}</div>
+      <div className="label-xs">{label}</div>
       {children}
     </label>
   );

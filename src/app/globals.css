@@ -1,8 +1,32 @@
 @import "tailwindcss";
 
+/*
+ * Royale Cinema Lounge brand palette — deliberately a single dark,
+ * "marquee at night" look rather than following the OS light/dark
+ * preference. Cinema/lounge brands are typically dark-themed
+ * regardless of system setting, and it keeps the whole site (which
+ * previously mixed light-mode defaults with dark: overrides) visually
+ * consistent instead of half-styled depending on the visitor's OS.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0b0a0f;
+  --surface: #16131c;
+  --surface-hover: #1d1824;
+  --border: #2c2632;
+  --foreground: #f4ede0;
+  --muted: #a79b8c;
+  --accent: #d3a24a;
+  --accent-hover: #e3b562;
+  --accent-foreground: #1a1206;
+  --accent-soft: rgba(211, 162, 74, 0.12);
+
+  --success-bg: #10241a;
+  --success-border: #2c5c3f;
+  --success-text: #8fe3ab;
+  --warn-bg: #241c0d;
+  --warn-border: #6b4f1a;
+  --warn-text: #f0c568;
+  --danger-text: #ef7d7d;
 }
 
 @theme inline {
@@ -10,23 +34,111 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-display: var(--font-playfair);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
 @layer components {
   .input {
-    @apply w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950;
+    @apply w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors;
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+  .input:focus {
+    border-color: var(--accent);
+  }
+
+  .font-display {
+    font-family: var(--font-display), Georgia, serif;
+  }
+
+  .eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.14em];
+    color: var(--accent);
+  }
+
+  .label-xs {
+    @apply mb-1 text-xs;
+    color: var(--muted);
+  }
+
+  .card {
+    @apply rounded-xl border p-5;
+    background: var(--surface);
+    border-color: var(--border);
+  }
+
+  .card-flat {
+    @apply rounded-xl border p-4 transition-colors;
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .card-flat:hover {
+    border-color: var(--accent);
+    background: var(--surface-hover);
+  }
+
+  .btn-primary {
+    @apply rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-secondary {
+    @apply rounded-lg border px-5 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .chip {
+    @apply rounded-full border px-3 py-1 text-xs transition-colors;
+    border-color: var(--border);
+    color: var(--foreground);
+  }
+  .chip:hover {
+    border-color: var(--accent);
+  }
+  .chip-selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .notice {
+    @apply rounded-xl border p-6;
+  }
+  .notice-success {
+    background: var(--success-bg);
+    border-color: var(--success-border);
+    color: var(--success-text);
+  }
+  .notice-warn {
+    @apply p-3 text-sm;
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+    color: var(--warn-text);
+  }
+
+  .poster-frame {
+    @apply relative aspect-[2/3] w-full overflow-hidden rounded-lg;
+    background: var(--surface-hover);
+  }
+  .poster-placeholder {
+    @apply flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center;
+    background: linear-gradient(160deg, var(--surface-hover), var(--surface));
+    color: var(--muted);
   }
 }

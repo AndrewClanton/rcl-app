@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getScreeningById } from "@/lib/data/screening-detail";
 import { getStripe } from "@/lib/stripe";
+import MoviePoster from "@/components/MoviePoster";
 import TicketReservation from "./TicketReservation";
 
 export const dynamic = "force-dynamic";
@@ -39,33 +40,37 @@ export default async function ScreeningDetailPage({
   }
 
   return (
-    <div className="mx-auto max-w-lg">
-      <h1 className="text-2xl font-semibold">{screening.movie.title}</h1>
-      <div className="mt-1 text-neutral-500">
-        {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}
-      </div>
-      <div className="text-neutral-500">
-        {screening.room.name}
-        {screening.movie.runtime_minutes ? ` · ${screening.movie.runtime_minutes} min` : ""}
-        {screening.movie.rating ? ` · ${screening.movie.rating}` : ""}
-      </div>
-      {screening.movie.synopsis && <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">{screening.movie.synopsis}</p>}
-      <div className="mt-2 text-lg font-medium">{money(screening.ticket_price)} / ticket</div>
+    <div className="mx-auto max-w-3xl">
+      <div className="grid gap-8 sm:grid-cols-[200px_1fr]">
+        <div className="mx-auto w-40 sm:mx-0 sm:w-full">
+          <MoviePoster posterPath={screening.movie.poster_path} title={screening.movie.title} sizes="200px" priority />
+        </div>
 
-      <div className="mt-6">
+        <div>
+          <h1 className="font-display text-3xl font-semibold">{screening.movie.title}</h1>
+          <div className="mt-2 text-[var(--muted)]">
+            {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}
+          </div>
+          <div className="text-[var(--muted)]">
+            {screening.room.name}
+            {screening.movie.runtime_minutes ? ` · ${screening.movie.runtime_minutes} min` : ""}
+            {screening.movie.rating ? ` · ${screening.movie.rating}` : ""}
+          </div>
+          {screening.movie.synopsis && <p className="mt-3 text-sm text-[var(--muted)]">{screening.movie.synopsis}</p>}
+          <div className="mt-3 text-lg font-semibold text-[var(--accent)]">{money(screening.ticket_price)} / ticket</div>
+        </div>
+      </div>
+
+      <div className="mt-8">
         {paymentConfirmed ? (
-          <div className="rounded-xl border border-green-300 bg-green-50 p-6 dark:border-green-800 dark:bg-green-950">
-            <h2 className="text-lg font-semibold text-green-900 dark:text-green-300">Payment received!</h2>
-            <p className="mt-2 text-sm text-green-800 dark:text-green-400">
-              Your tickets are confirmed. A receipt was sent to your email by Stripe.
-            </p>
+          <div className="notice notice-success">
+            <h2 className="text-lg font-semibold">Payment received!</h2>
+            <p className="mt-2 text-sm opacity-90">Your tickets are confirmed. A receipt was sent to your email by Stripe.</p>
           </div>
         ) : (
           <>
             {checkout === "cancelled" && (
-              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                Checkout was cancelled — your seats weren&apos;t held. Feel free to try again.
-              </div>
+              <div className="notice notice-warn mb-4">Checkout was cancelled — your seats weren&apos;t held. Feel free to try again.</div>
             )}
             <TicketReservation screeningId={screening.id} ticketPrice={screening.ticket_price} seatsLeft={seatsLeft} />
           </>

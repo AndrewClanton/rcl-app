@@ -9,15 +9,16 @@ function money(n: number) {
 
 function ItemCard({ item }: { item: MenuItem }) {
   return (
-    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+    <div className="card-flat">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="font-medium">{item.name}</span>
-        <span className="text-sm text-neutral-500">{money(item.price)}</span>
+        <span className="font-medium">
+          {item.name}
+          {item.is_alcohol && <span className="ml-2 chip !px-1.5 !py-0.5 align-middle text-[10px]">21+</span>}
+        </span>
+        <span className="whitespace-nowrap text-sm font-semibold text-[var(--accent)]">{money(item.price)}</span>
       </div>
       {item.modifier_groups.length > 0 && (
-        <div className="mt-1 text-xs text-neutral-500">
-          {item.modifier_groups.map((g) => g.label).join(" · ")}
-        </div>
+        <div className="mt-1 text-xs text-[var(--muted)]">{item.modifier_groups.map((g) => g.label).join(" · ")}</div>
       )}
     </div>
   );
@@ -25,13 +26,13 @@ function ItemCard({ item }: { item: MenuItem }) {
 
 function CategorySection({ category }: { category: MenuCategory }) {
   return (
-    <section className="mb-10">
-      <h2 className="mb-3 text-xl font-semibold">{category.label}</h2>
+    <section className="mb-12">
+      <h2 className="font-display mb-4 border-b border-[var(--border)] pb-2 text-2xl font-semibold">{category.label}</h2>
       {category.subcategories.length > 0 ? (
         <div className="space-y-6">
           {category.subcategories.map((sub) => (
             <div key={sub.id}>
-              <h3 className="mb-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">{sub.label}</h3>
+              <h3 className="eyebrow mb-2">{sub.label}</h3>
               <div className="grid gap-2 sm:grid-cols-2">
                 {sub.items.map((item) => (
                   <ItemCard key={item.id} item={item} />
@@ -55,7 +56,7 @@ export default async function MenuPage() {
   const categories = await getMenuTree();
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold">Menu</h1>
+      <h1 className="font-display mb-8 text-3xl font-semibold">Menu</h1>
       {categories
         .filter((c) => c.key !== "tickets")
         .map((cat) => (

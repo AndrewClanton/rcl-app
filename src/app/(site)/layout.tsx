@@ -3,29 +3,30 @@ import Link from "next/link";
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-full flex-col">
-      <header className="border-b border-neutral-200 dark:border-neutral-800">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4">
-          <Link href="/" className="text-lg font-semibold">
+      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-5xl flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-0">
+          <Link href="/" className="font-display flex items-center gap-2 whitespace-nowrap text-lg font-semibold tracking-wide text-[var(--foreground)]">
+            <span className="text-[var(--accent)]">●</span>
             Royale Cinema Lounge
           </Link>
-          <nav className="flex gap-5 text-sm">
-            <Link href="/showtimes" className="hover:underline">
+          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+            <Link href="/showtimes" className="transition-colors hover:text-[var(--accent)]">
               Showtimes
             </Link>
-            <Link href="/menu" className="hover:underline">
+            <Link href="/menu" className="transition-colors hover:text-[var(--accent)]">
               Menu
             </Link>
-            <Link href="/events" className="hover:underline">
+            <Link href="/events" className="transition-colors hover:text-[var(--accent)]">
               Private events
             </Link>
-            <Link href="/membership" className="hover:underline">
+            <Link href="/membership" className="transition-colors hover:text-[var(--accent)]">
               Insiders
             </Link>
           </nav>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
-      <footer className="border-t border-neutral-200 px-4 py-6 text-center text-xs text-neutral-500 dark:border-neutral-800">
+      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">{children}</main>
+      <footer className="border-t border-[var(--border)] px-4 py-8 text-center text-xs text-[var(--muted)]">
         Royale Cinema Lounge — Joplin, MO
       </footer>
     </div>
