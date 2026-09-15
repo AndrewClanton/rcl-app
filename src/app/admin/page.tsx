@@ -17,6 +17,13 @@ export default function AdminDashboardPage() {
         <div className="text-base font-medium">Showtime scheduler</div>
         <div className="mt-1 text-sm text-neutral-500">Movies, screening times, rooms.</div>
       </Link>
+      <Link
+        href="/admin/members"
+        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="text-base font-medium">Members</div>
+        <div className="mt-1 text-sm text-neutral-500">Loyalty tiers, points, monthly membership.</div>
+      </Link>
     </div>
   );
 }
