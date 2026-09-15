@@ -22,12 +22,24 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/membership" className="transition-colors hover:text-[var(--accent)]">
               Insiders
             </Link>
+            <Link href="/about" className="transition-colors hover:text-[var(--accent)]">
+              About
+            </Link>
           </nav>
         </div>
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-10">{children}</main>
       <footer className="border-t border-[var(--border)] px-4 py-8 text-center text-xs text-[var(--muted)]">
-        Royale Cinema Lounge — Joplin, MO
+        <div>Royale Cinema Lounge — 715 E Broadway, Joplin, MO 64801</div>
+        <div className="mt-1">
+          <a href="tel:+14172814172" className="hover:text-[var(--accent)]">
+            417-281-4172
+          </a>
+          {" · "}
+          <a href="mailto:info@royalecinemajoplin.com" className="hover:text-[var(--accent)]">
+            info@royalecinemajoplin.com
+          </a>
+        </div>
       </footer>
     </div>
   );
