@@ -47,7 +47,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
   // matching the old site's booking flow, which separated "free tickets"
   // (covered by membership) from "additional passes" (always charged).
   // Any guest seats beyond the member's own still cost full price.
-  const { data: member } = await supabase.from("members").select("id, tier").eq("email", email).maybeSingle();
+  const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
   const freeQuantity = member?.tier === "Insiders+" ? Math.min(1, fields.quantity) : 0;
   const paidQuantity = fields.quantity - freeQuantity;
 

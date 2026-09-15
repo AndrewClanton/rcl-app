@@ -20,7 +20,7 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
 
   const supabase = createAdminClient();
 
-  const { data: existing } = await supabase.from("members").select("id").eq("email", email).maybeSingle();
+  const { data: existing } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
   if (existing) throw new Error("An Insiders account already exists for that email. Ask staff to look it up for you in person.");
 
   const { error } = await supabase.from("members").insert({
@@ -57,7 +57,7 @@ export async function startMembershipCheckout(fields: {
   if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
 
   const supabase = createAdminClient();
-  const { data: existing } = await supabase.from("members").select("id, tier, subscription_status").eq("email", email).maybeSingle();
+  const { data: existing } = await supabase.from("members").select("id, tier, subscription_status").ilike("email", email).maybeSingle();
   if (existing?.tier === "Insiders+" && existing.subscription_status === "active") {
     throw new Error("This email already has an active Insiders+ membership.");
   }

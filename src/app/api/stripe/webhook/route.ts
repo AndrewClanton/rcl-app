@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
           subscription_status: "active",
           monthly_member: true,
         };
-        const { data: existing } = await supabase.from("members").select("id").eq("email", email).maybeSingle();
+        const { data: existing } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
         if (existing) {
           await supabase.from("members").update(memberFields).eq("id", existing.id);
         } else {

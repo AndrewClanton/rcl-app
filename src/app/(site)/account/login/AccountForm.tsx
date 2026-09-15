@@ -40,12 +40,18 @@ export default function AccountForm() {
         setSubmitting(false);
         return;
       }
-      const result = await linkMemberAccount(name);
-      if (!result.ok) {
-        setError(result.error);
-        setSubmitting(false);
-        return;
-      }
+    }
+
+    // Not just the signup path -- an auth user can exist without a linked
+    // members row (e.g. they reset a password before ever completing
+    // "Create account", or an earlier bug left them unlinked), so ensure
+    // the link exists after every successful sign-in too. Idempotent: a
+    // no-op if already linked.
+    const result = await linkMemberAccount(name);
+    if (!result.ok) {
+      setError(result.error);
+      setSubmitting(false);
+      return;
     }
 
     router.push("/account");

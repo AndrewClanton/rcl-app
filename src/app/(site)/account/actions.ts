@@ -23,7 +23,11 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   const admin = createAdminClient();
   const { data: existingByAuth } = await admin.from("members").select("id").eq("auth_user_id", user.id).maybeSingle();
   if (!existingByAuth) {
-    const { data: existingByEmail } = await admin.from("members").select("id").eq("email", user.email).maybeSingle();
+    // Case-insensitive -- members.email has a case-insensitive unique
+    // index (lower(email)), so an exact match here could miss an existing
+    // row that differs only in case and then fail the insert below with a
+    // duplicate-key error instead of claiming it.
+    const { data: existingByEmail } = await admin.from("members").select("id").ilike("email", user.email).maybeSingle();
     if (existingByEmail) {
       await admin.from("members").update({ auth_user_id: user.id }).eq("id", existingByEmail.id);
     } else {

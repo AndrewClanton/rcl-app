@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { linkMemberAccount } from "../actions";
 
 // Landing point for the "reset your password" email link. Supabase's
 // recovery link may arrive as a PKCE ?code= or an implicit #access_token=
@@ -75,6 +76,18 @@ export default function ResetPasswordPage() {
       setSubmitting(false);
       return;
     }
+
+    // The auth user resetting a password here might never have completed
+    // "Create account" (e.g. an old magic-link signup that never got
+    // linked) -- ensure a members row is linked before sending them to a
+    // page that requires one. Idempotent: a no-op if already linked.
+    const result = await linkMemberAccount();
+    if (!result.ok) {
+      setError(result.error);
+      setSubmitting(false);
+      return;
+    }
+
     router.push("/account");
     router.refresh();
   }
