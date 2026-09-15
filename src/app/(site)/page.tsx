@@ -47,12 +47,12 @@ export default async function HomePage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {screenings.map((s) => (
-              <div key={s.id} className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
+              <Link key={s.id} href={`/showtimes/${s.id}`} className="rounded-xl border border-neutral-200 p-4 hover:border-neutral-400 dark:border-neutral-800">
                 <div className="font-medium">{s.movie.title}</div>
                 <div className="mt-1 text-sm text-neutral-500">{formatShowtime(s.starts_at)}</div>
                 <div className="text-sm text-neutral-500">{s.room.name}</div>
                 <div className="mt-2 text-sm font-medium">${s.ticket_price.toFixed(2)}</div>
-              </div>
+              </Link>
             ))}
           </div>
         )}

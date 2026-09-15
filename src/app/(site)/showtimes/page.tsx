@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getUpcomingScreenings } from "@/lib/data/screenings";
 import type { Screening } from "@/lib/types";
 
@@ -40,9 +41,10 @@ export default async function ShowtimesPage() {
               <h2 className="mb-3 text-lg font-medium">{date}</h2>
               <div className="space-y-3">
                 {list.map((s) => (
-                  <div
+                  <Link
                     key={s.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"
+                    href={`/showtimes/${s.id}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 p-4 hover:border-neutral-400 dark:border-neutral-800"
                   >
                     <div>
                       <div className="font-medium">{s.movie.title}</div>
@@ -53,7 +55,7 @@ export default async function ShowtimesPage() {
                       </div>
                     </div>
                     <div className="text-sm font-medium">${s.ticket_price.toFixed(2)}</div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>
