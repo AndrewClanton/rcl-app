@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
   return (
     <div className="card-flat">
@@ -10,13 +12,18 @@ function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
 export default function AboutPage() {
   return (
     <div className="space-y-12">
-      <div>
-        <div className="eyebrow mb-2">About</div>
-        <h1 className="font-display text-3xl font-semibold">Joplin&apos;s only independent film center</h1>
-        <p className="mt-3 max-w-2xl text-[var(--muted)]">
-          Royale Cinema Lounge showcases independent releases and repertory cinema with a curated beverage and concessions menu — a
-          third space for the Joplin community to celebrate the art of cinema in a personal, curated way.
-        </p>
+      <div className="grid gap-8 lg:grid-cols-[1fr_0.9fr] lg:items-center">
+        <div>
+          <div className="eyebrow mb-2">About</div>
+          <h1 className="font-display text-3xl font-semibold">Joplin&apos;s only independent film center</h1>
+          <p className="mt-3 max-w-2xl text-[var(--muted)]">
+            Royale Cinema Lounge showcases independent releases and repertory cinema with a curated beverage and concessions menu —
+            a third space for the Joplin community to celebrate the art of cinema in a personal, curated way.
+          </p>
+        </div>
+        <div className="relative aspect-[2/3] max-w-xs overflow-hidden rounded-2xl border border-[var(--border)] lg:max-w-none lg:justify-self-end">
+          <Image src="/photos/hero-couple.jpg" alt="Guests at Royale Cinema Lounge" fill sizes="(min-width: 1024px) 360px, 80vw" className="object-cover" priority />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -49,6 +56,10 @@ export default function AboutPage() {
             exclusive access any time they visit: revisit old favorites, or discover hidden gems.
           </p>
         </div>
+      </div>
+
+      <div className="relative aspect-[21/9] overflow-hidden rounded-2xl border border-[var(--border)]">
+        <Image src="/photos/lounge-booths.png" alt="Booth seating and the film poster wall inside Royale Cinema Lounge" fill sizes="1000px" className="object-cover" />
       </div>
 
       <div id="faq">

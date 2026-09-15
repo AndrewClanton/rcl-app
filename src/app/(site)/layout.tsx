@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
@@ -5,9 +6,8 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
     <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur">
         <div className="mx-auto flex max-w-5xl flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-0">
-          <Link href="/" className="font-display flex items-center gap-2 whitespace-nowrap text-lg font-semibold tracking-wide text-[var(--foreground)]">
-            <span className="text-[var(--accent)]">●</span>
-            Royale Cinema Lounge
+          <Link href="/" className="flex shrink-0 items-center">
+            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="h-8 w-auto sm:h-9" />
           </Link>
           <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
             <Link href="/showtimes" className="transition-colors hover:text-[var(--accent)]">
