@@ -72,13 +72,19 @@ export async function reorderCategory(id: string, direction: "up" | "down", sibl
 
 // ---------- items ----------
 
-export async function addItem(categoryId: string, name: string, price: number) {
+export async function addItem(categoryId: string, name: string, price: number, isAlcohol = false): Promise<string | null> {
   const trimmed = name.trim();
-  if (!trimmed || !(price >= 0)) return;
+  if (!trimmed || !(price >= 0)) return null;
   const supabase = createAdminClient();
   const { count } = await supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("category_id", categoryId);
-  await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, sort_order: count ?? 0 });
+  const { data, error } = await supabase
+    .from("menu_items")
+    .insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 })
+    .select("id")
+    .single();
+  if (error) throw error;
   revalidate();
+  return data.id;
 }
 
 export async function updateItem(
@@ -131,5 +137,50 @@ export async function updateModifierOption(id: string, fields: Partial<{ name: s
 export async function deleteModifierOption(id: string) {
   const supabase = createAdminClient();
   await supabase.from("menu_modifier_options").delete().eq("id", id);
+  revalidate();
+}
+
+// ---------- recipes ----------
+// One recipes row per menu item (unique on menu_item_id) holds the
+// free-text how-to; recipe_ingredients holds the measured ingredient list.
+// Every mutation upserts the recipe row first so the UI never has to create
+// one explicitly before adding its first ingredient.
+
+async function ensureRecipeId(supabase: ReturnType<typeof createAdminClient>, menuItemId: string): Promise<string> {
+  const { data: existing } = await supabase.from("recipes").select("id").eq("menu_item_id", menuItemId).maybeSingle();
+  if (existing) return existing.id;
+  const { data: created, error } = await supabase.from("recipes").insert({ menu_item_id: menuItemId }).select("id").single();
+  if (error) throw error;
+  return created.id;
+}
+
+export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ instructions: string | null; glassware: string | null; garnish: string | null }>) {
+  const supabase = createAdminClient();
+  const recipeId = await ensureRecipeId(supabase, menuItemId);
+  await supabase.from("recipes").update(fields).eq("id", recipeId);
+  revalidate();
+}
+
+export async function addRecipeIngredient(menuItemId: string, ingredientId: string, quantity: number) {
+  if (!(quantity > 0)) return;
+  const supabase = createAdminClient();
+  const recipeId = await ensureRecipeId(supabase, menuItemId);
+  const { count } = await supabase.from("recipe_ingredients").select("id", { count: "exact", head: true }).eq("recipe_id", recipeId);
+  await supabase
+    .from("recipe_ingredients")
+    .upsert({ recipe_id: recipeId, ingredient_id: ingredientId, quantity, sort_order: count ?? 0 }, { onConflict: "recipe_id,ingredient_id" });
+  revalidate();
+}
+
+export async function updateRecipeIngredientQuantity(id: string, quantity: number) {
+  if (!(quantity > 0)) return;
+  const supabase = createAdminClient();
+  await supabase.from("recipe_ingredients").update({ quantity }).eq("id", id);
+  revalidate();
+}
+
+export async function removeRecipeIngredient(id: string) {
+  const supabase = createAdminClient();
+  await supabase.from("recipe_ingredients").delete().eq("id", id);
   revalidate();
 }

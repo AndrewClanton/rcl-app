@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { MembershipAnalytics, ReportOrder, RevenueDay } from "@/lib/data/reports";
+import type { AlcoholUsageRow, MembershipAnalytics, ReportOrder, RevenueDay } from "@/lib/data/reports";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundOrder } from "./actions";
 
@@ -11,17 +11,23 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+function unitLabel(unit: string) {
+  return unit === "count" ? "ct" : unit;
+}
+
 export default function ReportsPanel({
   todaysOrders,
   recentOrders,
   revenueTrend,
   membership,
+  alcoholUsage,
   days,
 }: {
   todaysOrders: ReportOrder[];
   recentOrders: ReportOrder[];
   revenueTrend: RevenueDay[];
   membership: MembershipAnalytics;
+  alcoholUsage: AlcoholUsageRow[];
   days: number;
 }) {
   const stats = useMemo(() => {
@@ -108,6 +114,52 @@ export default function ReportsPanel({
                 </div>
               ))}
             </div>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-lg font-semibold">Alcohol usage & variance</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Expected usage is recipe quantity × drinks sold in this range. Variance needs two physical counts (Ingredients page) bracketing
+          the range to compute -- positive means more was physically used than recipes account for.
+        </p>
+        {alcoholUsage.length === 0 ? (
+          <div className="text-sm text-neutral-500">No ingredients yet -- add some from the Ingredients page.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left text-xs text-neutral-500 dark:border-neutral-800">
+                  <th className="py-1.5 pr-3 font-medium">Ingredient</th>
+                  <th className="py-1.5 pr-3 font-medium">Expected usage</th>
+                  <th className="py-1.5 pr-3 font-medium">Physical count change</th>
+                  <th className="py-1.5 font-medium">Variance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                {alcoholUsage.map((row) => (
+                  <tr key={row.ingredientId}>
+                    <td className="py-1.5 pr-3">{row.name}</td>
+                    <td className="py-1.5 pr-3">
+                      {row.theoreticalUsage.toFixed(2)} {unitLabel(row.unit)}
+                    </td>
+                    <td className="py-1.5 pr-3 text-neutral-500">
+                      {row.physicalUsage === null ? "Not enough counts" : `${row.physicalUsage.toFixed(2)} ${unitLabel(row.unit)}`}
+                    </td>
+                    <td
+                      className={`py-1.5 font-medium ${
+                        row.variance === null ? "text-neutral-400" : row.variance > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                      }`}
+                    >
+                      {row.variance === null
+                        ? "—"
+                        : `${row.variance > 0 ? "+" : ""}${row.variance.toFixed(2)} ${unitLabel(row.unit)}${row.variance > 0 ? " over" : ""}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

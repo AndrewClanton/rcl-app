@@ -1,12 +1,21 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { MenuCategory } from "@/lib/types";
+import type { Ingredient, MenuCategory, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCategory, addItem, updateItem, deleteItem } from "./actions";
 import ItemModifiers from "./ItemModifiers";
+import ItemRecipe from "./ItemRecipe";
 
-export default function MenuManager({ categories }: { categories: MenuCategory[] }) {
+export default function MenuManager({
+  categories,
+  ingredients,
+  recipesByItem,
+}: {
+  categories: MenuCategory[];
+  ingredients: Ingredient[];
+  recipesByItem: Record<string, Recipe>;
+}) {
   const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({ categoryId: null, subcategoryId: null });
 
   const category = useMemo(() => categories.find((c) => c.id === nav.categoryId) ?? null, [categories, nav.categoryId]);
@@ -33,6 +42,8 @@ export default function MenuManager({ categories }: { categories: MenuCategory[]
   return (
     <ItemManager
       target={target}
+      ingredients={ingredients}
+      recipesByItem={recipesByItem}
       onBack={() =>
         subcategory
           ? setNav({ categoryId: category.id, subcategoryId: null })
@@ -193,14 +204,37 @@ function SubcategoryList({
   );
 }
 
-function ItemManager({ target, onBack, backLabel }: { target: MenuCategory; onBack: () => void; backLabel: string }) {
+function ItemManager({
+  target,
+  ingredients,
+  recipesByItem,
+  onBack,
+  backLabel,
+}: {
+  target: MenuCategory;
+  ingredients: Ingredient[];
+  recipesByItem: Record<string, Recipe>;
+  onBack: () => void;
+  backLabel: string;
+}) {
   const [pending, run] = useRefreshingAction();
   const [newName, setNewName] = useState("");
   const [newPrice, setNewPrice] = useState("");
+  const [newAlcohol, setNewAlcohol] = useState(false);
   const [openMods, setOpenMods] = useState<Set<string>>(new Set());
+  const [openRecipes, setOpenRecipes] = useState<Set<string>>(new Set());
 
   function toggleMods(id: string) {
     setOpenMods((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleRecipe(id: string) {
+    setOpenRecipes((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -225,7 +259,23 @@ function ItemManager({ target, onBack, backLabel }: { target: MenuCategory; onBa
                 Modifiers ({item.modifier_groups.length})
               </button>
               {item.is_event_item && <span className="rounded-full border border-blue-400 px-2 py-0.5 text-xs text-blue-600">event item</span>}
-              {item.is_alcohol && <span className="rounded-full border border-amber-400 px-2 py-0.5 text-xs text-amber-600">alcohol</span>}
+              <label className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-500">
+                <input
+                  type="checkbox"
+                  checked={item.is_alcohol}
+                  disabled={pending}
+                  onChange={(e) => run(() => updateItem(item.id, { is_alcohol: e.target.checked }))}
+                />
+                alcohol
+              </label>
+              {item.is_alcohol && (
+                <button
+                  className="rounded border border-amber-400 px-2 py-1 text-xs text-amber-700 dark:border-amber-800 dark:text-amber-500"
+                  onClick={() => toggleRecipe(item.id)}
+                >
+                  Recipe ({recipesByItem[item.id]?.ingredients.length ?? 0})
+                </button>
+              )}
               <button
                 className="ml-auto rounded border border-red-300 px-2 py-1 text-xs text-red-600 dark:border-red-900"
                 disabled={pending}
@@ -237,11 +287,12 @@ function ItemManager({ target, onBack, backLabel }: { target: MenuCategory; onBa
               </button>
             </div>
             {openMods.has(item.id) && <ItemModifiers item={item} />}
+            {openRecipes.has(item.id) && <ItemRecipe item={item} recipe={recipesByItem[item.id] ?? null} ingredients={ingredients} />}
           </div>
         ))}
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap items-end gap-2">
         <input
           className="min-w-[160px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
           placeholder="New item name"
@@ -257,15 +308,21 @@ function ItemManager({ target, onBack, backLabel }: { target: MenuCategory; onBa
           value={newPrice}
           onChange={(e) => setNewPrice(e.target.value)}
         />
+        <label className="flex items-center gap-1 pb-1.5 text-xs text-neutral-500">
+          <input type="checkbox" checked={newAlcohol} onChange={(e) => setNewAlcohol(e.target.checked)} />
+          Alcohol
+        </label>
         <button
           className="rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
           disabled={pending || !newName.trim() || !(parseFloat(newPrice) >= 0)}
           onClick={() => {
             const name = newName;
             const priceVal = parseFloat(newPrice);
+            const alcohol = newAlcohol;
             setNewName("");
             setNewPrice("");
-            run(() => addItem(target.id, name, priceVal));
+            setNewAlcohol(false);
+            run(() => addItem(target.id, name, priceVal, alcohol));
           }}
         >
           Add item

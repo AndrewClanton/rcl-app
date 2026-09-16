@@ -1,10 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import type { MenuItem } from "@/lib/types";
+import type { MenuItem, Recipe } from "@/lib/types";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+function unitLabel(unit: string) {
+  return unit === "count" ? "ct" : unit;
 }
 
 export interface BuiltLine {
@@ -16,7 +20,17 @@ export interface BuiltLine {
   isAlcohol: boolean;
 }
 
-export default function ItemBuilder({ item, onAdd, onCancel }: { item: MenuItem; onAdd: (line: BuiltLine) => void; onCancel: () => void }) {
+export default function ItemBuilder({
+  item,
+  recipe,
+  onAdd,
+  onCancel,
+}: {
+  item: MenuItem;
+  recipe: Recipe | null;
+  onAdd: (line: BuiltLine) => void;
+  onCancel: () => void;
+}) {
   const [qty, setQty] = useState(1);
   const [sel, setSel] = useState<Record<string, string[]>>(() => {
     const initial: Record<string, string[]> = {};
@@ -64,6 +78,36 @@ export default function ItemBuilder({ item, onAdd, onCancel }: { item: MenuItem;
       <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
         Base {money(item.price)}
       </p>
+
+      {item.is_alcohol && recipe && (recipe.ingredients.length > 0 || recipe.instructions || recipe.glassware || recipe.garnish) && (
+        <div className="mb-4 rounded-lg border p-3" style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}>
+          <div className="eyebrow mb-2">Recipe</div>
+          {recipe.ingredients.length > 0 && (
+            <ul className="mb-2 space-y-0.5 text-sm" style={{ color: "var(--foreground)" }}>
+              {recipe.ingredients.map((ri) => (
+                <li key={ri.id} className="flex justify-between gap-3">
+                  <span>{ri.ingredient_name}</span>
+                  <span style={{ color: "var(--muted)" }}>
+                    {ri.quantity} {unitLabel(ri.unit)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {(recipe.glassware || recipe.garnish) && (
+            <div className="mb-1 text-xs" style={{ color: "var(--muted)" }}>
+              {recipe.glassware && <>Glass: {recipe.glassware}</>}
+              {recipe.glassware && recipe.garnish && " · "}
+              {recipe.garnish && <>Garnish: {recipe.garnish}</>}
+            </div>
+          )}
+          {recipe.instructions && (
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              {recipe.instructions}
+            </p>
+          )}
+        </div>
+      )}
 
       {item.modifier_groups.map((g) => (
         <div key={g.id} className="mb-3">

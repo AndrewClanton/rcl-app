@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getRecipesByItem } from "./recipes";
 
 export interface ReportOrder {
   id: string;
@@ -153,6 +154,95 @@ export async function getMembershipAnalytics(): Promise<MembershipAnalytics> {
     newThisMonth,
     byProgram: [...programTally.entries()].map(([program, count]) => ({ program, count })).sort((a, b) => b.count - a.count),
   };
+}
+
+export interface AlcoholUsageRow {
+  ingredientId: string;
+  name: string;
+  unit: string;
+  theoreticalUsage: number;
+  physicalUsage: number | null;
+  variance: number | null;
+}
+
+// Compares recipe-based "theoretical" ingredient usage (recipe quantity x
+// drinks sold in range) against physical stock depletion (earliest count at
+// or before the range start minus the latest count overall) to surface
+// overpour/waste per ingredient. physicalUsage/variance stay null when
+// there isn't a count bracketing the range yet -- can't tell real usage
+// from theoretical alone, and showing a fabricated number would be worse
+// than showing nothing.
+export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageRow[]> {
+  const supabase = createAdminClient();
+  const since = new Date();
+  since.setDate(since.getDate() - (days - 1));
+  since.setHours(0, 0, 0, 0);
+  const now = new Date();
+
+  const [{ data: ingredients, error: ingErr }, { data: orders, error: ordersErr }, { data: counts, error: countsErr }, recipesByItem] =
+    await Promise.all([
+      supabase.from("ingredients").select("id, name, unit").eq("active", true).order("category").order("name"),
+      supabase.from("orders").select("id").eq("status", "completed").gte("created_at", since.toISOString()),
+      supabase.from("inventory_counts").select("ingredient_id, quantity_on_hand, counted_at").order("counted_at"),
+      getRecipesByItem(),
+    ]);
+  if (ingErr) throw ingErr;
+  if (ordersErr) throw ordersErr;
+  if (countsErr) throw countsErr;
+
+  const orderIds = (orders ?? []).map((o) => o.id);
+  let orderItems: { menu_item_id: string | null; quantity: number }[] = [];
+  if (orderIds.length > 0) {
+    const { data, error } = await supabase
+      .from("order_items")
+      .select("menu_item_id, quantity")
+      .in("order_id", orderIds)
+      .not("menu_item_id", "is", null);
+    if (error) throw error;
+    orderItems = data ?? [];
+  }
+
+  const theoreticalByIngredient = new Map<string, number>();
+  for (const oi of orderItems) {
+    const recipe = oi.menu_item_id ? recipesByItem[oi.menu_item_id] : undefined;
+    if (!recipe) continue;
+    for (const ri of recipe.ingredients) {
+      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * oi.quantity);
+    }
+  }
+
+  const countsByIngredient = new Map<string, { quantity_on_hand: number; counted_at: string }[]>();
+  for (const c of counts ?? []) {
+    const list = countsByIngredient.get(c.ingredient_id) ?? [];
+    list.push({ quantity_on_hand: Number(c.quantity_on_hand), counted_at: c.counted_at });
+    countsByIngredient.set(c.ingredient_id, list);
+  }
+
+  function latestAtOrBefore(list: { quantity_on_hand: number; counted_at: string }[], cutoff: Date) {
+    let best: { quantity_on_hand: number; counted_at: string } | null = null;
+    for (const c of list) {
+      if (new Date(c.counted_at) <= cutoff && (!best || new Date(c.counted_at) > new Date(best.counted_at))) best = c;
+    }
+    return best;
+  }
+
+  const rows: AlcoholUsageRow[] = (ingredients ?? []).map((ing) => {
+    const list = countsByIngredient.get(ing.id) ?? [];
+    const startCount = latestAtOrBefore(list, since);
+    const endCount = latestAtOrBefore(list, now);
+    const theoreticalUsage = theoreticalByIngredient.get(ing.id) ?? 0;
+    const physicalUsage = startCount && endCount && endCount.counted_at !== startCount.counted_at ? startCount.quantity_on_hand - endCount.quantity_on_hand : null;
+    return {
+      ingredientId: ing.id,
+      name: ing.name,
+      unit: ing.unit,
+      theoreticalUsage,
+      physicalUsage,
+      variance: physicalUsage !== null ? physicalUsage - theoreticalUsage : null,
+    };
+  });
+
+  return rows.sort((a, b) => b.theoreticalUsage - a.theoreticalUsage);
 }
 
 export interface DashboardSummary {

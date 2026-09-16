@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MenuCategory, Employee, Member } from "@/lib/types";
+import type { MenuCategory, Employee, Member, Recipe } from "@/lib/types";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -77,6 +77,7 @@ export default function PosApp({
   members,
   heldOrders,
   openTabs,
+  recipesByItem,
   readerAvailable,
 }: {
   categories: MenuCategory[];
@@ -84,6 +85,7 @@ export default function PosApp({
   members: Member[];
   heldOrders: DraftOrderSummary[];
   openTabs: DraftOrderSummary[];
+  recipesByItem: Record<string, Recipe>;
   readerAvailable: boolean;
 }) {
   const router = useRouter();
@@ -676,7 +678,7 @@ export default function PosApp({
         ) : null}
 
         {builderItem ? (
-          <ItemBuilder item={builderItem} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
+          <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {items.map((item) => (

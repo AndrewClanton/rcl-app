@@ -1,6 +1,7 @@
 import { getMenuTree } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getMembers } from "@/lib/data/members";
+import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { terminalConfigured } from "./terminal-config";
@@ -11,12 +12,13 @@ export const dynamic = "force-dynamic";
 export default async function PosPage() {
   await requireStaff();
 
-  const [categories, employees, members, heldOrders, openTabs] = await Promise.all([
+  const [categories, employees, members, heldOrders, openTabs, recipesByItem] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getMembers(),
     getDraftOrders("held"),
     getDraftOrders("tab"),
+    getRecipesByItem(),
   ]);
 
   // Tickets/events aren't ready for POS ordering yet (event booking flow,
@@ -39,6 +41,7 @@ export default async function PosPage() {
         members={members}
         heldOrders={heldOrders}
         openTabs={openTabs}
+        recipesByItem={recipesByItem}
         readerAvailable={terminalConfigured()}
       />
     </div>

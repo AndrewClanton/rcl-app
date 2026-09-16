@@ -48,6 +48,38 @@ export interface MenuCategory {
   subcategories: MenuCategory[];
 }
 
+export type IngredientUnit = "oz" | "ml" | "count";
+
+export interface Ingredient {
+  id: string;
+  name: string;
+  unit: IngredientUnit;
+  bottle_size: number | null;
+  category: string | null;
+  active: boolean;
+}
+
+export interface RecipeIngredientLine {
+  id: string;
+  ingredient_id: string;
+  ingredient_name: string;
+  unit: IngredientUnit;
+  quantity: number;
+  sort_order: number;
+}
+
+// Recipes are fetched separately from the public menu tree (see
+// src/lib/data/recipes.ts) -- staff-only information, never joined onto the
+// MenuItem shape that the public /menu page also renders.
+export interface Recipe {
+  id: string;
+  menu_item_id: string;
+  instructions: string | null;
+  glassware: string | null;
+  garnish: string | null;
+  ingredients: RecipeIngredientLine[];
+}
+
 export interface RoomAddon {
   id: string;
   room_id: string;

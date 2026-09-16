@@ -43,6 +43,13 @@ export default async function AdminDashboardPage() {
         <div className="mt-1 text-sm text-neutral-500">Movies, screening times, rooms.</div>
       </Link>
       <Link
+        href="/admin/ingredients"
+        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+      >
+        <div className="text-base font-medium">Ingredients & inventory</div>
+        <div className="mt-1 text-sm text-neutral-500">Recipe ingredients and physical stock counts.</div>
+      </Link>
+      <Link
         href="/admin/members"
         className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
       >
