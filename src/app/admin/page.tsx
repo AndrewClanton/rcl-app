@@ -1,8 +1,33 @@
 import Link from "next/link";
+import { getDashboardSummary } from "@/lib/data/reports";
 
-export default function AdminDashboardPage() {
+export const dynamic = "force-dynamic";
+
+function money(n: number) {
+  return `$${n.toFixed(2)}`;
+}
+
+export default async function AdminDashboardPage() {
+  const summary = await getDashboardSummary();
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[
+          ["Today's revenue", money(summary.todaysRevenue)],
+          ["Today's orders", String(summary.todaysOrders)],
+          ["Total members", String(summary.totalMembers)],
+          ["Free/community members", String(summary.compedMembers)],
+          ["Upcoming screenings", String(summary.upcomingScreenings)],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+            <div className="text-xs text-neutral-500">{label}</div>
+            <div className="mt-1 text-lg font-semibold">{value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
       <Link
         href="/admin/menu"
         className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
@@ -59,6 +84,7 @@ export default function AdminDashboardPage() {
         <div className="text-base font-medium">Box office signage</div>
         <div className="mt-1 text-sm text-neutral-500">Lobby showtimes display.</div>
       </Link>
+      </div>
     </div>
   );
 }

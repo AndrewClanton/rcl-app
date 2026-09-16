@@ -95,6 +95,13 @@ export interface Screening {
 
 export type MemberPriceTier = "adult" | "senior" | "student";
 
+export interface CommunityProgram {
+  id: string;
+  name: string;
+  description: string | null;
+  active: boolean;
+}
+
 export interface Member {
   id: string;
   name: string;
@@ -107,6 +114,13 @@ export interface Member {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string | null;
+  comped: boolean;
+  community_program_id: string | null;
+  comp_notes: string | null;
+  comped_by: string | null;
+  comped_at: string | null;
+  community_program: { name: string } | null;
+  created_at: string;
 }
 
 export interface Employee {

@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ReportOrder } from "@/lib/data/reports";
+import Link from "next/link";
+import type { MembershipAnalytics, ReportOrder, RevenueDay } from "@/lib/data/reports";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundOrder } from "./actions";
 
@@ -10,7 +11,19 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-export default function ReportsPanel({ todaysOrders, recentOrders }: { todaysOrders: ReportOrder[]; recentOrders: ReportOrder[] }) {
+export default function ReportsPanel({
+  todaysOrders,
+  recentOrders,
+  revenueTrend,
+  membership,
+  days,
+}: {
+  todaysOrders: ReportOrder[];
+  recentOrders: ReportOrder[];
+  revenueTrend: RevenueDay[];
+  membership: MembershipAnalytics;
+  days: number;
+}) {
   const stats = useMemo(() => {
     const revenue = todaysOrders.reduce((s, o) => s + o.total, 0);
     const tips = todaysOrders.reduce((s, o) => s + (o.tip || 0), 0);
@@ -46,6 +59,59 @@ export default function ReportsPanel({ todaysOrders, recentOrders }: { todaysOrd
 
   return (
     <div className="space-y-8">
+      <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold">Revenue trend</h2>
+          <div className="flex gap-1 text-xs">
+            {[7, 30, 90].map((n) => (
+              <Link
+                key={n}
+                href={`/admin/reports?days=${n}`}
+                className={`rounded border px-2 py-1 ${
+                  n === days
+                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
+                    : "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400"
+                }`}
+              >
+                {n}d
+              </Link>
+            ))}
+          </div>
+        </div>
+        <RevenueTrendChart data={revenueTrend} />
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">Membership & community impact</h2>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {[
+            ["Total members", String(membership.total)],
+            ["Insiders", String(membership.insiders)],
+            ["Insiders+ (paying)", String(membership.payingInsidersPlus)],
+            ["Free/community members", String(membership.compedMembers)],
+            ["New this month", String(membership.newThisMonth)],
+          ].map(([label, value]) => (
+            <div key={label} className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+              <div className="text-xs text-neutral-500">{label}</div>
+              <div className="mt-1 text-lg font-semibold">{value}</div>
+            </div>
+          ))}
+        </div>
+        {membership.byProgram.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-1 text-sm font-medium text-neutral-600 dark:text-neutral-400">Free members by community program</div>
+            <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              {membership.byProgram.map(({ program, count }) => (
+                <div key={program} className="flex justify-between py-1.5 text-sm">
+                  <span>{program}</span>
+                  <span>{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
       <section>
         <h2 className="mb-3 text-lg font-semibold">Today&apos;s summary</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -150,6 +216,51 @@ function OrderRow({ order }: { order: ReportOrder }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function RevenueTrendChart({ data }: { data: RevenueDay[] }) {
+  const max = Math.max(1, ...data.map((d) => d.total));
+  const totalForRange = data.reduce((s, d) => s + d.total, 0);
+
+  return (
+    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+      <div className="mb-2 text-sm text-neutral-500">Total for range: {money(totalForRange)}</div>
+      <div className="flex h-32 items-end gap-[2px]">
+        {data.map((d) => {
+          const posH = (d.pos / max) * 100;
+          const webH = (d.web / max) * 100;
+          const ticketsH = (d.tickets / max) * 100;
+          return (
+            <div
+              key={d.date}
+              className="group relative flex-1"
+              title={`${d.date}: ${money(d.total)} (POS ${money(d.pos)}, web ${money(d.web)}, tickets ${money(d.tickets)})`}
+            >
+              <div className="flex h-32 flex-col-reverse">
+                <div className="bg-neutral-400 dark:bg-neutral-600" style={{ height: `${posH}%` }} />
+                <div className="bg-amber-400 dark:bg-amber-600" style={{ height: `${webH}%` }} />
+                <div className="bg-emerald-400 dark:bg-emerald-600" style={{ height: `${ticketsH}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-500">
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 bg-neutral-400 dark:bg-neutral-600" /> POS
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 bg-amber-400 dark:bg-amber-600" /> Web
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-2 w-2 bg-emerald-400 dark:bg-emerald-600" /> Tickets
+        </span>
+        <span>
+          {data[0]?.date} – {data[data.length - 1]?.date}
+        </span>
+      </div>
     </div>
   );
 }
