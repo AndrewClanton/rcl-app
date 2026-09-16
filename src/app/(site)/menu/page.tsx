@@ -30,10 +30,10 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
   return (
     <section className="mb-12">
       {photos && photos.length > 0 && (
-        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+        <div className="mb-4 grid gap-2 sm:gap-3" style={{ gridTemplateColumns: `repeat(${photos.length}, minmax(0, 1fr))` }}>
           {photos.map((p) => (
             <div key={p.src} className="relative aspect-[4/3] overflow-hidden rounded-xl">
-              <Image src={p.src} alt={p.alt} fill sizes="(min-width: 1024px) 300px, 33vw" className="object-cover" priority />
+              <Image src={p.src} alt={p.alt} fill sizes={`(min-width: 1024px) ${Math.round(900 / photos.length)}px, ${Math.round(100 / photos.length)}vw`} className="object-cover" priority />
             </div>
           ))}
         </div>
@@ -73,8 +73,7 @@ export default async function MenuPage() {
     <div>
       <h1 className="font-display mb-2 text-3xl font-semibold">Menu</h1>
       <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
-        Everything below is available at the counter or from your seat via our servers -- this page is for browsing
-        and pricing, not ordering online.
+        Everything below is available at the counter -- this page is for browsing and pricing, not ordering online.
       </p>
 
       {categories
@@ -90,7 +89,12 @@ export default async function MenuPage() {
                     { src: "/photos/hot-dog.jpg", alt: "Hot dog with mustard and ketchup" },
                     { src: "/photos/pizza.jpg", alt: "Pizza with mozzarella, cherry tomatoes, and basil" },
                   ]
-                : undefined
+                : cat.key === "spirits"
+                  ? [
+                      { src: "/photos/cocktail.jpg", alt: "Cocktail with lime and rosemary garnish" },
+                      { src: "/photos/cocktails-bar.jpg", alt: "Three cocktails on the bar" },
+                    ]
+                  : undefined
             }
           />
         ))}
