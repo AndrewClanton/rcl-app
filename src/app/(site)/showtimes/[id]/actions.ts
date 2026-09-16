@@ -93,6 +93,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/Chicago",
   });
 
   const lineItems = [

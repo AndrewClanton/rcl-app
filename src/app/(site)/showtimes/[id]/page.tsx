@@ -23,6 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/Chicago",
   });
   const description = screening.movie.synopsis
     ? screening.movie.synopsis.slice(0, 155)
@@ -90,7 +91,7 @@ export default async function ScreeningDetailPage({
         <div>
           <h1 className="font-display text-3xl font-semibold">{screening.movie.title}</h1>
           <div className="mt-2 text-[var(--muted)]">
-            {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" })}
+            {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
           </div>
           <div className="text-[var(--muted)]">
             {screening.room.name}

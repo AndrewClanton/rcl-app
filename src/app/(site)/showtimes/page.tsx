@@ -12,11 +12,11 @@ export const metadata: Metadata = {
 };
 
 function dateKey(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" });
 }
 
 function timeLabel(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 }
 
 function groupByDate(screenings: Screening[]) {

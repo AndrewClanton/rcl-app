@@ -13,7 +13,7 @@ function money(n: number) {
 }
 
 function dateLabel(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
 }
 
 export default async function AccountPage() {
