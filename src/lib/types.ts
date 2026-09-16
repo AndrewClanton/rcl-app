@@ -164,3 +164,12 @@ export interface Employee {
   role: EmployeeRole;
   active: boolean;
 }
+
+export interface CalendarNote {
+  id: string;
+  note_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  label: string;
+  created_at: string;
+}

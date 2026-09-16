@@ -52,7 +52,14 @@ export default async function ShowtimesPage() {
                     </div>
                     <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
                       <div>
-                        <div className="font-medium">{s.movie.title}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{s.movie.title}</span>
+                          {s.room.name.toLowerCase().includes("outdoor") && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold tracking-wide text-emerald-800 uppercase dark:bg-emerald-900/40 dark:text-emerald-400">
+                              Outdoor
+                            </span>
+                          )}
+                        </div>
                         <div className="text-sm text-[var(--muted)]">
                           {timeLabel(s.starts_at)} · {s.room.name}
                           {s.movie.runtime_minutes ? ` · ${s.movie.runtime_minutes} min` : ""}

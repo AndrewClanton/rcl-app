@@ -23,6 +23,9 @@ const WARN_TEXT = "#f0c568";
 const OUTDOOR_BG = "#10241a";
 const OUTDOOR_BORDER = "#2c5c3f";
 const OUTDOOR_TEXT = "#8fe3ab";
+const NOTE_BG = "#1c1c24";
+const NOTE_BORDER = "#3c3c48";
+const NOTE_TEXT = "#c7c7d4";
 
 const DAY_HEADER_COLORS = [ACCENT, TEAL, MAGENTA];
 
@@ -57,10 +60,18 @@ interface EventRow {
   hours: number;
   room: { name: string } | null;
 }
+interface NoteRow {
+  id: string;
+  note_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  label: string;
+}
 
 interface DayEntry {
-  kind: "screening" | "event";
+  kind: "screening" | "event" | "note";
   time: string;
+  sortMinutes: number; // minutes since midnight, for chronological sort -- `time` is a display string and can't be lexically sorted (e.g. "06:00PM" < "12:00PM")
   title: string;
   outdoor: boolean;
   sub?: string; // room name, for events
@@ -95,6 +106,20 @@ function screeningTime(iso: string) {
     .toUpperCase();
 }
 
+// hourCycle "h23" avoids the well-known Intl quirk where hour12:false alone
+// can format midnight as "24:00" instead of "00:00" in some engines.
+function screeningMinutes(iso: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: CENTRAL_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(iso));
+  const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return hh * 60 + mm;
+}
+
+function wallClockMinutes(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return h * 60 + m;
+}
+
 // event_time is a bare "HH:MM:SS" (no timezone -- a wall-clock time entered
 // by staff for the venue itself, not a UTC instant), so this is plain
 // arithmetic, not a timezone conversion.
@@ -112,6 +137,19 @@ function eventTimeRange(time: string, hours: number) {
   return `${fmt(startMinutes)}-${fmt(endMinutes)}`;
 }
 
+// start_time/end_time are bare "HH:MM:SS" wall-clock strings, same as
+// event_time -- no timezone conversion involved.
+function noteTimeLabel(start: string | null, end: string | null): string {
+  if (!start) return "";
+  const fmtOne = (t: string) => {
+    const [hh, mm] = t.split(":").map(Number);
+    const period = hh >= 12 ? "PM" : "AM";
+    const hour12 = hh % 12 === 0 ? 12 : hh % 12;
+    return `${String(hour12).padStart(2, "0")}:${String(mm).padStart(2, "0")}${period}`;
+  };
+  return end ? `${fmtOne(start)}-${fmtOne(end)}` : fmtOne(start);
+}
+
 function addDaysToKey(dateKey: string, days: number) {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(Date.UTC(y, m - 1, d));
@@ -119,7 +157,7 @@ function addDaysToKey(dateKey: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function groupByDay(screenings: ScreeningRow[], events: EventRow[], rangeStart: string | null, rangeDays: number): DayGroup[] {
+function groupByDay(screenings: ScreeningRow[], events: EventRow[], notes: NoteRow[], rangeStart: string | null, rangeDays: number): DayGroup[] {
   const byDay = new Map<string, DayGroup>();
   function ensure(dateKey: string): DayGroup {
     let g = byDay.get(dateKey);
@@ -143,6 +181,7 @@ function groupByDay(screenings: ScreeningRow[], events: EventRow[], rangeStart: 
     ensure(key).entries.push({
       kind: "screening",
       time: screeningTime(s.starts_at),
+      sortMinutes: screeningMinutes(s.starts_at),
       title: s.movie.title,
       outdoor: isOutdoor(s.room?.name),
     });
@@ -151,13 +190,24 @@ function groupByDay(screenings: ScreeningRow[], events: EventRow[], rangeStart: 
     ensure(e.event_date).entries.push({
       kind: "event",
       time: eventTimeRange(e.event_time, e.hours),
+      sortMinutes: wallClockMinutes(e.event_time),
       title: e.event_name,
       outdoor: false,
       sub: e.room?.name,
     });
   }
+  for (const n of notes) {
+    ensure(n.note_date).entries.push({
+      kind: "note",
+      time: noteTimeLabel(n.start_time, n.end_time),
+      // No start_time = an all-day note -- sort it first (-1), ahead of any timed entry.
+      sortMinutes: n.start_time ? wallClockMinutes(n.start_time) : -1,
+      title: n.label,
+      outdoor: false,
+    });
+  }
 
-  for (const g of byDay.values()) g.entries.sort((a, b) => a.time.localeCompare(b.time));
+  for (const g of byDay.values()) g.entries.sort((a, b) => a.sortMinutes - b.sortMinutes);
   return [...byDay.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 }
 
@@ -182,10 +232,22 @@ function EntryLine({ entry }: { entry: DayEntry }) {
       </div>
     );
   }
+  if (entry.kind === "note") {
+    return (
+      <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 600, fontSize: 14, fontStyle: "italic", color: NOTE_TEXT, backgroundColor: NOTE_BG, border: `1px solid ${NOTE_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
+        {entry.time ? `${entry.time}: ` : ""}{entry.title}
+      </div>
+    );
+  }
   if (entry.outdoor) {
     return (
-      <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: OUTDOOR_TEXT, backgroundColor: OUTDOOR_BG, border: `1px solid ${OUTDOOR_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
-        {entry.time}: {entry.title} · OUTDOOR
+      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: OUTDOOR_BG, border: `1px solid ${OUTDOOR_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
+        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: OUTDOOR_TEXT }}>
+          {entry.time}: {entry.title}
+        </div>
+        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 800, fontSize: 10.5, color: BG, backgroundColor: OUTDOOR_TEXT, borderRadius: 3, padding: "1px 5px", letterSpacing: 0.5 }}>
+          OUTDOOR
+        </div>
       </div>
     );
   }
@@ -300,9 +362,10 @@ function renderBanner(days: DayGroup[], rangeLabel: string) {
                       style={{
                         display: "flex",
                         fontFamily: "Inter",
-                        fontWeight: entry.kind === "event" || entry.outdoor ? 700 : 400,
+                        fontStyle: entry.kind === "note" ? "italic" : "normal",
+                        fontWeight: entry.kind === "event" || entry.kind === "note" || entry.outdoor ? 700 : 400,
                         fontSize: 10.5,
-                        color: entry.kind === "event" ? WARN_TEXT : entry.outdoor ? OUTDOOR_TEXT : FOREGROUND,
+                        color: entry.kind === "event" ? WARN_TEXT : entry.kind === "note" ? NOTE_TEXT : entry.outdoor ? OUTDOOR_TEXT : FOREGROUND,
                       }}
                     >
                       {entry.time} {entry.title}
@@ -335,22 +398,28 @@ export async function GET(request: NextRequest) {
   const rangeDays = Math.max(1, Math.min(14, parseInt(searchParams.get("days") ?? "0", 10) || 0));
   const screeningIds = (searchParams.get("screeningIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   const eventIds = (searchParams.get("eventIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const noteIds = (searchParams.get("noteIds") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
   const supabase = createAdminClient();
-  const [screeningsRes, eventsRes] = await Promise.all([
+  const [screeningsRes, eventsRes, notesRes] = await Promise.all([
     screeningIds.length > 0
       ? supabase.from("screenings").select("id, starts_at, movie:movies(title, poster_path), room:rooms(name)").in("id", screeningIds).order("starts_at")
       : Promise.resolve({ data: [] as ScreeningRow[], error: null }),
     eventIds.length > 0
       ? supabase.from("events").select("id, event_name, event_date, event_time, hours, room:rooms(name)").in("id", eventIds)
       : Promise.resolve({ data: [] as EventRow[], error: null }),
+    noteIds.length > 0
+      ? supabase.from("calendar_notes").select("id, note_date, start_time, end_time, label").in("id", noteIds)
+      : Promise.resolve({ data: [] as NoteRow[], error: null }),
   ]);
   if (screeningsRes.error) return new Response("Failed to load screenings", { status: 500 });
   if (eventsRes.error) return new Response("Failed to load events", { status: 500 });
+  if (notesRes.error) return new Response("Failed to load notes", { status: 500 });
 
   const screenings = (screeningsRes.data ?? []) as unknown as ScreeningRow[];
   const events = (eventsRes.data ?? []) as unknown as EventRow[];
-  const days = groupByDay(screenings, events, rangeStart, rangeDays);
+  const notes = (notesRes.data ?? []) as unknown as NoteRow[];
+  const days = groupByDay(screenings, events, notes, rangeStart, rangeDays);
   const fonts = await fontsPromise;
 
   return new ImageResponse(format === "banner" ? renderBanner(days, rangeLabel) : renderGrid(days, screenings, rangeLabel, note), {

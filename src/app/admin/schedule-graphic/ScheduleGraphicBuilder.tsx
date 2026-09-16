@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { addCalendarNote, deleteCalendarNote } from "./actions";
 
 const CENTRAL_TZ = "America/Chicago";
 
@@ -17,6 +19,13 @@ interface EventLite {
   time: string; // HH:MM:SS wall-clock
   hours: number;
   room: string;
+}
+interface NoteLite {
+  id: string;
+  date: string; // YYYY-MM-DD
+  startTime: string | null; // HH:MM:SS wall-clock, null = all-day
+  endTime: string | null;
+  label: string;
 }
 
 // YYYY-MM-DD in Central time regardless of the visitor's own timezone or
@@ -46,6 +55,13 @@ function screeningTime(iso: string) {
   return new Date(iso).toLocaleTimeString("en-US", { timeZone: CENTRAL_TZ, hour: "numeric", minute: "2-digit" });
 }
 
+function fmtWallClock(time: string) {
+  const [h, m] = time.split(":").map(Number);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
 function eventTimeRange(time: string, hours: number) {
   const [h, m] = time.split(":").map(Number);
   const startMinutes = h * 60 + m;
@@ -60,13 +76,30 @@ function eventTimeRange(time: string, hours: number) {
   return `${fmt(startMinutes)}–${fmt(endMinutes)}`;
 }
 
-export default function ScheduleGraphicBuilder({ screenings, events }: { screenings: ScreeningLite[]; events: EventLite[] }) {
+export default function ScheduleGraphicBuilder({
+  screenings,
+  events,
+  notes,
+}: {
+  screenings: ScreeningLite[];
+  events: EventLite[];
+  notes: NoteLite[];
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [startDate, setStartDate] = useState(todayCentral());
   const [days, setDays] = useState(7);
   const [format, setFormat] = useState<"grid" | "banner">("grid");
-  const [note, setNote] = useState("");
+  const [planAheadNote, setPlanAheadNote] = useState("");
   const [excludedScreeningIds, setExcludedScreeningIds] = useState<Set<string>>(new Set());
   const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
+  const [excludedNoteIds, setExcludedNoteIds] = useState<Set<string>>(new Set());
+
+  const [newNoteDate, setNewNoteDate] = useState(todayCentral());
+  const [newNoteAllDay, setNewNoteAllDay] = useState(false);
+  const [newNoteStart, setNewNoteStart] = useState("18:00");
+  const [newNoteEnd, setNewNoteEnd] = useState("21:00");
+  const [newNoteLabel, setNewNoteLabel] = useState("");
 
   const endDate = addDays(startDate, days - 1);
 
@@ -81,21 +114,26 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
     () => events.filter((e) => e.date >= startDate && e.date <= endDate),
     [events, startDate, endDate]
   );
+  const notesInRange = useMemo(
+    () => notes.filter((n) => n.date >= startDate && n.date <= endDate),
+    [notes, startDate, endDate]
+  );
 
   const groupedDays = useMemo(() => {
-    const byDay = new Map<string, { screenings: ScreeningLite[]; events: EventLite[] }>();
+    const byDay = new Map<string, { screenings: ScreeningLite[]; events: EventLite[]; notes: NoteLite[] }>();
     function ensure(key: string) {
       let g = byDay.get(key);
       if (!g) {
-        g = { screenings: [], events: [] };
+        g = { screenings: [], events: [], notes: [] };
         byDay.set(key, g);
       }
       return g;
     }
     for (const s of screeningsInRange) ensure(centralDateKey(s.startsAt)).screenings.push(s);
     for (const e of eventsInRange) ensure(e.date).events.push(e);
+    for (const n of notesInRange) ensure(n.date).notes.push(n);
     return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [screeningsInRange, eventsInRange]);
+  }, [screeningsInRange, eventsInRange, notesInRange]);
 
   function toggleScreening(id: string) {
     setExcludedScreeningIds((prev) => {
@@ -113,13 +151,43 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
       return next;
     });
   }
+  function toggleNote(id: string) {
+    setExcludedNoteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function submitNewNote() {
+    if (!newNoteLabel.trim()) return;
+    startTransition(async () => {
+      await addCalendarNote({
+        noteDate: newNoteDate,
+        startTime: newNoteAllDay ? null : newNoteStart,
+        endTime: newNoteAllDay ? null : newNoteEnd,
+        label: newNoteLabel.trim(),
+      });
+      setNewNoteLabel("");
+      router.refresh();
+    });
+  }
+
+  function removeNote(id: string) {
+    startTransition(async () => {
+      await deleteCalendarNote(id);
+      router.refresh();
+    });
+  }
 
   const includedScreeningIds = screeningsInRange.filter((s) => !excludedScreeningIds.has(s.id)).map((s) => s.id);
   const includedEventIds = eventsInRange.filter((e) => !excludedEventIds.has(e.id)).map((e) => e.id);
-  const totalIncluded = includedScreeningIds.length + includedEventIds.length;
-  const totalInRange = screeningsInRange.length + eventsInRange.length;
+  const includedNoteIds = notesInRange.filter((n) => !excludedNoteIds.has(n.id)).map((n) => n.id);
+  const totalIncluded = includedScreeningIds.length + includedEventIds.length + includedNoteIds.length;
+  const totalInRange = screeningsInRange.length + eventsInRange.length + notesInRange.length;
   const rangeLabel = `${dayHeading(startDate)} – ${dayHeading(endDate)}`;
-  const imageUrl = `/admin/schedule-graphic/image?format=${format}&label=${encodeURIComponent(rangeLabel)}&note=${encodeURIComponent(note)}&start=${startDate}&days=${days}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}`;
+  const imageUrl = `/admin/schedule-graphic/image?format=${format}&label=${encodeURIComponent(rangeLabel)}&note=${encodeURIComponent(planAheadNote)}&start=${startDate}&days=${days}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}&noteIds=${includedNoteIds.join(",")}`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
@@ -173,11 +241,75 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
                 type="text"
                 placeholder="e.g. Halloween double feature next Fri"
                 className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
+                value={planAheadNote}
+                onChange={(e) => setPlanAheadNote(e.target.value)}
               />
             </div>
           )}
+        </div>
+
+        <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <h2 className="mb-2 text-sm font-semibold">Add a custom note</h2>
+          <p className="mb-2 text-xs text-neutral-500">
+            For anything that isn&apos;t a real screening or a billed booking -- e.g. &quot;closed for a private
+            party&quot; at a specific hour, or closed all day.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-1 block text-xs text-neutral-500">Date</label>
+              <input
+                type="date"
+                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                value={newNoteDate}
+                onChange={(e) => setNewNoteDate(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end pb-1.5">
+              <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+                <input type="checkbox" checked={newNoteAllDay} onChange={(e) => setNewNoteAllDay(e.target.checked)} />
+                All day
+              </label>
+            </div>
+          </div>
+          {!newNoteAllDay && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <div>
+                <label className="mb-1 block text-xs text-neutral-500">From</label>
+                <input
+                  type="time"
+                  className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                  value={newNoteStart}
+                  onChange={(e) => setNewNoteStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-neutral-500">To</label>
+                <input
+                  type="time"
+                  className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                  value={newNoteEnd}
+                  onChange={(e) => setNewNoteEnd(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <div className="mt-2">
+            <label className="mb-1 block text-xs text-neutral-500">Label</label>
+            <input
+              type="text"
+              placeholder="e.g. Closed -- private event"
+              className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              value={newNoteLabel}
+              onChange={(e) => setNewNoteLabel(e.target.value)}
+            />
+          </div>
+          <button
+            onClick={submitNewNote}
+            disabled={isPending || !newNoteLabel.trim()}
+            className="mt-3 w-full rounded border border-neutral-300 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-neutral-700"
+          >
+            {isPending ? "Saving…" : "Add note"}
+          </button>
         </div>
 
         <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
@@ -195,6 +327,17 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
                 <div key={day}>
                   <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">{dayHeading(day)}</div>
                   <div className="space-y-1">
+                    {list.notes.map((n) => (
+                      <div key={n.id} className="flex items-start gap-2 text-sm">
+                        <input type="checkbox" checked={!excludedNoteIds.has(n.id)} onChange={() => toggleNote(n.id)} className="mt-0.5" />
+                        <span className={`flex-1 ${excludedNoteIds.has(n.id) ? "text-neutral-400 line-through" : "text-slate-600 dark:text-slate-400"}`}>
+                          {n.startTime ? `${fmtWallClock(n.startTime)}${n.endTime ? `–${fmtWallClock(n.endTime)}` : ""}` : "All day"} — {n.label}
+                        </span>
+                        <button onClick={() => removeNote(n.id)} className="text-xs text-neutral-400 hover:text-red-600" title="Delete note">
+                          ✕
+                        </button>
+                      </div>
+                    ))}
                     {list.events.map((e) => (
                       <label key={e.id} className="flex items-start gap-2 text-sm">
                         <input type="checkbox" checked={!excludedEventIds.has(e.id)} onChange={() => toggleEvent(e.id)} className="mt-0.5" />

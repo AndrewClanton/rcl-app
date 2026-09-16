@@ -89,7 +89,14 @@ export default async function ScreeningDetailPage({
         </div>
 
         <div>
-          <h1 className="font-display text-3xl font-semibold">{screening.movie.title}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="font-display text-3xl font-semibold">{screening.movie.title}</h1>
+            {screening.room.name.toLowerCase().includes("outdoor") && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold tracking-wide text-emerald-800 uppercase dark:bg-emerald-900/40 dark:text-emerald-400">
+                Outdoor
+              </span>
+            )}
+          </div>
           <div className="mt-2 text-[var(--muted)]">
             {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
           </div>
