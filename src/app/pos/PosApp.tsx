@@ -670,7 +670,13 @@ export default function PosApp({
                   </button>
                 ))
               : (
-                  <button className="chip" onClick={() => setNav({ categoryId: category.id, subcategoryId: null })}>
+                  <button
+                    className="chip"
+                    onClick={() => {
+                      setNav({ categoryId: category.id, subcategoryId: null });
+                      setBuilderItemId(null);
+                    }}
+                  >
                     ← Back
                   </button>
                 )}
