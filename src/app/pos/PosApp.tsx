@@ -498,24 +498,36 @@ export default function PosApp({
         <div className="mt-2 flex gap-2">
           <button
             className="btn-secondary flex-1 py-2 text-sm"
-            style={{ color: "var(--danger-text)" }}
-            disabled={cart.length === 0 || busy}
-            onClick={() =>
+            style={activeTabId ? undefined : { color: "var(--danger-text)" }}
+            disabled={(cart.length === 0 && !activeTabId) || busy}
+            onClick={() => {
+              // Leaving a tab is a routine, non-destructive action (it saves
+              // first) -- only skip the confirm step for that case. Clearing
+              // a walk-up order with items actually discards them, so that
+              // one still asks first.
+              if (activeTabId) {
+                setBusy(true);
+                stashCurrentWork()
+                  .then(() => {
+                    resetOrder();
+                    router.refresh();
+                  })
+                  .finally(() => setBusy(false));
+                return;
+              }
               setConfirmState({
-                title: activeTabId ? "Leave this tab?" : "Clear the current order?",
-                description: activeTabId ? "Your changes will be saved and you can switch back to it later." : undefined,
+                title: "Clear the current order?",
                 danger: true,
-                confirmLabel: activeTabId ? "Leave tab" : "Clear",
-                onConfirm: async () => {
+                confirmLabel: "Clear",
+                onConfirm: () => {
                   setConfirmState(null);
-                  if (activeTabId) await stashCurrentWork();
                   resetOrder();
                   router.refresh();
                 },
-              })
-            }
+              });
+            }}
           >
-            Clear order
+            {activeTabId ? "Put tab away" : "Clear order"}
           </button>
           <button className="btn-secondary flex-1 py-2 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
             Hold order
