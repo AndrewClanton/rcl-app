@@ -31,30 +31,34 @@ export default function ManagerPinModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        <p className="mt-1 text-sm text-neutral-500">{description}</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-xs text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          {title}
+        </h3>
+        <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+          {description}
+        </p>
         <input
           type="password"
           inputMode="numeric"
           maxLength={4}
           autoFocus
-          className="mt-4 w-full rounded border border-neutral-300 px-3 py-2 text-center text-lg tracking-[0.5em] dark:border-neutral-700 dark:bg-neutral-950"
+          className="input mt-4 text-center text-lg tracking-[0.5em]"
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
           onKeyDown={(e) => e.key === "Enter" && pin.length === 4 && submit()}
         />
-        {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
+        {error && (
+          <div className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
+            {error}
+          </div>
+        )}
         <div className="mt-4 flex justify-center gap-2">
-          <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={onCancel}>
+          <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
-            disabled={submitting || pin.length !== 4}
-            onClick={submit}
-          >
+          <button className="btn-primary" disabled={submitting || pin.length !== 4} onClick={submit}>
             Confirm
           </button>
         </div>

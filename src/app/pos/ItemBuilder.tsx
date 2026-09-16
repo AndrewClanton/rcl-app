@@ -57,26 +57,24 @@ export default function ItemBuilder({ item, onAdd, onCancel }: { item: MenuItem;
   }
 
   return (
-    <div className="rounded-xl border border-neutral-300 bg-neutral-50 p-4 dark:border-neutral-700 dark:bg-neutral-900">
-      <h3 className="text-base font-semibold">{item.name}</h3>
-      <p className="mb-3 text-sm text-neutral-500">Base {money(item.price)}</p>
+    <div className="card-flat" style={{ background: "var(--surface-hover)" }}>
+      <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+        {item.name}
+      </h3>
+      <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
+        Base {money(item.price)}
+      </p>
 
       {item.modifier_groups.map((g) => (
         <div key={g.id} className="mb-3">
-          <div className="mb-1 text-xs text-neutral-500">{g.label} {g.type === "single" ? "(choose 1)" : "(optional)"}</div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="label-xs mb-1.5">
+            {g.label} {g.type === "single" ? "(choose 1)" : "(optional)"}
+          </div>
+          <div className="flex flex-wrap gap-2">
             {g.options.map((o) => {
               const picked = (sel[g.key] ?? []).includes(o.name);
               return (
-                <button
-                  key={o.id}
-                  className={`rounded-full border px-3 py-1 text-xs ${
-                    picked
-                      ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                      : "border-neutral-300 dark:border-neutral-700"
-                  }`}
-                  onClick={() => toggleOption(g.key, g.type, o.name)}
-                >
+                <button key={o.id} className={picked ? "chip chip-selected" : "chip"} onClick={() => toggleOption(g.key, g.type, o.name)}>
                   {o.name}
                   {o.price_delta ? ` (+${money(o.price_delta).slice(1)})` : ""}
                 </button>
@@ -86,25 +84,35 @@ export default function ItemBuilder({ item, onAdd, onCancel }: { item: MenuItem;
         </div>
       ))}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
         <div className="flex items-center gap-3">
-          <button className="h-7 w-7 rounded border border-neutral-300 dark:border-neutral-700" disabled={qty <= 1} onClick={() => setQty((q) => q - 1)}>
+          <button
+            className="h-9 w-9 rounded-lg border text-base"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            disabled={qty <= 1}
+            onClick={() => setQty((q) => q - 1)}
+          >
             −
           </button>
-          <span className="min-w-[1.5rem] text-center font-medium">{qty}</span>
-          <button className="h-7 w-7 rounded border border-neutral-300 dark:border-neutral-700" onClick={() => setQty((q) => q + 1)}>
+          <span className="min-w-[1.5rem] text-center font-medium" style={{ color: "var(--foreground)" }}>
+            {qty}
+          </span>
+          <button
+            className="h-9 w-9 rounded-lg border text-base"
+            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            onClick={() => setQty((q) => q + 1)}
+          >
             +
           </button>
         </div>
-        <div className="text-lg font-semibold">{money(unitPrice() * qty)}</div>
+        <div className="text-xl font-semibold" style={{ color: "var(--accent)" }}>
+          {money(unitPrice() * qty)}
+        </div>
         <div className="flex gap-2">
-          <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={onCancel}>
+          <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
-            onClick={handleAdd}
-          >
+          <button className="btn-primary" onClick={handleAdd}>
             Add to order
           </button>
         </div>

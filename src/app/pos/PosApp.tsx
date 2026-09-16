@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Member } from "@/lib/types";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
@@ -17,6 +17,7 @@ import {
   discardDraftOrder,
   cancelTab,
   type CheckoutPayment,
+  type CheckoutTotals,
   type DraftOrderSummary,
   type DraftFields,
 } from "./actions";
@@ -55,6 +56,19 @@ function computeTotals(cart: CartLine[], member: Member | null, monthlyMember: b
   const tax = taxFree ? 0 : taxable * TAX_RATE;
   const total = Math.max(0, taxable) + tax;
   return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
+}
+
+// Draft rows (held orders + tabs) persist the same shape the cart displays,
+// so the held/tabs lists never drift from what's actually on the check.
+function totalsPayload(t: ReturnType<typeof computeTotals>): CheckoutTotals {
+  return {
+    subtotal: t.subtotal,
+    tier_discount: t.tierDiscount,
+    monthly_discount: t.monthlyDiscount,
+    redemption_discount: t.redemptionDiscount,
+    tax: t.tax,
+    total: t.total,
+  };
 }
 
 export default function PosApp({
@@ -171,6 +185,22 @@ export default function PosApp({
     setCart((prev) => prev.filter((l) => l.key !== key));
   }
 
+  // Keeps the active tab's DB row current as the cart is built, instead of
+  // only saving when the cashier switches away/holds/checks out. Without
+  // this, the Tabs list (and a reload or crash) showed whatever was on the
+  // tab the last time it was left, not what had just been added to it.
+  useEffect(() => {
+    if (!activeTabId) return;
+    const id = activeTabId;
+    const fields = currentFields();
+    const payload = totalsPayload(totals);
+    const timer = setTimeout(() => {
+      updateDraftOrder(id, fields, payload).then(() => router.refresh());
+    }, 900);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+
   function resetOrder() {
     setCart([]);
     setOrderName("");
@@ -183,7 +213,7 @@ export default function PosApp({
 
   async function stashCurrentWork() {
     if (activeTabId) {
-      await updateDraftOrder(activeTabId, currentFields());
+      await updateDraftOrder(activeTabId, currentFields(), totalsPayload(totals));
       return;
     }
     if (cart.length > 0) {
@@ -191,7 +221,7 @@ export default function PosApp({
       // order; it'll sit in the held list for the cashier to clean up.
       const fields = currentFields();
       fields.orderName = fields.orderName || `Held ${new Date().toLocaleTimeString()}`;
-      await saveDraftOrder("held", fields);
+      await saveDraftOrder("held", fields, totalsPayload(totals));
     }
   }
 
@@ -201,7 +231,7 @@ export default function PosApp({
     try {
       const fields = currentFields();
       fields.orderName = fields.orderName || `Held ${new Date().toLocaleTimeString()}`;
-      await saveDraftOrder("held", fields);
+      await saveDraftOrder("held", fields, totalsPayload(totals));
       resetOrder();
       router.refresh();
     } finally {
@@ -343,16 +373,14 @@ export default function PosApp({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+    <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
       {/* Cart panel */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="mb-2 flex items-center gap-2 text-sm">
-          <span>Cashier:</span>
-          <select
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-            value={employeeId}
-            onChange={(e) => setEmployeeId(e.target.value)}
-          >
+      <div className="card flex flex-col">
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-xs" style={{ color: "var(--muted)" }}>
+            Cashier
+          </span>
+          <select className="input flex-1" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
             <option value="">Not logged in</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
@@ -362,46 +390,60 @@ export default function PosApp({
           </select>
         </div>
 
-        <div className="mb-2 flex items-center justify-between text-sm text-neutral-500">
-          <span>Items: {itemCount}</span>
+        <div className="mb-3 flex items-center justify-between">
+          <span className="eyebrow">Current order</span>
+          <span className="text-sm" style={{ color: "var(--muted)" }}>
+            {itemCount} item{itemCount === 1 ? "" : "s"}
+          </span>
         </div>
 
         {activeTab && (
-          <div className="mb-2 inline-block rounded-full border border-neutral-400 px-2.5 py-0.5 text-xs text-neutral-600 dark:text-neutral-400">
+          <div className="chip chip-selected mb-2 inline-flex w-fit">
             Tab: {activeTab.order_name}
           </div>
         )}
 
-        <input
-          className="mb-3 w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-          placeholder="Order / guest name"
-          value={orderName}
-          onChange={(e) => setOrderName(e.target.value)}
-        />
+        <input className="input mb-3" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
 
         <div className="max-h-[320px] space-y-2 overflow-y-auto">
           {cart.length === 0 ? (
-            <div className="py-6 text-center text-sm text-neutral-500">No items yet</div>
+            <div className="rounded-lg border border-dashed py-6 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+              No items yet
+            </div>
           ) : (
             cart.map((line) => (
-              <div key={line.key} className="rounded-lg border border-neutral-200 p-2 dark:border-neutral-800">
+              <div key={line.key} className="card-flat p-2.5">
                 <div className="flex justify-between gap-2 text-sm">
-                  <span className="font-medium">
+                  <span className="font-medium" style={{ color: "var(--foreground)" }}>
                     {line.qty > 1 ? `${line.qty}× ` : ""}
                     {line.name}
                   </span>
-                  <span>{money(line.unit * line.qty)}</span>
+                  <span style={{ color: "var(--foreground)" }}>{money(line.unit * line.qty)}</span>
                 </div>
-                {line.mods.length > 0 && <div className="mt-0.5 text-xs text-neutral-500">{line.mods.join(", ")}</div>}
-                <div className="mt-1 flex items-center gap-2">
-                  <button className="h-6 w-6 rounded border border-neutral-300 text-xs dark:border-neutral-700" onClick={() => updateQty(line.key, -1)}>
+                {line.mods.length > 0 && (
+                  <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
+                    {line.mods.join(", ")}
+                  </div>
+                )}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <button
+                    className="h-7 w-7 rounded-md border text-sm"
+                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    onClick={() => updateQty(line.key, -1)}
+                  >
                     −
                   </button>
-                  <span className="text-xs">{line.qty}</span>
-                  <button className="h-6 w-6 rounded border border-neutral-300 text-xs dark:border-neutral-700" onClick={() => updateQty(line.key, 1)}>
+                  <span className="text-xs" style={{ color: "var(--foreground)" }}>
+                    {line.qty}
+                  </span>
+                  <button
+                    className="h-7 w-7 rounded-md border text-sm"
+                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                    onClick={() => updateQty(line.key, 1)}
+                  >
                     +
                   </button>
-                  <button className="ml-auto text-xs text-red-600 hover:underline" onClick={() => removeLine(line.key)}>
+                  <button className="ml-auto text-xs hover:underline" style={{ color: "var(--danger-text)" }} onClick={() => removeLine(line.key)}>
                     Remove
                   </button>
                 </div>
@@ -410,52 +452,53 @@ export default function PosApp({
           )}
         </div>
 
-        <div className="mt-3 border-t border-neutral-200 pt-2 text-sm dark:border-neutral-800">
-          <div className="flex justify-between text-neutral-500">
+        <div className="mt-3 border-t pt-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
+          <div className="flex justify-between" style={{ color: "var(--muted)" }}>
             <span>Subtotal</span>
             <span>{money(totals.subtotal)}</span>
           </div>
           {totals.discount > 0 && (
-            <div className="flex justify-between text-neutral-500">
+            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
               <span>Discount</span>
               <span>-{money(totals.discount)}</span>
             </div>
           )}
-          <div className="flex justify-between text-neutral-500">
+          <div className="flex justify-between" style={{ color: "var(--muted)" }}>
             <span>Tax</span>
             <span>{money(totals.tax)}</span>
           </div>
-          <div className="mt-1 flex justify-between text-base font-semibold text-neutral-900 dark:text-neutral-100">
-            <span>Total</span>
-            <span>{money(totals.total)}</span>
+          <div className="mt-1.5 flex items-baseline justify-between border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
+            <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
+              Total
+            </span>
+            <span className="text-2xl font-semibold" style={{ color: "var(--accent)" }}>
+              {money(totals.total)}
+            </span>
           </div>
 
-          <label className="mt-2 flex items-center gap-2 text-xs text-neutral-500">
+          <label className="mt-2.5 flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
             <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
             Monthly member (10% off)
           </label>
-          <label className="flex items-center gap-2 text-xs text-neutral-500">
+          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
             <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
             Tax exempt
           </label>
           {totals.canRedeem && (
-            <label className="flex items-center gap-2 text-xs text-neutral-500">
+            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
               <input type="checkbox" checked={pointsRedeemed} onChange={(e) => setPointsRedeemed(e.target.checked)} />
               Redeem {POINTS_REDEEM_COST} pts for {money(POINTS_REDEEM_VALUE)} off
             </label>
           )}
         </div>
 
-        <button
-          className="mt-3 w-full rounded-lg bg-neutral-900 py-2.5 text-sm font-semibold text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
-          disabled={cart.length === 0 || !employeeId || busy}
-          onClick={startCheckout}
-        >
+        <button className="btn-primary mt-3 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
           Complete order
         </button>
         <div className="mt-2 flex gap-2">
           <button
-            className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm text-red-600 dark:border-neutral-700"
+            className="btn-secondary flex-1 py-2 text-sm"
+            style={{ color: "var(--danger-text)" }}
             disabled={cart.length === 0 || busy}
             onClick={() =>
               setConfirmState({
@@ -474,42 +517,40 @@ export default function PosApp({
           >
             Clear order
           </button>
-          <button className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" disabled={cart.length === 0 || busy} onClick={handleHold}>
+          <button className="btn-secondary flex-1 py-2 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
             Hold order
           </button>
         </div>
-        <button className="mt-2 w-full rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" onClick={() => setHeldListOpen((v) => !v)}>
+        <button className="btn-secondary mt-2 w-full py-2 text-sm" onClick={() => setHeldListOpen((v) => !v)}>
           Held orders ({heldOrders.length})
         </button>
         <div className="mt-2 flex gap-2">
-          <button
-            className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700"
-            disabled={!employeeId || busy}
-            onClick={() => setOpenTabPromptOpen(true)}
-          >
+          <button className="btn-secondary flex-1 py-2 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
             Open a tab
           </button>
-          <button className="flex-1 rounded-lg border border-neutral-300 py-2 text-sm dark:border-neutral-700" onClick={() => setTabsListOpen((v) => !v)}>
+          <button className="btn-secondary flex-1 py-2 text-sm" onClick={() => setTabsListOpen((v) => !v)}>
             Tabs ({openTabs.length})
           </button>
         </div>
 
         {heldListOpen && (
-          <div className="mt-2 rounded-lg border border-neutral-300 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Held orders</div>
+          <div className="card-flat mt-2 p-3" style={{ background: "var(--surface-hover)" }}>
+            <div className="eyebrow mb-2">Held orders</div>
             {heldOrders.length === 0 ? (
-              <div className="text-sm text-neutral-500">No held orders.</div>
+              <div className="text-sm" style={{ color: "var(--muted)" }}>
+                No held orders.
+              </div>
             ) : (
               heldOrders.map((h) => (
-                <div key={h.id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-1.5 text-sm last:border-0 dark:border-neutral-800">
-                  <span>
-                    {h.order_name || "Held order"} ({h.item_count} item{h.item_count === 1 ? "" : "s"})
+                <div key={h.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
+                  <span style={{ color: "var(--foreground)" }}>
+                    {h.order_name || "Held order"} — {money(h.total)} ({h.item_count} item{h.item_count === 1 ? "" : "s"})
                   </span>
                   <div className="flex gap-1">
-                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleResumeHeld(h.id)}>
+                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleResumeHeld(h.id)}>
                       Resume
                     </button>
-                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleDiscardHeld(h.id)}>
+                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleDiscardHeld(h.id)}>
                       Discard
                     </button>
                   </div>
@@ -520,24 +561,26 @@ export default function PosApp({
         )}
 
         {tabsListOpen && (
-          <div className="mt-2 rounded-lg border border-neutral-300 bg-neutral-50 p-3 dark:border-neutral-700 dark:bg-neutral-900">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">Open tabs</div>
+          <div className="card-flat mt-2 p-3" style={{ background: "var(--surface-hover)" }}>
+            <div className="eyebrow mb-2">Open tabs</div>
             {openTabs.length === 0 ? (
-              <div className="text-sm text-neutral-500">No open tabs.</div>
+              <div className="text-sm" style={{ color: "var(--muted)" }}>
+                No open tabs.
+              </div>
             ) : (
               openTabs.map((t) => (
-                <div key={t.id} className="flex items-center justify-between gap-2 border-b border-neutral-200 py-1.5 text-sm last:border-0 dark:border-neutral-800">
-                  <span>
+                <div key={t.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
+                  <span style={{ color: "var(--foreground)" }}>
                     {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"})
                     {t.id === activeTabId ? " · active now" : ""}
                   </span>
                   <div className="flex gap-1">
                     {t.id !== activeTabId && (
-                      <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => handleSwitchTab(t.id)}>
+                      <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleSwitchTab(t.id)}>
                         Switch to
                       </button>
                     )}
-                    <button className="rounded border border-neutral-300 px-2 py-0.5 text-xs dark:border-neutral-700" onClick={() => setCancelTabId(t.id)}>
+                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => setCancelTabId(t.id)}>
                       Cancel tab
                     </button>
                   </div>
@@ -548,25 +591,24 @@ export default function PosApp({
         )}
 
         {toast && (
-          <div className="mt-3 rounded-lg border border-green-400 bg-green-50 p-2 text-xs text-green-800 dark:border-green-800 dark:bg-green-950 dark:text-green-300">
+          <div className="notice notice-success mt-3 p-2.5 text-xs">
             {toast}
           </div>
         )}
 
-        <div className="mt-4 border-t border-neutral-200 pt-3 dark:border-neutral-800">
-          <div className="mb-2 text-sm text-neutral-500">{member ? `Member: ${member.name} — ${member.tier}` : "No member attached"}</div>
-          <input
-            className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-            placeholder="Search members..."
-            value={memberQuery}
-            onChange={(e) => setMemberQuery(e.target.value)}
-          />
+        <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+          <div className="eyebrow mb-2">Member</div>
+          <div className="mb-2 text-sm" style={{ color: "var(--muted)" }}>
+            {member ? `${member.name} — ${member.tier}` : "No member attached"}
+          </div>
+          <input className="input" placeholder="Search members..." value={memberQuery} onChange={(e) => setMemberQuery(e.target.value)} />
           {memberMatches.length > 0 && (
-            <div className="mt-1 max-h-32 overflow-y-auto rounded border border-neutral-200 dark:border-neutral-800">
+            <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
               {memberMatches.map((m) => (
                 <div
                   key={m.id}
-                  className="cursor-pointer px-2 py-1 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  className="cursor-pointer px-2 py-1.5 text-sm"
+                  style={{ color: "var(--foreground)" }}
                   onClick={() => {
                     setMemberId(m.id);
                     setMemberQuery("");
@@ -578,25 +620,23 @@ export default function PosApp({
             </div>
           )}
           {member && (
-            <button className="mt-2 text-xs text-neutral-500 hover:underline" onClick={() => setMemberId(null)}>
+            <button className="mt-2 text-xs hover:underline" style={{ color: "var(--accent)" }} onClick={() => setMemberId(null)}>
               Remove member
             </button>
           )}
-          <div className="mt-2 text-xs text-neutral-500">{member ? `Loyalty points: ${Math.round(member.points)}` : "Loyalty points: — (attach a member)"}</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+            {member ? `Loyalty points: ${Math.round(member.points)}` : "Loyalty points: — (attach a member)"}
+          </div>
         </div>
       </div>
 
       {/* Menu panel */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="card">
         <div className="mb-3 flex flex-wrap gap-2">
           {categories.map((c) => (
             <button
               key={c.id}
-              className={`rounded-full border px-3 py-1.5 text-sm ${
-                nav.categoryId === c.id
-                  ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                  : "border-neutral-300 dark:border-neutral-700"
-              }`}
+              className={nav.categoryId === c.id ? "chip chip-selected px-4 py-2 text-sm" : "chip px-4 py-2 text-sm"}
               onClick={() => {
                 setNav({ categoryId: c.id, subcategoryId: null });
                 setBuilderItemId(null);
@@ -611,19 +651,12 @@ export default function PosApp({
           <div className="mb-3 flex flex-wrap gap-2 text-sm">
             {!nav.subcategoryId
               ? category.subcategories.map((s) => (
-                  <button
-                    key={s.id}
-                    className="rounded border border-neutral-300 px-2 py-1 dark:border-neutral-700"
-                    onClick={() => setNav({ categoryId: category.id, subcategoryId: s.id })}
-                  >
+                  <button key={s.id} className="chip" onClick={() => setNav({ categoryId: category.id, subcategoryId: s.id })}>
                     {s.label}
                   </button>
                 ))
               : (
-                  <button
-                    className="rounded border border-neutral-300 px-2 py-1 dark:border-neutral-700"
-                    onClick={() => setNav({ categoryId: category.id, subcategoryId: null })}
-                  >
+                  <button className="chip" onClick={() => setNav({ categoryId: category.id, subcategoryId: null })}>
                     ← Back
                   </button>
                 )}
@@ -633,15 +666,15 @@ export default function PosApp({
         {builderItem ? (
           <ItemBuilder item={builderItem} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : (
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {items.map((item) => (
-              <button
-                key={item.id}
-                className="flex min-h-[80px] flex-col items-center justify-center gap-1 rounded-lg border border-neutral-200 p-3 text-center hover:border-neutral-400 dark:border-neutral-800"
-                onClick={() => setBuilderItemId(item.id)}
-              >
-                <span className="text-sm font-medium">{item.name}</span>
-                <span className="text-xs text-neutral-500">{money(item.price)}</span>
+              <button key={item.id} className="card-flat flex min-h-[92px] flex-col items-center justify-center gap-1.5 p-3 text-center" onClick={() => setBuilderItemId(item.id)}>
+                <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
+                  {item.name}
+                </span>
+                <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+                  {money(item.price)}
+                </span>
               </button>
             ))}
           </div>
@@ -653,16 +686,20 @@ export default function PosApp({
       )}
 
       {ageConfirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
-            <h3 className="text-lg font-semibold">Age verification</h3>
-            <p className="mt-1 text-sm text-neutral-500">This order includes alcohol. Confirm you&apos;ve checked ID and the customer is 21 or older.</p>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="card w-full max-w-xs text-center shadow-2xl">
+            <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+              Age verification
+            </h3>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+              This order includes alcohol. Confirm you&apos;ve checked ID and the customer is 21 or older.
+            </p>
             <div className="mt-4 flex justify-center gap-2">
-              <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={() => setAgeConfirmOpen(false)}>
+              <button className="btn-secondary" onClick={() => setAgeConfirmOpen(false)}>
                 Cancel
               </button>
               <button
-                className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
+                className="btn-primary"
                 onClick={() => {
                   setAgeConfirmOpen(false);
                   setPayOpen(true);

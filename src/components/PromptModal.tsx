@@ -22,26 +22,24 @@ export default function PromptModal({
   const [value, setValue] = useState("");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
-        <h3 className="text-lg font-semibold">{title}</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-xs text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          {title}
+        </h3>
         <input
           autoFocus
-          className="mt-4 w-full rounded border border-neutral-300 px-3 py-2 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="input mt-4"
           placeholder={placeholder}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && value.trim() && onSubmit(value.trim())}
         />
         <div className="mt-4 flex justify-center gap-2">
-          <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={onCancel}>
+          <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
-            disabled={!value.trim()}
-            onClick={() => onSubmit(value.trim())}
-          >
+          <button className="btn-primary" disabled={!value.trim()} onClick={() => onSubmit(value.trim())}>
             {confirmLabel}
           </button>
         </div>

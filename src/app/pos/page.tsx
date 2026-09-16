@@ -26,8 +26,12 @@ export default async function PosPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <div className="mb-4 flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold">Royale Cinema Lounge — POS</h1>
-        <span className="text-sm text-neutral-500">{new Date().toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric" })}</span>
+        <h1 className="font-display text-2xl" style={{ color: "var(--foreground)" }}>
+          Royale Cinema Lounge <span style={{ color: "var(--accent)" }}>· Point of Sale</span>
+        </h1>
+        <span className="eyebrow">
+          {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
+        </span>
       </div>
       <PosApp
         categories={orderableCategories}

@@ -18,16 +18,23 @@ export default function ConfirmModal({
   onCancel: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
-        <h3 className="text-lg font-semibold">{title}</h3>
-        {description && <p className="mt-1 text-sm text-neutral-500">{description}</p>}
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-xs text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          {title}
+        </h3>
+        {description && (
+          <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+            {description}
+          </p>
+        )}
         <div className="mt-4 flex justify-center gap-2">
-          <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={onCancel}>
+          <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
           <button
-            className={`rounded px-3 py-1.5 text-sm text-white ${danger ? "bg-red-600" : "bg-neutral-900 dark:bg-neutral-100 dark:text-neutral-900"}`}
+            className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors"
+            style={{ background: danger ? "#c0392b" : "var(--accent)", color: danger ? "#fff" : "var(--accent-foreground)" }}
             onClick={onConfirm}
           >
             {confirmLabel}

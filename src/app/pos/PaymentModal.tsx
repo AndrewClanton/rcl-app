@@ -69,32 +69,44 @@ export default function PaymentModal({
 
   if (reader) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="card w-full max-w-xs text-center shadow-2xl">
           {reader.state === "waiting" ? (
             <>
-              <h3 className="text-lg font-semibold">Present card on reader</h3>
-              <p className="mt-1 text-sm text-neutral-500">
-                Total due: <strong className="text-neutral-900 dark:text-neutral-100">{money(total)}</strong>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                Present card on reader
+              </h3>
+              <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                Total due:{" "}
+                <strong className="text-lg" style={{ color: "var(--accent)" }}>
+                  {money(total)}
+                </strong>
               </p>
-              <p className="mt-3 text-sm text-neutral-500">Waiting for the customer to tap, insert, or swipe on the reader...</p>
-              {reader.message && <p className="mt-2 text-xs text-red-600">{reader.message}</p>}
-              <button className="mt-4 text-sm text-neutral-500 hover:underline" onClick={handleCancelReader}>
+              <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>
+                Waiting for the customer to tap, insert, or swipe on the reader...
+              </p>
+              {reader.message && (
+                <p className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
+                  {reader.message}
+                </p>
+              )}
+              <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={handleCancelReader}>
                 Cancel
               </button>
             </>
           ) : (
             <>
-              <h3 className="text-lg font-semibold">Card reader error</h3>
-              <p className="mt-2 text-sm text-red-600">{reader.message}</p>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                Card reader error
+              </h3>
+              <p className="mt-2 text-sm" style={{ color: "var(--danger-text)" }}>
+                {reader.message}
+              </p>
               <div className="mt-4 flex justify-center gap-2">
-                <button className="rounded border border-neutral-300 px-3 py-1.5 text-sm dark:border-neutral-700" onClick={() => setReader(null)}>
+                <button className="btn-secondary" onClick={() => setReader(null)}>
                   Back
                 </button>
-                <button
-                  className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
-                  onClick={handleReaderCharge}
-                >
+                <button className="btn-primary" onClick={handleReaderCharge}>
                   Try again
                 </button>
               </div>
@@ -106,64 +118,53 @@ export default function PaymentModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-xs rounded-2xl bg-white p-6 text-center shadow-xl dark:bg-neutral-900">
-        <h3 className="text-lg font-semibold">Take payment</h3>
-        <p className="mt-1 text-sm text-neutral-500">
-          Total due: <strong className="text-neutral-900 dark:text-neutral-100">{money(total)}</strong>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-xs text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          Take payment
+        </h3>
+        <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+          Total due:{" "}
+          <strong className="text-lg" style={{ color: "var(--accent)" }}>
+            {money(total)}
+          </strong>
         </p>
 
         {!splitOpen ? (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <button
-              className="rounded border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700"
-              onClick={() => onConfirm({ method: "cash", cash: total, card: 0 })}
-            >
+            <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "cash", cash: total, card: 0 })}>
               Cash
             </button>
             {readerAvailable ? (
-              <button className="rounded border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700" onClick={handleReaderCharge}>
+              <button className="btn-secondary px-4 py-2" onClick={handleReaderCharge}>
                 Card (reader)
               </button>
             ) : (
-              <button
-                className="rounded border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700"
-                onClick={() => onConfirm({ method: "card", cash: 0, card: total })}
-              >
+              <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "card", cash: 0, card: total })}>
                 Card
               </button>
             )}
-            <button className="rounded border border-neutral-300 px-4 py-2 text-sm dark:border-neutral-700" onClick={() => setSplitOpen(true)}>
+            <button className="btn-secondary px-4 py-2" onClick={() => setSplitOpen(true)}>
               Split
             </button>
           </div>
         ) : (
           <div className="mt-4 space-y-2 text-left">
             <div>
-              <label className="mb-1 block text-xs text-neutral-500">Cash amount</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                value={cash}
-                onChange={(e) => setCash(e.target.value)}
-              />
+              <label className="label-xs">Cash amount</label>
+              <input type="number" step="0.01" min="0" className="input" value={cash} onChange={(e) => setCash(e.target.value)} />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-neutral-500">Card amount</label>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
-                value={card}
-                onChange={(e) => setCard(e.target.value)}
-              />
+              <label className="label-xs">Card amount</label>
+              <input type="number" step="0.01" min="0" className="input" value={card} onChange={(e) => setCard(e.target.value)} />
             </div>
-            {error && <div className="text-xs text-red-600">Cash + card must equal the total due.</div>}
+            {error && (
+              <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+                Cash + card must equal the total due.
+              </div>
+            )}
             <button
-              className="w-full rounded bg-neutral-900 px-3 py-2 text-sm text-white dark:bg-neutral-100 dark:text-neutral-900"
+              className="btn-primary w-full"
               onClick={() => {
                 const c = parseFloat(cash) || 0;
                 const cd = parseFloat(card) || 0;
@@ -179,7 +180,7 @@ export default function PaymentModal({
           </div>
         )}
 
-        <button className="mt-4 text-sm text-neutral-500 hover:underline" onClick={onCancel}>
+        <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onCancel}>
           Cancel
         </button>
       </div>

@@ -152,8 +152,16 @@ export async function completeOrder(params: DraftFields & {
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------
+//
+// Draft rows must carry a real, current total (not a 0 placeholder) --
+// getDraftOrders reads it straight from the row rather than recomputing a
+// bare item subtotal, so the held/tabs lists always show the same
+// tax-and-discount-inclusive number the cashier sees in the cart. Callers
+// pass the totals they already computed for the on-screen cart.
 
-export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields): Promise<string> {
+const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, tax: 0, total: 0 };
+
+export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields, totals: CheckoutTotals = ZERO_TOTALS): Promise<string> {
   const supabase = createAdminClient();
   const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
   if (numberErr) throw numberErr;
@@ -171,9 +179,12 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       tax_free: fields.taxFree,
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
-      subtotal: 0,
-      tax: 0,
-      total: 0,
+      subtotal: totals.subtotal,
+      tier_discount: totals.tier_discount,
+      monthly_discount: totals.monthly_discount,
+      redemption_discount: totals.redemption_discount,
+      tax: totals.tax,
+      total: totals.total,
     })
     .select("id")
     .single();
@@ -184,7 +195,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
   return order.id;
 }
 
-export async function updateDraftOrder(id: string, fields: DraftFields): Promise<void> {
+export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<void> {
   const supabase = createAdminClient();
   await supabase
     .from("orders")
@@ -196,6 +207,12 @@ export async function updateDraftOrder(id: string, fields: DraftFields): Promise
       tax_free: fields.taxFree,
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
+      subtotal: totals.subtotal,
+      tier_discount: totals.tier_discount,
+      monthly_discount: totals.monthly_discount,
+      redemption_discount: totals.redemption_discount,
+      tax: totals.tax,
+      total: totals.total,
     })
     .eq("id", id);
   await replaceOrderItems(supabase, id, fields.lines);
@@ -206,19 +223,16 @@ export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrder
   const supabase = createAdminClient();
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, order_name, items:order_items(unit_price, quantity)")
+    .select("id, order_name, total, items:order_items(quantity)")
     .eq("status", status)
     .order("created_at");
   if (error) throw error;
-  return (orders ?? []).map((o) => {
-    const items = o.items as { unit_price: number; quantity: number }[];
-    return {
-      id: o.id,
-      order_name: o.order_name,
-      item_count: items.reduce((s, i) => s + i.quantity, 0),
-      total: items.reduce((s, i) => s + i.unit_price * i.quantity, 0),
-    };
-  });
+  return (orders ?? []).map((o) => ({
+    id: o.id,
+    order_name: o.order_name,
+    item_count: (o.items as { quantity: number }[]).reduce((s, i) => s + i.quantity, 0),
+    total: Number(o.total),
+  }));
 }
 
 export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
