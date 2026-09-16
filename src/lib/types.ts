@@ -119,7 +119,9 @@ export interface Member {
   comp_notes: string | null;
   comped_by: string | null;
   comped_at: string | null;
-  community_program: { name: string } | null;
+  // Only present when the query joins community_programs (see
+  // getMembersPage/getMemberById) -- not selected by every members query.
+  community_program?: { name: string } | null;
   created_at: string;
 }
 

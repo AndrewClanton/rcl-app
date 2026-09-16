@@ -1,9 +1,18 @@
 "use server";
 
+import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff } from "@/lib/auth";
+import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
+
+async function siteOrigin(): Promise<string> {
+  const h = await headers();
+  const host = h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  return `${proto}://${host}`;
+}
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -102,4 +111,22 @@ export async function setCommunityProgramActive(id: string, active: boolean) {
   const supabase = createAdminClient();
   await supabase.from("community_programs").update({ active }).eq("id", id);
   revalidate();
+}
+
+// Opens Stripe's own hosted billing portal for this member's Stripe
+// customer, scoped to update their payment method (or view invoices) --
+// staff can hand a tablet to the member and let them enter a new card
+// directly into Stripe's PCI-compliant page. We never see or store the
+// card number ourselves.
+export async function createMemberBillingPortalLink(memberId: string): Promise<{ url: string }> {
+  await requireStaff();
+  const supabase = createAdminClient();
+  const { data: member } = await supabase.from("members").select("stripe_customer_id").eq("id", memberId).maybeSingle();
+  if (!member?.stripe_customer_id) throw new Error("No billing account on file for this member.");
+  const origin = await siteOrigin();
+  const session = await getStripe().billingPortal.sessions.create({
+    customer: member.stripe_customer_id,
+    return_url: `${origin}/admin/members/${memberId}`,
+  });
+  return { url: session.url };
 }
