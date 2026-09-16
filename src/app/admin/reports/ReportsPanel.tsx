@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { AlcoholUsageRow, MembershipAnalytics, ReportOrder, RevenueDay } from "@/lib/data/reports";
+import type { AlcoholUsageRow, MembershipAnalytics, PourCostRow, ReportOrder, RevenueDay } from "@/lib/data/reports";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundOrder } from "./actions";
 
@@ -21,6 +21,7 @@ export default function ReportsPanel({
   revenueTrend,
   membership,
   alcoholUsage,
+  pourCost,
   days,
 }: {
   todaysOrders: ReportOrder[];
@@ -28,6 +29,7 @@ export default function ReportsPanel({
   revenueTrend: RevenueDay[];
   membership: MembershipAnalytics;
   alcoholUsage: AlcoholUsageRow[];
+  pourCost: PourCostRow[];
   days: number;
 }) {
   const stats = useMemo(() => {
@@ -122,7 +124,8 @@ export default function ReportsPanel({
         <h2 className="mb-1 text-lg font-semibold">Alcohol usage & variance</h2>
         <p className="mb-3 text-sm text-neutral-500">
           Expected usage is recipe quantity × drinks sold in this range. Variance needs two physical counts (Ingredients page) bracketing
-          the range to compute -- positive means more was physically used than recipes account for.
+          the range to compute -- positive means more was physically used than recipes account for. Set a cost per ingredient on the
+          Ingredients page to see $ figures too; sorted by $ impact when known.
         </p>
         {alcoholUsage.length === 0 ? (
           <div className="text-sm text-neutral-500">No ingredients yet -- add some from the Ingredients page.</div>
@@ -134,7 +137,8 @@ export default function ReportsPanel({
                   <th className="py-1.5 pr-3 font-medium">Ingredient</th>
                   <th className="py-1.5 pr-3 font-medium">Expected usage</th>
                   <th className="py-1.5 pr-3 font-medium">Physical count change</th>
-                  <th className="py-1.5 font-medium">Variance</th>
+                  <th className="py-1.5 pr-3 font-medium">Variance</th>
+                  <th className="py-1.5 font-medium">Variance ($)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -148,13 +152,60 @@ export default function ReportsPanel({
                       {row.physicalUsage === null ? "Not enough counts" : `${row.physicalUsage.toFixed(2)} ${unitLabel(row.unit)}`}
                     </td>
                     <td
-                      className={`py-1.5 font-medium ${
+                      className={`py-1.5 pr-3 font-medium ${
                         row.variance === null ? "text-neutral-400" : row.variance > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
                       }`}
                     >
                       {row.variance === null
                         ? "—"
                         : `${row.variance > 0 ? "+" : ""}${row.variance.toFixed(2)} ${unitLabel(row.unit)}${row.variance > 0 ? " over" : ""}`}
+                    </td>
+                    <td
+                      className={`py-1.5 font-medium ${
+                        row.varianceCost === null ? "text-neutral-400" : row.varianceCost > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                      }`}
+                    >
+                      {row.varianceCost === null ? (row.unitCost === null ? "no cost set" : "—") : `${row.varianceCost > 0 ? "+" : ""}${money(row.varianceCost)}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h2 className="mb-1 text-lg font-semibold">Pour cost by drink</h2>
+        <p className="mb-3 text-sm text-neutral-500">
+          Ingredient cost as a share of menu price for each alcohol item -- the standard bar-industry "pour cost" metric. Bars typically
+          target 16-20%; higher means less margin on that drink. Only shown once every ingredient in a recipe has a cost set.
+        </p>
+        {pourCost.length === 0 ? (
+          <div className="text-sm text-neutral-500">No alcohol menu items yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-neutral-200 text-left text-xs text-neutral-500 dark:border-neutral-800">
+                  <th className="py-1.5 pr-3 font-medium">Drink</th>
+                  <th className="py-1.5 pr-3 font-medium">Price</th>
+                  <th className="py-1.5 pr-3 font-medium">Ingredient cost</th>
+                  <th className="py-1.5 font-medium">Pour cost %</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                {pourCost.map((row) => (
+                  <tr key={row.menuItemId}>
+                    <td className="py-1.5 pr-3">{row.name}</td>
+                    <td className="py-1.5 pr-3">{money(row.price)}</td>
+                    <td className="py-1.5 pr-3 text-neutral-500">{row.ingredientCost === null ? "—" : money(row.ingredientCost)}</td>
+                    <td
+                      className={`py-1.5 font-medium ${
+                        row.pourCostPct === null ? "text-neutral-400" : row.pourCostPct > 0.2 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                      }`}
+                    >
+                      {row.pourCostPct === null ? "missing ingredient cost(s)" : `${(row.pourCostPct * 100).toFixed(1)}%`}
                     </td>
                   </tr>
                 ))}

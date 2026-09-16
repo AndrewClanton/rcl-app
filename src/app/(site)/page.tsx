@@ -81,9 +81,15 @@ export default async function HomePage() {
               Not a traditional theater — a members&apos; club for people who love film.
             </h2>
             <p className="mt-3 max-w-2xl text-sm text-[var(--muted)]">
-              Because we don&apos;t publicly advertise every screening, we can show a wider range of films at a lower cost. If
-              there&apos;s a movie you want to see on the big screen, just let us know — odds are, we can get it for you.
+              We don&apos;t publish a full public schedule — that&apos;s what lets us bring in a much wider range of films, at a
+              lower cost, than a typical theater could justify. Members always know what&apos;s playing.
             </p>
+            <a
+              href="mailto:info@royalecinemajoplin.com?subject=Screening%20request"
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
+            >
+              Request a screening →
+            </a>
           </div>
           <div className="relative aspect-[3/2] overflow-hidden rounded-2xl border border-[var(--border)]">
             <Image
@@ -118,12 +124,24 @@ export default async function HomePage() {
           </div>
           <div className="eyebrow mb-2">Become a member</div>
           <h2 className="font-display text-xl font-semibold">Free to join, unlimited with Insiders+</h2>
-          <p className="mt-2 flex-1 text-sm text-[var(--muted)]">
-            Royale Insiders is free — a mailing list, a $5 day pass, and points on every purchase. Upgrade to Insiders+ for unlimited
-            free entry to every screening, concession discounts, and priority access, from $10/mo.
-          </p>
+          <div className="mt-3 grid flex-1 grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="font-medium">Insiders — Free</div>
+              <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
+                <li>$5 day pass</li>
+                <li>Points on every purchase</li>
+              </ul>
+            </div>
+            <div>
+              <div className="font-medium text-[var(--accent)]">Insiders+ — from $10/mo</div>
+              <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
+                <li>Unlimited free entry</li>
+                <li>Concession discounts</li>
+              </ul>
+            </div>
+          </div>
           <Link href="/membership" className="btn-secondary mt-4 self-start">
-            Explore membership options
+            Compare membership tiers
           </Link>
         </div>
         <div className="card flex flex-col">
@@ -173,9 +191,10 @@ export default async function HomePage() {
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="card-flat">
-            <div className="font-medium">What films will you be screening?</div>
+            <div className="font-medium">Why don&apos;t you publish a full public schedule?</div>
             <div className="mt-1 text-sm text-[var(--muted)]">
-              Everything from modern indie hits to classics spanning the last 60 years, plus new independent features every week.
+              It&apos;s what lets us bring in a much wider range of films, at a lower cost, than a typical theater could justify.
+              Members always know what&apos;s playing.
             </div>
           </div>
           <div className="card-flat">

@@ -55,6 +55,7 @@ export interface Ingredient {
   name: string;
   unit: IngredientUnit;
   bottle_size: number | null;
+  unit_cost: number | null;
   category: string | null;
   active: boolean;
 }

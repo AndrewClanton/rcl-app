@@ -1,4 +1,11 @@
-import { getTodaysCompletedOrders, getRecentOrders, getRevenueTrend, getMembershipAnalytics, getAlcoholUsageReport } from "@/lib/data/reports";
+import {
+  getTodaysCompletedOrders,
+  getRecentOrders,
+  getRevenueTrend,
+  getMembershipAnalytics,
+  getAlcoholUsageReport,
+  getPourCostReport,
+} from "@/lib/data/reports";
 import ReportsPanel from "./ReportsPanel";
 
 export const dynamic = "force-dynamic";
@@ -9,12 +16,13 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
   const params = await searchParams;
   const days = VALID_RANGES.includes(Number(params.days)) ? Number(params.days) : 30;
 
-  const [todaysOrders, recentOrders, revenueTrend, membership, alcoholUsage] = await Promise.all([
+  const [todaysOrders, recentOrders, revenueTrend, membership, alcoholUsage, pourCost] = await Promise.all([
     getTodaysCompletedOrders(),
     getRecentOrders(),
     getRevenueTrend(days),
     getMembershipAnalytics(),
     getAlcoholUsageReport(days),
+    getPourCostReport(),
   ]);
 
   return (
@@ -26,6 +34,7 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
         revenueTrend={revenueTrend}
         membership={membership}
         alcoholUsage={alcoholUsage}
+        pourCost={pourCost}
         days={days}
       />
     </div>

@@ -163,6 +163,10 @@ export interface AlcoholUsageRow {
   theoreticalUsage: number;
   physicalUsage: number | null;
   variance: number | null;
+  unitCost: number | null;
+  theoreticalCost: number | null;
+  physicalCost: number | null;
+  varianceCost: number | null;
 }
 
 // Compares recipe-based "theoretical" ingredient usage (recipe quantity x
@@ -181,7 +185,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
 
   const [{ data: ingredients, error: ingErr }, { data: orders, error: ordersErr }, { data: counts, error: countsErr }, recipesByItem] =
     await Promise.all([
-      supabase.from("ingredients").select("id, name, unit").eq("active", true).order("category").order("name"),
+      supabase.from("ingredients").select("id, name, unit, unit_cost").eq("active", true).order("category").order("name"),
       supabase.from("orders").select("id").eq("status", "completed").gte("created_at", since.toISOString()),
       supabase.from("inventory_counts").select("ingredient_id, quantity_on_hand, counted_at").order("counted_at"),
       getRecipesByItem(),
@@ -232,17 +236,84 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     const endCount = latestAtOrBefore(list, now);
     const theoreticalUsage = theoreticalByIngredient.get(ing.id) ?? 0;
     const physicalUsage = startCount && endCount && endCount.counted_at !== startCount.counted_at ? startCount.quantity_on_hand - endCount.quantity_on_hand : null;
+    const variance = physicalUsage !== null ? physicalUsage - theoreticalUsage : null;
+    const unitCost = ing.unit_cost !== null ? Number(ing.unit_cost) : null;
     return {
       ingredientId: ing.id,
       name: ing.name,
       unit: ing.unit,
       theoreticalUsage,
       physicalUsage,
-      variance: physicalUsage !== null ? physicalUsage - theoreticalUsage : null,
+      variance,
+      unitCost,
+      theoreticalCost: unitCost !== null ? theoreticalUsage * unitCost : null,
+      physicalCost: unitCost !== null && physicalUsage !== null ? physicalUsage * unitCost : null,
+      varianceCost: unitCost !== null && variance !== null ? variance * unitCost : null,
     };
   });
 
-  return rows.sort((a, b) => b.theoreticalUsage - a.theoreticalUsage);
+  // Ingredients with a known $ variance sort to the top, worst overpour
+  // first -- that's what actually needs attention. Everything else falls
+  // back to theoretical usage so the list stays meaningful before any costs
+  // are entered.
+  return rows.sort((a, b) => {
+    if (a.varianceCost !== null || b.varianceCost !== null) return (b.varianceCost ?? -Infinity) - (a.varianceCost ?? -Infinity);
+    return b.theoreticalUsage - a.theoreticalUsage;
+  });
+}
+
+export interface PourCostRow {
+  menuItemId: string;
+  name: string;
+  price: number;
+  ingredientCost: number | null;
+  pourCostPct: number | null;
+}
+
+// Ingredient cost as a % of menu price, per alcohol drink -- the standard
+// bar-industry "pour cost" metric (target is usually ~16-20%). Only
+// computed for items whose recipe has every ingredient costed; a partially
+// costed recipe would understate cost and overstate margin, which is worse
+// than just not showing a number.
+export async function getPourCostReport(): Promise<PourCostRow[]> {
+  const supabase = createAdminClient();
+  const [{ data: items, error: itemErr }, { data: ingredients, error: ingErr }, recipesByItem] = await Promise.all([
+    supabase.from("menu_items").select("id, name, price").eq("is_alcohol", true).eq("active", true),
+    supabase.from("ingredients").select("id, unit_cost"),
+    getRecipesByItem(),
+  ]);
+  if (itemErr) throw itemErr;
+  if (ingErr) throw ingErr;
+
+  const costByIngredient = new Map((ingredients ?? []).map((i) => [i.id, i.unit_cost !== null ? Number(i.unit_cost) : null]));
+
+  const rows: PourCostRow[] = (items ?? [])
+    .map((item) => {
+      const recipe = recipesByItem[item.id];
+      if (!recipe || recipe.ingredients.length === 0) return { menuItemId: item.id, name: item.name, price: Number(item.price), ingredientCost: null, pourCostPct: null };
+
+      let cost = 0;
+      for (const ri of recipe.ingredients) {
+        const unitCost = costByIngredient.get(ri.ingredient_id);
+        if (unitCost === null || unitCost === undefined) {
+          cost = NaN; // one uncosted ingredient makes the whole recipe's cost unknown
+          break;
+        }
+        cost += ri.quantity * unitCost;
+      }
+      const ingredientCost = isNaN(cost) ? null : cost;
+      const price = Number(item.price);
+      return {
+        menuItemId: item.id,
+        name: item.name,
+        price,
+        ingredientCost,
+        pourCostPct: ingredientCost !== null && price > 0 ? ingredientCost / price : null,
+      };
+    })
+    .sort((a, b) => (b.pourCostPct ?? -1) - (a.pourCostPct ?? -1));
+
+  return rows;
 }
 
 export interface DashboardSummary {

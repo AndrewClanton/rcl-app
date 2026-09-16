@@ -35,33 +35,59 @@ export default async function MembershipPage({
         Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever.
       </p>
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-2">
-        <div className="card">
-          <div className="font-medium text-[var(--accent)]">Royale Insiders — Free</div>
-          <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
-            <li>Free mailing list subscription with weekly updates</li>
-            <li>$5 day pass to the lounge (+$3 on new-release days)</li>
-            <li>Earn points with every purchase</li>
-          </ul>
-        </div>
-        <div className="card">
-          <div className="font-medium text-[var(--accent)]">Royale Insiders+ — Monthly</div>
-          <ul className="mt-2 space-y-1 text-sm text-[var(--muted)]">
-            <li>Unlimited entry to every screening — free tickets, always</li>
-            <li>Priority access to weekly titles and exclusive events</li>
-            <li>Discounts on concessions and merchandise, plus faster points</li>
-          </ul>
-          <div className="mt-3 flex flex-wrap gap-3 text-sm">
-            <span>
-              Adults <strong className="text-[var(--accent)]">$15/mo</strong>
-            </span>
-            <span>
-              Seniors <strong className="text-[var(--accent)]">$12/mo</strong>
-            </span>
-            <span>
-              Students <strong className="text-[var(--accent)]">$10/mo</strong>
-            </span>
-          </div>
+      <div className="card mb-8 overflow-x-auto !p-0">
+        <table className="w-full min-w-[420px] text-sm">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-left">
+              <th className="px-4 py-3 font-medium text-[var(--muted)]">&nbsp;</th>
+              <th className="px-4 py-3 font-medium">
+                Insiders
+                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">Free</div>
+              </th>
+              <th className="px-4 py-3 font-medium text-[var(--accent)]">
+                Insiders+
+                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">from $10/mo</div>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">Mailing list &amp; weekly updates</td>
+              <td className="px-4 py-3">Included</td>
+              <td className="px-4 py-3">Included</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">Lounge entry</td>
+              <td className="px-4 py-3">$5 day pass (+$3 new releases)</td>
+              <td className="px-4 py-3 font-medium text-[var(--accent)]">Free, unlimited, always</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">Points on every purchase</td>
+              <td className="px-4 py-3">Standard rate</td>
+              <td className="px-4 py-3">Faster rate</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">Priority access to weekly titles &amp; exclusive events</td>
+              <td className="px-4 py-3 text-[var(--muted)]">—</td>
+              <td className="px-4 py-3">Included</td>
+            </tr>
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">Concession &amp; merch discounts</td>
+              <td className="px-4 py-3 text-[var(--muted)]">—</td>
+              <td className="px-4 py-3">Included</td>
+            </tr>
+          </tbody>
+        </table>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-[var(--border)] px-4 py-3 text-sm text-[var(--muted)]">
+          <span>
+            Insiders+ pricing: Adults <strong className="text-[var(--accent)]">$15/mo</strong>
+          </span>
+          <span>
+            Seniors <strong className="text-[var(--accent)]">$12/mo</strong>
+          </span>
+          <span>
+            Students <strong className="text-[var(--accent)]">$10/mo</strong>
+          </span>
         </div>
       </div>
 

@@ -10,7 +10,13 @@ function revalidate() {
   revalidatePath("/admin/reports");
 }
 
-export async function addIngredient(fields: { name: string; unit: IngredientUnit; bottleSize?: number | null; category?: string }) {
+export async function addIngredient(fields: {
+  name: string;
+  unit: IngredientUnit;
+  bottleSize?: number | null;
+  unitCost?: number | null;
+  category?: string;
+}) {
   const name = fields.name.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -18,6 +24,7 @@ export async function addIngredient(fields: { name: string; unit: IngredientUnit
     name,
     unit: fields.unit,
     bottle_size: fields.bottleSize ?? null,
+    unit_cost: fields.unitCost ?? null,
     category: fields.category?.trim() || null,
   });
   revalidate();
@@ -25,7 +32,7 @@ export async function addIngredient(fields: { name: string; unit: IngredientUnit
 
 export async function updateIngredient(
   id: string,
-  fields: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; category: string | null }>
+  fields: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }>
 ) {
   const supabase = createAdminClient();
   await supabase.from("ingredients").update(fields).eq("id", id);
