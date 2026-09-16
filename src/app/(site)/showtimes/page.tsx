@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getUpcomingScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import type { Screening } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Showtimes",
+  description: "See what's playing at Royale Cinema Lounge in Joplin, MO, and reserve your seat.",
+};
 
 function dateKey(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });

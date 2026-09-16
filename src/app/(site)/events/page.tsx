@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
 import { getRooms } from "@/lib/data/rooms";
 import EventBookingForm from "./EventBookingForm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Private Events",
+  description: "Book a space at Royale Cinema Lounge for a private screening, party, or gathering.",
+};
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;

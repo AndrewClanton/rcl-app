@@ -1,4 +1,11 @@
+import type { Metadata } from "next";
 import Image from "next/image";
+
+export const metadata: Metadata = {
+  title: "About",
+  description:
+    "Joplin's only independent film center -- a third space for the Joplin community to celebrate the art of cinema, in a historic 1920 building on Route 66.",
+};
 
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
   return (

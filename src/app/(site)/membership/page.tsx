@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
 import MembershipForm from "./MembershipForm";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Join Insiders",
+  description: "Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever.",
+};
 
 export default async function MembershipPage({
   searchParams,

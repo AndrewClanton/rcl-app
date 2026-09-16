@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getScreeningById } from "@/lib/data/screening-detail";
 import { getStripe } from "@/lib/stripe";
@@ -9,6 +10,31 @@ export const dynamic = "force-dynamic";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  const { id } = await params;
+  const screening = await getScreeningById(id);
+  if (!screening) return { title: "Showtime" };
+
+  const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const description = screening.movie.synopsis
+    ? screening.movie.synopsis.slice(0, 155)
+    : `${screening.movie.title} -- ${showtime} at Royale Cinema Lounge, Joplin, MO.`;
+
+  return {
+    title: `${screening.movie.title} -- ${showtime}`,
+    description,
+    openGraph: screening.movie.poster_path
+      ? { images: [{ url: `https://image.tmdb.org/t/p/w780${screening.movie.poster_path}` }] }
+      : undefined,
+  };
 }
 
 export default async function ScreeningDetailPage({

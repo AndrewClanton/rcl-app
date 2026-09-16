@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
 import { getMenuTree } from "@/lib/data/menu";
 import type { MenuCategory, MenuItem } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Menu",
+  description: "Snacks, soft drinks, draft beer, wine, and specialty cocktails -- plus vegan, dairy-free, and gluten-free options.",
+};
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
