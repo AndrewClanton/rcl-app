@@ -17,7 +17,7 @@ export default async function ScheduleGraphicPage() {
         want on it, then download the image.
       </p>
       <ScheduleGraphicBuilder
-        screenings={screenings.map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at }))}
+        screenings={screenings.map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at, room: s.room.name }))}
         events={events.map((e) => ({
           id: e.id,
           name: e.event_name,

@@ -8,6 +8,7 @@ interface ScreeningLite {
   id: string;
   title: string;
   startsAt: string;
+  room: string;
 }
 interface EventLite {
   id: string;
@@ -62,7 +63,8 @@ function eventTimeRange(time: string, hours: number) {
 export default function ScheduleGraphicBuilder({ screenings, events }: { screenings: ScreeningLite[]; events: EventLite[] }) {
   const [startDate, setStartDate] = useState(todayCentral());
   const [days, setDays] = useState(7);
-  const [format, setFormat] = useState<"poster" | "banner">("poster");
+  const [format, setFormat] = useState<"grid" | "banner">("grid");
+  const [note, setNote] = useState("");
   const [excludedScreeningIds, setExcludedScreeningIds] = useState<Set<string>>(new Set());
   const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
 
@@ -117,7 +119,7 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
   const totalIncluded = includedScreeningIds.length + includedEventIds.length;
   const totalInRange = screeningsInRange.length + eventsInRange.length;
   const rangeLabel = `${dayHeading(startDate)} – ${dayHeading(endDate)}`;
-  const imageUrl = `/admin/schedule-graphic/image?format=${format}&label=${encodeURIComponent(rangeLabel)}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}`;
+  const imageUrl = `/admin/schedule-graphic/image?format=${format}&label=${encodeURIComponent(rangeLabel)}&note=${encodeURIComponent(note)}&start=${startDate}&days=${days}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
@@ -150,10 +152,10 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
             <label className="mb-1 block text-xs text-neutral-500">Shape</label>
             <div className="flex gap-2">
               <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "poster" ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}
-                onClick={() => setFormat("poster")}
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "grid" ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}
+                onClick={() => setFormat("grid")}
               >
-                Poster (1080×1350)
+                Full-page grid (1920×1080)
               </button>
               <button
                 className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "banner" ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}
@@ -163,6 +165,19 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
               </button>
             </div>
           </div>
+
+          {format === "grid" && (
+            <div className="mt-3">
+              <label className="mb-1 block text-xs text-neutral-500">&quot;Plan ahead&quot; note (optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Halloween double feature next Fri"
+                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
         <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
@@ -192,8 +207,9 @@ export default function ScheduleGraphicBuilder({ screenings, events }: { screeni
                     {list.screenings.map((s) => (
                       <label key={s.id} className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={!excludedScreeningIds.has(s.id)} onChange={() => toggleScreening(s.id)} />
-                        <span className={excludedScreeningIds.has(s.id) ? "text-neutral-400 line-through" : ""}>
+                        <span className={excludedScreeningIds.has(s.id) ? "text-neutral-400 line-through" : s.room.toLowerCase().includes("outdoor") ? "text-emerald-700 dark:text-emerald-500" : ""}>
                           {screeningTime(s.startsAt)} — {s.title}
+                          {s.room.toLowerCase().includes("outdoor") && !excludedScreeningIds.has(s.id) ? " (outdoor)" : ""}
                         </span>
                       </label>
                     ))}
