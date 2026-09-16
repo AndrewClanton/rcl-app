@@ -17,15 +17,10 @@ function money(n: number) {
 function ItemRow({ item }: { item: MenuItem }) {
   return (
     <div className="flex items-baseline justify-between gap-3 border-b border-[var(--border)] py-2.5 last:border-b-0">
-      <div className="min-w-0">
-        <span className="font-medium">
-          {item.name}
-          {item.is_alcohol && <span className="ml-2 chip !px-1.5 !py-0.5 align-middle text-[10px]">21+</span>}
-        </span>
-        {item.modifier_groups.length > 0 && (
-          <div className="mt-0.5 text-xs text-[var(--muted)]">{item.modifier_groups.map((g) => g.label).join(" · ")}</div>
-        )}
-      </div>
+      <span className="min-w-0 font-medium">
+        {item.name}
+        {item.is_alcohol && <span className="ml-2 chip !px-1.5 !py-0.5 align-middle text-[10px]">21+</span>}
+      </span>
       <span className="whitespace-nowrap text-sm font-semibold text-[var(--accent)]">{money(item.price)}</span>
     </div>
   );
@@ -49,7 +44,7 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
           {category.subcategories.map((sub) => (
             <div key={sub.id}>
               <h3 className="eyebrow mb-1">{sub.label}</h3>
-              <div className="sm:columns-2 sm:gap-x-8">
+              <div className="card !p-4 sm:columns-2 sm:gap-x-8">
                 {sub.items.map((item) => (
                   <div key={item.id} className="break-inside-avoid">
                     <ItemRow item={item} />
@@ -60,7 +55,7 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
           ))}
         </div>
       ) : (
-        <div className="sm:columns-2 sm:gap-x-8">
+        <div className="card !p-4 sm:columns-2 sm:gap-x-8">
           {category.items.map((item) => (
             <div key={item.id} className="break-inside-avoid">
               <ItemRow item={item} />
