@@ -31,12 +31,16 @@ function ItemRow({ item }: { item: MenuItem }) {
   );
 }
 
-function CategorySection({ category, photo }: { category: MenuCategory; photo?: { src: string; alt: string } }) {
+function CategorySection({ category, photos }: { category: MenuCategory; photos?: { src: string; alt: string }[] }) {
   return (
     <section className="mb-12">
-      {photo && (
-        <div className="relative mb-4 aspect-[21/8] overflow-hidden rounded-xl">
-          <Image src={photo.src} alt={photo.alt} fill sizes="(min-width: 1024px) 900px, 100vw" className="object-cover" priority />
+      {photos && photos.length > 0 && (
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:gap-3">
+          {photos.map((p) => (
+            <div key={p.src} className="relative aspect-[4/3] overflow-hidden rounded-xl">
+              <Image src={p.src} alt={p.alt} fill sizes="(min-width: 1024px) 300px, 33vw" className="object-cover" priority />
+            </div>
+          ))}
         </div>
       )}
       <h2 className="font-display mb-4 border-b border-[var(--border)] pb-2 text-2xl font-semibold">{category.label}</h2>
@@ -84,7 +88,15 @@ export default async function MenuPage() {
           <CategorySection
             key={cat.id}
             category={cat}
-            photo={cat.key === "grub" ? { src: "/photos/popcorn-pink.jpg", alt: "Fresh popcorn at Royale Cinema Lounge" } : undefined}
+            photos={
+              cat.key === "grub"
+                ? [
+                    { src: "/photos/popcorn-pink.jpg", alt: "Fresh popcorn at Royale Cinema Lounge" },
+                    { src: "/photos/hot-dog.jpg", alt: "Hot dog with mustard and ketchup" },
+                    { src: "/photos/pizza.jpg", alt: "Pizza with mozzarella, cherry tomatoes, and basil" },
+                  ]
+                : undefined
+            }
           />
         ))}
     </div>
