@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Menu",
-  description: "Snacks, soft drinks, draft beer, wine, and specialty cocktails -- plus vegan, dairy-free, and gluten-free options.",
+  description: "Snacks, soft drinks, draft beer, wine, and specialty cocktails.",
 };
 
 function money(n: number) {

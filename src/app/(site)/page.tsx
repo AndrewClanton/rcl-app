@@ -152,8 +152,8 @@ export default async function HomePage() {
           <div className="eyebrow mb-2">Food &amp; drink</div>
           <h2 className="font-display text-xl font-semibold">A full menu, made for movie night</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails — plus vegan, dairy-free, and
-            gluten-free options. Try one of our movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.
+            Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails. Try one of our
+            movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.
           </p>
           <Link href="/menu" className="btn-secondary mt-4 self-start">
             View our menu
