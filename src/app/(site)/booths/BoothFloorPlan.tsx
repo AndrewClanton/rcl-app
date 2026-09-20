@@ -2,12 +2,15 @@
 
 import type { Booth } from "@/lib/types";
 
-// Hand-drawn schematic tracing the venue's own floor plan photo as closely
-// as possible: room silhouette (the restroom block notched out of the top
-// right, the step out toward concession), furniture shape and position,
-// and the same tight, mostly-neutral, mostly-unlabelled-until-a-leader-line
-// style the source photo itself uses. Keyed by booth label -- a booth
-// renamed in /admin/booths needs its key updated here too.
+// Hand-drawn schematic of the venue's floor plan. The 8 booth footprints
+// below (HIT_BOXES) are not eyeballed -- they're the exact pixel bounding
+// boxes of the 8 red rectangles Andrew drew directly over the real floor
+// plan photo, extracted with a small Node script (nearest-center pixel
+// assignment + line-density filtering to ignore stray anti-aliased pixels,
+// see the conversation this was built in) rather than read off the image
+// by eye. Furniture inside each box is still hand-drawn, but its footprint
+// now matches the real photo instead of an estimate. Keyed by booth label
+// -- a booth renamed in /admin/booths needs its key updated here too.
 
 const INK = "var(--foreground)";
 const WOOD = "#a8763e";
@@ -151,96 +154,114 @@ type LayoutKey =
   | "Window Booth"
   | "Front Booth";
 
-// One hit-box per booth (a little larger than its furniture, so touch/click
-// doesn't have to land pixel-perfect on a chair leg) and where its soft
-// selection/hover highlight renders.
+// Exact pixel bounding boxes of the hand-drawn red rectangles (see the note
+// above) -- this is what makes the map line up with the real room, and is
+// also each booth's clickable hit area.
 const HIT_BOXES: Record<LayoutKey, { x: number; y: number; w: number; h: number }> = {
-  "Back Booth": { x: 108, y: 2, w: 140, h: 210 },
-  "Juke Box Booth": { x: 68, y: 198, w: 88, h: 92 },
-  "Double Booth (Right)": { x: 0, y: 318, w: 122, h: 108 },
-  "Double Booth (Left)": { x: 0, y: 430, w: 122, h: 78 },
-  "Pinball Booth": { x: 262, y: 300, w: 226, h: 170 },
-  "Middle Booth": { x: 255, y: 538, w: 84, h: 55 },
-  "Window Booth": { x: 262, y: 605, w: 240, h: 160 },
-  "Front Booth": { x: 160, y: 650, w: 118, h: 62 },
+  "Back Booth": { x: 8, y: 9, w: 208, h: 158 },
+  "Juke Box Booth": { x: 66, y: 141, w: 155, h: 160 },
+  "Double Booth (Right)": { x: 72, y: 297, w: 154, h: 118 },
+  "Double Booth (Left)": { x: 70, y: 414, w: 156, h: 97 },
+  "Pinball Booth": { x: 256, y: 308, w: 134, h: 158 },
+  "Middle Booth": { x: 249, y: 520, w: 108, h: 123 },
+  "Front Booth": { x: 139, y: 629, w: 158, h: 133 },
+  "Window Booth": { x: 298, y: 616, w: 200, h: 149 },
 };
 
 function BoothFurniture({ layoutKey, stroke }: { layoutKey: LayoutKey; stroke: string }) {
   switch (layoutKey) {
     case "Back Booth":
+      // Box: (8,9) 208x158. TV sits in the top-left corner; three tufted
+      // chairs cascade down toward the bottom-right of the box.
       return (
         <>
-          <TuftedChair x={120} y={22} size={58} rotate={33} stroke={stroke} />
-          <TuftedChair x={116} y={84} size={52} rotate={27} stroke={stroke} />
-          <TuftedChair x={150} y={144} size={48} rotate={20} stroke={stroke} />
+          <TuftedChair x={120} y={16} size={56} rotate={33} stroke={stroke} />
+          <TuftedChair x={112} y={72} size={52} rotate={26} stroke={stroke} />
+          <TuftedChair x={140} y={122} size={48} rotate={18} stroke={stroke} />
         </>
       );
     case "Juke Box Booth":
+      // Box: (66,141) 155x160.
       return (
         <>
-          <Jukebox x={76} y={203} stroke={stroke} />
-          <TuftedChair x={82} y={234} size={46} rotate={-10} stroke={stroke} dark />
+          <Jukebox x={82} y={156} stroke={stroke} />
+          <TuftedChair x={92} y={196} size={54} rotate={-10} stroke={stroke} dark />
         </>
       );
     case "Double Booth (Right)":
+      // Box: (72,297) 154x118 -- L-bench plus its wood table.
       return (
         <>
-          <LBench x={0} y={320} stroke={stroke} />
-          <TableProp x={0} y={402} w={95} h={24} />
+          <LBench x={78} y={303} stroke={stroke} />
+          <TableProp x={78} y={387} w={92} h={22} />
         </>
       );
     case "Double Booth (Left)":
-      return <LBench x={0} y={432} stroke={stroke} />;
+      // Box: (70,414) 156x97 -- L-bench only, no table (matches the photo).
+      return <LBench x={76} y={418} stroke={stroke} />;
     case "Pinball Booth":
+      // Box: (256,308) 134x158 -- just the seating (chair + loveseat). The
+      // pinball machines themselves aren't part of the reservable seat, so
+      // they're drawn as a landmark outside the clickable box.
       return (
         <>
-          <TuftedChair x={296} y={330} size={46} rotate={-16} stroke={stroke} />
-          <Couch x={340} y={358} w={72} h={78} rotate={-2} stroke={stroke} />
-          <PinballCabinet x={412} y={315} stroke={stroke} />
-          <PinballCabinet x={452} y={315} stroke={stroke} />
-          <rect x={296} y={456} width={148} height={7} rx={3} fill={WOOD} opacity={0.8} />
+          <TuftedChair x={264} y={318} size={46} rotate={-16} stroke={stroke} />
+          <Couch x={278} y={368} w={88} h={88} rotate={-2} stroke={stroke} />
         </>
       );
     case "Middle Booth":
+      // Box: (249,520) 108x123 -- two facing chairs near the top of the box.
       return (
         <>
-          <SimpleChair x={258} y={540} size={34} rotate={16} stroke={stroke} />
-          <SimpleChair x={296} y={540} size={34} rotate={-16} stroke={stroke} />
+          <SimpleChair x={256} y={532} size={36} rotate={16} stroke={stroke} />
+          <SimpleChair x={296} y={532} size={36} rotate={-16} stroke={stroke} />
         </>
       );
     case "Window Booth":
+      // Box: (298,616) 200x149 -- sunlit alcove: chair top, dark couch
+      // bottom-left, wood table, chair right.
       return (
         <>
-          <rect x={264} y={608} width={235} height={155} rx={8} fill="var(--gold)" opacity={0.1} />
-          <rect x={264} y={608} width={235} height={155} rx={8} fill="none" stroke={stroke} strokeWidth={1.75} strokeDasharray="6 4" opacity={0.45} />
-          <TuftedChair x={286} y={622} size={36} rotate={8} stroke={stroke} />
-          <Couch x={276} y={686} w={104} h={72} rotate={-4} stroke={stroke} dark />
-          <TableProp x={368} y={700} w={62} h={34} />
-          <TuftedChair x={432} y={664} size={46} rotate={12} stroke={stroke} />
+          <rect x={298} y={616} width={200} height={149} rx={8} fill="var(--gold)" opacity={0.1} />
+          <rect x={298} y={616} width={200} height={149} rx={8} fill="none" stroke={stroke} strokeWidth={1.75} strokeDasharray="6 4" opacity={0.45} />
+          <TuftedChair x={312} y={626} size={34} rotate={8} stroke={stroke} />
+          <Couch x={304} y={672} w={92} h={66} rotate={-4} stroke={stroke} dark />
+          <TableProp x={392} y={686} w={58} h={32} />
+          <TuftedChair x={448} y={654} size={42} rotate={12} stroke={stroke} />
         </>
       );
     case "Front Booth":
+      // Box: (139,629) 158x133 -- couch plus a small ottoman.
       return (
         <>
-          <Couch x={162} y={652} w={112} h={44} stroke={stroke} />
-          <Ottoman x={196} y={702} size={32} stroke={stroke} />
+          <Couch x={148} y={650} w={116} h={46} stroke={stroke} />
+          <Ottoman x={176} y={706} size={34} stroke={stroke} />
         </>
       );
   }
+}
+
+function PinballMachines({ x, y, stroke }: { x: number; y: number; stroke: string }) {
+  return (
+    <g opacity={0.7}>
+      <PinballCabinet x={x} y={y} stroke={stroke} />
+      <PinballCabinet x={x + 40} y={y} stroke={stroke} />
+    </g>
+  );
 }
 
 // (x1,y1) is the leader's dot near the furniture; omit it to place the
 // label directly beside the cluster with no line, matching the source
 // photo, which only draws an arrow for some booths.
 const LEADER_POS: Record<LayoutKey, { x1?: number; y1?: number; x2: number; y2: number; anchor?: "start" | "end" | "middle" }> = {
-  "Back Booth": { x2: 128, y2: 210, anchor: "start" },
-  "Juke Box Booth": { x1: 100, y1: 250, x2: 92, y2: 300, anchor: "start" },
-  "Double Booth (Right)": { x1: 78, y1: 358, x2: 130, y2: 372, anchor: "start" },
-  "Double Booth (Left)": { x1: 78, y1: 462, x2: 130, y2: 462, anchor: "start" },
-  "Pinball Booth": { x1: 358, y1: 420, x2: 330, y2: 488, anchor: "middle" },
-  "Middle Booth": { x2: 297, y2: 610, anchor: "middle" },
-  "Window Booth": { x1: 380, y1: 620, x2: 430, y2: 598, anchor: "start" },
-  "Front Booth": { x1: 220, y1: 674, x2: 60, y2: 678, anchor: "start" },
+  "Back Booth": { x2: 130, y2: 190, anchor: "start" },
+  "Juke Box Booth": { x1: 108, y1: 220, x2: 100, y2: 284, anchor: "start" },
+  "Double Booth (Right)": { x1: 92, y1: 350, x2: 145, y2: 362, anchor: "start" },
+  "Double Booth (Left)": { x1: 92, y1: 456, x2: 145, y2: 456, anchor: "start" },
+  "Pinball Booth": { x1: 322, y1: 400, x2: 322, y2: 452, anchor: "middle" },
+  "Middle Booth": { x2: 303, y2: 578, anchor: "middle" },
+  "Window Booth": { x1: 400, y1: 630, x2: 450, y2: 610, anchor: "start" },
+  "Front Booth": { x1: 220, y1: 674, x2: 60, y2: 674, anchor: "start" },
 };
 
 export default function BoothFloorPlan({
@@ -258,12 +279,13 @@ export default function BoothFloorPlan({
 
   return (
     <div className="panel overflow-hidden bg-[var(--surface)] p-3">
-      <svg viewBox="0 0 758 768" className="w-full" role="group" aria-label="Booth floor plan — click a booth to reserve it">
+      <svg viewBox="0 0 757 768" className="w-full" role="group" aria-label="Booth floor plan — click a booth to reserve it">
         {/* Room silhouette -- an L-shape with the restrooms notched out of
             the top right and a step out toward the concession stand, traced
-            from the venue's floor plan rather than a plain rectangle. */}
+            from the venue's floor plan rather than a plain rectangle. Wall
+            positions are set just outside the verified booth boxes. */}
         <path
-          d="M 2 2 H 262 V 320 H 490 V 460 H 700 V 766 H 2 Z"
+          d="M 2 2 H 236 V 300 H 500 V 442 H 700 V 766 H 2 Z"
           fill="none"
           stroke={INK}
           strokeWidth="2"
@@ -272,15 +294,15 @@ export default function BoothFloorPlan({
 
         {/* Context-only landmarks, not clickable */}
         <g opacity="0.55">
-          <rect x="272" y="18" width="266" height="285" rx="2" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 4" />
-          <text x="405" y="75" textAnchor="middle" className="font-mono" fontSize="13" fill="var(--muted)">
+          <rect x="246" y="15" width="244" height="278" rx="2" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeDasharray="5 4" />
+          <text x="368" y="70" textAnchor="middle" className="font-mono" fontSize="13" fill="var(--muted)">
             RESTROOMS
           </text>
 
-          <text x="600" y="410" textAnchor="middle" className="font-mono" fontSize="11" fill="var(--muted)">
+          <text x="600" y="395" textAnchor="middle" className="font-mono" fontSize="11" fill="var(--muted)">
             CONCESSION
           </text>
-          <text x="600" y="424" textAnchor="middle" className="font-mono" fontSize="11" fill="var(--muted)">
+          <text x="600" y="409" textAnchor="middle" className="font-mono" fontSize="11" fill="var(--muted)">
             &amp; TICKETS
           </text>
 
@@ -289,7 +311,8 @@ export default function BoothFloorPlan({
           </text>
         </g>
 
-        <Tv x={2} y={2} />
+        <Tv x={8} y={9} />
+        <PinballMachines x={396} y={318} stroke={INK} />
 
         {(Object.keys(HIT_BOXES) as LayoutKey[]).map((key) => {
           const booth = boothByLabel.get(key);
