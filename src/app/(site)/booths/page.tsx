@@ -38,7 +38,7 @@ export default async function BoothsPage({
     <div className="mx-auto max-w-3xl">
       <h1 className="font-display mb-1 text-3xl font-semibold">Reserve a Booth</h1>
       <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
-        Hold one of our 8 lounge booths for a two-hour window with a flat reservation fee -- food, drinks, and any
+        Tap a booth on the map to hold it for a two-hour window with a flat reservation fee — food, drinks, and any
         movie tickets are ordered separately once you're seated.
       </p>
 
