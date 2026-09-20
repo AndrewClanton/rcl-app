@@ -74,6 +74,18 @@ export async function POST(request: NextRequest) {
           .eq("id", bookingId)
           .eq("status", "pending");
       }
+
+      const boothReservationId = session.metadata?.booth_reservation_id;
+      if (boothReservationId) {
+        await supabase
+          .from("booth_reservations")
+          .update({
+            status: "confirmed",
+            stripe_payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
+          })
+          .eq("id", boothReservationId)
+          .eq("status", "pending");
+      }
     }
   }
 
@@ -84,6 +96,11 @@ export async function POST(request: NextRequest) {
       // Only cancel if it never got confirmed -- don't clobber a booking
       // that completed via a race with this expiry event.
       await supabase.from("bookings").update({ status: "cancelled" }).eq("id", bookingId).eq("status", "pending");
+    }
+
+    const boothReservationId = session.metadata?.booth_reservation_id;
+    if (boothReservationId) {
+      await supabase.from("booth_reservations").update({ status: "cancelled" }).eq("id", boothReservationId).eq("status", "pending");
     }
   }
 

@@ -35,6 +35,9 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/showtimes" className="transition-colors hover:text-[var(--accent)]">
               Showtimes
             </Link>
+            <Link href="/booths" className="transition-colors hover:text-[var(--accent)]">
+              Reserve a Booth
+            </Link>
             <Link href="/menu" className="transition-colors hover:text-[var(--accent)]">
               Menu
             </Link>

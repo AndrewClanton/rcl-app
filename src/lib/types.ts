@@ -173,3 +173,33 @@ export interface CalendarNote {
   label: string;
   created_at: string;
 }
+
+export interface Booth {
+  id: string;
+  label: string;
+  capacity: number;
+  reservation_fee: number;
+  active: boolean;
+  sort_order: number;
+}
+
+export type BoothReservationStatus = "pending" | "confirmed" | "cancelled";
+
+export interface BoothReservation {
+  id: string;
+  booth_id: string;
+  member_id: string | null;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string | null;
+  party_size: number;
+  reservation_date: string;
+  start_time: string;
+  hours: number;
+  fee_amount: number;
+  status: BoothReservationStatus;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  created_at: string;
+  booth?: Booth;
+}
