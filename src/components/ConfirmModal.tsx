@@ -33,8 +33,8 @@ export default function ConfirmModal({
             Cancel
           </button>
           <button
-            className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors"
-            style={{ background: danger ? "#c0392b" : "var(--accent)", color: danger ? "#fff" : "var(--accent-foreground)" }}
+            className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors"
+            style={{ background: danger ? "var(--foreground)" : "var(--accent)", color: danger ? "var(--background)" : "var(--accent-foreground)" }}
             onClick={onConfirm}
           >
             {confirmLabel}

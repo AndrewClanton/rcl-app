@@ -20,12 +20,12 @@ export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuIt
   const available = activeIngredients.filter((i) => !usedIds.has(i.id));
 
   return (
-    <div className="mt-2 rounded-lg border border-dashed border-amber-300 bg-amber-50/50 p-3 dark:border-amber-900 dark:bg-amber-950/10">
+    <div className="mt-2 rounded-lg border border-dashed border-[var(--warn-border)] bg-[var(--warn-bg)] p-3 ">
       <div className="mb-3 grid gap-2 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Glassware</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Glassware</label>
           <input
-            className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. Rocks glass"
             value={glassware}
             onChange={(e) => setGlassware(e.target.value)}
@@ -35,9 +35,9 @@ export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuIt
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Garnish</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Garnish</label>
           <input
-            className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. Orange twist"
             value={garnish}
             onChange={(e) => setGarnish(e.target.value)}
@@ -49,9 +49,9 @@ export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuIt
       </div>
 
       <div className="mb-3">
-        <label className="mb-1 block text-xs text-neutral-500">Method / instructions</label>
+        <label className="mb-1 block text-xs text-[var(--muted)]">Method / instructions</label>
         <textarea
-          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
           rows={2}
           placeholder="e.g. Shake with ice, strain into glass."
           value={instructions}
@@ -62,9 +62,9 @@ export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuIt
         />
       </div>
 
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-neutral-500">Ingredients</div>
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Ingredients</div>
       {(recipe?.ingredients ?? []).length === 0 ? (
-        <div className="mb-2 text-sm text-neutral-500">No ingredients yet.</div>
+        <div className="mb-2 text-sm text-[var(--muted)]">No ingredients yet.</div>
       ) : (
         <div className="mb-2 space-y-1">
           {(recipe?.ingredients ?? []).map((ri) => (
@@ -76,7 +76,7 @@ export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuIt
       <AddRecipeIngredientRow menuItemId={item.id} available={available} />
 
       {ingredients.length === 0 && (
-        <p className="mt-2 text-xs text-neutral-500">
+        <p className="mt-2 text-xs text-[var(--muted)]">
           No ingredients in the catalog yet -- add some from the Ingredients admin page first.
         </p>
       )}
@@ -95,7 +95,7 @@ function RecipeIngredientRow({ id, name, unit, quantity }: { id: string; name: s
         type="number"
         step="0.01"
         min="0"
-        className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+        className="w-20 rounded border border-[var(--border)] px-2 py-1 text-sm "
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
@@ -103,8 +103,8 @@ function RecipeIngredientRow({ id, name, unit, quantity }: { id: string; name: s
           if (!isNaN(v) && v > 0 && v !== quantity) run(() => updateRecipeIngredientQuantity(id, v));
         }}
       />
-      <span className="w-8 text-xs text-neutral-500">{unitLabel(unit)}</span>
-      <button className="text-xs text-red-600 hover:underline" disabled={pending} onClick={() => run(() => removeRecipeIngredient(id))}>
+      <span className="w-8 text-xs text-[var(--muted)]">{unitLabel(unit)}</span>
+      <button className="text-xs text-[var(--danger-text)] hover:underline" disabled={pending} onClick={() => run(() => removeRecipeIngredient(id))}>
         Remove
       </button>
     </div>
@@ -122,9 +122,9 @@ function AddRecipeIngredientRow({ menuItemId, available }: { menuItemId: string;
   return (
     <div className="mt-2 flex flex-wrap items-end gap-2">
       <div className="flex-1 min-w-[140px]">
-        <label className="mb-1 block text-xs text-neutral-500">Ingredient</label>
+        <label className="mb-1 block text-xs text-[var(--muted)]">Ingredient</label>
         <select
-          className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
           value={ingredientId}
           onChange={(e) => setIngredientId(e.target.value)}
         >
@@ -137,18 +137,18 @@ function AddRecipeIngredientRow({ menuItemId, available }: { menuItemId: string;
         </select>
       </div>
       <div>
-        <label className="mb-1 block text-xs text-neutral-500">Quantity{selected ? ` (${unitLabel(selected.unit)})` : ""}</label>
+        <label className="mb-1 block text-xs text-[var(--muted)]">Quantity{selected ? ` (${unitLabel(selected.unit)})` : ""}</label>
         <input
           type="number"
           step="0.01"
           min="0"
-          className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
           value={quantity}
           onChange={(e) => setQuantity(e.target.value)}
         />
       </div>
       <button
-        className="rounded border border-neutral-300 px-2 py-1.5 text-xs dark:border-neutral-700"
+        className="rounded border border-[var(--border)] px-2 py-1.5 text-xs "
         disabled={pending || !ingredientId || !(parseFloat(quantity) > 0)}
         onClick={() => {
           const qty = parseFloat(quantity);

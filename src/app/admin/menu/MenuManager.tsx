@@ -62,7 +62,7 @@ function CategoryList({ categories, onManage }: { categories: MenuCategory[]; on
   return (
     <div>
       <h2 className="mb-3 text-lg font-semibold">Categories</h2>
-      <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+      <div className="divide-y divide-[var(--border)] ">
         {categories.map((cat, idx) => {
           const count = cat.subcategories.length
             ? cat.subcategories.reduce((s, sc) => s + sc.items.length, 0)
@@ -70,26 +70,26 @@ function CategoryList({ categories, onManage }: { categories: MenuCategory[]; on
           return (
             <div key={cat.id} className="flex flex-wrap items-center gap-2 py-2">
               <button
-                className="rounded border border-neutral-300 px-2 py-1 text-xs disabled:opacity-30 dark:border-neutral-700"
+                className="rounded border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-30 "
                 disabled={idx === 0 || pending}
                 onClick={() => run(() => reorderCategory(cat.id, "up", ids))}
               >
                 ↑
               </button>
               <button
-                className="rounded border border-neutral-300 px-2 py-1 text-xs disabled:opacity-30 dark:border-neutral-700"
+                className="rounded border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-30 "
                 disabled={idx === categories.length - 1 || pending}
                 onClick={() => run(() => reorderCategory(cat.id, "down", ids))}
               >
                 ↓
               </button>
               <CategoryLabelInput id={cat.id} label={cat.label} />
-              <span className="text-xs text-neutral-500">{count} item(s)</span>
-              <button className="ml-auto rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => onManage(cat.id)}>
+              <span className="text-xs text-[var(--muted)]">{count} item(s)</span>
+              <button className="ml-auto rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => onManage(cat.id)}>
                 Manage items
               </button>
               <button
-                className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 dark:border-red-900"
+                className="rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
                 disabled={pending}
                 onClick={() => {
                   if (confirm(`Delete category "${cat.label}" and everything in it? This cannot be undone.`)) {
@@ -106,13 +106,13 @@ function CategoryList({ categories, onManage }: { categories: MenuCategory[]; on
 
       <div className="mt-3 flex gap-2">
         <input
-          className="flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="New category name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
         />
         <button
-          className="rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
           disabled={pending || !newName.trim()}
           onClick={() => {
             const name = newName;
@@ -132,7 +132,7 @@ function CategoryLabelInput({ id, label }: { id: string; label: string }) {
   const [, run] = useRefreshingAction();
   return (
     <input
-      className="min-w-[140px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+      className="min-w-[140px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {
@@ -156,21 +156,21 @@ function SubcategoryList({
 
   return (
     <div>
-      <button className="mb-3 rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={onBack}>
+      <button className="mb-3 rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={onBack}>
         ← Back to categories
       </button>
       <h2 className="mb-1 text-lg font-semibold">Managing: {parent.label}</h2>
-      <div className="mb-3 text-sm text-neutral-500">Subcategories</div>
-      <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+      <div className="mb-3 text-sm text-[var(--muted)]">Subcategories</div>
+      <div className="divide-y divide-[var(--border)] ">
         {parent.subcategories.map((sub) => (
           <div key={sub.id} className="flex flex-wrap items-center gap-2 py-2">
             <span className="min-w-[140px] flex-1 text-sm">{sub.label}</span>
-            <span className="text-xs text-neutral-500">{sub.items.length} item(s)</span>
-            <button className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => onManage(sub.id)}>
+            <span className="text-xs text-[var(--muted)]">{sub.items.length} item(s)</span>
+            <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => onManage(sub.id)}>
               Manage items
             </button>
             <button
-              className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 dark:border-red-900"
+              className="rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
               disabled={pending}
               onClick={() => {
                 if (confirm(`Delete subcategory "${sub.label}" and all its items?`)) run(() => deleteCategory(sub.id));
@@ -183,13 +183,13 @@ function SubcategoryList({
       </div>
       <div className="mt-3 flex gap-2">
         <input
-          className="flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="New subcategory name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
         />
         <button
-          className="rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
           disabled={pending || !newName.trim()}
           onClick={() => {
             const name = newName;
@@ -244,22 +244,22 @@ function ItemManager({
 
   return (
     <div>
-      <button className="mb-3 rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={onBack}>
+      <button className="mb-3 rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={onBack}>
         {backLabel}
       </button>
       <h2 className="mb-3 text-lg font-semibold">Managing: {target.label}</h2>
 
       <div className="space-y-3">
         {target.items.map((item) => (
-          <div key={item.id} className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+          <div key={item.id} className="rounded-lg border border-[var(--border)] p-3 ">
             <div className="flex flex-wrap items-center gap-2">
               <ItemNameInput id={item.id} name={item.name} />
               <ItemPriceInput id={item.id} price={item.price} />
-              <button className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => toggleMods(item.id)}>
+              <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => toggleMods(item.id)}>
                 Modifiers ({item.modifier_groups.length})
               </button>
               {item.is_event_item && <span className="rounded-full border border-blue-400 px-2 py-0.5 text-xs text-blue-600">event item</span>}
-              <label className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-500">
+              <label className="flex items-center gap-1 text-xs text-[var(--warn-text)] ">
                 <input
                   type="checkbox"
                   checked={item.is_alcohol}
@@ -270,14 +270,14 @@ function ItemManager({
               </label>
               {item.is_alcohol && (
                 <button
-                  className="rounded border border-amber-400 px-2 py-1 text-xs text-amber-700 dark:border-amber-800 dark:text-amber-500"
+                  className="rounded border border-[var(--warn-border)] px-2 py-1 text-xs text-[var(--warn-text)] "
                   onClick={() => toggleRecipe(item.id)}
                 >
                   Recipe ({recipesByItem[item.id]?.ingredients.length ?? 0})
                 </button>
               )}
               <button
-                className="ml-auto rounded border border-red-300 px-2 py-1 text-xs text-red-600 dark:border-red-900"
+                className="ml-auto rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
                 disabled={pending}
                 onClick={() => {
                   if (confirm(`Delete "${item.name}"?`)) run(() => deleteItem(item.id));
@@ -294,7 +294,7 @@ function ItemManager({
 
       <div className="mt-4 flex flex-wrap items-end gap-2">
         <input
-          className="min-w-[160px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="New item name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
@@ -303,17 +303,17 @@ function ItemManager({
           type="number"
           step="0.01"
           min="0"
-          className="w-28 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="w-28 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="0.00"
           value={newPrice}
           onChange={(e) => setNewPrice(e.target.value)}
         />
-        <label className="flex items-center gap-1 pb-1.5 text-xs text-neutral-500">
+        <label className="flex items-center gap-1 pb-1.5 text-xs text-[var(--muted)]">
           <input type="checkbox" checked={newAlcohol} onChange={(e) => setNewAlcohol(e.target.checked)} />
           Alcohol
         </label>
         <button
-          className="rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
           disabled={pending || !newName.trim() || !(parseFloat(newPrice) >= 0)}
           onClick={() => {
             const name = newName;
@@ -337,7 +337,7 @@ function ItemNameInput({ id, name }: { id: string; name: string }) {
   const [, run] = useRefreshingAction();
   return (
     <input
-      className="min-w-[140px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+      className="min-w-[140px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {
@@ -355,7 +355,7 @@ function ItemPriceInput({ id, price }: { id: string; price: number }) {
       type="number"
       step="0.01"
       min="0"
-      className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+      className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => {

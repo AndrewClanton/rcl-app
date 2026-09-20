@@ -8,7 +8,7 @@ export default async function AdminIngredientsPage() {
   return (
     <div>
       <h1 className="mb-1 text-lg font-semibold">Ingredients & inventory</h1>
-      <p className="mb-4 text-sm text-neutral-500">
+      <p className="mb-4 text-sm text-[var(--muted)]">
         The shared ingredient catalog used by recipes (see Menu → an alcohol item → Recipe). Log a physical count here whenever someone
         counts the shelf -- the Reports page compares counts over time against recipe-based expected usage to flag overpour/waste.
       </p>

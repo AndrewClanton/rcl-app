@@ -11,7 +11,7 @@ export default async function LoginPage() {
   if (user) redirect("/admin");
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4 dark:bg-neutral-900">
+    <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--background)" }}>
       <Suspense>
         <LoginForm />
       </Suspense>

@@ -31,17 +31,17 @@ export default function IngredientManager({ ingredients }: { ingredients: Ingred
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-        <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+        <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
           Show deactivated ingredients
         </label>
       </div>
 
       {grouped.map(([category, items]) => (
-        <div key={category} className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-neutral-500">{category}</h2>
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+        <div key={category} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">{category}</h2>
+          <div className="divide-y divide-[var(--border)] ">
             {items.map((ing) => (
               <IngredientRow key={ing.id} ingredient={ing} />
             ))}
@@ -50,7 +50,7 @@ export default function IngredientManager({ ingredients }: { ingredients: Ingred
       ))}
 
       {grouped.length === 0 && (
-        <div className="rounded-xl border border-neutral-200 bg-white p-5 text-sm text-neutral-500 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)] ">
           No ingredients yet -- add one below, then attach it to a recipe from Menu → an alcohol item → Recipe.
         </div>
       )}
@@ -93,25 +93,25 @@ function IngredientRow({ ingredient }: { ingredient: IngredientWithLastCount }) 
     <div className="py-2.5">
       <div className="flex flex-wrap items-center gap-2">
         <input
-          className="min-w-[140px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[140px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={() => {
             if (name.trim() && name !== ingredient.name) run(() => updateIngredient(ingredient.id, { name: name.trim() }));
           }}
         />
-        <span className="text-xs text-neutral-500">
+        <span className="text-xs text-[var(--muted)]">
           {unitLabel(ingredient.unit)}
           {ingredient.bottle_size ? ` · ${ingredient.bottle_size} ${unitLabel(ingredient.unit)}/bottle` : ""}
         </span>
         {hasBottleSize ? (
-          <div className="flex items-center gap-1 text-xs text-neutral-500">
+          <div className="flex items-center gap-1 text-xs text-[var(--muted)]">
             <span>$</span>
             <input
               type="number"
               step="0.01"
               min="0"
-              className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-20 rounded border border-[var(--border)] px-2 py-1 text-sm "
               placeholder="bottle cost"
               value={bottleCost}
               onChange={(e) => setBottleCost(e.target.value)}
@@ -119,17 +119,17 @@ function IngredientRow({ ingredient }: { ingredient: IngredientWithLastCount }) 
             />
             <span>/bottle</span>
             {ingredient.unit_cost != null && (
-              <span className="text-neutral-400">({money(ingredient.unit_cost)}/{unitLabel(ingredient.unit)})</span>
+              <span className="text-[var(--muted)]">({money(ingredient.unit_cost)}/{unitLabel(ingredient.unit)})</span>
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-1 text-xs text-neutral-500">
+          <div className="flex items-center gap-1 text-xs text-[var(--muted)]">
             <span>$</span>
             <input
               type="number"
               step="0.0001"
               min="0"
-              className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-20 rounded border border-[var(--border)] px-2 py-1 text-sm "
               placeholder="cost"
               value={directUnitCost}
               onChange={(e) => setDirectUnitCost(e.target.value)}
@@ -139,20 +139,20 @@ function IngredientRow({ ingredient }: { ingredient: IngredientWithLastCount }) 
           </div>
         )}
         {!ingredient.active && (
-          <span className="rounded-full border border-neutral-400 px-2 py-0.5 text-xs text-neutral-500">deactivated</span>
+          <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]">deactivated</span>
         )}
         <button
-          className="ml-auto text-xs text-neutral-500 hover:underline"
+          className="ml-auto text-xs text-[var(--muted)] hover:underline"
           disabled={pending}
           onClick={() => run(() => setIngredientActive(ingredient.id, !ingredient.active))}
         >
           {ingredient.active ? "Deactivate" : "Reactivate"}
         </button>
-        <button className="text-xs text-neutral-500 hover:underline" onClick={() => setCountOpen((v) => !v)}>
+        <button className="text-xs text-[var(--muted)] hover:underline" onClick={() => setCountOpen((v) => !v)}>
           Log count...
         </button>
       </div>
-      <div className="mt-1 text-xs text-neutral-500">
+      <div className="mt-1 text-xs text-[var(--muted)]">
         {ingredient.lastCount
           ? `Last counted: ${ingredient.lastCount.quantity_on_hand} ${unitLabel(ingredient.unit)} on ${new Date(
               ingredient.lastCount.counted_at
@@ -192,23 +192,23 @@ function LogCountForm({
   const [note, setNote] = useState("");
 
   return (
-    <div className="mt-2 rounded-lg border border-neutral-200 bg-neutral-50 p-3 dark:border-neutral-800 dark:bg-neutral-900">
+    <div className="mt-2 rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] p-3 ">
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Quantity on hand ({unitLabel(unit)})</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Quantity on hand ({unitLabel(unit)})</label>
           <input
             type="number"
             step="0.01"
             min="0"
-            className="w-28 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-28 rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={qty}
             onChange={(e) => setQty(e.target.value)}
           />
         </div>
         <div className="flex-1 min-w-[160px]">
-          <label className="mb-1 block text-xs text-neutral-500">Note (optional)</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Note (optional)</label>
           <input
-            className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. end of Friday shift"
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -217,13 +217,13 @@ function LogCountForm({
       </div>
       <div className="mt-2 flex gap-2">
         <button
-          className="rounded bg-neutral-900 px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1.5 text-xs text-white disabled:opacity-50 "
           disabled={pending || !(parseFloat(qty) >= 0)}
           onClick={() => onSubmit(parseFloat(qty), note)}
         >
           Log count
         </button>
-        <button className="text-xs text-neutral-500 hover:underline" onClick={onCancel}>
+        <button className="text-xs text-[var(--muted)] hover:underline" onClick={onCancel}>
           Cancel
         </button>
       </div>
@@ -244,31 +244,31 @@ function AddIngredientForm() {
   const bottleCostNum = parseFloat(bottleCost);
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Add ingredient</h2>
       <div className="flex flex-wrap items-end gap-2">
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Name</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Name</label>
           <input
-            className="min-w-[160px] rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="min-w-[160px] rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. Well Vodka"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Category</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Category</label>
           <input
-            className="min-w-[140px] rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="min-w-[140px] rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. Spirit, Mixer, Garnish"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Unit</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Unit</label>
           <select
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={unit}
             onChange={(e) => setUnit(e.target.value as IngredientUnit)}
           >
@@ -278,24 +278,24 @@ function AddIngredientForm() {
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Bottle size (optional)</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Bottle size (optional)</label>
           <input
             type="number"
             step="0.01"
             min="0"
-            className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. 25.4"
             value={bottleSize}
             onChange={(e) => setBottleSize(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Cost per bottle (optional)</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Cost per bottle (optional)</label>
           <input
             type="number"
             step="0.01"
             min="0"
-            className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="e.g. 18.00"
             value={bottleCost}
             onChange={(e) => setBottleCost(e.target.value)}
@@ -304,21 +304,21 @@ function AddIngredientForm() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">
+          <label className="mb-1 block text-xs text-[var(--muted)]">
             {bottleSize && bottleCostNum > 0 && bottleSizeNum > 0 ? `Cost/${unitLabel(unit)} (auto)` : `Cost per ${unitLabel(unit)} (optional)`}
           </label>
           <input
             type="number"
             step="0.0001"
             min="0"
-            className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={bottleSize && bottleCostNum > 0 && bottleSizeNum > 0 ? (bottleCostNum / bottleSizeNum).toFixed(4) : unitCost}
             onChange={(e) => setUnitCost(e.target.value)}
             disabled={!!(bottleSize && bottleCostNum > 0 && bottleSizeNum > 0)}
           />
         </div>
         <button
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
           disabled={pending || !name.trim()}
           onClick={() => {
             const computedUnitCost =
@@ -335,7 +335,7 @@ function AddIngredientForm() {
           Add ingredient
         </button>
       </div>
-      <p className="mt-2 text-xs text-neutral-500">
+      <p className="mt-2 text-xs text-[var(--muted)]">
         {bottleSize && bottleCostNum > 0 && bottleSizeNum > 0
           ? `${money(bottleCostNum)} ÷ ${bottleSizeNum} ${unitLabel(unit)} = ${money(bottleCostNum / bottleSizeNum)}/${unitLabel(unit)} -- used for the $ pour-cost report.`
           : "Cost is optional but powers the $ variance and pour-cost reports on the Reports page."}

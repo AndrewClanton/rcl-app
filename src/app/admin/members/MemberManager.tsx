@@ -10,8 +10,8 @@ import { addCommunityProgram, addMember, setCommunityProgramActive } from "./act
 
 function tierBadgeClass(tier: MemberTier) {
   return tier === "Insiders+"
-    ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400"
-    : "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400";
+    ? "border-[var(--warn-border)] bg-[var(--warn-bg)] text-[var(--warn-text)] "
+    : "border-[var(--border)] text-[var(--muted)] ";
 }
 
 export default function MemberManager({
@@ -69,52 +69,52 @@ export default function MemberManager({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
         <div className="flex flex-wrap items-center gap-3">
           <input
-            className="min-w-[200px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="min-w-[200px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
             placeholder="Search members by name or email..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+          <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
             <input type="checkbox" checked={compedOnly} onChange={(e) => toggleCompedOnly(e.target.checked)} />
             Community/free members only
           </label>
         </div>
       </div>
 
-      <div className="rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
-        <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] ">
+        <div className="divide-y divide-[var(--border)] ">
           {members.map((m) => (
             <Link
               key={m.id}
               href={`/admin/members/${m.id}`}
-              className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-[var(--surface-hover)] "
             >
               <span className="min-w-[160px] flex-1 font-medium">{m.name}</span>
-              <span className="min-w-[160px] flex-1 truncate text-neutral-500">{m.email ?? "—"}</span>
+              <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>
               <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(m.tier)}`}>{m.tier}</span>
               {m.comped && (
-                <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400">
+                <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-0.5 text-xs text-[var(--success-text)] ">
                   Free · {m.community_program?.name ?? "community"}
                 </span>
               )}
-              <span className="text-xs text-neutral-500">{m.points} pts</span>
-              <span className="ml-auto text-xs text-neutral-400">→</span>
+              <span className="text-xs text-[var(--muted)]">{m.points} pts</span>
+              <span className="ml-auto text-xs text-[var(--muted)]">→</span>
             </Link>
           ))}
-          {members.length === 0 && <div className="px-4 py-6 text-sm text-neutral-500">No members match.</div>}
+          {members.length === 0 && <div className="px-4 py-6 text-sm text-[var(--muted)]">No members match.</div>}
         </div>
 
         {total > 0 && (
-          <div className="flex items-center justify-between border-t border-neutral-200 px-4 py-3 text-xs text-neutral-500 dark:border-neutral-800">
+          <div className="flex items-center justify-between border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted)] ">
             <span>
               Showing {from}–{to} of {total}
             </span>
             <div className="flex gap-2">
               <button
-                className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-40 dark:border-neutral-700"
+                className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
                 disabled={page <= 1}
                 onClick={() => goToPage(page - 1)}
               >
@@ -124,7 +124,7 @@ export default function MemberManager({
                 Page {page} of {totalPages}
               </span>
               <button
-                className="rounded border border-neutral-300 px-2 py-1 disabled:opacity-40 dark:border-neutral-700"
+                className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
                 disabled={page >= totalPages}
                 onClick={() => goToPage(page + 1)}
               >
@@ -151,7 +151,7 @@ function AddMemberForm() {
   if (!open) {
     return (
       <button
-        className="rounded-xl border border-dashed border-neutral-300 bg-white px-5 py-3 text-sm text-neutral-500 hover:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-950"
+        className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface)] px-5 py-3 text-sm text-[var(--muted)] hover:border-[var(--border)] "
         onClick={() => setOpen(true)}
       >
         + Add member
@@ -160,23 +160,23 @@ function AddMemberForm() {
   }
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Add member</h2>
       <div className="flex flex-wrap items-end gap-2">
         <input
-          className="min-w-[160px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="Name"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         <input
-          className="min-w-[160px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="Email (optional)"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
         <select
-          className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="rounded border border-[var(--border)] px-2 py-1 text-sm "
           value={tier}
           onChange={(e) => setTier(e.target.value as MemberTier)}
         >
@@ -184,7 +184,7 @@ function AddMemberForm() {
           <option value="Insiders+">Insiders+</option>
         </select>
         <button
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
           disabled={pending || !name.trim()}
           onClick={() => {
             const fields = { name, email, tier };
@@ -196,7 +196,7 @@ function AddMemberForm() {
         >
           Add member
         </button>
-        <button className="text-sm text-neutral-500 hover:underline" onClick={() => setOpen(false)}>
+        <button className="text-sm text-[var(--muted)] hover:underline" onClick={() => setOpen(false)}>
           Cancel
         </button>
       </div>
@@ -210,19 +210,19 @@ function CommunityProgramsPanel({ programs }: { programs: CommunityProgram[] }) 
   const [description, setDescription] = useState("");
 
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-1 text-lg font-semibold">Community programs</h2>
-      <p className="mb-3 text-sm text-neutral-500">
+      <p className="mb-3 text-sm text-[var(--muted)]">
         Social/outreach programs that grant free Insiders+ membership. Grant one from a member&apos;s page -- counts show up on the Reports
         page for nonprofit reporting.
       </p>
-      <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+      <div className="divide-y divide-[var(--border)] ">
         {programs.map((p) => (
           <div key={p.id} className="flex items-center gap-2 py-1.5 text-sm">
-            <span className={p.active ? "" : "text-neutral-400 line-through"}>{p.name}</span>
-            {p.description && <span className="text-xs text-neutral-500">— {p.description}</span>}
+            <span className={p.active ? "" : "text-[var(--muted)] line-through"}>{p.name}</span>
+            {p.description && <span className="text-xs text-[var(--muted)]">— {p.description}</span>}
             <button
-              className="ml-auto text-xs text-neutral-500 hover:underline"
+              className="ml-auto text-xs text-[var(--muted)] hover:underline"
               disabled={pending}
               onClick={() => run(() => setCommunityProgramActive(p.id, !p.active))}
             >
@@ -230,23 +230,23 @@ function CommunityProgramsPanel({ programs }: { programs: CommunityProgram[] }) 
             </button>
           </div>
         ))}
-        {programs.length === 0 && <div className="py-2 text-sm text-neutral-500">No community programs yet.</div>}
+        {programs.length === 0 && <div className="py-2 text-sm text-[var(--muted)]">No community programs yet.</div>}
       </div>
       <div className="mt-3 flex flex-wrap items-end gap-2">
         <input
-          className="min-w-[160px] flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="Program name"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
         <input
-          className="min-w-[200px] flex-[2] rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="min-w-[200px] flex-[2] rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="Description (optional)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
         <button
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
           disabled={pending || !name.trim()}
           onClick={() => {
             const fields = { name, description };

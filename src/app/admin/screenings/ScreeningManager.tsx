@@ -43,24 +43,24 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   }
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Movies</h2>
 
       <div className="mb-3 flex gap-2">
         <input
-          className="flex-1 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+          className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
           placeholder="Search TMDb for a movie title..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && runSearch()}
         />
-        <button className="rounded border border-neutral-300 px-3 py-1 text-sm dark:border-neutral-700" onClick={runSearch}>
+        <button className="rounded border border-[var(--border)] px-3 py-1 text-sm " onClick={runSearch}>
           Search
         </button>
       </div>
 
       {error && (
-        <div className="mb-3 rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
+        <div className="mb-3 rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] p-2 text-sm text-[var(--warn-text)] ">
           {error} You can still add a movie manually below.
         </div>
       )}
@@ -72,57 +72,57 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
               key={r.id}
               disabled={pending}
               onClick={() => run(() => importMovieFromTmdb(r.id))}
-              className="rounded border border-neutral-200 p-2 text-left text-xs hover:border-neutral-400 dark:border-neutral-800"
+              className="rounded border border-[var(--border)] p-2 text-left text-xs hover:border-[var(--border)] "
             >
               <div className="font-medium">{r.title}</div>
-              <div className="text-neutral-500">{r.release_date?.slice(0, 4) || "—"}</div>
+              <div className="text-[var(--muted)]">{r.release_date?.slice(0, 4) || "—"}</div>
             </button>
           ))}
         </div>
       )}
 
-      <button className="mb-2 text-xs text-neutral-500 hover:underline" onClick={() => setManualOpen((v) => !v)}>
+      <button className="mb-2 text-xs text-[var(--muted)] hover:underline" onClick={() => setManualOpen((v) => !v)}>
         {manualOpen ? "Hide manual entry" : "Add a movie manually instead"}
       </button>
       {manualOpen && (
-        <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-neutral-300 p-3 dark:border-neutral-700">
+        <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-dashed border-[var(--border)] p-3 ">
           <div>
-            <label className="mb-1 block text-xs text-neutral-500">Title</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Title</label>
             <input
-              className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="rounded border border-[var(--border)] px-2 py-1 text-sm "
               value={manualTitle}
               onChange={(e) => setManualTitle(e.target.value)}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-neutral-500">Runtime (min)</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Runtime (min)</label>
             <input
               type="number"
-              className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
               value={manualRuntime}
               onChange={(e) => setManualRuntime(e.target.value)}
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-neutral-500">Rating</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Rating</label>
             <input
-              className="w-20 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-20 rounded border border-[var(--border)] px-2 py-1 text-sm "
               placeholder="PG-13"
               value={manualRating}
               onChange={(e) => setManualRating(e.target.value)}
             />
           </div>
           <div className="w-full">
-            <label className="mb-1 block text-xs text-neutral-500">Synopsis</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Synopsis</label>
             <textarea
-              className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
               rows={2}
               value={manualSynopsis}
               onChange={(e) => setManualSynopsis(e.target.value)}
             />
           </div>
           <button
-            className="rounded bg-neutral-900 px-3 py-1 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+            className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
             disabled={pending || !manualTitle.trim()}
             onClick={() => {
               const fields = {
@@ -144,7 +144,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
         </div>
       )}
 
-      <div className="text-sm text-neutral-500">{movies.length} movie(s) in the library.</div>
+      <div className="text-sm text-[var(--muted)]">{movies.length} movie(s) in the library.</div>
     </section>
   );
 }
@@ -162,13 +162,13 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
   const canSubmit = movieId && roomId && date && time && parseFloat(price) >= 0 && parseInt(capacity, 10) > 0;
 
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Schedule a screening</h2>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Movie</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Movie</label>
           <select
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={movieId}
             onChange={(e) => setMovieId(e.target.value)}
           >
@@ -181,9 +181,9 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Room</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Room</label>
           <select
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={roomId}
             onChange={(e) => {
               setRoomId(e.target.value);
@@ -199,46 +199,46 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Date</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Date</label>
           <input
             type="date"
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={date}
             onChange={(e) => setDate(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Time</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Time</label>
           <input
             type="time"
-            className="rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={time}
             onChange={(e) => setTime(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Ticket price</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Ticket price</label>
           <input
             type="number"
             step="0.01"
             min="0"
-            className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-neutral-500">Capacity</label>
+          <label className="mb-1 block text-xs text-[var(--muted)]">Capacity</label>
           <input
             type="number"
             min="1"
-            className="w-24 rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
             value={capacity}
             onChange={(e) => setCapacity(e.target.value)}
           />
         </div>
         <button
-          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
           disabled={pending || !canSubmit}
           onClick={() => {
             const fields = {
@@ -256,7 +256,7 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
           Schedule screening
         </button>
       </div>
-      {screeningRooms.length === 0 && <div className="mt-2 text-sm text-amber-600">No rooms are marked as screening rooms yet.</div>}
+      {screeningRooms.length === 0 && <div className="mt-2 text-sm text-[var(--warn-text)]">No rooms are marked as screening rooms yet.</div>}
     </section>
   );
 }
@@ -264,23 +264,23 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
 function UpcomingScreenings({ screenings }: { screenings: Screening[] }) {
   const [pending, run] = useRefreshingAction();
   return (
-    <section className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-950">
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Upcoming screenings</h2>
       {screenings.length === 0 ? (
-        <div className="text-sm text-neutral-500">No screenings scheduled yet.</div>
+        <div className="text-sm text-[var(--muted)]">No screenings scheduled yet.</div>
       ) : (
-        <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+        <div className="divide-y divide-[var(--border)] ">
           {screenings.map((s) => (
             <div key={s.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
               <span className="font-medium">{s.movie.title}</span>
-              <span className="text-neutral-500">
+              <span className="text-[var(--muted)]">
                 {new Date(s.starts_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
               </span>
-              <span className="text-neutral-500">{s.room.name}</span>
-              <span className="text-neutral-500">{money(s.ticket_price)}</span>
-              <span className="text-neutral-500">cap {s.capacity}</span>
+              <span className="text-[var(--muted)]">{s.room.name}</span>
+              <span className="text-[var(--muted)]">{money(s.ticket_price)}</span>
+              <span className="text-[var(--muted)]">cap {s.capacity}</span>
               <button
-                className="ml-auto rounded border border-red-300 px-2 py-1 text-xs text-red-600 dark:border-red-900"
+                className="ml-auto rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
                 disabled={pending}
                 onClick={() => {
                   if (confirm(`Remove this screening of "${s.movie.title}"?`)) run(() => deleteScreening(s.id));

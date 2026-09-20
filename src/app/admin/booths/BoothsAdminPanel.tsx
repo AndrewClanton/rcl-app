@@ -40,20 +40,20 @@ function BoothRow({ booth }: { booth: Booth }) {
   }
 
   return (
-    <div className="grid grid-cols-2 items-center gap-2 rounded-lg border border-neutral-200 p-3 text-sm sm:grid-cols-5 dark:border-neutral-800">
+    <div className="grid grid-cols-2 items-center gap-2 rounded-lg border border-[var(--border)] p-3 text-sm sm:grid-cols-5 ">
       <div className="font-medium">{booth.label}</div>
-      <label className="flex items-center gap-1 text-xs text-neutral-500">
+      <label className="flex items-center gap-1 text-xs text-[var(--muted)]">
         Capacity
-        <input type="number" min={1} className="w-14 rounded border border-neutral-300 px-1 py-0.5 dark:border-neutral-700 dark:bg-neutral-950" value={capacity} onChange={(e) => setCapacity(Math.max(1, parseInt(e.target.value) || 1))} />
+        <input type="number" min={1} className="w-14 rounded border border-[var(--border)] px-1 py-0.5 " value={capacity} onChange={(e) => setCapacity(Math.max(1, parseInt(e.target.value) || 1))} />
       </label>
-      <label className="flex items-center gap-1 text-xs text-neutral-500">
+      <label className="flex items-center gap-1 text-xs text-[var(--muted)]">
         Fee $
-        <input type="number" min={0} step="0.01" className="w-16 rounded border border-neutral-300 px-1 py-0.5 dark:border-neutral-700 dark:bg-neutral-950" value={fee} onChange={(e) => setFee(Math.max(0, parseFloat(e.target.value) || 0))} />
+        <input type="number" min={0} step="0.01" className="w-16 rounded border border-[var(--border)] px-1 py-0.5 " value={fee} onChange={(e) => setFee(Math.max(0, parseFloat(e.target.value) || 0))} />
       </label>
-      <label className="flex items-center gap-1 text-xs text-neutral-500">
+      <label className="flex items-center gap-1 text-xs text-[var(--muted)]">
         <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Active
       </label>
-      <button className="justify-self-start rounded border border-neutral-300 px-2 py-1 text-xs disabled:opacity-40 dark:border-neutral-700" disabled={!dirty || saving} onClick={save}>
+      <button className="justify-self-start rounded border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-40 " disabled={!dirty || saving} onClick={save}>
         {saving ? "Saving…" : "Save"}
       </button>
     </div>
@@ -65,22 +65,22 @@ function ReservationRow({ reservation }: { reservation: BoothReservation }) {
   const [pinOpen, setPinOpen] = useState(false);
 
   return (
-    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+    <div className="rounded-lg border border-[var(--border)] p-3 ">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span>
           {reservation.booth?.label ?? "Booth"} — {fmtDate(reservation.reservation_date)} {fmtTime(reservation.start_time)} — {reservation.customer_name} ({reservation.party_size})
         </span>
         {reservation.status === "cancelled" ? (
-          <span className="rounded-full border border-red-500 px-2 py-0.5 text-xs text-red-600">Cancelled</span>
+          <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]">Cancelled</span>
         ) : reservation.status === "pending" ? (
-          <span className="rounded-full border border-amber-500 px-2 py-0.5 text-xs text-amber-600">Pending payment</span>
+          <span className="rounded-full border border-[var(--warn-border)] px-2 py-0.5 text-xs text-[var(--warn-text)]">Pending payment</span>
         ) : (
-          <button className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => setPinOpen(true)}>
+          <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => setPinOpen(true)}>
             Cancel &amp; refund
           </button>
         )}
       </div>
-      <div className="mt-1 text-xs text-neutral-500">
+      <div className="mt-1 text-xs text-[var(--muted)]">
         {reservation.customer_email}
         {reservation.customer_phone ? ` · ${reservation.customer_phone}` : ""} · {money(reservation.fee_amount)}
       </div>
@@ -115,7 +115,7 @@ export default function BoothsAdminPanel({ booths, reservations }: { booths: Boo
       <section>
         <h2 className="mb-3 text-sm font-semibold">Upcoming reservations</h2>
         {reservations.length === 0 ? (
-          <div className="text-sm text-neutral-500">No upcoming reservations.</div>
+          <div className="text-sm text-[var(--muted)]">No upcoming reservations.</div>
         ) : (
           <div className="space-y-2">
             {reservations.map((r) => (

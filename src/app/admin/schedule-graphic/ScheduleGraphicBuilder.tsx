@@ -192,24 +192,24 @@ export default function ScheduleGraphicBuilder({
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
       <div className="space-y-4">
-        <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 ">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="mb-1 block text-xs text-neutral-500">Starting</label>
+              <label className="mb-1 block text-xs text-[var(--muted)]">Starting</label>
               <input
                 type="date"
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-neutral-500">For how many days</label>
+              <label className="mb-1 block text-xs text-[var(--muted)]">For how many days</label>
               <input
                 type="number"
                 min={1}
                 max={14}
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                 value={days}
                 onChange={(e) => setDays(Math.max(1, Math.min(14, parseInt(e.target.value) || 1)))}
               />
@@ -217,16 +217,16 @@ export default function ScheduleGraphicBuilder({
           </div>
 
           <div className="mt-3">
-            <label className="mb-1 block text-xs text-neutral-500">Shape</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Shape</label>
             <div className="flex gap-2">
               <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "grid" ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "grid" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
                 onClick={() => setFormat("grid")}
               >
                 Full-page grid (1920×1080)
               </button>
               <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "banner" ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900" : "border-neutral-300 dark:border-neutral-700"}`}
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "banner" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
                 onClick={() => setFormat("banner")}
               >
                 Banner (1200×628)
@@ -236,11 +236,11 @@ export default function ScheduleGraphicBuilder({
 
           {format === "grid" && (
             <div className="mt-3">
-              <label className="mb-1 block text-xs text-neutral-500">&quot;Plan ahead&quot; note (optional)</label>
+              <label className="mb-1 block text-xs text-[var(--muted)]">&quot;Plan ahead&quot; note (optional)</label>
               <input
                 type="text"
                 placeholder="e.g. Halloween double feature next Fri"
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                 value={planAheadNote}
                 onChange={(e) => setPlanAheadNote(e.target.value)}
               />
@@ -248,24 +248,24 @@ export default function ScheduleGraphicBuilder({
           )}
         </div>
 
-        <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 ">
           <h2 className="mb-2 text-sm font-semibold">Add a custom note</h2>
-          <p className="mb-2 text-xs text-neutral-500">
+          <p className="mb-2 text-xs text-[var(--muted)]">
             For anything that isn&apos;t a real screening or a billed booking -- e.g. &quot;closed for a private
             party&quot; at a specific hour, or closed all day.
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="mb-1 block text-xs text-neutral-500">Date</label>
+              <label className="mb-1 block text-xs text-[var(--muted)]">Date</label>
               <input
                 type="date"
-                className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                 value={newNoteDate}
                 onChange={(e) => setNewNoteDate(e.target.value)}
               />
             </div>
             <div className="flex items-end pb-1.5">
-              <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+              <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
                 <input type="checkbox" checked={newNoteAllDay} onChange={(e) => setNewNoteAllDay(e.target.checked)} />
                 All day
               </label>
@@ -274,19 +274,19 @@ export default function ScheduleGraphicBuilder({
           {!newNoteAllDay && (
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">From</label>
+                <label className="mb-1 block text-xs text-[var(--muted)]">From</label>
                 <input
                   type="time"
-                  className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                  className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                   value={newNoteStart}
                   onChange={(e) => setNewNoteStart(e.target.value)}
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-neutral-500">To</label>
+                <label className="mb-1 block text-xs text-[var(--muted)]">To</label>
                 <input
                   type="time"
-                  className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+                  className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
                   value={newNoteEnd}
                   onChange={(e) => setNewNoteEnd(e.target.value)}
                 />
@@ -294,11 +294,11 @@ export default function ScheduleGraphicBuilder({
             </div>
           )}
           <div className="mt-2">
-            <label className="mb-1 block text-xs text-neutral-500">Label</label>
+            <label className="mb-1 block text-xs text-[var(--muted)]">Label</label>
             <input
               type="text"
               placeholder="e.g. Closed -- private event"
-              className="w-full rounded border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-950"
+              className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
               value={newNoteLabel}
               onChange={(e) => setNewNoteLabel(e.target.value)}
             />
@@ -306,34 +306,34 @@ export default function ScheduleGraphicBuilder({
           <button
             onClick={submitNewNote}
             disabled={isPending || !newNoteLabel.trim()}
-            className="mt-3 w-full rounded border border-neutral-300 py-1.5 text-sm font-medium disabled:opacity-40 dark:border-neutral-700"
+            className="mt-3 w-full rounded border border-[var(--border)] py-1.5 text-sm font-medium disabled:opacity-40 "
           >
             {isPending ? "Saving…" : "Add note"}
           </button>
         </div>
 
-        <div className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 ">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-sm font-semibold">Included</h2>
-            <span className="text-xs text-neutral-500">
+            <span className="text-xs text-[var(--muted)]">
               {totalIncluded} of {totalInRange}
             </span>
           </div>
           {groupedDays.length === 0 ? (
-            <p className="text-sm text-neutral-500">Nothing scheduled or booked in this range.</p>
+            <p className="text-sm text-[var(--muted)]">Nothing scheduled or booked in this range.</p>
           ) : (
             <div className="max-h-[420px] space-y-3 overflow-y-auto">
               {groupedDays.map(([day, list]) => (
                 <div key={day}>
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">{dayHeading(day)}</div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{dayHeading(day)}</div>
                   <div className="space-y-1">
                     {list.notes.map((n) => (
                       <div key={n.id} className="flex items-start gap-2 text-sm">
                         <input type="checkbox" checked={!excludedNoteIds.has(n.id)} onChange={() => toggleNote(n.id)} className="mt-0.5" />
-                        <span className={`flex-1 ${excludedNoteIds.has(n.id) ? "text-neutral-400 line-through" : "text-slate-600 dark:text-slate-400"}`}>
+                        <span className={`flex-1 ${excludedNoteIds.has(n.id) ? "text-[var(--muted)] line-through" : "text-[var(--muted)] "}`}>
                           {n.startTime ? `${fmtWallClock(n.startTime)}${n.endTime ? `–${fmtWallClock(n.endTime)}` : ""}` : "All day"} — {n.label}
                         </span>
-                        <button onClick={() => removeNote(n.id)} className="text-xs text-neutral-400 hover:text-red-600" title="Delete note">
+                        <button onClick={() => removeNote(n.id)} className="text-xs text-[var(--muted)] hover:text-[var(--danger-text)]" title="Delete note">
                           ✕
                         </button>
                       </div>
@@ -341,16 +341,16 @@ export default function ScheduleGraphicBuilder({
                     {list.events.map((e) => (
                       <label key={e.id} className="flex items-start gap-2 text-sm">
                         <input type="checkbox" checked={!excludedEventIds.has(e.id)} onChange={() => toggleEvent(e.id)} className="mt-0.5" />
-                        <span className={excludedEventIds.has(e.id) ? "text-neutral-400 line-through" : "text-amber-700 dark:text-amber-500"}>
+                        <span className={excludedEventIds.has(e.id) ? "text-[var(--muted)] line-through" : "text-[var(--warn-text)] "}>
                           {eventTimeRange(e.time, e.hours)} — {e.name}{" "}
-                          <span className="text-xs text-neutral-500">({e.room})</span>
+                          <span className="text-xs text-[var(--muted)]">({e.room})</span>
                         </span>
                       </label>
                     ))}
                     {list.screenings.map((s) => (
                       <label key={s.id} className="flex items-center gap-2 text-sm">
                         <input type="checkbox" checked={!excludedScreeningIds.has(s.id)} onChange={() => toggleScreening(s.id)} />
-                        <span className={excludedScreeningIds.has(s.id) ? "text-neutral-400 line-through" : s.room.toLowerCase().includes("outdoor") ? "text-emerald-700 dark:text-emerald-500" : ""}>
+                        <span className={excludedScreeningIds.has(s.id) ? "text-[var(--muted)] line-through" : s.room.toLowerCase().includes("outdoor") ? "text-[var(--success-text)] " : ""}>
                           {screeningTime(s.startsAt)} — {s.title}
                           {s.room.toLowerCase().includes("outdoor") && !excludedScreeningIds.has(s.id) ? " (outdoor)" : ""}
                         </span>
@@ -366,13 +366,13 @@ export default function ScheduleGraphicBuilder({
         <a
           href={imageUrl}
           download={`royale-cinema-schedule-${startDate}.png`}
-          className="block rounded-lg bg-neutral-900 py-2.5 text-center text-sm font-semibold text-white disabled:opacity-40 dark:bg-neutral-100 dark:text-neutral-900"
+          className="block rounded-lg bg-[var(--accent)] py-2.5 text-center text-sm font-semibold text-white disabled:opacity-40 "
         >
           Download PNG
         </a>
       </div>
 
-      <div className="flex items-start justify-center rounded-xl border border-neutral-200 bg-neutral-50 p-6 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="flex items-start justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-hover)] p-6 ">
         {/* eslint-disable-next-line @next/next/no-img-element -- server-generated PNG, not a static asset next/image can optimize */}
         <img
           key={imageUrl}

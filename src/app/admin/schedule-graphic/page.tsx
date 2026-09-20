@@ -15,7 +15,7 @@ export default async function ScheduleGraphicPage() {
   return (
     <div>
       <h1 className="mb-1 text-lg font-semibold">Weekly schedule graphic</h1>
-      <p className="mb-4 max-w-2xl text-sm text-neutral-500">
+      <p className="mb-4 max-w-2xl text-sm text-[var(--muted)]">
         Pulls straight from the live showtimes and booked private events -- no re-typing the schedule into Canva.
         Grouped day by day, so a booked-out room (private event, entire building, outdoor cinema, etc.) shows up
         right alongside that day's screenings instead of getting lost. Add a custom note for anything that isn't a

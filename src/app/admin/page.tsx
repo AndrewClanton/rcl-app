@@ -20,8 +20,8 @@ export default async function AdminDashboardPage() {
           ["Free/community members", String(summary.compedMembers)],
           ["Upcoming screenings", String(summary.upcomingScreenings)],
         ].map(([label, value]) => (
-          <div key={label} className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-950">
-            <div className="text-xs text-neutral-500">{label}</div>
+          <div key={label} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 ">
+            <div className="text-xs text-[var(--muted)]">{label}</div>
             <div className="mt-1 text-lg font-semibold">{value}</div>
           </div>
         ))}
@@ -30,73 +30,73 @@ export default async function AdminDashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2">
       <Link
         href="/admin/menu"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Menu management</div>
-        <div className="mt-1 text-sm text-neutral-500">Categories, items, prices, and modifiers.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Categories, items, prices, and modifiers.</div>
       </Link>
       <Link
         href="/admin/screenings"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Showtime scheduler</div>
-        <div className="mt-1 text-sm text-neutral-500">Movies, screening times, rooms.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Movies, screening times, rooms.</div>
       </Link>
       <Link
         href="/admin/ingredients"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Ingredients & inventory</div>
-        <div className="mt-1 text-sm text-neutral-500">Recipe ingredients and physical stock counts.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Recipe ingredients and physical stock counts.</div>
       </Link>
       <Link
         href="/admin/members"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Members</div>
-        <div className="mt-1 text-sm text-neutral-500">Loyalty tiers, points, monthly membership.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Loyalty tiers, points, monthly membership.</div>
       </Link>
       <Link
         href="/admin/events"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Event bookings</div>
-        <div className="mt-1 text-sm text-neutral-500">Deposits, balances, and venue rentals.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Deposits, balances, and venue rentals.</div>
       </Link>
       <Link
         href="/pos"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Point of sale</div>
-        <div className="mt-1 text-sm text-neutral-500">Ring up an order.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Ring up an order.</div>
       </Link>
       <Link
         href="/admin/reports"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Reports</div>
-        <div className="mt-1 text-sm text-neutral-500">Sales, top sellers, tips, order history.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Sales, top sellers, tips, order history.</div>
       </Link>
       <Link
         href="/display/kitchen"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Kitchen display</div>
-        <div className="mt-1 text-sm text-neutral-500">Live prep tickets as POS orders complete.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Live prep tickets as POS orders complete.</div>
       </Link>
       <Link
         href="/display/box-office"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Box office signage</div>
-        <div className="mt-1 text-sm text-neutral-500">Lobby showtimes display.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Lobby showtimes display.</div>
       </Link>
       <Link
         href="/admin/schedule-graphic"
-        className="rounded-xl border border-neutral-200 bg-white p-5 hover:border-neutral-400 dark:border-neutral-800 dark:bg-neutral-950"
+        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Weekly schedule graphic</div>
-        <div className="mt-1 text-sm text-neutral-500">Download an image of this week's lineup for email.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Download an image of this week's lineup for email.</div>
       </Link>
       </div>
     </div>

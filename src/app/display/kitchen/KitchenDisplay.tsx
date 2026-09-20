@@ -77,26 +77,34 @@ export default function KitchenDisplay({ initialTickets }: { initialTickets: Kit
   }
 
   return (
-    <div className="min-h-screen bg-neutral-950 p-6 text-neutral-100">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Kitchen</h1>
-        <span className={`flex items-center gap-2 text-sm ${connected ? "text-green-400" : "text-neutral-500"}`}>
-          <span className={`h-2 w-2 rounded-full ${connected ? "bg-green-400" : "bg-neutral-600"}`} />
+    <div className="min-h-screen p-6" style={{ background: "var(--background)", color: "var(--foreground)" }}>
+      <div className="mb-6 flex items-center justify-between border-b-2 pb-4" style={{ borderColor: "var(--foreground)" }}>
+        <h1 className="font-display text-2xl">Kitchen</h1>
+        <span className="flex items-center gap-2 text-sm font-bold" style={{ color: connected ? "var(--success-text)" : "var(--muted)" }}>
+          <span className="h-2 w-2 rounded-full" style={{ background: connected ? "var(--success-text)" : "var(--muted)" }} />
           {connected ? "Live" : "Connecting..."}
         </span>
       </div>
 
       {grouped.size === 0 ? (
-        <div className="mt-20 text-center text-neutral-500">No orders in the last two hours.</div>
+        <div className="mt-20 text-center" style={{ color: "var(--muted)" }}>
+          No orders in the last two hours.
+        </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...grouped.entries()].map(([orderNumber, items]) => (
-            <div key={orderNumber} className="rounded-xl border border-neutral-800 bg-neutral-900 p-4">
+            <div key={orderNumber} className="card">
               <div className="mb-2 flex items-baseline justify-between">
-                <span className="text-lg font-semibold">#{orderNumber}</span>
-                <span className="text-xs text-neutral-500">{timeAgo(items[0].created_at)}</span>
+                <span className="font-display text-lg">#{orderNumber}</span>
+                <span className="text-xs" style={{ color: "var(--muted)" }}>
+                  {timeAgo(items[0].created_at)}
+                </span>
               </div>
-              {items[0].order_name && <div className="mb-2 text-sm text-neutral-400">{items[0].order_name}</div>}
+              {items[0].order_name && (
+                <div className="mb-2 text-sm" style={{ color: "var(--muted)" }}>
+                  {items[0].order_name}
+                </div>
+              )}
               <div className="space-y-2">
                 {items.map((item) => (
                   <div key={item.id} className="text-sm">
@@ -104,7 +112,11 @@ export default function KitchenDisplay({ initialTickets }: { initialTickets: Kit
                       {item.quantity > 1 ? `${item.quantity}× ` : ""}
                       {item.name}
                     </span>
-                    {item.modifiers.length > 0 && <div className="text-xs text-neutral-500">{item.modifiers.join(", ")}</div>}
+                    {item.modifiers.length > 0 && (
+                      <div className="text-xs" style={{ color: "var(--muted)" }}>
+                        {item.modifiers.join(", ")}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

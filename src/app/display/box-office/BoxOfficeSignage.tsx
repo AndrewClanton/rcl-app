@@ -40,22 +40,30 @@ export default function BoxOfficeSignage({ initialScreenings }: { initialScreeni
   }, []);
 
   return (
-    <div className="min-h-screen bg-black p-10 text-white">
-      <div className="mb-8 flex items-baseline justify-between">
-        <h1 className="text-4xl font-semibold">Royale Cinema Lounge</h1>
-        <span className="text-2xl text-neutral-400">{clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</span>
+    <div className="min-h-screen p-10" style={{ background: "var(--background)", color: "var(--foreground)" }}>
+      <div className="mb-8 flex items-baseline justify-between border-b-2 pb-4" style={{ borderColor: "var(--foreground)" }}>
+        <h1 className="font-display text-4xl">ROYALE CINEMA LOUNGE</h1>
+        <span className="font-mono text-2xl" style={{ color: "var(--muted)" }}>
+          {clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+        </span>
       </div>
 
       {screenings.length === 0 ? (
-        <div className="mt-20 text-center text-2xl text-neutral-500">No screenings scheduled.</div>
+        <div className="mt-20 text-center text-2xl" style={{ color: "var(--muted)" }}>
+          No screenings scheduled.
+        </div>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {screenings.map((s) => (
-            <div key={s.id} className="rounded-2xl border border-neutral-800 bg-neutral-950 p-6">
-              <div className="text-2xl font-semibold">{s.movie.title}</div>
-              <div className="mt-2 text-xl text-amber-400">{formatShowtime(s.starts_at)}</div>
-              <div className="mt-1 text-neutral-400">{s.room.name}</div>
-              {s.movie.rating && <div className="mt-3 inline-block rounded border border-neutral-700 px-2 py-0.5 text-sm text-neutral-400">{s.movie.rating}</div>}
+            <div key={s.id} className="card">
+              <div className="font-display text-2xl">{s.movie.title}</div>
+              <div className="mt-2 text-xl font-bold" style={{ color: "var(--accent)" }}>
+                {formatShowtime(s.starts_at)}
+              </div>
+              <div className="mt-1" style={{ color: "var(--muted)" }}>
+                {s.room.name}
+              </div>
+              {s.movie.rating && <div className="stamp-tag stamp-tag-gold mt-3">{s.movie.rating}</div>}
             </div>
           ))}
         </div>

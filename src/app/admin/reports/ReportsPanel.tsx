@@ -77,8 +77,8 @@ export default function ReportsPanel({
                 href={`/admin/reports?days=${n}`}
                 className={`rounded border px-2 py-1 ${
                   n === days
-                    ? "border-neutral-900 bg-neutral-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900"
-                    : "border-neutral-300 text-neutral-600 dark:border-neutral-700 dark:text-neutral-400"
+                    ? "border-[var(--foreground)] bg-[var(--accent)] text-white "
+                    : "border-[var(--border)] text-[var(--muted)] "
                 }`}
               >
                 {n}d
@@ -99,16 +99,16 @@ export default function ReportsPanel({
             ["Free/community members", String(membership.compedMembers)],
             ["New this month", String(membership.newThisMonth)],
           ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-              <div className="text-xs text-neutral-500">{label}</div>
+            <div key={label} className="rounded-lg border border-[var(--border)] p-3 ">
+              <div className="text-xs text-[var(--muted)]">{label}</div>
               <div className="mt-1 text-lg font-semibold">{value}</div>
             </div>
           ))}
         </div>
         {membership.byProgram.length > 0 && (
           <div className="mt-3">
-            <div className="mb-1 text-sm font-medium text-neutral-600 dark:text-neutral-400">Free members by community program</div>
-            <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+            <div className="mb-1 text-sm font-medium text-[var(--muted)] ">Free members by community program</div>
+            <div className="divide-y divide-[var(--border)] ">
               {membership.byProgram.map(({ program, count }) => (
                 <div key={program} className="flex justify-between py-1.5 text-sm">
                   <span>{program}</span>
@@ -122,18 +122,18 @@ export default function ReportsPanel({
 
       <section>
         <h2 className="mb-1 text-lg font-semibold">Alcohol usage & variance</h2>
-        <p className="mb-3 text-sm text-neutral-500">
+        <p className="mb-3 text-sm text-[var(--muted)]">
           Expected usage is recipe quantity × drinks sold in this range. Variance needs two physical counts (Ingredients page) bracketing
           the range to compute -- positive means more was physically used than recipes account for. Set a cost per ingredient on the
           Ingredients page to see $ figures too; sorted by $ impact when known.
         </p>
         {alcoholUsage.length === 0 ? (
-          <div className="text-sm text-neutral-500">No ingredients yet -- add some from the Ingredients page.</div>
+          <div className="text-sm text-[var(--muted)]">No ingredients yet -- add some from the Ingredients page.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-neutral-200 text-left text-xs text-neutral-500 dark:border-neutral-800">
+                <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted)] ">
                   <th className="py-1.5 pr-3 font-medium">Ingredient</th>
                   <th className="py-1.5 pr-3 font-medium">Expected usage</th>
                   <th className="py-1.5 pr-3 font-medium">Physical count change</th>
@@ -141,19 +141,19 @@ export default function ReportsPanel({
                   <th className="py-1.5 font-medium">Variance ($)</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              <tbody className="divide-y divide-[var(--border)] ">
                 {alcoholUsage.map((row) => (
                   <tr key={row.ingredientId}>
                     <td className="py-1.5 pr-3">{row.name}</td>
                     <td className="py-1.5 pr-3">
                       {row.theoreticalUsage.toFixed(2)} {unitLabel(row.unit)}
                     </td>
-                    <td className="py-1.5 pr-3 text-neutral-500">
+                    <td className="py-1.5 pr-3 text-[var(--muted)]">
                       {row.physicalUsage === null ? "Not enough counts" : `${row.physicalUsage.toFixed(2)} ${unitLabel(row.unit)}`}
                     </td>
                     <td
                       className={`py-1.5 pr-3 font-medium ${
-                        row.variance === null ? "text-neutral-400" : row.variance > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                        row.variance === null ? "text-[var(--muted)]" : row.variance > 0 ? "text-[var(--danger-text)] " : "text-[var(--muted)]"
                       }`}
                     >
                       {row.variance === null
@@ -162,7 +162,7 @@ export default function ReportsPanel({
                     </td>
                     <td
                       className={`py-1.5 font-medium ${
-                        row.varianceCost === null ? "text-neutral-400" : row.varianceCost > 0 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                        row.varianceCost === null ? "text-[var(--muted)]" : row.varianceCost > 0 ? "text-[var(--danger-text)] " : "text-[var(--muted)]"
                       }`}
                     >
                       {row.varianceCost === null ? (row.unitCost === null ? "no cost set" : "—") : `${row.varianceCost > 0 ? "+" : ""}${money(row.varianceCost)}`}
@@ -177,32 +177,32 @@ export default function ReportsPanel({
 
       <section>
         <h2 className="mb-1 text-lg font-semibold">Pour cost by drink</h2>
-        <p className="mb-3 text-sm text-neutral-500">
+        <p className="mb-3 text-sm text-[var(--muted)]">
           Ingredient cost as a share of menu price for each alcohol item -- the standard bar-industry "pour cost" metric. Bars typically
           target 16-20%; higher means less margin on that drink. Only shown once every ingredient in a recipe has a cost set.
         </p>
         {pourCost.length === 0 ? (
-          <div className="text-sm text-neutral-500">No alcohol menu items yet.</div>
+          <div className="text-sm text-[var(--muted)]">No alcohol menu items yet.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-neutral-200 text-left text-xs text-neutral-500 dark:border-neutral-800">
+                <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted)] ">
                   <th className="py-1.5 pr-3 font-medium">Drink</th>
                   <th className="py-1.5 pr-3 font-medium">Price</th>
                   <th className="py-1.5 pr-3 font-medium">Ingredient cost</th>
                   <th className="py-1.5 font-medium">Pour cost %</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+              <tbody className="divide-y divide-[var(--border)] ">
                 {pourCost.map((row) => (
                   <tr key={row.menuItemId}>
                     <td className="py-1.5 pr-3">{row.name}</td>
                     <td className="py-1.5 pr-3">{money(row.price)}</td>
-                    <td className="py-1.5 pr-3 text-neutral-500">{row.ingredientCost === null ? "—" : money(row.ingredientCost)}</td>
+                    <td className="py-1.5 pr-3 text-[var(--muted)]">{row.ingredientCost === null ? "—" : money(row.ingredientCost)}</td>
                     <td
                       className={`py-1.5 font-medium ${
-                        row.pourCostPct === null ? "text-neutral-400" : row.pourCostPct > 0.2 ? "text-red-600 dark:text-red-400" : "text-neutral-500"
+                        row.pourCostPct === null ? "text-[var(--muted)]" : row.pourCostPct > 0.2 ? "text-[var(--danger-text)] " : "text-[var(--muted)]"
                       }`}
                     >
                       {row.pourCostPct === null ? "missing ingredient cost(s)" : `${(row.pourCostPct * 100).toFixed(1)}%`}
@@ -226,8 +226,8 @@ export default function ReportsPanel({
             ["Card collected", money(stats.card)],
             ["Tips collected", money(stats.tips)],
           ].map(([label, value]) => (
-            <div key={label} className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-              <div className="text-xs text-neutral-500">{label}</div>
+            <div key={label} className="rounded-lg border border-[var(--border)] p-3 ">
+              <div className="text-xs text-[var(--muted)]">{label}</div>
               <div className="mt-1 text-lg font-semibold">{value}</div>
             </div>
           ))}
@@ -237,9 +237,9 @@ export default function ReportsPanel({
       <section>
         <h2 className="mb-3 text-lg font-semibold">Top sellers today</h2>
         {topSellers.length === 0 ? (
-          <div className="text-sm text-neutral-500">No sales recorded yet today.</div>
+          <div className="text-sm text-[var(--muted)]">No sales recorded yet today.</div>
         ) : (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <div className="divide-y divide-[var(--border)] ">
             {topSellers.map(([name, v]) => (
               <div key={name} className="flex justify-between py-1.5 text-sm">
                 <span>
@@ -255,9 +255,9 @@ export default function ReportsPanel({
       <section>
         <h2 className="mb-3 text-lg font-semibold">Sales by modifier today</h2>
         {modifierTally.length === 0 ? (
-          <div className="text-sm text-neutral-500">No modifier data yet today.</div>
+          <div className="text-sm text-[var(--muted)]">No modifier data yet today.</div>
         ) : (
-          <div className="divide-y divide-neutral-200 dark:divide-neutral-800">
+          <div className="divide-y divide-[var(--border)] ">
             {modifierTally.map(([name, count]) => (
               <div key={name} className="flex justify-between py-1.5 text-sm">
                 <span>{name}</span>
@@ -271,7 +271,7 @@ export default function ReportsPanel({
       <section>
         <h2 className="mb-3 text-lg font-semibold">Recent orders</h2>
         {recentOrders.length === 0 ? (
-          <div className="text-sm text-neutral-500">No completed orders yet.</div>
+          <div className="text-sm text-[var(--muted)]">No completed orders yet.</div>
         ) : (
           <div className="space-y-2">
             {recentOrders.map((o) => (
@@ -289,20 +289,20 @@ function OrderRow({ order }: { order: ReportOrder }) {
   const [pinOpen, setPinOpen] = useState(false);
 
   return (
-    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
+    <div className="rounded-lg border border-[var(--border)] p-3 ">
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
         <span>
           Order #{order.order_number} — {money(order.total)} — {order.employee?.name ?? "no cashier"}
         </span>
         {order.status === "refunded" ? (
-          <span className="rounded-full border border-red-500 px-2 py-0.5 text-xs text-red-600">Refunded</span>
+          <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]">Refunded</span>
         ) : (
-          <button className="rounded border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700" onClick={() => setPinOpen(true)}>
+          <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => setPinOpen(true)}>
             Refund
           </button>
         )}
       </div>
-      <div className="mt-1 text-xs text-neutral-500">
+      <div className="mt-1 text-xs text-[var(--muted)]">
         {new Date(order.created_at).toLocaleString()} · {order.payment_method ?? "unknown"} · {order.items.length} item(s)
         {order.tab_name ? ` · tab: ${order.tab_name}` : ""}
         {order.tip ? ` · tip ${money(order.tip)}` : ""}
@@ -328,8 +328,8 @@ function RevenueTrendChart({ data }: { data: RevenueDay[] }) {
   const totalForRange = data.reduce((s, d) => s + d.total, 0);
 
   return (
-    <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
-      <div className="mb-2 text-sm text-neutral-500">Total for range: {money(totalForRange)}</div>
+    <div className="rounded-lg border border-[var(--border)] p-3 ">
+      <div className="mb-2 text-sm text-[var(--muted)]">Total for range: {money(totalForRange)}</div>
       <div className="flex h-32 items-end gap-[2px]">
         {data.map((d) => {
           const posH = (d.pos / max) * 100;
@@ -342,23 +342,23 @@ function RevenueTrendChart({ data }: { data: RevenueDay[] }) {
               title={`${d.date}: ${money(d.total)} (POS ${money(d.pos)}, web ${money(d.web)}, tickets ${money(d.tickets)})`}
             >
               <div className="flex h-32 flex-col-reverse">
-                <div className="bg-neutral-400 dark:bg-neutral-600" style={{ height: `${posH}%` }} />
-                <div className="bg-amber-400 dark:bg-amber-600" style={{ height: `${webH}%` }} />
-                <div className="bg-emerald-400 dark:bg-emerald-600" style={{ height: `${ticketsH}%` }} />
+                <div className="bg-[var(--muted)] " style={{ height: `${posH}%` }} />
+                <div className="bg-[var(--warn-border)] " style={{ height: `${webH}%` }} />
+                <div className="bg-[var(--success-border)] " style={{ height: `${ticketsH}%` }} />
               </div>
             </div>
           );
         })}
       </div>
-      <div className="mt-2 flex flex-wrap gap-3 text-xs text-neutral-500">
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-[var(--muted)]">
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 bg-neutral-400 dark:bg-neutral-600" /> POS
+          <span className="inline-block h-2 w-2 bg-[var(--muted)] " /> POS
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 bg-amber-400 dark:bg-amber-600" /> Web
+          <span className="inline-block h-2 w-2 bg-[var(--warn-border)] " /> Web
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block h-2 w-2 bg-emerald-400 dark:bg-emerald-600" /> Tickets
+          <span className="inline-block h-2 w-2 bg-[var(--success-border)] " /> Tickets
         </span>
         <span>
           {data[0]?.date} – {data[data.length - 1]?.date}

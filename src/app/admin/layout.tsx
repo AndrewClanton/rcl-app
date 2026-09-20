@@ -37,13 +37,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/schedule-graphic" className="hover:underline">
             Schedule graphic
           </Link>
-          <Link href="/" className="text-neutral-500 hover:underline">
+          <Link href="/" className="text-[var(--muted)] hover:underline">
             View site
           </Link>
-          <span className="text-neutral-400">|</span>
-          <span className="text-neutral-500">{staff.name}</span>
+          <span className="text-[var(--muted)]">|</span>
+          <span className="text-[var(--muted)]">{staff.name}</span>
           <form action={signOut}>
-            <button type="submit" className="text-neutral-500 hover:underline">
+            <button type="submit" className="text-[var(--muted)] hover:underline">
               Sign out
             </button>
           </form>
