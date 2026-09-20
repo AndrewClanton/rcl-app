@@ -23,34 +23,32 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-16">
-      <section className="relative overflow-hidden rounded-2xl border border-[var(--border)] p-8 sm:p-12">
-        <Image src="/photos/theater-friends.jpg" alt="" fill priority sizes="100vw" className="object-cover" />
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ background: "linear-gradient(100deg, var(--background) 32%, rgba(11,10,15,0.62) 68%, rgba(11,10,15,0.3) 100%)" }}
-        />
-        <div className="relative">
+      <section className="overflow-hidden rounded-lg border-2 border-[var(--foreground)]">
+        <div className="px-6 py-16 text-center sm:px-12 sm:py-24" style={{ background: "var(--gold)" }}>
           <div className="eyebrow mb-3">Joplin, MO</div>
-          <h1 className="font-display max-w-2xl text-4xl font-semibold leading-tight sm:text-5xl">
+          <h1 className="font-display mx-auto max-w-3xl text-4xl leading-[1.02] sm:text-6xl" style={{ color: "var(--gold-foreground)" }}>
             Movies, food, and drinks in one place.
           </h1>
-          <p className="mt-4 max-w-xl text-[var(--muted)]">
+          <p className="mx-auto mt-5 max-w-xl text-sm font-medium sm:text-base" style={{ color: "var(--gold-foreground)" }}>
             Royale Cinema Lounge is a dine-in cinema and bar. Grab a seat, order off the full menu, and catch a show.
           </p>
-          <div className="mt-7 flex flex-wrap gap-3">
+          <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/showtimes" className="btn-primary">
               See showtimes
             </Link>
-            <Link href="/menu" className="btn-secondary">
+            <Link href="/menu" className="btn-secondary" style={{ borderColor: "var(--gold-foreground)", color: "var(--gold-foreground)" }}>
               View menu
             </Link>
           </div>
+        </div>
+        <div className="px-6 py-3 text-center font-mono text-xs tracking-wide" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+          715 E BROADWAY, JOPLIN MO · ROUTE 66 · EST. 1920
         </div>
       </section>
 
       <section>
         <div className="mb-5 flex items-end justify-between">
-          <h2 className="font-display text-2xl font-semibold">Coming up</h2>
+          <h2 className="font-display text-2xl">Coming up</h2>
           <Link href="/showtimes" className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--accent)]">
             See all showtimes →
           </Link>
@@ -61,12 +59,17 @@ export default async function HomePage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {screenings.map((s) => (
               <Link key={s.id} href={`/showtimes/${s.id}`} className="card-flat !p-3">
-                <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
+                <div className="relative">
+                  <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
+                  {s.room.name.toLowerCase().includes("outdoor") && (
+                    <span className="stamp-tag stamp-tag-gold absolute top-2 left-2">Outdoor</span>
+                  )}
+                </div>
                 <div className="mt-3 px-1">
-                  <div className="font-medium">{s.movie.title}</div>
+                  <div className="font-display text-lg leading-tight">{s.movie.title}</div>
                   <div className="mt-1 text-sm text-[var(--muted)]">{formatShowtime(s.starts_at)}</div>
                   <div className="text-sm text-[var(--muted)]">{s.room.name}</div>
-                  <div className="mt-2 text-sm font-semibold text-[var(--accent)]">${s.ticket_price.toFixed(2)}</div>
+                  <div className="mt-2 text-sm font-bold text-[var(--accent)]">${s.ticket_price.toFixed(2)}</div>
                 </div>
               </Link>
             ))}
@@ -78,7 +81,7 @@ export default async function HomePage() {
         <div className="grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
           <div>
             <div className="eyebrow mb-2">Why a member lounge?</div>
-            <h2 className="font-display max-w-2xl text-2xl font-semibold">
+            <h2 className="font-display max-w-2xl text-2xl">
               Not a traditional theater — a members&apos; club for people who love film.
             </h2>
             <p className="mt-3 max-w-2xl text-sm text-[var(--muted)]">
@@ -87,12 +90,12 @@ export default async function HomePage() {
             </p>
             <a
               href="mailto:info@royalecinemajoplin.com?subject=Screening%20request"
-              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-[var(--accent)] hover:underline"
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-bold text-[var(--accent)] hover:underline"
             >
               Request a screening →
             </a>
           </div>
-          <div className="relative aspect-[3/2] overflow-hidden rounded-2xl border border-[var(--border)]">
+          <div className="relative aspect-[3/2] overflow-hidden rounded-lg border-2 border-[var(--foreground)]">
             <Image
               src="/photos/vhs-shelf-couple.jpg"
               alt="Guests browsing the VHS shelf at Royale Cinema Lounge"
@@ -104,15 +107,15 @@ export default async function HomePage() {
         </div>
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
           <div className="card">
-            <h3 className="font-medium text-[var(--accent)]">Private access</h3>
+            <h3 className="font-display text-lg text-[var(--accent)]">Private access</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">Screenings and events exclusive to members — a close-knit community of film fans.</p>
           </div>
           <div className="card">
-            <h3 className="font-medium text-[var(--accent)]">Curated programming</h3>
+            <h3 className="font-display text-lg text-[var(--accent)]">Curated programming</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">Timeless classics, groundbreaking independent films, and hidden gems.</p>
           </div>
           <div className="card">
-            <h3 className="font-medium text-[var(--accent)]">Comfort &amp; community</h3>
+            <h3 className="font-display text-lg text-[var(--accent)]">Comfort &amp; community</h3>
             <p className="mt-1 text-sm text-[var(--muted)]">An intimate setting built for conversation — more living room than megaplex.</p>
           </div>
         </div>
@@ -124,17 +127,17 @@ export default async function HomePage() {
             <Image src="/photos/theater-popcorn-couple.jpg" alt="" fill sizes="(min-width: 640px) 400px, 100vw" className="object-cover" />
           </div>
           <div className="eyebrow mb-2">Become a member</div>
-          <h2 className="font-display text-xl font-semibold">Free to join, unlimited with Insiders+</h2>
+          <h2 className="font-display text-xl">Free to join, unlimited with Insiders+</h2>
           <div className="mt-3 grid flex-1 grid-cols-2 gap-4 text-sm">
             <div>
-              <div className="font-medium">Insiders — Free</div>
+              <div className="font-bold">Insiders — Free</div>
               <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
                 <li>$5 day pass</li>
                 <li>Points on every purchase</li>
               </ul>
             </div>
             <div>
-              <div className="font-medium text-[var(--accent)]">Insiders+ — from $10/mo</div>
+              <div className="font-bold text-[var(--accent)]">Insiders+ — from $10/mo</div>
               <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
                 <li>Unlimited free entry</li>
                 <li>Concession discounts</li>
@@ -150,7 +153,7 @@ export default async function HomePage() {
             <Image src="/photos/popcorn-reeses.png" alt="" fill sizes="(min-width: 640px) 400px, 100vw" className="object-cover" />
           </div>
           <div className="eyebrow mb-2">Food &amp; drink</div>
-          <h2 className="font-display text-xl font-semibold">A full menu, made for movie night</h2>
+          <h2 className="font-display text-xl">A full menu, made for movie night</h2>
           <p className="mt-2 text-sm text-[var(--muted)]">
             Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails. Try one of our
             movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.
@@ -163,7 +166,7 @@ export default async function HomePage() {
 
       <section className="card">
         <div className="grid gap-6 sm:grid-cols-[1fr_1.2fr] sm:items-center">
-          <div className="relative aspect-[4/3] overflow-hidden rounded-xl">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-lg border-2 border-[var(--foreground)]">
             <Image
               src="/photos/video-lounge.png"
               alt="Royale Cinema Lounge's VHS video lounge, with tapes, posters, and a CRT television"
@@ -174,7 +177,7 @@ export default async function HomePage() {
           </div>
           <div>
             <div className="eyebrow mb-2">Video lounge</div>
-            <h2 className="font-display text-xl font-semibold">Revisit classics on our VHS archive</h2>
+            <h2 className="font-display text-xl">Revisit classics on our VHS archive</h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
               A haven for film lovers who want to experience the magic of &quot;dead formats.&quot; Members have exclusive access to
               our treasure trove of VHS tapes — curl up in a comfy seat, pop in a cassette, and travel back in time.
@@ -185,39 +188,45 @@ export default async function HomePage() {
 
       <section>
         <div className="mb-5 flex items-end justify-between">
-          <h2 className="font-display text-2xl font-semibold">Frequently asked questions</h2>
+          <h2 className="font-display text-2xl">Frequently asked questions</h2>
           <Link href="/about#faq" className="text-sm text-[var(--muted)] transition-colors hover:text-[var(--accent)]">
             View all FAQs →
           </Link>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="card-flat">
-            <div className="font-medium">Why don&apos;t you publish a full public schedule?</div>
+            <div className="font-bold">Why don&apos;t you publish a full public schedule?</div>
             <div className="mt-1 text-sm text-[var(--muted)]">
               It&apos;s what lets us bring in a much wider range of films, at a lower cost, than a typical theater could justify.
               Members always know what&apos;s playing.
             </div>
           </div>
           <div className="card-flat">
-            <div className="font-medium">How can I purchase tickets?</div>
+            <div className="font-bold">How can I purchase tickets?</div>
             <div className="mt-1 text-sm text-[var(--muted)]">Online through our showtimes page, or at the door, subject to availability.</div>
           </div>
         </div>
       </section>
 
-      <section className="relative flex flex-col justify-between gap-6 overflow-hidden rounded-xl border border-[var(--border)] p-5 sm:flex-row sm:items-center">
+      <section className="relative flex flex-col justify-between gap-6 overflow-hidden rounded-lg border-2 border-[var(--foreground)] p-5 sm:flex-row sm:items-center">
         <Image src="/photos/lounge-neon.png" alt="" fill sizes="100vw" className="object-cover" />
-        <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(100deg, var(--background) 20%, rgba(11,10,15,0.7) 70%)" }} />
+        <div className="pointer-events-none absolute inset-0" style={{ background: "linear-gradient(100deg, var(--foreground) 20%, rgba(20,17,12,0.72) 70%)" }} />
         <div className="relative">
-          <div className="eyebrow mb-2">Visit us</div>
-          <h2 className="font-display text-xl font-semibold">715 E Broadway, Joplin, MO 64801</h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">One of the oldest buildings in the city, on Historic Route 66 since 1920.</p>
+          <div className="eyebrow mb-2" style={{ color: "var(--gold)" }}>
+            Visit us
+          </div>
+          <h2 className="font-display text-xl" style={{ color: "var(--background)" }}>
+            715 E Broadway, Joplin, MO 64801
+          </h2>
+          <p className="mt-1 text-sm" style={{ color: "rgba(248,245,236,0.75)" }}>
+            One of the oldest buildings in the city, on Historic Route 66 since 1920.
+          </p>
         </div>
         <div className="relative flex shrink-0 flex-wrap gap-3">
           <a href={DIRECTIONS_URL} target="_blank" rel="noopener noreferrer" className="btn-primary">
             Get directions
           </a>
-          <a href="tel:+14172814172" className="btn-secondary">
+          <a href="tel:+14172814172" className="btn-secondary" style={{ borderColor: "var(--background)", color: "var(--background)" }}>
             Call 417-281-4172
           </a>
         </div>

@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { SITE_URL } from "@/lib/site";
 
@@ -26,12 +25,12 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
   return (
     <div className="flex min-h-full flex-col">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }} />
-      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--background)]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-0">
-          <Link href="/" className="flex shrink-0 items-center">
-            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="h-8 w-auto sm:h-9" />
+      <header className="sticky top-0 z-10 border-b-2 border-[var(--foreground)] bg-[var(--background)]/95 backdrop-blur">
+        <div className="mx-auto max-w-5xl px-4 py-5 text-center">
+          <Link href="/" className="font-display inline-block text-2xl sm:text-3xl">
+            ROYALE CINEMA LOUNGE
           </Link>
-          <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--muted)]">
+          <nav className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm font-bold text-[var(--muted)]">
             <Link href="/showtimes" className="transition-colors hover:text-[var(--accent)]">
               Showtimes
             </Link>

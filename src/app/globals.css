@@ -1,54 +1,59 @@
 @import "tailwindcss";
 
 /*
- * Royale Cinema Lounge brand palette — deliberately a single dark,
- * "marquee at night" look rather than following the OS light/dark
- * preference. Cinema/lounge brands are typically dark-themed
- * regardless of system setting, and it keeps the whole site (which
- * previously mixed light-mode defaults with dark: overrides) visually
- * consistent instead of half-styled depending on the visitor's OS.
+ * Royale Cinema Lounge brand palette -- a warm parchment ground with a
+ * Kodak-yellow-and-red accent system and a bold, printed-poster type
+ * voice (Archivo Black display, Archivo body, Space Mono for technical
+ * labels). Flat color throughout -- no gradients, no grain -- reads as
+ * confident commercial print rather than atmosphere. Single palette
+ * regardless of OS light/dark preference, same reasoning as before: one
+ * consistent look everywhere rather than half-styled depending on the
+ * visitor's system setting.
  */
 :root {
-  --background: #0b0a0f;
-  --surface: #16131c;
-  --surface-hover: #1d1824;
-  --border: #2c2632;
-  --foreground: #f4ede0;
-  --muted: #a79b8c;
-  --accent: #d3a24a;
-  --accent-hover: #e3b562;
-  --accent-foreground: #1a1206;
-  --accent-soft: rgba(211, 162, 74, 0.12);
+  --background: #f8f5ec;
+  --surface: #ffffff;
+  --surface-hover: #f2ecd8;
+  --border: #e3ddc9;
+  --foreground: #14110c;
+  --muted: #6b6455;
 
-  --success-bg: #10241a;
-  --success-border: #2c5c3f;
-  --success-text: #8fe3ab;
-  --warn-bg: #241c0d;
-  --warn-border: #6b4f1a;
-  --warn-text: #f0c568;
-  --danger-text: #ef7d7d;
+  /* Red is the interactive accent -- links, prices, eyebrows, button
+     fills. It works as both a text color and a fill against the cream/
+     white grounds, so existing var(--accent) usages across the app
+     (many pages, all built on top of this one token) carry over cleanly. */
+  --accent: #ed1c24;
+  --accent-hover: #c81017;
+  --accent-foreground: #ffffff;
+  --accent-soft: rgba(237, 28, 36, 0.1);
+
+  /* Gold is reserved for hero panels and featured badges -- a fill
+     color only, never small text (yellow-on-cream has no contrast). */
+  --gold: #ffc72c;
+  --gold-hover: #ffd65c;
+  --gold-foreground: #14110c;
+
+  --success-bg: #e6f4ea;
+  --success-border: #8dc79c;
+  --success-text: #1f6b3a;
+  --warn-bg: #fdf1d6;
+  --warn-border: #e8c266;
+  --warn-text: #8a5a0a;
+  --danger-text: #ed1c24;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-display: var(--font-playfair);
+  --font-sans: var(--font-archivo);
+  --font-mono: var(--font-space-mono);
+  --font-display: var(--font-archivo-black);
 }
 
 body {
   background-color: var(--background);
-  /* A soft warm glow near the top, plus a tiled retro "bowling alley
-     carpet" confetti pattern (pure CSS/SVG, no image asset) -- triangles,
-     squiggles, and dots in a dusty gold/teal/magenta/purple palette that
-     nods at the cinema's own retro-lounge branding without being loud. */
-  background-image: radial-gradient(120% 60% at 15% -10%, rgba(211, 162, 74, 0.07), transparent 60%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cg%3E%3Cpolygon points='20,10 40,10 30,30' fill='rgba(211,162,74,0.4)' transform='rotate(15 30 20)'/%3E%3Cpath d='M70,20 C80,5 95,35 105,20' stroke='rgba(58,140,133,0.45)' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='140' cy='25' r='6' fill='rgba(178,79,126,0.45)'/%3E%3Cpolygon points='180,15 205,15 192,38' fill='rgba(122,94,168,0.35)' transform='rotate(-10 192 25)'/%3E%3Ccircle cx='250' cy='40' r='5' fill='rgba(58,140,133,0.45)'/%3E%3Cpath d='M15,90 C25,75 40,105 50,90' stroke='rgba(211,162,74,0.4)' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Cpolygon points='90,80 112,80 101,102' fill='rgba(178,79,126,0.35)' transform='rotate(25 101 90)'/%3E%3Ccircle cx='150' cy='95' r='7' fill='rgba(122,94,168,0.4)'/%3E%3Cpath d='M190,70 l10,15 l-20,3 z' fill='rgba(58,140,133,0.35)' transform='rotate(-20 195 82)'/%3E%3Ccircle cx='260' cy='110' r='5' fill='rgba(211,162,74,0.45)'/%3E%3Cpolygon points='30,150 52,150 41,172' fill='rgba(58,140,133,0.35)' transform='rotate(8 41 160)'/%3E%3Cpath d='M80,160 C90,145 105,175 115,160' stroke='rgba(178,79,126,0.45)' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='150' cy='170' r='6' fill='rgba(211,162,74,0.4)'/%3E%3Cpolygon points='190,155 212,155 201,177' fill='rgba(122,94,168,0.35)' transform='rotate(-15 201 165)'/%3E%3Ccircle cx='250' cy='180' r='5' fill='rgba(178,79,126,0.45)'/%3E%3Cpath d='M20,220 C30,205 45,235 55,220' stroke='rgba(122,94,168,0.4)' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Cpolygon points='90,210 112,210 101,232' fill='rgba(211,162,74,0.35)' transform='rotate(18 101 220)'/%3E%3Ccircle cx='150' cy='225' r='6' fill='rgba(58,140,133,0.45)'/%3E%3Cpath d='M190,205 l10,15 l-20,3 z' fill='rgba(178,79,126,0.35)' transform='rotate(10 195 217)'/%3E%3Ccircle cx='260' cy='240' r='5' fill='rgba(122,94,168,0.45)'/%3E%3Cpolygon points='30,270 52,270 41,292' fill='rgba(58,140,133,0.35)' transform='rotate(-12 41 280)'/%3E%3Cpath d='M90,280 C100,265 115,295 125,280' stroke='rgba(211,162,74,0.4)' stroke-width='4' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='170' cy='270' r='6' fill='rgba(178,79,126,0.4)'/%3E%3Cpolygon points='210,260 232,260 221,282' fill='rgba(122,94,168,0.35)' transform='rotate(20 221 270)'/%3E%3C/g%3E%3C/svg%3E");
-  background-repeat: no-repeat, repeat;
-  background-size: 100% 640px, 300px 300px;
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-archivo), Arial, Helvetica, sans-serif;
 }
 
 @layer components {
@@ -63,11 +68,11 @@ body {
   }
 
   .font-display {
-    font-family: var(--font-display), Georgia, serif;
+    font-family: var(--font-display), Arial Black, sans-serif;
   }
 
   .eyebrow {
-    @apply text-xs font-semibold uppercase tracking-[0.14em];
+    @apply text-xs font-bold uppercase tracking-[0.14em];
     color: var(--accent);
   }
 
@@ -77,13 +82,13 @@ body {
   }
 
   .card {
-    @apply rounded-xl border p-5;
+    @apply rounded-lg border p-5;
     background: var(--surface);
     border-color: var(--border);
   }
 
   .card-flat {
-    @apply rounded-xl border p-4 transition-colors;
+    @apply rounded-lg border p-4 transition-colors;
     background: var(--surface);
     border-color: var(--border);
   }
@@ -93,7 +98,7 @@ body {
   }
 
   .btn-primary {
-    @apply rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    @apply rounded-lg px-5 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
     background: var(--accent);
     color: var(--accent-foreground);
   }
@@ -102,13 +107,13 @@ body {
   }
 
   .btn-secondary {
-    @apply rounded-lg border px-5 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
-    border-color: var(--border);
+    @apply rounded-lg border-2 px-5 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    border-color: var(--foreground);
     color: var(--foreground);
   }
   .btn-secondary:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
+    background: var(--foreground);
+    color: var(--background);
   }
 
   .chip {
@@ -126,7 +131,7 @@ body {
   }
 
   .notice {
-    @apply rounded-xl border p-6;
+    @apply rounded-lg border p-6;
   }
   .notice-success {
     background: var(--success-bg);
@@ -148,5 +153,23 @@ body {
     @apply flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center;
     background: linear-gradient(160deg, var(--surface-hover), var(--surface));
     color: var(--muted);
+  }
+
+  /* Canted "film-box" tag -- the one loud device this system allows,
+     used sparingly for a handful of real badges (21+, outdoor, sold
+     out), never for body text or routine UI chrome. */
+  .stamp-tag {
+    @apply inline-flex items-center rounded border-2 px-2.5 py-1 text-[11px] font-black uppercase tracking-wide;
+    border-color: var(--foreground);
+    transform: rotate(-2deg);
+  }
+  .stamp-tag-gold {
+    background: var(--gold);
+    color: var(--gold-foreground);
+  }
+  .stamp-tag-accent {
+    background: var(--accent);
+    color: var(--accent-foreground);
+    transform: rotate(2deg);
   }
 }
