@@ -23,8 +23,8 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-16">
-      <section className="overflow-hidden rounded-lg border-2 border-[var(--foreground)]">
-        <div className="px-6 py-16 text-center sm:px-12 sm:py-24" style={{ background: "var(--gold)" }}>
+      <section className="panel overflow-hidden">
+        <div className="halftone halftone-hero px-6 py-16 text-center sm:px-12 sm:py-24" style={{ background: "var(--gold)" }}>
           <div className="eyebrow mb-3">Joplin, MO</div>
           <h1 className="font-display mx-auto max-w-3xl text-4xl leading-[1.02] sm:text-6xl" style={{ color: "var(--gold-foreground)" }}>
             Movies, food, and drinks in one place.
@@ -56,21 +56,24 @@ export default async function HomePage() {
         {screenings.length === 0 ? (
           <div className="card text-sm text-[var(--muted)]">No screenings scheduled yet — check back soon.</div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-5 pt-3 sm:grid-cols-2 lg:grid-cols-3">
             {screenings.map((s) => (
-              <Link key={s.id} href={`/showtimes/${s.id}`} className="card-flat !p-3">
-                <div className="relative">
-                  <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
-                  {s.room.name.toLowerCase().includes("outdoor") && (
-                    <span className="stamp-tag stamp-tag-gold absolute top-2 left-2">Outdoor</span>
-                  )}
+              <Link key={s.id} href={`/showtimes/${s.id}`} className="panel relative block bg-[var(--surface)] transition-transform hover:-translate-y-0.5">
+                <div className="overflow-hidden rounded-[inherit]">
+                  <div className="relative">
+                    <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
+                    {s.room.name.toLowerCase().includes("outdoor") && (
+                      <span className="stamp-tag stamp-tag-gold absolute top-2 left-2">Outdoor</span>
+                    )}
+                  </div>
+                  <div className="px-3 py-3">
+                    <div className="font-display text-lg leading-tight">{s.movie.title}</div>
+                    <div className="mt-1 font-mono text-xs text-[var(--muted)]">
+                      {formatShowtime(s.starts_at)} · {s.room.name}
+                    </div>
+                  </div>
                 </div>
-                <div className="mt-3 px-1">
-                  <div className="font-display text-lg leading-tight">{s.movie.title}</div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">{formatShowtime(s.starts_at)}</div>
-                  <div className="text-sm text-[var(--muted)]">{s.room.name}</div>
-                  <div className="mt-2 text-sm font-bold text-[var(--accent)]">${s.ticket_price.toFixed(2)}</div>
-                </div>
+                <span className="stamp-tag stamp-tag-gold absolute -top-3 right-3">${s.ticket_price.toFixed(2)}</span>
               </Link>
             ))}
           </div>
@@ -121,46 +124,84 @@ export default async function HomePage() {
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2">
-        <div className="card flex flex-col">
-          <div className="relative mb-4 aspect-[3/2] overflow-hidden rounded-lg">
-            <Image src="/photos/theater-popcorn-couple.jpg" alt="" fill sizes="(min-width: 640px) 400px, 100vw" className="object-cover" />
+      <section>
+        <div className="eyebrow mb-2">Become a member</div>
+        <h2 className="font-display max-w-xl text-2xl">Skip the day pass. Walk in free, every time.</h2>
+        <p className="mt-2 max-w-xl text-sm text-[var(--muted)]">
+          Insiders is free to join. Insiders+ members never pay at the door again — one flat monthly rate covers
+          unlimited entry to every screening.
+        </p>
+        <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_1.4fr] lg:items-stretch">
+          <div className="card flex flex-col">
+            <div className="text-xs font-bold tracking-wide text-[var(--muted)] uppercase">Insiders</div>
+            <div className="font-display mt-1 text-3xl">Free</div>
+            <ul className="mt-4 flex-1 space-y-2 text-sm text-[var(--muted)]">
+              <li>$5 day pass (+$3 new releases)</li>
+              <li>Points on every purchase</li>
+              <li>Mailing list &amp; weekly updates</li>
+            </ul>
+            <Link href="/membership" className="btn-secondary mt-5 self-start">
+              Join free
+            </Link>
           </div>
-          <div className="eyebrow mb-2">Become a member</div>
-          <h2 className="font-display text-xl">Free to join, unlimited with Insiders+</h2>
-          <div className="mt-3 grid flex-1 grid-cols-2 gap-4 text-sm">
-            <div>
-              <div className="font-bold">Insiders — Free</div>
-              <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
-                <li>$5 day pass</li>
-                <li>Points on every purchase</li>
-              </ul>
+
+          <div className="panel panel-accent flex flex-col p-6" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+            <span className="stamp-tag stamp-tag-gold self-start">Most popular</span>
+            <div className="font-display mt-4 text-3xl">Insiders+</div>
+            <div className="mt-1 flex items-baseline gap-1.5">
+              <span className="font-display text-5xl" style={{ color: "var(--gold)" }}>
+                $15
+              </span>
+              <span className="text-sm opacity-70">/ month</span>
             </div>
-            <div>
-              <div className="font-bold text-[var(--accent)]">Insiders+ — from $10/mo</div>
-              <ul className="mt-1 space-y-0.5 text-[var(--muted)]">
-                <li>Unlimited free entry</li>
-                <li>Concession discounts</li>
-              </ul>
-            </div>
+            <ul className="mt-5 flex-1 space-y-2.5 text-sm">
+              <li className="flex gap-2">
+                <span style={{ color: "var(--gold)" }}>✓</span>
+                <span>
+                  <strong>Unlimited free entry</strong> — every screening, no ticket cost, ever
+                </span>
+              </li>
+              <li className="flex gap-2">
+                <span style={{ color: "var(--gold)" }}>✓</span>
+                <span>Faster points on every purchase</span>
+              </li>
+              <li className="flex gap-2">
+                <span style={{ color: "var(--gold)" }}>✓</span>
+                <span>Priority access to weekly titles &amp; exclusive events</span>
+              </li>
+              <li className="flex gap-2">
+                <span style={{ color: "var(--gold)" }}>✓</span>
+                <span>Concession &amp; merch discounts</span>
+              </li>
+            </ul>
+            <Link href="/membership" className="btn-primary mt-5 self-start">
+              Join Insiders+
+            </Link>
+            <div className="mt-3 text-xs opacity-60">Seniors $12/mo · Students $10/mo in person with ID</div>
           </div>
-          <Link href="/membership" className="btn-secondary mt-4 self-start">
-            Compare membership tiers
-          </Link>
         </div>
-        <div className="card flex flex-col">
-          <div className="relative mb-4 aspect-[3/2] overflow-hidden rounded-lg">
+      </section>
+
+      <section className="card">
+        <div className="grid gap-6 sm:grid-cols-[1.2fr_1fr] sm:items-center">
+          <div>
+            <div className="eyebrow mb-2">Food &amp; drink</div>
+            <h2 className="font-display text-xl">A full menu, made for movie night</h2>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails. Try one of our
+              movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              <span className="stamp-tag stamp-tag-gold">Now serving</span>
+              <span className="stamp-tag stamp-tag-accent">21+</span>
+            </div>
+            <Link href="/menu" className="btn-secondary mt-5 self-start">
+              View our menu
+            </Link>
+          </div>
+          <div className="relative aspect-[3/2] overflow-hidden rounded-lg border-2 border-[var(--foreground)]">
             <Image src="/photos/popcorn-reeses.png" alt="" fill sizes="(min-width: 640px) 400px, 100vw" className="object-cover" />
           </div>
-          <div className="eyebrow mb-2">Food &amp; drink</div>
-          <h2 className="font-display text-xl">A full menu, made for movie night</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails. Try one of our
-            movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.
-          </p>
-          <Link href="/menu" className="btn-secondary mt-4 self-start">
-            View our menu
-          </Link>
         </div>
       </section>
 

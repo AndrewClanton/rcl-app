@@ -172,4 +172,46 @@ body {
     color: var(--accent-foreground);
     transform: rotate(2deg);
   }
+
+  /* Hard-edged "comic panel" look -- 2px ink border plus a solid, unblurred
+     offset shadow -- the boxing convention from the print mockups. Reserved
+     for a handful of feature moments (hero, pricing card, feature cards),
+     not every piece of UI chrome. */
+  .panel {
+    @apply rounded-lg border-2;
+    border-color: var(--foreground);
+    box-shadow: 4px 4px 0 var(--foreground);
+  }
+  .panel-accent {
+    box-shadow: 4px 4px 0 var(--accent);
+  }
+
+  /* Ben-Day dot-screen texture, faded out with a mask so it reads as a
+     print artifact rather than a stamped pattern. Set --dot/--dot-size/
+     --dot-blend/--dot-opacity/--dot-dir per use. */
+  .halftone {
+    position: relative;
+    overflow: hidden;
+  }
+  .halftone::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: radial-gradient(circle, var(--foreground) 34%, transparent 36%);
+    background-size: 11px 11px;
+    mix-blend-mode: multiply;
+    -webkit-mask-image: linear-gradient(90deg, transparent, black);
+    mask-image: linear-gradient(90deg, transparent, black);
+    opacity: 0.9;
+  }
+  /* Hero variant -- red dots over the gold band, faded in from the left. */
+  .halftone-hero::after {
+    background-image: radial-gradient(circle, var(--accent) 34%, transparent 36%);
+    background-size: 13px 13px;
+    mix-blend-mode: multiply;
+    -webkit-mask-image: linear-gradient(100deg, transparent, black);
+    mask-image: linear-gradient(100deg, transparent, black);
+    opacity: 0.35;
+  }
 }

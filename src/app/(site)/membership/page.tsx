@@ -46,7 +46,7 @@ export default async function MembershipPage({
               </th>
               <th className="px-4 py-3 font-medium text-[var(--accent)]">
                 Insiders+
-                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">from $10/mo</div>
+                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">$15/mo</div>
               </th>
             </tr>
           </thead>
