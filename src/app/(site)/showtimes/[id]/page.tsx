@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getScreeningById } from "@/lib/data/screening-detail";
+import { isWithinPublicWindow } from "@/lib/data/screenings";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
@@ -15,7 +16,7 @@ function money(n: number) {
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const screening = await getScreeningById(id);
-  if (!screening) return { title: "Showtime" };
+  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime" };
 
   const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
     weekday: "long",
@@ -48,7 +49,7 @@ export default async function ScreeningDetailPage({
   const { id } = await params;
   const { checkout, session_id, booking_id } = await searchParams;
   const screening = await getScreeningById(id);
-  if (!screening) notFound();
+  if (!screening || !isWithinPublicWindow(screening.starts_at)) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
 

@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { getUpcomingScreenings } from "@/lib/data/screenings";
+import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ function formatShowtime(iso: string) {
 const DIRECTIONS_URL = "https://www.google.com/maps/search/?api=1&query=715+E+Broadway,+Joplin,+MO+64801";
 
 export default async function HomePage() {
-  const screenings = (await getUpcomingScreenings()).slice(0, 6);
+  const screenings = (await getPubliclyVisibleScreenings()).slice(0, 6);
 
   return (
     <div className="space-y-16">

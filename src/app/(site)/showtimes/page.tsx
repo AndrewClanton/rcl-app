@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getUpcomingScreenings } from "@/lib/data/screenings";
+import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import type { Screening } from "@/lib/types";
 
@@ -31,12 +31,19 @@ function groupByDate(screenings: Screening[]) {
 }
 
 export default async function ShowtimesPage() {
-  const screenings = await getUpcomingScreenings();
+  const screenings = await getPubliclyVisibleScreenings();
   const groups = groupByDate(screenings);
 
   return (
     <div>
-      <h1 className="font-display mb-8 text-3xl font-semibold">Showtimes</h1>
+      <h1 className="font-display mb-2 text-3xl font-semibold">Showtimes</h1>
+      <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
+        Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Check back regularly, or{" "}
+        <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="font-bold text-[var(--accent)] hover:underline">
+          ask us
+        </a>{" "}
+        what&apos;s coming up.
+      </p>
       {screenings.length === 0 ? (
         <div className="card text-sm text-[var(--muted)]">No screenings scheduled yet — check back soon.</div>
       ) : (

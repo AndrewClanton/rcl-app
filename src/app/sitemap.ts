@@ -1,6 +1,6 @@
 import type { MetadataRoute } from "next";
 import { SITE_URL } from "@/lib/site";
-import { getUpcomingScreenings } from "@/lib/data/screenings";
+import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 
 const STATIC_ROUTES: MetadataRoute.Sitemap = [
   { url: `${SITE_URL}/`, changeFrequency: "daily", priority: 1 },
@@ -8,12 +8,13 @@ const STATIC_ROUTES: MetadataRoute.Sitemap = [
   { url: `${SITE_URL}/menu`, changeFrequency: "weekly", priority: 0.7 },
   { url: `${SITE_URL}/membership`, changeFrequency: "monthly", priority: 0.7 },
   { url: `${SITE_URL}/events`, changeFrequency: "monthly", priority: 0.6 },
+  { url: `${SITE_URL}/booths`, changeFrequency: "monthly", priority: 0.6 },
   { url: `${SITE_URL}/about`, changeFrequency: "monthly", priority: 0.6 },
 ];
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   try {
-    const screenings = await getUpcomingScreenings();
+    const screenings = await getPubliclyVisibleScreenings();
     const screeningRoutes: MetadataRoute.Sitemap = screenings.map((s) => ({
       url: `${SITE_URL}/showtimes/${s.id}`,
       changeFrequency: "daily",
