@@ -272,6 +272,8 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
   );
 }
 
+const SCREENING_ROW_GRID = "grid grid-cols-[1.6fr_1.3fr_1fr_60px_56px_72px] items-center gap-3";
+
 function UpcomingScreenings({ screenings }: { screenings: Screening[] }) {
   const [pending, run] = useRefreshingAction();
   return (
@@ -280,27 +282,41 @@ function UpcomingScreenings({ screenings }: { screenings: Screening[] }) {
       {screenings.length === 0 ? (
         <div className="text-sm text-[var(--muted)]">No screenings scheduled yet.</div>
       ) : (
-        <div className="divide-y divide-[var(--border)] ">
-          {screenings.map((s) => (
-            <div key={s.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
-              <span className="font-medium">{s.movie.title}</span>
-              <span className="text-[var(--muted)]">
-                {new Date(s.starts_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-              </span>
-              <span className="text-[var(--muted)]">{s.room.name}</span>
-              <span className="text-[var(--muted)]">{s.ticket_price === 0 ? "Free" : money(s.ticket_price)}</span>
-              <span className="text-[var(--muted)]">cap {s.capacity}</span>
-              <button
-                className="ml-auto rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
-                disabled={pending}
-                onClick={() => {
-                  if (confirm(`Remove this screening of "${s.movie.title}"?`)) run(() => deleteScreening(s.id));
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
+        <div className="min-w-[560px] overflow-x-auto text-sm">
+          <div className={`${SCREENING_ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
+            <span>Movie</span>
+            <span>When</span>
+            <span>Room</span>
+            <span className="text-right">Price</span>
+            <span className="text-right">Cap</span>
+            <span />
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {screenings.map((s) => (
+              <div key={s.id} className={`${SCREENING_ROW_GRID} py-2`}>
+                <span className="truncate font-medium" title={s.movie.title}>
+                  {s.movie.title}
+                </span>
+                <span className="text-[var(--muted)]">
+                  {new Date(s.starts_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
+                <span className="truncate text-[var(--muted)]" title={s.room.name}>
+                  {s.room.name}
+                </span>
+                <span className="text-right text-[var(--muted)]">{s.ticket_price === 0 ? "Free" : money(s.ticket_price)}</span>
+                <span className="text-right text-[var(--muted)]">{s.capacity}</span>
+                <button
+                  className="justify-self-end rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "
+                  disabled={pending}
+                  onClick={() => {
+                    if (confirm(`Remove this screening of "${s.movie.title}"?`)) run(() => deleteScreening(s.id));
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </section>
