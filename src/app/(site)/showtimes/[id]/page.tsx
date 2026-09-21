@@ -103,7 +103,9 @@ export default async function ScreeningDetailPage({
             {screening.movie.rating ? ` · ${screening.movie.rating}` : ""}
           </div>
           {screening.movie.synopsis && <p className="mt-3 text-sm text-[var(--muted)]">{screening.movie.synopsis}</p>}
-          <div className="mt-3 text-lg font-semibold text-[var(--accent)]">{money(screening.ticket_price)} / ticket</div>
+          <div className="mt-3 text-lg font-semibold text-[var(--accent)]">
+            {screening.ticket_price === 0 ? "Free" : `${money(screening.ticket_price)} / ticket`}
+          </div>
         </div>
       </div>
 

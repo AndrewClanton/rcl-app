@@ -43,6 +43,30 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     throw new Error(`Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.`);
   }
 
+  const origin = await siteOrigin();
+
+  // Free screenings (the outdoor cinema, sponsored by the Royale Cinema
+  // Project) skip Stripe entirely -- there's no reason to send someone to a
+  // payment processor to pay nothing.
+  if (screening.ticket_price === 0) {
+    const { data: member } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
+    const { data: booking, error: insertErr } = await supabase
+      .from("bookings")
+      .insert({
+        screening_id: fields.screeningId,
+        member_id: member?.id ?? null,
+        customer_name: name,
+        customer_email: email,
+        quantity: fields.quantity,
+        unit_price: 0,
+        status: "confirmed",
+      })
+      .select("id")
+      .single();
+    if (insertErr) throw insertErr;
+    return { url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
+  }
+
   // Insiders+ members get unlimited free entry (their own ticket) --
   // matching the old site's booking flow, which separated "free tickets"
   // (covered by membership) from "additional passes" (always charged).
@@ -50,8 +74,6 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
   const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
   const freeQuantity = member?.tier === "Insiders+" ? Math.min(1, fields.quantity) : 0;
   const paidQuantity = fields.quantity - freeQuantity;
-
-  const origin = await siteOrigin();
 
   if (paidQuantity === 0) {
     // Fully covered by membership -- no payment needed, confirm immediately.

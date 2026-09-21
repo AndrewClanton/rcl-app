@@ -149,15 +149,23 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   );
 }
 
+function isOutdoorRoom(room: Room | undefined) {
+  return !!room?.name.toLowerCase().includes("outdoor");
+}
+
 function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] }) {
   const [pending, run] = useRefreshingAction();
   const screeningRooms = rooms.filter((r) => r.is_screening_room);
+  const initialRoom = screeningRooms[0];
   const [movieId, setMovieId] = useState("");
-  const [roomId, setRoomId] = useState(screeningRooms[0]?.id ?? "");
+  const [roomId, setRoomId] = useState(initialRoom?.id ?? "");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
-  const [price, setPrice] = useState("8");
-  const [capacity, setCapacity] = useState(String(screeningRooms[0]?.capacity ?? ""));
+  const [price, setPrice] = useState(isOutdoorRoom(initialRoom) ? "0" : "8");
+  const [capacity, setCapacity] = useState(String(initialRoom?.capacity ?? ""));
+
+  const selectedRoom = screeningRooms.find((r) => r.id === roomId);
+  const outdoor = isOutdoorRoom(selectedRoom);
 
   const canSubmit = movieId && roomId && date && time && parseFloat(price) >= 0 && parseInt(capacity, 10) > 0;
 
@@ -189,6 +197,7 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
               setRoomId(e.target.value);
               const r = screeningRooms.find((r) => r.id === e.target.value);
               if (r) setCapacity(String(r.capacity));
+              if (isOutdoorRoom(r)) setPrice("0");
             }}
           >
             {screeningRooms.map((r) => (
@@ -222,10 +231,12 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
             type="number"
             step="0.01"
             min="0"
-            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
+            disabled={outdoor}
+            className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm disabled:opacity-50 "
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
+          {outdoor && <div className="mt-0.5 text-[10px] text-[var(--muted)]">Free — sponsored by the Royale Cinema Project</div>}
         </div>
         <div>
           <label className="mb-1 block text-xs text-[var(--muted)]">Capacity</label>
@@ -277,7 +288,7 @@ function UpcomingScreenings({ screenings }: { screenings: Screening[] }) {
                 {new Date(s.starts_at).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
               </span>
               <span className="text-[var(--muted)]">{s.room.name}</span>
-              <span className="text-[var(--muted)]">{money(s.ticket_price)}</span>
+              <span className="text-[var(--muted)]">{s.ticket_price === 0 ? "Free" : money(s.ticket_price)}</span>
               <span className="text-[var(--muted)]">cap {s.capacity}</span>
               <button
                 className="ml-auto rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] "

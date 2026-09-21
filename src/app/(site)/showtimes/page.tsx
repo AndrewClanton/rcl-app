@@ -69,7 +69,7 @@ export default async function ShowtimesPage() {
                           {s.movie.rating ? ` · ${s.movie.rating}` : ""}
                         </div>
                       </div>
-                      <div className="text-sm font-semibold text-[var(--accent)]">${s.ticket_price.toFixed(2)}</div>
+                      <div className="text-sm font-semibold text-[var(--accent)]">{s.ticket_price === 0 ? "Free" : `$${s.ticket_price.toFixed(2)}`}</div>
                     </div>
                   </Link>
                 ))}
