@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { getStripe } from "@/lib/stripe";
+import { getCashAllocationForDate, type CashAllocation } from "@/lib/data/reports";
+
+export async function getCashAllocation(date: string): Promise<CashAllocation> {
+  return getCashAllocationForDate(date);
+}
 
 export async function verifyManagerPin(pin: string): Promise<boolean> {
   if (!pin) return false;

@@ -316,6 +316,125 @@ export async function getPourCostReport(): Promise<PourCostRow[]> {
   return rows;
 }
 
+// Central time, fixed -05:00 (CDT) offset -- same simplification the rest
+// of the codebase uses for one-off Central-time conversions. Drifts an hour
+// during the CST months (roughly early Nov - early Mar); not worth a tz
+// library for a same-day cash report a human reviews before moving money.
+function centralWindowToUtc(dateStr: string, startTime: string, endTime: string) {
+  return {
+    start: new Date(`${dateStr}T${startTime}:00-05:00`).toISOString(),
+    end: new Date(`${dateStr}T${endTime}:00-05:00`).toISOString(),
+  };
+}
+
+const DAY_START = "06:30";
+const DAY_END = "22:30";
+const TAX_RATE = 0.1;
+const BOX_OFFICE_PER_TICKET = 4;
+const INVENTORY_SHARE = 0.2;
+const EXPENSE_SHARE = 0.8;
+
+// Maps a menu_categories.key to which cash-allocation bucket it falls in.
+// 'sweet' (candy) and 'tickets' (POS-sold event/day-pass items, distinct
+// from the movie-ticket `bookings` table) aren't in Nathan's 4 named
+// categories (food/coffee/soda/liquor) -- bucketed as "other" rather than
+// silently folded into one of the four, so the report doesn't misrepresent
+// what it's including.
+const CATEGORY_BUCKET: Record<string, "food" | "coffee" | "soda" | "liquor"> = {
+  grub: "food",
+  caffe: "coffee",
+  rad: "soda",
+  beer: "liquor",
+  wine: "liquor",
+  cocktails: "liquor",
+  shots: "liquor",
+  spirits: "liquor",
+};
+
+export interface CashAllocation {
+  date: string;
+  windowLabel: string;
+  ticketCount: number;
+  paidTicketCount: number;
+  ticketRevenue: number;
+  boothRevenue: number;
+  categoryRevenue: { food: number; coffee: number; soda: number; liquor: number; other: number };
+  totalSales: number;
+  taxAccount: number;
+  boxOfficeAccount: number;
+  inventoryAccount: number;
+  expenseAccount: number;
+}
+
+// Splits a day's activity (6:30am-10:30pm Central) across the 4 accounts
+// Nathan asked for: 10% of total sales to the tax account, $4/paid movie
+// ticket to the box office account, and food/coffee/soda/liquor sales split
+// 20% inventory-purchasing / 80% expense. These are independent
+// calculations, not a sequential waterfall -- e.g. tax is 10% of
+// *everything* (including ticket and booth revenue), so the 4 figures
+// won't necessarily sum to totalSales. Anything not explicitly covered by
+// one of Nathan's rules (net ticket/booth revenue beyond their own
+// carve-outs, candy, POS "tickets and events" items) isn't assigned to an
+// account here -- shown in categoryRevenue.other instead of guessed at.
+export async function getCashAllocationForDate(date: string): Promise<CashAllocation> {
+  const supabase = createAdminClient();
+  const { start, end } = centralWindowToUtc(date, DAY_START, DAY_END);
+
+  const [{ data: orders, error: ordersErr }, { data: bookings, error: bookingsErr }, { data: boothReservations, error: boothErr }, { data: menuItems, error: menuErr }, { data: categories, error: catErr }] =
+    await Promise.all([
+      supabase.from("orders").select("id").eq("status", "completed").gte("created_at", start).lt("created_at", end),
+      supabase.from("bookings").select("quantity, unit_price").eq("status", "confirmed").gte("created_at", start).lt("created_at", end),
+      supabase.from("booth_reservations").select("fee_amount").eq("status", "confirmed").gte("created_at", start).lt("created_at", end),
+      supabase.from("menu_items").select("id, category_id"),
+      supabase.from("menu_categories").select("id, key"),
+    ]);
+  if (ordersErr) throw ordersErr;
+  if (bookingsErr) throw bookingsErr;
+  if (boothErr) throw boothErr;
+  if (menuErr) throw menuErr;
+  if (catErr) throw catErr;
+
+  const categoryKeyById = new Map((categories ?? []).map((c) => [c.id, c.key]));
+  const bucketByMenuItemId = new Map((menuItems ?? []).map((m) => [m.id, CATEGORY_BUCKET[categoryKeyById.get(m.category_id) ?? ""]]));
+
+  const orderIds = (orders ?? []).map((o) => o.id);
+  let orderItems: { menu_item_id: string | null; unit_price: number; quantity: number; is_alcohol: boolean }[] = [];
+  if (orderIds.length > 0) {
+    const { data, error } = await supabase.from("order_items").select("menu_item_id, unit_price, quantity, is_alcohol").in("order_id", orderIds);
+    if (error) throw error;
+    orderItems = data ?? [];
+  }
+
+  const categoryRevenue = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
+  for (const oi of orderItems) {
+    const lineTotal = oi.unit_price * oi.quantity;
+    const bucket = oi.is_alcohol ? "liquor" : oi.menu_item_id ? bucketByMenuItemId.get(oi.menu_item_id) : undefined;
+    categoryRevenue[bucket ?? "other"] += lineTotal;
+  }
+
+  const ticketCount = (bookings ?? []).reduce((s, b) => s + b.quantity, 0);
+  const paidTicketCount = (bookings ?? []).filter((b) => b.unit_price > 0).reduce((s, b) => s + b.quantity, 0);
+  const ticketRevenue = (bookings ?? []).reduce((s, b) => s + b.quantity * b.unit_price, 0);
+  const boothRevenue = (boothReservations ?? []).reduce((s, r) => s + r.fee_amount, 0);
+  const foodDrinkTotal = categoryRevenue.food + categoryRevenue.coffee + categoryRevenue.soda + categoryRevenue.liquor;
+  const totalSales = ticketRevenue + boothRevenue + foodDrinkTotal + categoryRevenue.other;
+
+  return {
+    date,
+    windowLabel: "6:30 AM – 10:30 PM",
+    ticketCount,
+    paidTicketCount,
+    ticketRevenue,
+    boothRevenue,
+    categoryRevenue,
+    totalSales,
+    taxAccount: totalSales * TAX_RATE,
+    boxOfficeAccount: paidTicketCount * BOX_OFFICE_PER_TICKET,
+    inventoryAccount: foodDrinkTotal * INVENTORY_SHARE,
+    expenseAccount: foodDrinkTotal * EXPENSE_SHARE,
+  };
+}
+
 export interface DashboardSummary {
   todaysRevenue: number;
   todaysOrders: number;
