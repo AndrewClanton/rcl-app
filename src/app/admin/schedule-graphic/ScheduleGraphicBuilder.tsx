@@ -89,7 +89,7 @@ export default function ScheduleGraphicBuilder({
   const [isPending, startTransition] = useTransition();
   const [startDate, setStartDate] = useState(todayCentral());
   const [days, setDays] = useState(7);
-  const [format, setFormat] = useState<"grid" | "banner">("grid");
+  const [format, setFormat] = useState<"grid" | "banner" | "portrait">("grid");
   const [planAheadNote, setPlanAheadNote] = useState("");
   const [excludedScreeningIds, setExcludedScreeningIds] = useState<Set<string>>(new Set());
   const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
@@ -218,12 +218,18 @@ export default function ScheduleGraphicBuilder({
 
           <div className="mt-3">
             <label className="mb-1 block text-xs text-[var(--muted)]">Shape</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "grid" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
                 onClick={() => setFormat("grid")}
               >
                 Full-page grid (1920×1080)
+              </button>
+              <button
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "portrait" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
+                onClick={() => setFormat("portrait")}
+              >
+                Portrait, for phones (1080×1920)
               </button>
               <button
                 className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "banner" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}

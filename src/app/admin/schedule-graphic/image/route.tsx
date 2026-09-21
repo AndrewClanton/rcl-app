@@ -8,42 +8,52 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 
 const CENTRAL_TZ = "America/Chicago";
-const BG = "#0b0a0f";
-const SURFACE = "#16131c";
-const BORDER = "#2c2632";
-const FOREGROUND = "#f4ede0";
-const MUTED = "#a79b8c";
-const ACCENT = "#d3a24a";
-const ACCENT_FG = "#1a1206";
-const TEAL = "#3a8c85";
-const MAGENTA = "#b24f7e";
-const WARN_BG = "#241c0d";
-const WARN_BORDER = "#6b4f1a";
-const WARN_TEXT = "#f0c568";
-const OUTDOOR_BG = "#10241a";
-const OUTDOOR_BORDER = "#2c5c3f";
-const OUTDOOR_TEXT = "#8fe3ab";
-const NOTE_BG = "#1c1c24";
-const NOTE_BORDER = "#3c3c48";
-const NOTE_TEXT = "#c7c7d4";
 
-const DAY_HEADER_COLORS = [ACCENT, TEAL, MAGENTA];
+// Matches the site's own design tokens (src/app/globals.css) -- Satori
+// renders in total isolation from the app's CSS, so these have to be
+// literal hex values, not var() references.
+const BG = "#f8f5ec";
+const SURFACE = "#ffffff";
+const SURFACE_HOVER = "#f2ecd8";
+const BORDER = "#e3ddc9";
+const INK = "#14110c";
+const MUTED = "#6b6455";
+const ACCENT = "#ed1c24";
+const ACCENT_FG = "#ffffff";
+const GOLD = "#ffc72c";
+const GOLD_FG = "#14110c";
+const WARN_BG = "#fdf1d6";
+const WARN_BORDER = "#e8c266";
+const WARN_TEXT = "#8a5a0a";
+const NOTE_TEXT = "#4a4438";
+
+// Day headers alternate gold/red -- the same two-color "stamp" pairing
+// used for badges across the real site, instead of a 3-color rainbow that
+// doesn't exist anywhere else in the brand.
+const DAY_HEADERS = [
+  { bg: GOLD, fg: GOLD_FG },
+  { bg: ACCENT, fg: ACCENT_FG },
+];
+
+const DISPLAY = "Archivo Black";
+const SANS = "Archivo";
+const MONO = "Space Mono";
 
 // Fonts don't depend on request data -- read once at module scope (Next's
 // own recommendation for ImageResponse) rather than on every request.
 const FONTS_DIR = join(process.cwd(), "src/app/admin/schedule-graphic/fonts");
 const fontsPromise = Promise.all([
-  readFile(join(FONTS_DIR, "PlayfairDisplay-Bold.ttf")),
-  readFile(join(FONTS_DIR, "PlayfairDisplay-SemiBold.ttf")),
-  readFile(join(FONTS_DIR, "Inter-Regular.ttf")),
-  readFile(join(FONTS_DIR, "Inter-SemiBold.ttf")),
-  readFile(join(FONTS_DIR, "Inter-ExtraBold.ttf")),
-]).then(([playfairBold, playfairSemi, interReg, interSemi, interExtra]) => [
-  { name: "Playfair Display", data: playfairBold, weight: 700 as const, style: "normal" as const },
-  { name: "Playfair Display", data: playfairSemi, weight: 600 as const, style: "normal" as const },
-  { name: "Inter", data: interReg, weight: 400 as const, style: "normal" as const },
-  { name: "Inter", data: interSemi, weight: 600 as const, style: "normal" as const },
-  { name: "Inter", data: interExtra, weight: 800 as const, style: "normal" as const },
+  readFile(join(FONTS_DIR, "ArchivoBlack-Regular.ttf")),
+  readFile(join(FONTS_DIR, "Archivo-Regular.ttf")),
+  readFile(join(FONTS_DIR, "Archivo-Bold.ttf")),
+  readFile(join(FONTS_DIR, "SpaceMono-Regular.ttf")),
+  readFile(join(FONTS_DIR, "SpaceMono-Bold.ttf")),
+]).then(([archivoBlack, archivoReg, archivoBold, monoReg, monoBold]) => [
+  { name: DISPLAY, data: archivoBlack, weight: 900 as const, style: "normal" as const },
+  { name: SANS, data: archivoReg, weight: 400 as const, style: "normal" as const },
+  { name: SANS, data: archivoBold, weight: 700 as const, style: "normal" as const },
+  { name: MONO, data: monoReg, weight: 400 as const, style: "normal" as const },
+  { name: MONO, data: monoBold, weight: 700 as const, style: "normal" as const },
 ]);
 
 interface ScreeningRow {
@@ -211,122 +221,172 @@ function groupByDay(screenings: ScreeningRow[], events: EventRow[], notes: NoteR
   return [...byDay.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 }
 
-function uniquePosters(screenings: ScreeningRow[]): { title: string; url: string }[] {
+function uniquePosters(screenings: ScreeningRow[], limit: number): { title: string; url: string }[] {
   const seen = new Map<string, string>();
   for (const s of screenings) {
     if (s.movie?.poster_path && !seen.has(s.movie.title)) {
       seen.set(s.movie.title, `https://image.tmdb.org/t/p/w185${s.movie.poster_path}`);
     }
   }
-  return [...seen.entries()].slice(0, 10).map(([title, url]) => ({ title, url }));
+  return [...seen.entries()].slice(0, limit).map(([title, url]) => ({ title, url }));
 }
 
-function EntryLine({ entry }: { entry: DayEntry }) {
+// A closed/empty day reads as a small, deliberate tag instead of a lone
+// giant word floating in a sea of blank space -- the actual fix for "too
+// much dead space" on light days, since there's no real content to pad it
+// out with.
+function ClosedTag({ size = "md" }: { size?: "sm" | "md" }) {
+  const fontSize = size === "sm" ? 11 : 13;
+  return (
+    <div
+      style={{
+        display: "flex",
+        fontFamily: DISPLAY,
+        fontSize,
+        letterSpacing: 1,
+        color: MUTED,
+        border: `1.5px solid ${BORDER}`,
+        borderRadius: 4,
+        padding: size === "sm" ? "3px 8px" : "4px 10px",
+      }}
+    >
+      CLOSED
+    </div>
+  );
+}
+
+function EntryLine({ entry, compact = false }: { entry: DayEntry; compact?: boolean }) {
+  const timeSize = compact ? 11 : 13;
+  const titleSize = compact ? 12.5 : 15;
   if (entry.kind === "event") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", backgroundColor: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
-        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 15, color: WARN_TEXT }}>
-          {entry.time} {entry.title}
+      <div style={{ display: "flex", flexDirection: "column", backgroundColor: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: 5, padding: "4px 8px" }}>
+        <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: titleSize, color: WARN_TEXT }}>
+          <span style={{ fontFamily: MONO, marginRight: 6 }}>{entry.time}</span>
+          {entry.title}
         </div>
-        {entry.sub && <div style={{ display: "flex", fontFamily: "Inter", fontSize: 11, color: MUTED }}>{entry.sub}</div>}
+        {entry.sub && !compact && <div style={{ display: "flex", fontFamily: SANS, fontSize: 10.5, color: MUTED }}>{entry.sub}</div>}
       </div>
     );
   }
   if (entry.kind === "note") {
     return (
-      <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 600, fontSize: 14, fontStyle: "italic", color: NOTE_TEXT, backgroundColor: NOTE_BG, border: `1px solid ${NOTE_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
-        {entry.time ? `${entry.time}: ` : ""}{entry.title}
+      <div
+        style={{
+          display: "flex",
+          fontFamily: SANS,
+          fontWeight: 600,
+          fontStyle: "italic",
+          fontSize: titleSize,
+          color: NOTE_TEXT,
+          backgroundColor: SURFACE_HOVER,
+          border: `1px solid ${BORDER}`,
+          borderRadius: 5,
+          padding: "4px 8px",
+        }}
+      >
+        {entry.time && <span style={{ fontFamily: MONO, fontStyle: "normal", marginRight: 6 }}>{entry.time}</span>}
+        {entry.title}
       </div>
     );
   }
   if (entry.outdoor) {
     return (
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: OUTDOOR_BG, border: `1px solid ${OUTDOOR_BORDER}`, borderRadius: 5, padding: "4px 7px" }}>
-        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: OUTDOOR_TEXT }}>
-          {entry.time}: {entry.title}
-        </div>
-        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 800, fontSize: 10.5, color: BG, backgroundColor: OUTDOOR_TEXT, borderRadius: 3, padding: "1px 5px", letterSpacing: 0.5 }}>
+      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 5, padding: "4px 8px" }}>
+        <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: INK }}>{entry.time}</span>
+        <span style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: titleSize, color: INK }}>{entry.title}</span>
+        <span style={{ display: "flex", fontFamily: DISPLAY, fontSize: 9.5, color: GOLD_FG, backgroundColor: GOLD, borderRadius: 3, padding: "2px 5px", letterSpacing: 0.4 }}>
           OUTDOOR
-        </div>
+        </span>
       </div>
     );
   }
   return (
-    <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: FOREGROUND, padding: "1px 2px" }}>
-      {entry.time}: {entry.title}
+    <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 6, padding: "2px 3px" }}>
+      <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: ACCENT }}>{entry.time}</span>
+      <span style={{ display: "flex", fontFamily: SANS, fontWeight: 600, fontSize: titleSize, color: INK }}>{entry.title}</span>
     </div>
   );
 }
 
 function DayCell({ day, colorIndex }: { day: DayGroup; colorIndex: number }) {
-  const headerColor = DAY_HEADER_COLORS[colorIndex % DAY_HEADER_COLORS.length];
+  const header = DAY_HEADERS[colorIndex % DAY_HEADERS.length];
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 8, overflow: "hidden" }}>
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 8, backgroundColor: headerColor, padding: "8px 12px" }}>
-        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 800, fontSize: 17, color: ACCENT_FG }}>{day.weekday}</div>
-        <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: ACCENT_FG, opacity: 0.75 }}>{day.dateLabel}</div>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 8, backgroundColor: header.bg, padding: "7px 12px" }}>
+        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 15, color: header.fg }}>{day.weekday}</div>
+        <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
       </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: day.entries.length === 0 ? "center" : "flex-start", alignItems: day.entries.length === 0 ? "center" : "stretch", padding: "8px 10px", gap: "4px" }}>
-        {day.entries.length === 0 ? (
-          <div style={{ display: "flex", fontFamily: "Playfair Display", fontWeight: 700, fontSize: 30, color: MUTED }}>CLOSED</div>
-        ) : (
-          day.entries.map((entry, i) => <EntryLine key={i} entry={entry} />)
-        )}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: day.entries.length === 0 ? "center" : "stretch", padding: "9px 10px", gap: "5px" }}>
+        {day.entries.length === 0 ? <ClosedTag /> : day.entries.map((entry, i) => <EntryLine key={i} entry={entry} />)}
       </div>
     </div>
   );
 }
 
+function GraphicHeader({ title, rangeLabel }: { title: string; rangeLabel: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, letterSpacing: 2, color: ACCENT }}>JOPLIN, MO</div>
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 38, color: INK, textAlign: "center", marginTop: 2 }}>{title}</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontSize: 14, color: MUTED, marginTop: 3 }}>{rangeLabel}</div>
+    </div>
+  );
+}
+
+function GraphicFooter({ fontSize = 13 }: { fontSize?: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", fontFamily: MONO, fontSize, color: MUTED }}>
+      715 E BROADWAY, JOPLIN MO · 417-281-4172
+    </div>
+  );
+}
+
 function renderGrid(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string, note: string) {
-  const posters = uniquePosters(allScreenings);
+  const posters = uniquePosters(allScreenings, 10);
   const gridDays = days.slice(0, 7);
   const firstRow = gridDays.slice(0, 4);
   const secondRow = gridDays.slice(4, 7);
 
   return (
-    <div style={{ width: "1920px", height: "1080px", display: "flex", flexDirection: "column", backgroundColor: BG, padding: "28px 34px", fontFamily: "Inter" }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ display: "flex", fontFamily: "Playfair Display", fontWeight: 700, fontSize: 46, color: ACCENT, textAlign: "center" }}>
-          ROYALE INSIDERS MOVIE LINEUP
-        </div>
-        <div style={{ display: "flex", fontFamily: "Inter", fontSize: 16, color: MUTED, marginTop: 2 }}>{rangeLabel}</div>
-      </div>
+    <div style={{ width: "1920px", height: "1080px", display: "flex", flexDirection: "column", backgroundColor: BG, padding: "22px 30px", fontFamily: SANS }}>
+      <GraphicHeader title="ROYALE INSIDERS MOVIE LINEUP" rangeLabel={rangeLabel} />
 
       {posters.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", gap: "10px", marginBottom: 16 }}>
+        <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", gap: "8px", margin: "10px 0" }}>
           {posters.map((p) => (
-            <img key={p.title} src={p.url} width={72} height={108} style={{ width: 72, height: 108, borderRadius: 5, objectFit: "cover", border: `1px solid ${BORDER}` }} />
+            <img key={p.title} src={p.url} width={58} height={87} style={{ width: 58, height: 87, borderRadius: 4, objectFit: "cover", border: `1.5px solid ${INK}` }} />
           ))}
         </div>
       )}
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "12px" }}>
-        <div style={{ display: "flex", flexDirection: "row", gap: "12px", flex: 1 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px", marginTop: posters.length > 0 ? 0 : 14 }}>
+        <div style={{ display: "flex", flexDirection: "row", gap: "10px", flex: 1 }}>
           {firstRow.map((day, i) => (
             <DayCell key={day.dateKey} day={day} colorIndex={i} />
           ))}
         </div>
-        <div style={{ display: "flex", flexDirection: "row", gap: "12px", flex: 1 }}>
+        <div style={{ display: "flex", flexDirection: "row", gap: "10px", flex: 1 }}>
           {secondRow.map((day, i) => (
             <DayCell key={day.dateKey} day={day} colorIndex={i + 4} />
           ))}
-          <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1px solid ${ACCENT}`, borderRadius: 8, overflow: "hidden" }}>
-            <div style={{ display: "flex", backgroundColor: ACCENT, padding: "8px 12px" }}>
-              <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 800, fontSize: 17, color: ACCENT_FG }}>PLAN AHEAD</div>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${ACCENT}`, borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ display: "flex", backgroundColor: ACCENT, padding: "7px 12px" }}>
+              <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 15, color: ACCENT_FG }}>PLAN AHEAD</div>
             </div>
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 14px" }}>
               {note ? (
-                <div style={{ display: "flex", fontFamily: "Playfair Display", fontWeight: 600, fontSize: 20, color: FOREGROUND, textAlign: "center" }}>{note}</div>
+                <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: 18, color: INK, textAlign: "center" }}>{note}</div>
               ) : (
-                <div style={{ display: "flex", fontFamily: "Inter", fontSize: 14, color: MUTED, textAlign: "center" }}>—</div>
+                <div style={{ display: "flex", fontFamily: MONO, fontSize: 13, color: MUTED, textAlign: "center" }}>—</div>
               )}
             </div>
           </div>
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", marginTop: 14, fontFamily: "Inter", fontSize: 14, color: MUTED }}>
-        715 E Broadway, Joplin, MO · 417-281-4172
+      <div style={{ display: "flex", marginTop: 14 }}>
+        <GraphicFooter />
       </div>
     </div>
   );
@@ -335,41 +395,49 @@ function renderGrid(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel:
 function renderBanner(days: DayGroup[], rangeLabel: string) {
   const shown = days.slice(0, 7);
   return (
-    <div style={{ width: "1200px", height: "628px", display: "flex", flexDirection: "column", backgroundColor: BG, fontFamily: "Inter" }}>
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", padding: "26px 40px 16px", borderBottom: `2px solid ${BORDER}` }}>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: "14px" }}>
-          <div style={{ display: "flex", fontFamily: "Playfair Display", fontWeight: 700, fontSize: 30, color: FOREGROUND }}>Royale Cinema Lounge</div>
-          <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: ACCENT }}>THIS WEEK</div>
+    <div style={{ width: "1200px", height: "628px", display: "flex", flexDirection: "column", backgroundColor: BG, fontFamily: SANS }}>
+      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", padding: "22px 32px 14px", borderBottom: `2px solid ${INK}` }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: "12px" }}>
+          <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 24, color: INK }}>ROYALE CINEMA LOUNGE</div>
+          <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: ACCENT }}>THIS WEEK</div>
         </div>
-        <div style={{ display: "flex", fontFamily: "Inter", fontSize: 15, color: MUTED }}>{rangeLabel}</div>
+        <div style={{ display: "flex", fontFamily: MONO, fontSize: 13, color: MUTED }}>{rangeLabel}</div>
       </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "row", padding: "16px 24px" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "row", padding: "14px 20px" }}>
         {shown.length === 0 ? (
-          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: "Inter", fontSize: 20, color: MUTED }}>No days selected</div>
+          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: SANS, fontSize: 18, color: MUTED }}>No days selected</div>
         ) : (
-          shown.map((day) => (
-            <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, padding: "0 8px", borderLeft: `1px solid ${BORDER}`, gap: "4px" }}>
-              <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 800, fontSize: 12, color: ACCENT }}>{day.weekday.slice(0, 3)}</div>
-              <div style={{ display: "flex", fontFamily: "Inter", fontSize: 10, color: MUTED, marginBottom: 4 }}>{day.dateLabel}</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+          shown.map((day, i) => (
+            <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, padding: "0 8px", borderLeft: i === 0 ? "none" : `1px solid ${BORDER}`, gap: "3px" }}>
+              <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 }}>
+                <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 13, color: ACCENT }}>{day.weekday.slice(0, 3)}</div>
+                <div style={{ display: "flex", fontFamily: MONO, fontSize: 10, color: MUTED }}>{day.dateLabel}</div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "center", gap: "4px", marginTop: 2 }}>
                 {day.entries.length === 0 ? (
-                  <div style={{ display: "flex", fontFamily: "Inter", fontWeight: 700, fontSize: 13, color: MUTED }}>CLOSED</div>
+                  <ClosedTag size="sm" />
                 ) : (
-                  day.entries.map((entry, i) => (
+                  day.entries.map((entry, i2) => (
                     <div
-                      key={i}
+                      key={i2}
                       style={{
                         display: "flex",
-                        fontFamily: "Inter",
+                        flexDirection: "row",
+                        flexWrap: "wrap",
+                        gap: 4,
+                        fontFamily: SANS,
                         fontStyle: entry.kind === "note" ? "italic" : "normal",
-                        fontWeight: entry.kind === "event" || entry.kind === "note" || entry.outdoor ? 700 : 400,
+                        fontWeight: entry.kind === "event" || entry.kind === "note" || entry.outdoor ? 700 : 600,
                         fontSize: 10.5,
-                        color: entry.kind === "event" ? WARN_TEXT : entry.kind === "note" ? NOTE_TEXT : entry.outdoor ? OUTDOOR_TEXT : FOREGROUND,
+                        color: entry.kind === "event" ? WARN_TEXT : entry.kind === "note" ? NOTE_TEXT : INK,
                       }}
                     >
-                      {entry.time} {entry.title}
-                      {entry.outdoor ? " (OUT)" : ""}
+                      <span style={{ display: "flex", fontFamily: MONO, color: entry.outdoor ? GOLD_FG : ACCENT }}>{entry.time}</span>
+                      <span style={{ display: "flex" }}>
+                        {entry.title}
+                        {entry.outdoor ? " (OUT)" : ""}
+                      </span>
                     </div>
                   ))
                 )}
@@ -379,8 +447,69 @@ function renderBanner(days: DayGroup[], rangeLabel: string) {
         )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", padding: "12px 0 18px", borderTop: `2px solid ${BORDER}`, fontFamily: "Inter", fontSize: 13, color: MUTED }}>
-        715 E Broadway, Joplin, MO · 417-281-4172
+      <div style={{ display: "flex", padding: "10px 0 16px", borderTop: `2px solid ${INK}` }}>
+        <GraphicFooter fontSize={12} />
+      </div>
+    </div>
+  );
+}
+
+// Phone-friendly: 7 days stacked full-width instead of a grid of narrow
+// columns, each getting an even share of the tall canvas (flex: 1) so a
+// light day reads as intentionally calm rather than as a gap in the
+// layout. Entries wrap left-to-right within a day's band instead of
+// forcing one entry per line, using the width as well as the height.
+function renderPortrait(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string) {
+  const shown = days.slice(0, 7);
+  const posters = uniquePosters(allScreenings, 6);
+
+  return (
+    <div style={{ width: "1080px", height: "1920px", display: "flex", flexDirection: "column", backgroundColor: BG, padding: "26px 26px 18px", fontFamily: SANS }}>
+      <GraphicHeader title="ROYALE INSIDERS MOVIE LINEUP" rangeLabel={rangeLabel} />
+
+      {posters.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", gap: "7px", margin: "12px 0 4px" }}>
+          {posters.map((p) => (
+            <img key={p.title} src={p.url} width={54} height={81} style={{ width: 54, height: 81, borderRadius: 4, objectFit: "cover", border: `1.5px solid ${INK}` }} />
+          ))}
+        </div>
+      )}
+
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px", marginTop: 14 }}>
+        {shown.length === 0 ? (
+          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: SANS, fontSize: 20, color: MUTED }}>No days selected</div>
+        ) : (
+          shown.map((day, i) => {
+            const header = DAY_HEADERS[i % DAY_HEADERS.length];
+            return (
+              <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 8, backgroundColor: header.bg, padding: "6px 14px" }}>
+                  <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 16, color: header.fg }}>{day.weekday}</div>
+                  <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
+                </div>
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "row",
+                    flexWrap: "wrap",
+                    alignContent: "center",
+                    justifyContent: day.entries.length === 0 ? "center" : "flex-start",
+                    alignItems: day.entries.length === 0 ? "center" : "flex-start",
+                    padding: "8px 12px",
+                    gap: "6px",
+                  }}
+                >
+                  {day.entries.length === 0 ? <ClosedTag /> : day.entries.map((entry, i2) => <EntryLine key={i2} entry={entry} compact />)}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div style={{ display: "flex", marginTop: 12 }}>
+        <GraphicFooter />
       </div>
     </div>
   );
@@ -391,7 +520,8 @@ export async function GET(request: NextRequest) {
   if (!session) return new Response("Unauthorized", { status: 401 });
 
   const { searchParams } = request.nextUrl;
-  const format = searchParams.get("format") === "banner" ? "banner" : "grid";
+  const formatParam = searchParams.get("format");
+  const format = formatParam === "banner" ? "banner" : formatParam === "portrait" ? "portrait" : "grid";
   const rangeLabel = searchParams.get("label") ?? "";
   const note = searchParams.get("note") ?? "";
   const rangeStart = searchParams.get("start");
@@ -422,9 +552,9 @@ export async function GET(request: NextRequest) {
   const days = groupByDay(screenings, events, notes, rangeStart, rangeDays);
   const fonts = await fontsPromise;
 
-  return new ImageResponse(format === "banner" ? renderBanner(days, rangeLabel) : renderGrid(days, screenings, rangeLabel, note), {
-    width: format === "banner" ? 1200 : 1920,
-    height: format === "banner" ? 628 : 1080,
-    fonts,
-  });
+  const dims = format === "banner" ? { width: 1200, height: 628 } : format === "portrait" ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
+  const element =
+    format === "banner" ? renderBanner(days, rangeLabel) : format === "portrait" ? renderPortrait(days, screenings, rangeLabel) : renderGrid(days, screenings, rangeLabel, note);
+
+  return new ImageResponse(element, { ...dims, fonts });
 }
