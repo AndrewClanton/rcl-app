@@ -34,6 +34,22 @@ export async function getBoothReservationsForDate(date: string): Promise<BoothRe
   return (data ?? []) as BoothReservation[];
 }
 
+// All reservations (including cancelled, so the admin calendar can show a
+// slot's history) whose date falls within [start, end) -- used by the admin
+// booth calendar, one calendar month at a time.
+export async function getBoothReservationsForMonth(start: string, end: string): Promise<BoothReservation[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("booth_reservations")
+    .select("*, booth:booths(*)")
+    .gte("reservation_date", start)
+    .lt("reservation_date", end)
+    .order("reservation_date")
+    .order("start_time");
+  if (error) throw error;
+  return (data ?? []) as unknown as BoothReservation[];
+}
+
 export async function getUpcomingBoothReservations(): Promise<BoothReservation[]> {
   const supabase = createAdminClient();
   // Central time, not server-local UTC -- Vercel runs UTC, so a plain

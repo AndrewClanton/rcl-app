@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import type { Booth, BoothReservation } from "@/lib/types";
 import { startBoothCheckout, getAvailabilityForDate } from "./actions";
-import BoothFloorPlan from "./BoothFloorPlan";
+import BoothPhotoGrid from "./BoothPhotoGrid";
 
 const RESERVATION_HOURS = 2;
 
@@ -29,6 +29,7 @@ function addHours(t: string, hours: number) {
 function BoothDetailModal({
   booth,
   date,
+  minDate,
   onDateChange,
   loadingAvailability,
   bookedWindows,
@@ -36,6 +37,7 @@ function BoothDetailModal({
 }: {
   booth: Booth;
   date: string;
+  minDate: string;
   onDateChange: (next: string) => void;
   loadingAvailability: boolean;
   bookedWindows: string[];
@@ -93,8 +95,9 @@ function BoothDetailModal({
 
         <label className="mt-4 block">
           <div className="label-xs">Day {loadingAvailability && <span>(checking availability…)</span>}</div>
-          <input type="date" className="input" value={date} onChange={(e) => onDateChange(e.target.value)} />
+          <input type="date" className="input" min={minDate} value={date} onChange={(e) => onDateChange(e.target.value)} />
         </label>
+        <div className="mt-1 text-xs text-[var(--muted)]">Booths open up starting tomorrow, so no one books a seat out from under whoever&apos;s already sitting in it.</div>
 
         {bookedWindows.length > 0 && (
           <div className="notice notice-warn mt-2">Already booked that day: {bookedWindows.join(", ")}</div>
@@ -135,14 +138,20 @@ function BoothDetailModal({
 
         {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
+        <div className="notice mt-3 !p-2.5 text-xs" style={{ background: "var(--accent-soft)", color: "var(--foreground)" }}>
+          <strong className="text-[var(--accent)]">Insiders+ perk:</strong> 2 free booth reservations every month. Enter your
+          membership email above and we&apos;ll apply it automatically if you have one left this month.
+        </div>
+
         <div className="mt-4 flex items-center justify-between">
           <span className="text-lg font-semibold text-[var(--accent)]">{money(booth.reservation_fee)}</span>
           <button className="btn-primary" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-            {submitting ? "Redirecting to checkout..." : "Reserve — pay now"}
+            {submitting ? "Just a moment..." : "Reserve this booth"}
           </button>
         </div>
         <div className="mt-2 text-xs text-[var(--muted)]">
-          You&apos;ll be redirected to Stripe to pay securely. Reservations hold your booth for a {RESERVATION_HOURS}-hour window; the fee covers the reservation only.
+          Reservations hold your booth for a {RESERVATION_HOURS}-hour window. Unless it&apos;s covered by an Insiders+ free
+          reservation, you&apos;ll be redirected to Stripe to pay securely; the fee covers the reservation only.
         </div>
       </div>
     </div>
@@ -158,6 +167,11 @@ export default function BoothReservationForm({
   initialDate: string;
   initialReservations: BoothReservation[];
 }) {
+  // Same-day booking is disabled (see actions.ts) so no one reserves a seat
+  // out from under a customer who's currently sitting in it -- initialDate
+  // is already "tomorrow" as computed by the page, this is just the floor
+  // for the date picker itself.
+  const minDate = initialDate;
   const [date, setDate] = useState(initialDate);
   const [reservations, setReservations] = useState(initialReservations);
   const [loadingAvailability, startAvailabilityTransition] = useTransition();
@@ -187,12 +201,13 @@ export default function BoothReservationForm({
 
   return (
     <div>
-      <BoothFloorPlan booths={booths} selectedId={boothId} bookedIds={bookedIds} onSelect={setBoothId} />
+      <BoothPhotoGrid booths={booths} selectedId={boothId} bookedIds={bookedIds} onSelect={setBoothId} />
 
       {selectedBooth && (
         <BoothDetailModal
           booth={selectedBooth}
           date={date}
+          minDate={minDate}
           onDateChange={handleDateChange}
           loadingAvailability={loadingAvailability}
           bookedWindows={bookedWindowsByBooth.get(selectedBooth.id) ?? []}

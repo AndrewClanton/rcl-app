@@ -181,6 +181,7 @@ export interface Booth {
   reservation_fee: number;
   active: boolean;
   sort_order: number;
+  photo_url: string | null;
 }
 
 export type BoothReservationStatus = "pending" | "confirmed" | "cancelled";

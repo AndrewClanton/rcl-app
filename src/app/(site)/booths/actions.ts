@@ -22,6 +22,22 @@ function timeToMinutes(t: string) {
   return h * 60 + m;
 }
 
+function todayCentral() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+}
+
+// [start, end) bounds for the calendar month that `dateStr` (YYYY-MM-DD)
+// falls in -- used to cap Insiders+ free reservations at 2 per month, by
+// the month the reservation is FOR (not the month it was booked in).
+function monthBounds(dateStr: string) {
+  const [y, m] = dateStr.split("-").map(Number);
+  const start = `${y}-${String(m).padStart(2, "0")}-01`;
+  const end = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
+  return { start, end };
+}
+
+const FREE_RESERVATIONS_PER_MONTH = 2;
+
 export interface StartBoothCheckoutFields {
   boothId: string;
   reservationDate: string; // YYYY-MM-DD
@@ -40,6 +56,12 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
   if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
   if (!(fields.partySize > 0)) throw new Error("Enter your party size.");
   if (!fields.reservationDate || !fields.startTime) throw new Error("Pick a date and time.");
+  // Never same-day -- so nobody books a seat out from under a customer
+  // who's already sitting in it. Client-side <input min> mirrors this, but
+  // don't trust that alone.
+  if (fields.reservationDate <= todayCentral()) {
+    throw new Error("Booths can be reserved starting tomorrow, not for today.");
+  }
 
   const supabase = createAdminClient();
 
@@ -74,7 +96,46 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     throw new Error(`${booth.label} is already reserved for part of that window. Pick another time or booth.`);
   }
 
-  const { data: member } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
+  const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
+  const origin = await siteOrigin();
+
+  // Insiders+ perk: 2 free booth reservations per calendar month (counted
+  // by the month the reservation is FOR), same "skip Stripe, confirm
+  // immediately" pattern as Insiders+ free screening entry.
+  if (member?.tier === "Insiders+") {
+    const { start, end } = monthBounds(fields.reservationDate);
+    const { count, error: countErr } = await supabase
+      .from("booth_reservations")
+      .select("id", { count: "exact", head: true })
+      .eq("member_id", member.id)
+      .eq("fee_amount", 0)
+      .eq("status", "confirmed")
+      .gte("reservation_date", start)
+      .lt("reservation_date", end);
+    if (countErr) throw countErr;
+
+    if ((count ?? 0) < FREE_RESERVATIONS_PER_MONTH) {
+      const { data: freeReservation, error: freeErr } = await supabase
+        .from("booth_reservations")
+        .insert({
+          booth_id: fields.boothId,
+          member_id: member.id,
+          customer_name: name,
+          customer_email: email,
+          customer_phone: phone || null,
+          party_size: fields.partySize,
+          reservation_date: fields.reservationDate,
+          start_time: fields.startTime,
+          hours,
+          fee_amount: 0,
+          status: "confirmed",
+        })
+        .select("id")
+        .single();
+      if (freeErr) throw freeErr;
+      return { url: `${origin}/booths?checkout=free&reservation_id=${freeReservation.id}` };
+    }
+  }
 
   const { data: reservation, error: insertErr } = await supabase
     .from("booth_reservations")
@@ -95,7 +156,6 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     .single();
   if (insertErr) throw insertErr;
 
-  const origin = await siteOrigin();
   const dateLabel = new Date(`${fields.reservationDate}T12:00:00`).toLocaleDateString(undefined, {
     weekday: "short",
     month: "short",

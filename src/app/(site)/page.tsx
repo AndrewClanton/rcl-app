@@ -73,7 +73,7 @@ export default async function HomePage() {
                     </div>
                   </div>
                 </div>
-                <span className="stamp-tag stamp-tag-gold absolute -top-3 right-3">${s.ticket_price.toFixed(2)}</span>
+                <span className="stamp-tag stamp-tag-gold absolute -top-3 right-3">{s.ticket_price === 0 ? "Free" : `$${s.ticket_price.toFixed(2)}`}</span>
               </Link>
             ))}
           </div>
@@ -172,6 +172,10 @@ export default async function HomePage() {
               <li className="flex gap-2">
                 <span style={{ color: "var(--gold)" }}>✓</span>
                 <span>Concession &amp; merch discounts</span>
+              </li>
+              <li className="flex gap-2">
+                <span style={{ color: "var(--gold)" }}>✓</span>
+                <span>2 free booth reservations every month</span>
               </li>
             </ul>
             <Link href="/membership" className="btn-primary mt-5 self-start">

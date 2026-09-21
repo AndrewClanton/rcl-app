@@ -76,6 +76,15 @@ export default async function MembershipPage({
               <td className="px-4 py-3 text-[var(--muted)]">—</td>
               <td className="px-4 py-3">Included</td>
             </tr>
+            <tr>
+              <td className="px-4 py-3 text-[var(--muted)]">
+                <a href="/booths" className="hover:underline">
+                  Booth reservations
+                </a>
+              </td>
+              <td className="px-4 py-3 text-[var(--muted)]">Pay the reservation fee</td>
+              <td className="px-4 py-3 font-medium text-[var(--accent)]">2 free every month</td>
+            </tr>
           </tbody>
         </table>
         <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-[var(--border)] px-4 py-3 text-sm text-[var(--muted)]">
