@@ -57,3 +57,12 @@ export async function requireStaff(): Promise<StaffSession> {
   if (!session) redirect("/login?error=not_staff");
   return session;
 }
+
+// Stricter than requireStaff() -- only the 'admin' role, not manager/cashier.
+// Used for the Develop Mate feedback tool (a small, deliberately-restricted
+// group per Andrew's own request) and its review queue.
+export async function requireAdmin(): Promise<StaffSession> {
+  const session = await requireStaff();
+  if (session.role !== "admin") redirect("/admin");
+  return session;
+}

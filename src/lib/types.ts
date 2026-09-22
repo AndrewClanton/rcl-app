@@ -6,6 +6,18 @@ export type PaymentMethod = "cash" | "card" | "split";
 export type EmployeeRole = "cashier" | "manager" | "admin";
 export type MemberTier = "Insiders" | "Insiders+";
 export type EventStatus = "outstanding" | "paid";
+export type DevNoteStatus = "new" | "approved" | "dismissed" | "done";
+
+export interface DevNote {
+  id: string;
+  page_path: string;
+  page_title: string | null;
+  message: string;
+  status: DevNoteStatus;
+  created_at: string;
+  updated_at: string;
+  submitted_by: { name: string } | null;
+}
 
 export interface ModifierOption {
   id: string;
