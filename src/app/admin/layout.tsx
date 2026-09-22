@@ -45,7 +45,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           {isAdmin && (
             <Link href="/admin/dev-notes" className="hover:underline">
-              Develop Mate{openDevNotes > 0 && <span className="ml-1 rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold text-white">{openDevNotes}</span>}
+              Dev Notes{openDevNotes > 0 && <span className="ml-1 rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold text-white">{openDevNotes}</span>}
             </Link>
           )}
           {staff.role === "owner" && (

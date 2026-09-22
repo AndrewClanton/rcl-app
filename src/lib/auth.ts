@@ -66,7 +66,7 @@ export function hasAdminAccess(role: EmployeeRole): boolean {
 }
 
 // Stricter than requireStaff() -- 'admin' or 'owner' only, not manager/
-// cashier. Used for the Develop Mate feedback tool (a small, deliberately-
+// cashier. Used for the Dev Notes feedback tool (a small, deliberately-
 // restricted group per Andrew's own request) and its review queue.
 export async function requireAdmin(): Promise<StaffSession> {
   const session = await requireStaff();

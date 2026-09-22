@@ -10,7 +10,7 @@ import { submitDevNote } from "@/app/admin/dev-notes/actions";
 // their static generation -- this component checks admin status itself, via
 // a tiny API route, rather than the layout gating it server-side. Captures
 // the page the admin was on automatically, so a note never loses its context.
-export default function DevMateWidget() {
+export default function DevNotesWidget() {
   const pathname = usePathname();
   const [authorized, setAuthorized] = useState(false);
   const [open, setOpen] = useState(false);
@@ -34,7 +34,7 @@ export default function DevMateWidget() {
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
     function check() {
-      fetch("/api/dev-mate/session")
+      fetch("/api/dev-notes/session")
         .then((res) => {
           if (!res.ok) throw new Error(`status ${res.status}`);
           return res.json();
@@ -80,7 +80,7 @@ export default function DevMateWidget() {
       {open ? (
         <div className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Develop Mate</span>
+            <span className="text-sm font-semibold">Dev Notes</span>
             <button onClick={() => setOpen(false)} aria-label="Close" className="text-[var(--muted)] hover:text-[var(--foreground)]">
               ✕
             </button>

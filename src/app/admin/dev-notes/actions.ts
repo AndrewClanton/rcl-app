@@ -9,7 +9,7 @@ function revalidate() {
   revalidatePath("/admin/dev-notes");
 }
 
-// Called from the global Develop Mate widget, which only renders for admins
+// Called from the global Dev Notes widget, which only renders for admins
 // in the first place (see src/app/layout.tsx) -- this check is defense in
 // depth against the action being invoked directly, not the primary gate.
 export async function submitDevNote(input: { pagePath: string; pageTitle: string; message: string }) {

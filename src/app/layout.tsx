@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Archivo, Archivo_Black, Space_Mono } from "next/font/google";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
-import DevMateWidget from "@/components/DevMateWidget";
+import DevNotesWidget from "@/components/DevNotesWidget";
 import "./globals.css";
 
 const archivo = Archivo({
@@ -54,7 +54,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="min-h-full flex flex-col">
         {children}
-        <DevMateWidget />
+        <DevNotesWidget />
       </body>
     </html>
   );

@@ -9,9 +9,9 @@ export default async function AdminDevNotesPage() {
   const notes = await getDevNotes();
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Develop Mate</h1>
+      <h1 className="mb-1 text-lg font-semibold">Dev Notes</h1>
       <p className="mb-4 text-sm text-[var(--muted)]">
-        Notes admins jotted down from the Develop Mate widget, with the page they were on. Approve the ones worth
+        Notes admins jotted down from the Dev Notes widget, with the page they were on. Approve the ones worth
         doing -- that's the backlog to hand to Claude.
       </p>
       <DevNotesPanel notes={notes} />

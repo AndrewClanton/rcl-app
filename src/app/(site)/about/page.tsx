@@ -75,15 +75,8 @@ export default function AboutPage() {
           <FaqItem q="Why don't you publish a full public schedule?">
             We don&apos;t advertise every screening — that&apos;s what lets us bring in a much wider range of films, at a lower
             cost, than a typical theater could justify. Members always know what&apos;s playing here first. And if there&apos;s
-            something specific you want to see on the big screen, just{" "}
-            <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="text-[var(--accent)] hover:underline">
-              email us
-            </a>{" "}
-            at{" "}
-            <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="text-[var(--accent)] hover:underline">
-              info@royalecinemajoplin.com
-            </a>{" "}
-            — odds are, we can get it for you.
+            something specific you want to see on the big screen, just email us at{" "}
+            <span className="font-medium select-all">info@royalecinemajoplin.com</span> — odds are, we can get it for you.
           </FaqItem>
           <FaqItem q="What films will you be screening?">
             Everything from modern indie hits to classics spanning the last 60 years, plus new independent features every week. Let
