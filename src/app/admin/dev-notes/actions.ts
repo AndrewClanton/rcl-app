@@ -36,6 +36,23 @@ async function setStatus(id: string, status: DevNoteStatus) {
   revalidate();
 }
 
+// A small append-only thread per note -- e.g. explaining why something
+// marked 'done' got reopened, or leaving context mid-review. Independent of
+// status changes (not tied to any one action) so it also covers "still
+// looking into this" notes left while a note just sits approved.
+export async function addDevNoteComment(id: string, message: string) {
+  const staff = await getStaffSession();
+  if (!staff || !hasAdminAccess(staff.role)) throw new Error("Not authorized");
+
+  const trimmed = message.trim();
+  if (!trimmed) return;
+
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("dev_note_comments").insert({ dev_note_id: id, message: trimmed, created_by: staff.employeeId });
+  if (error) throw error;
+  revalidate();
+}
+
 export async function approveDevNote(id: string) {
   await setStatus(id, "approved");
 }

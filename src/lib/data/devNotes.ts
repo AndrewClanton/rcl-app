@@ -1,11 +1,16 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { DevNote } from "@/lib/types";
 
-const DEV_NOTE_SELECT = "id, page_path, page_title, message, status, created_at, updated_at, submitted_by:employees(name)";
+const DEV_NOTE_SELECT =
+  "id, page_path, page_title, message, status, created_at, updated_at, submitted_by:employees(name), comments:dev_note_comments(id, message, created_at, created_by:employees(name))";
 
 export async function getDevNotes(): Promise<DevNote[]> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from("dev_notes").select(DEV_NOTE_SELECT).order("created_at", { ascending: false });
+  const { data, error } = await supabase
+    .from("dev_notes")
+    .select(DEV_NOTE_SELECT)
+    .order("created_at", { ascending: false })
+    .order("created_at", { referencedTable: "dev_note_comments", ascending: true });
   if (error) throw error;
   return (data ?? []) as unknown as DevNote[];
 }

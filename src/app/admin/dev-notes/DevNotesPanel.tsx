@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import type { DevNote } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { approveDevNote, dismissDevNote, markDevNoteDone, reopenDevNote, deleteDevNote } from "./actions";
+import { approveDevNote, dismissDevNote, markDevNoteDone, reopenDevNote, deleteDevNote, addDevNoteComment } from "./actions";
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -104,6 +105,53 @@ function NoteCard({ note, muted }: { note: DevNote; muted?: boolean }) {
             </button>
           </>
         )}
+      </div>
+      <CommentThread note={note} />
+    </div>
+  );
+}
+
+// A follow-up thread per note -- e.g. why something marked done got
+// reopened, or context left while it's still being worked. Available
+// regardless of status, not tied to any one action.
+function CommentThread({ note }: { note: DevNote }) {
+  const [pending, run] = useRefreshingAction();
+  const [draft, setDraft] = useState("");
+
+  function submit() {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    setDraft("");
+    run(() => addDevNoteComment(note.id, trimmed));
+  }
+
+  return (
+    <div className="mt-3 border-t border-[var(--border)] pt-2.5">
+      {note.comments.length > 0 && (
+        <ul className="mb-2 space-y-1.5">
+          {note.comments.map((c) => (
+            <li key={c.id} className="text-xs">
+              <span className="text-[var(--muted)]">
+                {c.created_by?.name ?? "Unknown"} · {fmt(c.created_at)}:
+              </span>{" "}
+              <span className="whitespace-pre-wrap">{c.message}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+          placeholder="Add a note (e.g. what's still wrong)..."
+          className="input !py-1 text-xs"
+        />
+        <button disabled={pending || !draft.trim()} onClick={submit} className="shrink-0 rounded border border-[var(--border)] px-2.5 py-1 text-xs disabled:opacity-50">
+          Add
+        </button>
       </div>
     </div>
   );

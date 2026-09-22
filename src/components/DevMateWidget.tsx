@@ -18,18 +18,41 @@ export default function DevMateWidget() {
   const [sent, setSent] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  // Re-checks on every client-side navigation (pathname change), not just
+  // once on first mount -- the root layout persists across navigations
+  // (that's the point of a layout), so a mount-once check would only ever
+  // reflect whatever the auth state was on the very first page load. That
+  // was the real bug behind "sometimes I have to reload the page for it to
+  // show up": land on a page before signing in (or before the session
+  // cookie is readable yet) and it stays hidden for the rest of the visit,
+  // even after logging in, since logging in redirects to a *different*
+  // route rather than remounting this component. A retry also covers a
+  // plain transient fetch failure, which used to be silently swallowed
+  // forever.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/dev-mate/session")
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) setAuthorized(!!data.isAdmin);
-      })
-      .catch(() => {});
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function check() {
+      fetch("/api/dev-mate/session")
+        .then((res) => {
+          if (!res.ok) throw new Error(`status ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
+          if (!cancelled) setAuthorized(!!data.isAdmin);
+        })
+        .catch(() => {
+          if (!cancelled) retryTimer = setTimeout(check, 3000);
+        });
+    }
+    check();
+
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
     };
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     if (!sent) return;

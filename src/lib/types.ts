@@ -8,6 +8,13 @@ export type MemberTier = "Insiders" | "Insiders+";
 export type EventStatus = "outstanding" | "paid";
 export type DevNoteStatus = "new" | "approved" | "dismissed" | "done";
 
+export interface DevNoteComment {
+  id: string;
+  message: string;
+  created_at: string;
+  created_by: { name: string } | null;
+}
+
 export interface DevNote {
   id: string;
   page_path: string;
@@ -17,6 +24,7 @@ export interface DevNote {
   created_at: string;
   updated_at: string;
   submitted_by: { name: string } | null;
+  comments: DevNoteComment[];
 }
 
 export interface ModifierOption {
