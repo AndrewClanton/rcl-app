@@ -23,10 +23,14 @@ export default function AvatarUpload({ name, avatarUrl }: { name: string; avatar
     try {
       const formData = new FormData();
       formData.set("avatar", file);
-      await uploadAvatar(formData);
+      const result = await uploadAvatar(formData);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
       router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
+    } catch {
+      setError("Upload failed.");
     } finally {
       setUploading(false);
     }

@@ -16,10 +16,15 @@ export default function BillingPortalButton() {
           setPending(true);
           setError(null);
           try {
-            const { url } = await startBillingPortal();
-            window.location.href = url;
-          } catch (e) {
-            setError(e instanceof Error ? e.message : "Something went wrong.");
+            const result = await startBillingPortal();
+            if (!result.ok) {
+              setError(result.error);
+              setPending(false);
+              return;
+            }
+            window.location.href = result.url;
+          } catch {
+            setError("Something went wrong.");
             setPending(false);
           }
         }}

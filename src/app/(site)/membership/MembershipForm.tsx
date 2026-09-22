@@ -22,14 +22,24 @@ export default function MembershipForm() {
     setError(null);
     try {
       if (plan === "free") {
-        await submitMembershipSignup({ name, email, phone });
+        const result = await submitMembershipSignup({ name, email, phone });
+        if (!result.ok) {
+          setError(result.error);
+          setSubmitting(false);
+          return;
+        }
         setDone(true);
       } else {
-        const { url } = await startMembershipCheckout({ name, email, phone, priceTier: plan });
-        window.location.href = url;
+        const result = await startMembershipCheckout({ name, email, phone, priceTier: plan });
+        if (!result.ok) {
+          setError(result.error);
+          setSubmitting(false);
+          return;
+        }
+        window.location.href = result.url;
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+    } catch {
+      setError("Something went wrong. Please try again.");
       setSubmitting(false);
     }
   }

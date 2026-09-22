@@ -12,16 +12,25 @@ async function siteOrigin(): Promise<string> {
   return `${proto}://${host}`;
 }
 
-export async function submitMembershipSignup(fields: { name: string; email: string; phone: string }): Promise<void> {
+// Next.js redacts a *thrown* Server Action error's message in production
+// builds (only the generic "Minified React error #441..." reaches the
+// client -- the real text only shows in dev, which is exactly why this
+// class of bug is so easy to ship without noticing). Expected, user-
+// actionable errors -- bad input, a duplicate signup -- are modeled as
+// return values instead, per Next's own guidance, so the real message
+// reaches the client in every environment.
+export type SignupResult = { ok: true } | { ok: false; error: string };
+
+export async function submitMembershipSignup(fields: { name: string; email: string; phone: string }): Promise<SignupResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
-  if (!name) throw new Error("Enter your name.");
-  if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
+  if (!name) return { ok: false, error: "Enter your name." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
 
   const supabase = createAdminClient();
 
   const { data: existing } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
-  if (existing) throw new Error("An Insiders account already exists for that email. Ask staff to look it up for you in person.");
+  if (existing) return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
 
   const { error } = await supabase.from("members").insert({
     name,
@@ -31,9 +40,10 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
     points: 0,
   });
   if (error) {
-    if (error.code === "23505") throw new Error("An Insiders account already exists for that email. Ask staff to look it up for you in person.");
+    if (error.code === "23505") return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
     throw error;
   }
+  return { ok: true };
 }
 
 // Insiders+ price tier -> env var holding that tier's recurring Stripe Price
@@ -45,26 +55,28 @@ const PRICE_ENV_KEY: Record<"adult" | "senior", string> = {
   senior: "STRIPE_PRICE_INSIDERS_PLUS_SENIOR",
 };
 
+export type CheckoutResult = { ok: true; url: string } | { ok: false; error: string };
+
 export async function startMembershipCheckout(fields: {
   name: string;
   email: string;
   phone: string;
   priceTier: "adult" | "senior";
-}): Promise<{ url: string }> {
+}): Promise<CheckoutResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
-  if (!name) throw new Error("Enter your name.");
-  if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
+  if (!name) return { ok: false, error: "Enter your name." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
 
   const supabase = createAdminClient();
   const { data: existing } = await supabase.from("members").select("id, tier, subscription_status").ilike("email", email).maybeSingle();
   if (existing?.tier === "Insiders+" && existing.subscription_status === "active") {
-    throw new Error("This email already has an active Insiders+ membership.");
+    return { ok: false, error: "This email already has an active Insiders+ membership." };
   }
 
   const priceEnvKey = PRICE_ENV_KEY[fields.priceTier];
   const priceId = priceEnvKey ? process.env[priceEnvKey] : undefined;
-  if (!priceId) throw new Error("Membership pricing isn't configured yet.");
+  if (!priceId) return { ok: false, error: "Membership pricing isn't configured yet." };
 
   const origin = await siteOrigin();
   const stripe = getStripe();
@@ -82,6 +94,6 @@ export async function startMembershipCheckout(fields: {
     },
   });
 
-  if (!session.url) throw new Error("Could not start checkout. Please try again.");
-  return { url: session.url };
+  if (!session.url) return { ok: false, error: "Could not start checkout. Please try again." };
+  return { ok: true, url: session.url };
 }

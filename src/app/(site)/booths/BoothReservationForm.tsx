@@ -58,7 +58,7 @@ function BoothDetailModal({
     setSubmitting(true);
     setError(null);
     try {
-      const { url } = await startBoothCheckout({
+      const result = await startBoothCheckout({
         boothId: booth.id,
         reservationDate: date,
         startTime,
@@ -67,9 +67,14 @@ function BoothDetailModal({
         customerEmail: email,
         customerPhone: phone,
       });
-      window.location.href = url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      if (!result.ok) {
+        setError(result.error);
+        setSubmitting(false);
+        return;
+      }
+      window.location.href = result.url;
+    } catch {
+      setError("Something went wrong. Please try again.");
       setSubmitting(false);
     }
   }

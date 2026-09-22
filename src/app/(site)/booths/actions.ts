@@ -48,19 +48,27 @@ export interface StartBoothCheckoutFields {
   customerPhone: string;
 }
 
-export async function startBoothCheckout(fields: StartBoothCheckoutFields): Promise<{ url: string }> {
+// Next.js redacts a *thrown* Server Action error's message in production
+// builds (only a generic "Minified React error..." reaches the client --
+// the real text only ever shows in dev). Expected, user-actionable errors
+// are modeled as return values instead, per Next's own guidance, so the
+// real message reaches the client in every environment. Genuine
+// unexpected failures (a DB/Stripe error) are left as throws below.
+export type BoothCheckoutResult = { ok: true; url: string } | { ok: false; error: string };
+
+export async function startBoothCheckout(fields: StartBoothCheckoutFields): Promise<BoothCheckoutResult> {
   const name = fields.customerName.trim();
   const email = fields.customerEmail.trim();
   const phone = fields.customerPhone.trim();
-  if (!name) throw new Error("Enter your name.");
-  if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
-  if (!(fields.partySize > 0)) throw new Error("Enter your party size.");
-  if (!fields.reservationDate || !fields.startTime) throw new Error("Pick a date and time.");
+  if (!name) return { ok: false, error: "Enter your name." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
+  if (!(fields.partySize > 0)) return { ok: false, error: "Enter your party size." };
+  if (!fields.reservationDate || !fields.startTime) return { ok: false, error: "Pick a date and time." };
   // Never same-day -- so nobody books a seat out from under a customer
   // who's already sitting in it. Client-side <input min> mirrors this, but
   // don't trust that alone.
   if (fields.reservationDate <= todayCentral()) {
-    throw new Error("Booths can be reserved starting tomorrow, not for today.");
+    return { ok: false, error: "Booths can be reserved starting tomorrow, not for today." };
   }
 
   const supabase = createAdminClient();
@@ -70,9 +78,9 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     .select("id, label, capacity, reservation_fee, active")
     .eq("id", fields.boothId)
     .single();
-  if (boothErr || !booth || !booth.active) throw new Error("That booth isn't available.");
+  if (boothErr || !booth || !booth.active) return { ok: false, error: "That booth isn't available." };
   if (fields.partySize > booth.capacity) {
-    throw new Error(`${booth.label} seats up to ${booth.capacity} people.`);
+    return { ok: false, error: `${booth.label} seats up to ${booth.capacity} people.` };
   }
 
   const hours = 2;
@@ -93,7 +101,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     return newStart < e && newEnd > s;
   });
   if (overlaps) {
-    throw new Error(`${booth.label} is already reserved for part of that window. Pick another time or booth.`);
+    return { ok: false, error: `${booth.label} is already reserved for part of that window. Pick another time or booth.` };
   }
 
   const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
@@ -133,7 +141,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
         .select("id")
         .single();
       if (freeErr) throw freeErr;
-      return { url: `${origin}/booths?checkout=free&reservation_id=${freeReservation.id}` };
+      return { ok: true, url: `${origin}/booths?checkout=free&reservation_id=${freeReservation.id}` };
     }
   }
 
@@ -191,5 +199,5 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
 
   await supabase.from("booth_reservations").update({ stripe_checkout_session_id: session.id }).eq("id", reservation.id);
 
-  return { url: session.url! };
+  return { ok: true, url: session.url! };
 }

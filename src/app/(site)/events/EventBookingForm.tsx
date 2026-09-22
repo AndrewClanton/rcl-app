@@ -41,7 +41,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
     setSubmitting(true);
     setError(null);
     try {
-      const { estimate: est } = await submitEventInquiry({
+      const inquiryResult = await submitEventInquiry({
         roomId,
         hours: hoursNum,
         addonIds,
@@ -54,9 +54,13 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         organizerName,
         organizerEmail,
       });
-      setResult(est);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      if (!inquiryResult.ok) {
+        setError(inquiryResult.error);
+        return;
+      }
+      setResult(inquiryResult.estimate);
+    } catch {
+      setError("Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }

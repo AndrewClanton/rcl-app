@@ -52,14 +52,22 @@ export async function signOut(): Promise<void> {
   redirect("/");
 }
 
+// Next.js redacts a *thrown* Server Action error's message in production
+// builds (only a generic "Minified React error..." reaches the client --
+// the real text only ever shows in dev). Expected, user-actionable errors
+// are modeled as return values instead, per Next's own guidance, so the
+// real message reaches the client in every environment. Genuine
+// unexpected failures (a Storage/DB error) are left as throws below.
+export type UploadAvatarResult = { ok: true } | { ok: false; error: string };
+
 // Shown on the customer-facing kiosk (see /display/customer) after a
 // phone-number lookup. Same upload pattern as uploadBoothPhoto -- a
 // timestamped filename avoids needing to delete the old file first.
-export async function uploadAvatar(formData: FormData): Promise<void> {
+export async function uploadAvatar(formData: FormData): Promise<UploadAvatarResult> {
   const member = await requireMember();
   const file = formData.get("avatar");
-  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo to upload.");
-  if (!file.type.startsWith("image/")) throw new Error("File must be an image.");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a photo to upload." };
+  if (!file.type.startsWith("image/")) return { ok: false, error: "File must be an image." };
 
   const admin = createAdminClient();
   const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -72,15 +80,18 @@ export async function uploadAvatar(formData: FormData): Promise<void> {
   const { data: urlData } = admin.storage.from("member-avatars").getPublicUrl(path);
   const { error } = await admin.from("members").update({ avatar_url: urlData.publicUrl }).eq("id", member.id);
   if (error) throw error;
+  return { ok: true };
 }
 
-export async function startBillingPortal(): Promise<{ url: string }> {
+export type BillingPortalResult = { ok: true; url: string } | { ok: false; error: string };
+
+export async function startBillingPortal(): Promise<BillingPortalResult> {
   const member = await requireMember();
-  if (!member.stripe_customer_id) throw new Error("No subscription on file.");
+  if (!member.stripe_customer_id) return { ok: false, error: "No subscription on file." };
   const origin = await siteOrigin();
   const session = await getStripe().billingPortal.sessions.create({
     customer: member.stripe_customer_id,
     return_url: `${origin}/account`,
   });
-  return { url: session.url };
+  return { ok: true, url: session.url };
 }

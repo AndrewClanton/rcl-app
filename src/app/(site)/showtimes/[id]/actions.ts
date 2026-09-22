@@ -14,12 +14,20 @@ async function siteOrigin(): Promise<string> {
   return `${proto}://${host}`;
 }
 
-export async function startCheckout(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<{ url: string }> {
+// Next.js redacts a *thrown* Server Action error's message in production
+// builds (only a generic "Minified React error..." reaches the client --
+// the real text only ever shows in dev). Expected, user-actionable errors
+// are modeled as return values instead, per Next's own guidance, so the
+// real message reaches the client in every environment. Genuine
+// unexpected failures (a DB/Stripe error) are left as throws below.
+export type CheckoutResult = { ok: true; url: string } | { ok: false; error: string };
+
+export async function startCheckout(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<CheckoutResult> {
   const name = fields.customerName.trim();
   const email = fields.customerEmail.trim();
-  if (!name) throw new Error("Enter your name.");
-  if (!email || !email.includes("@")) throw new Error("Enter a valid email.");
-  if (!(fields.quantity > 0)) throw new Error("Select at least one ticket.");
+  if (!name) return { ok: false, error: "Enter your name." };
+  if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
+  if (!(fields.quantity > 0)) return { ok: false, error: "Select at least one ticket." };
 
   const supabase = createAdminClient();
 
@@ -28,7 +36,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     .select("id, ticket_price, capacity, starts_at, movie:movies(title)")
     .eq("id", fields.screeningId)
     .single();
-  if (screeningErr || !screening) throw new Error("Screening not found.");
+  if (screeningErr || !screening) return { ok: false, error: "Screening not found." };
   const movie = screening.movie as unknown as { title: string };
 
   const { data: existingBookings, error: bookingsErr } = await supabase
@@ -40,7 +48,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
 
   const booked = (existingBookings ?? []).reduce((s, b) => s + b.quantity, 0);
   if (booked + fields.quantity > screening.capacity) {
-    throw new Error(`Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.`);
+    return { ok: false, error: `Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.` };
   }
 
   const origin = await siteOrigin();
@@ -64,7 +72,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
       .select("id")
       .single();
     if (insertErr) throw insertErr;
-    return { url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
+    return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
   }
 
   // Insiders+ members get unlimited free entry (their own ticket) --
@@ -91,7 +99,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
       .select("id")
       .single();
     if (insertErr) throw insertErr;
-    return { url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
+    return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
   }
 
   const { data: booking, error: insertErr } = await supabase
@@ -159,5 +167,5 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
 
   await supabase.from("bookings").update({ stripe_checkout_session_id: session.id }).eq("id", booking.id);
 
-  return { url: session.url! };
+  return { ok: true, url: session.url! };
 }

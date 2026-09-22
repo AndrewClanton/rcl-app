@@ -21,10 +21,15 @@ export default function TicketReservation({ screeningId, ticketPrice, seatsLeft 
     setSubmitting(true);
     setError(null);
     try {
-      const { url } = await startCheckout({ screeningId, quantity, customerName: name, customerEmail: email });
-      window.location.href = url;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
+      const result = await startCheckout({ screeningId, quantity, customerName: name, customerEmail: email });
+      if (!result.ok) {
+        setError(result.error);
+        setSubmitting(false);
+        return;
+      }
+      window.location.href = result.url;
+    } catch {
+      setError("Something went wrong. Please try again.");
       setSubmitting(false);
     }
   }

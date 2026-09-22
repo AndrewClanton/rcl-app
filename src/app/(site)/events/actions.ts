@@ -5,6 +5,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import type { Room } from "@/lib/types";
 
+// Next.js redacts a *thrown* Server Action error's message in production
+// builds (only a generic "Minified React error..." reaches the client --
+// the real text only ever shows in dev). Expected, user-actionable errors
+// are modeled as return values instead, per Next's own guidance, so the
+// real message reaches the client in every environment. Genuine
+// unexpected failures (a DB error) are left as throws below.
+export type EventInquiryResult = { ok: true; estimate: number } | { ok: false; error: string };
+
 export async function submitEventInquiry(fields: {
   roomId: string;
   hours: number;
@@ -17,12 +25,12 @@ export async function submitEventInquiry(fields: {
   pizzaCount: number | null;
   organizerName: string;
   organizerEmail: string;
-}): Promise<{ estimate: number }> {
-  if (!fields.roomId) throw new Error("Select a space.");
-  if (!(fields.hours > 0)) throw new Error("Enter the number of hours.");
-  if (!fields.eventDate) throw new Error("Enter an event date.");
-  if (!fields.eventTime) throw new Error("Enter an event time.");
-  if (!fields.organizerEmail || !fields.organizerEmail.includes("@")) throw new Error("Enter a valid email.");
+}): Promise<EventInquiryResult> {
+  if (!fields.roomId) return { ok: false, error: "Select a space." };
+  if (!(fields.hours > 0)) return { ok: false, error: "Enter the number of hours." };
+  if (!fields.eventDate) return { ok: false, error: "Enter an event date." };
+  if (!fields.eventTime) return { ok: false, error: "Enter an event time." };
+  if (!fields.organizerEmail || !fields.organizerEmail.includes("@")) return { ok: false, error: "Enter a valid email." };
 
   const supabase = createAdminClient();
   const { data: room, error: roomErr } = await supabase
@@ -30,7 +38,7 @@ export async function submitEventInquiry(fields: {
     .select("*, addons:room_addons(*)")
     .eq("id", fields.roomId)
     .single();
-  if (roomErr || !room) throw new Error("Room not found");
+  if (roomErr || !room) return { ok: false, error: "Room not found" };
 
   const estimate = estimateEventTotal(room as unknown as Room, fields.hours, fields.addonIds);
 
@@ -53,5 +61,5 @@ export async function submitEventInquiry(fields: {
   if (error) throw error;
 
   revalidatePath("/admin/events");
-  return { estimate };
+  return { ok: true, estimate };
 }
