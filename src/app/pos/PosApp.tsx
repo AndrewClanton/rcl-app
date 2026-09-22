@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Member, Recipe } from "@/lib/types";
+import { createClient } from "@/lib/supabase/client";
+import { REGISTER_CHANNEL, EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -202,6 +204,46 @@ export default function PosApp({
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+
+  // Mirrors the cart onto the customer-facing kiosk display in real time,
+  // via Realtime broadcast rather than a database row -- entirely separate
+  // from the draft/tab persistence above, so this can't affect payment or
+  // order-history logic. cartSnapshotRef always holds the latest snapshot
+  // (updated every render, read from both the debounced broadcast-on-change
+  // effect below and the request-state handler in the subscribe effect),
+  // which avoids a stale closure in the long-lived channel subscription.
+  const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
+  cartSnapshotRef.current = {
+    orderName,
+    items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods })),
+    subtotal: totals.subtotal,
+    tax: totals.tax,
+    total: totals.total,
+  };
+  const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase.channel(REGISTER_CHANNEL);
+    registerChannelRef.current = channel;
+    channel
+      .on("broadcast", { event: "request-state" }, () => {
+        channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+      registerChannelRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
+    }, 250);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total]);
 
   function resetOrder() {
     setCart([]);

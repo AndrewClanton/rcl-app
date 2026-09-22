@@ -43,6 +43,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/schedule-graphic" className="hover:underline">
             Schedule graphic
           </Link>
+          <Link href="/display" className="hover:underline">
+            Displays
+          </Link>
           {isAdmin && (
             <Link href="/admin/dev-notes" className="hover:underline">
               Dev Notes{openDevNotes > 0 && <span className="ml-1 rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold text-white">{openDevNotes}</span>}

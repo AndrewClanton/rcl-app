@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/lib/types";
@@ -50,7 +51,25 @@ function ProfileCard({ member }: { member: Member }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        {member.avatar_url && (
+          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-[var(--border)]">
+            <Image src={member.avatar_url} alt={member.name} fill sizes="40px" className="object-cover" />
+          </div>
+        )}
         <h1 className="text-xl font-semibold">{member.name}</h1>
+        {member.avatar_url && (
+          <button
+            className="text-xs text-[var(--muted)] hover:underline"
+            disabled={pending}
+            onClick={() => {
+              if (confirm("Remove this member's profile photo? Shown on the customer-facing kiosk after phone sign-in.")) {
+                run(() => updateMember(member.id, { avatar_url: null }));
+              }
+            }}
+          >
+            Remove photo
+          </button>
+        )}
         <span
           className={`rounded-full border px-2 py-0.5 text-xs ${
             member.tier === "Insiders+"

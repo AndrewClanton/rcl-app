@@ -42,6 +42,7 @@ export async function updateMember(
     points: number;
     monthly_member: boolean;
     price_tier: MemberPriceTier | null;
+    avatar_url: string | null;
   }>
 ) {
   const supabase = createAdminClient();

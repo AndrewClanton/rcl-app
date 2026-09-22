@@ -6,6 +6,7 @@ import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
 import SignOutButton from "./SignOutButton";
 import BillingPortalButton from "./BillingPortalButton";
+import AvatarUpload from "./AvatarUpload";
 
 export const dynamic = "force-dynamic";
 
@@ -47,13 +48,16 @@ export default async function AccountPage() {
   return (
     <div className="space-y-10">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="eyebrow mb-2">My account</div>
-          <h1 className="font-display text-3xl font-semibold">{member.name}</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {member.email} · {member.tier}
-            {member.tier === "Insiders+" && member.subscription_status ? ` (${member.subscription_status})` : ""}
-          </p>
+        <div className="flex items-start gap-4">
+          <AvatarUpload name={member.name} avatarUrl={member.avatar_url} />
+          <div>
+            <div className="eyebrow mb-2">My account</div>
+            <h1 className="font-display text-3xl font-semibold">{member.name}</h1>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {member.email} · {member.tier}
+              {member.tier === "Insiders+" && member.subscription_status ? ` (${member.subscription_status})` : ""}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {isStaffAdmin && (

@@ -1,11 +1,11 @@
 import { requireStaff } from "@/lib/auth";
-import { getRecentKitchenTickets } from "@/lib/data/kitchen";
-import KitchenDisplay from "./KitchenDisplay";
+import { getKitchenTickets } from "@/lib/data/prepTickets";
+import PrepTicketBoard from "../PrepTicketBoard";
 
 export const dynamic = "force-dynamic";
 
 export default async function KitchenDisplayPage() {
   await requireStaff();
-  const tickets = await getRecentKitchenTickets();
-  return <KitchenDisplay initialTickets={tickets} />;
+  const tickets = await getKitchenTickets();
+  return <PrepTicketBoard title="Kitchen" station="kitchen" initialTickets={tickets} />;
 }

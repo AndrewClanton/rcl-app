@@ -78,18 +78,11 @@ export default async function AdminDashboardPage() {
         <div className="mt-1 text-sm text-[var(--muted)]">Sales, top sellers, tips, order history.</div>
       </Link>
       <Link
-        href="/display/kitchen"
+        href="/display"
         className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
-        <div className="text-base font-medium">Kitchen display</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Live prep tickets as POS orders complete.</div>
-      </Link>
-      <Link
-        href="/display/box-office"
-        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
-      >
-        <div className="text-base font-medium">Box office signage</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Lobby showtimes display.</div>
+        <div className="text-base font-medium">Live displays</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Kitchen, bar, customer-facing, and box office signage.</div>
       </Link>
       <Link
         href="/admin/schedule-graphic"

@@ -52,6 +52,28 @@ export async function signOut(): Promise<void> {
   redirect("/");
 }
 
+// Shown on the customer-facing kiosk (see /display/customer) after a
+// phone-number lookup. Same upload pattern as uploadBoothPhoto -- a
+// timestamped filename avoids needing to delete the old file first.
+export async function uploadAvatar(formData: FormData): Promise<void> {
+  const member = await requireMember();
+  const file = formData.get("avatar");
+  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo to upload.");
+  if (!file.type.startsWith("image/")) throw new Error("File must be an image.");
+
+  const admin = createAdminClient();
+  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+  const path = `${member.id}-${Date.now()}.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
+
+  const { error: uploadErr } = await admin.storage.from("member-avatars").upload(path, buffer, { contentType: file.type });
+  if (uploadErr) throw uploadErr;
+
+  const { data: urlData } = admin.storage.from("member-avatars").getPublicUrl(path);
+  const { error } = await admin.from("members").update({ avatar_url: urlData.publicUrl }).eq("id", member.id);
+  if (error) throw error;
+}
+
 export async function startBillingPortal(): Promise<{ url: string }> {
   const member = await requireMember();
   if (!member.stripe_customer_id) throw new Error("No subscription on file.");
