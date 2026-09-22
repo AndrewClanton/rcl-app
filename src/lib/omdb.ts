@@ -28,9 +28,14 @@ function naToNull(v: string | undefined): string | null {
   return !v || v === "N/A" ? null : v;
 }
 
-export async function searchMovies(query: string): Promise<OmdbSearchResult[]> {
+// A bare title search buries anything with a common title (e.g. "Hope",
+// "The Musical") under hundreds of unrelated results -- OMDb's search
+// doesn't rank by relevance. Passing a year narrows it down to almost
+// always find the right one first.
+export async function searchMovies(query: string, year?: string): Promise<OmdbSearchResult[]> {
   const key = requireApiKey();
-  const url = `${OMDB_API}?apikey=${key}&type=movie&s=${encodeURIComponent(query)}`;
+  const yearParam = year?.trim() ? `&y=${encodeURIComponent(year.trim())}` : "";
+  const url = `${OMDB_API}?apikey=${key}&type=movie&s=${encodeURIComponent(query)}${yearParam}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`OMDb search failed: ${res.status}`);
   const json = await res.json();

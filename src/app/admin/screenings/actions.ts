@@ -10,9 +10,9 @@ function revalidate() {
   revalidatePath("/");
 }
 
-export async function searchOmdbMovies(query: string): Promise<OmdbSearchResult[]> {
+export async function searchOmdbMovies(query: string, year?: string): Promise<OmdbSearchResult[]> {
   if (!query.trim()) return [];
-  return searchMovies(query.trim());
+  return searchMovies(query.trim(), year);
 }
 
 // Downloads a poster once and re-hosts it in our own Storage bucket, so the

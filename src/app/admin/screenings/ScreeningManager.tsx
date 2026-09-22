@@ -23,6 +23,7 @@ export default function ScreeningManager({ movies, rooms, screenings }: { movies
 function MovieImporter({ movies }: { movies: Movie[] }) {
   const [pending, run] = useRefreshingAction();
   const [query, setQuery] = useState("");
+  const [year, setYear] = useState("");
   const [results, setResults] = useState<OmdbSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
@@ -34,7 +35,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   async function runSearch() {
     setError(null);
     try {
-      const res = await searchOmdbMovies(query);
+      const res = await searchOmdbMovies(query, year);
       setResults(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
@@ -54,9 +55,19 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && runSearch()}
         />
+        <input
+          className="w-20 rounded border border-[var(--border)] px-2 py-1 text-sm "
+          placeholder="Year"
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && runSearch()}
+        />
         <button className="rounded border border-[var(--border)] px-3 py-1 text-sm " onClick={runSearch}>
           Search
         </button>
+      </div>
+      <div className="mb-3 -mt-2 text-xs text-[var(--muted)]">
+        Common titles (e.g. &quot;Hope&quot;) get buried under hundreds of results without a year -- add one if your search doesn&apos;t find the right movie.
       </div>
 
       {error && (
