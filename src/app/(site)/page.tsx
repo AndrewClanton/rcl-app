@@ -27,10 +27,10 @@ export default async function HomePage() {
         <div className="halftone halftone-hero px-6 py-16 text-center sm:px-12 sm:py-24" style={{ background: "var(--gold)" }}>
           <div className="eyebrow mb-3">Joplin, MO</div>
           <h1 className="font-display mx-auto max-w-3xl text-4xl leading-[1.02] sm:text-6xl" style={{ color: "var(--gold-foreground)" }}>
-            Movies, food, and drinks in one place.
+            micro cinema, third space, film archive
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-sm font-medium sm:text-base" style={{ color: "var(--gold-foreground)" }}>
-            Royale Cinema Lounge is a dine-in cinema and bar. Grab a seat, order off the full menu, and catch a show.
+            Royale Cinema Lounge is a dine-in cinema and bar. Grab a seat, order off the menu, and catch a show.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/showtimes" className="btn-primary">
@@ -190,7 +190,7 @@ export default async function HomePage() {
         <div className="grid gap-6 sm:grid-cols-[1.2fr_1fr] sm:items-center">
           <div>
             <div className="eyebrow mb-2">Food &amp; drink</div>
-            <h2 className="font-display text-xl">A full menu, made for movie night</h2>
+            <h2 className="font-display text-xl">A menu made for movie night</h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
               Snacks, soft drinks, draft beer, wine from Eagles Landing, and specialty cocktails. Try one of our
               movie-themed coffee bar drinks: City of Stars, Oppenheimer, Titanic.

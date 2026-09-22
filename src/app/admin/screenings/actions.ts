@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { searchMovies, getMovieDetails, type OmdbSearchResult } from "@/lib/omdb";
+import { getPosterOptionsByImdbId, type PosterOption } from "@/lib/tmdb-posters";
 
 function revalidate() {
   revalidatePath("/admin/screenings");
@@ -21,7 +22,7 @@ export async function searchOmdbMovies(query: string, year?: string): Promise<Om
 // shouldn't block adding the movie to the schedule.
 async function downloadAndStorePoster(
   supabase: ReturnType<typeof createAdminClient>,
-  imdbId: string,
+  key: string,
   posterUrl: string | null
 ): Promise<string | null> {
   if (!posterUrl) return null;
@@ -31,7 +32,7 @@ async function downloadAndStorePoster(
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
     const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
     const buffer = Buffer.from(await res.arrayBuffer());
-    const path = `${imdbId}.${ext}`;
+    const path = `${key}.${ext}`;
     const { error: uploadErr } = await supabase.storage.from("movie-posters").upload(path, buffer, { contentType, upsert: true });
     if (uploadErr) return null;
     const { data: urlData } = supabase.storage.from("movie-posters").getPublicUrl(path);
@@ -66,6 +67,29 @@ export async function importMovieFromOmdb(imdbId: string): Promise<string> {
   if (error) throw error;
   revalidate();
   return data.id;
+}
+
+// Alternate poster art for a movie already in the library, pulled from TMDb
+// by the movie's IMDb id. Empty if the movie has no imdb_id on file (added
+// manually) or TMDb has no matching entry.
+export async function getPosterOptions(movieId: string): Promise<PosterOption[]> {
+  const supabase = createAdminClient();
+  const { data: movie } = await supabase.from("movies").select("imdb_id").eq("id", movieId).single();
+  if (!movie?.imdb_id) return [];
+  return getPosterOptionsByImdbId(movie.imdb_id);
+}
+
+export async function setMoviePoster(movieId: string, posterUrl: string): Promise<void> {
+  const supabase = createAdminClient();
+  // A timestamped filename (not just movieId) -- otherwise this re-uploads
+  // to the exact same path as the poster it's replacing, the public URL
+  // never changes, and browsers keep showing the old cached image at that
+  // URL even though the file and the DB row were both updated correctly.
+  const stored = await downloadAndStorePoster(supabase, `${movieId}-${Date.now()}`, posterUrl);
+  if (!stored) throw new Error("Could not download that poster. Try a different one.");
+  const { error } = await supabase.from("movies").update({ poster_url: stored }).eq("id", movieId);
+  if (error) throw error;
+  revalidate();
 }
 
 export async function addMovieManually(fields: { title: string; synopsis?: string; runtime_minutes?: number; rating?: string }) {

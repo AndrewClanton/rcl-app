@@ -4,7 +4,8 @@ import { useState } from "react";
 import type { Movie, Room, Screening } from "@/lib/types";
 import type { OmdbSearchResult } from "@/lib/omdb";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { searchOmdbMovies, importMovieFromOmdb, addMovieManually, addScreening, deleteScreening } from "./actions";
+import type { PosterOption } from "@/lib/tmdb-posters";
+import { searchOmdbMovies, importMovieFromOmdb, getPosterOptions, setMoviePoster, addMovieManually, addScreening, deleteScreening } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -14,9 +15,94 @@ export default function ScreeningManager({ movies, rooms, screenings }: { movies
   return (
     <div className="space-y-8">
       <MovieImporter movies={movies} />
+      <MovieLibrary movies={movies} />
       <ScreeningScheduler movies={movies} rooms={rooms} />
       <UpcomingScreenings screenings={screenings} />
     </div>
+  );
+}
+
+function MovieLibrary({ movies }: { movies: Movie[] }) {
+  const [pending, run] = useRefreshingAction();
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const [options, setOptions] = useState<PosterOption[]>([]);
+  const [loadingOptions, setLoadingOptions] = useState(false);
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+
+  async function openPicker(movieId: string) {
+    setOpenFor(movieId);
+    setOptions([]);
+    setOptionsError(null);
+    setLoadingOptions(true);
+    try {
+      const opts = await getPosterOptions(movieId);
+      if (opts.length === 0) setOptionsError("No alternate posters found for this movie.");
+      setOptions(opts);
+    } catch (e) {
+      setOptionsError(e instanceof Error ? e.message : "Couldn't load poster options.");
+    } finally {
+      setLoadingOptions(false);
+    }
+  }
+
+  const openMovie = movies.find((m) => m.id === openFor);
+
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+      <h2 className="mb-3 text-lg font-semibold">Movie library</h2>
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 lg:grid-cols-8">
+        {movies.map((m) => (
+          <div key={m.id}>
+            <div className="relative aspect-[2/3] w-full overflow-hidden rounded border border-[var(--border)] bg-[var(--surface-hover)]">
+              {m.poster_url && (
+                // Candidate thumbnails come straight from TMDb until one is picked and re-hosted, so next/image (which only allows our own storage domain) doesn't apply here.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.poster_url} alt={m.title} className="h-full w-full object-cover" />
+              )}
+            </div>
+            <div className="mt-1 line-clamp-1 text-xs font-medium" title={m.title}>
+              {m.title}
+            </div>
+            <button className="text-[11px] text-[var(--accent)] hover:underline" onClick={() => openPicker(m.id)}>
+              Change poster
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {openMovie && (
+        <div className="mt-4 rounded-lg border border-dashed border-[var(--border)] p-3 ">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm font-medium">Choose a poster for {openMovie.title}</div>
+            <button className="text-xs text-[var(--muted)] hover:underline" onClick={() => setOpenFor(null)}>
+              Close
+            </button>
+          </div>
+          {loadingOptions && <div className="text-sm text-[var(--muted)]">Loading options...</div>}
+          {optionsError && (
+            <div className="rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] p-2 text-sm text-[var(--warn-text)] ">{optionsError}</div>
+          )}
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+            {options.map((o) => (
+              <button
+                key={o.url}
+                disabled={pending}
+                className="overflow-hidden rounded border border-[var(--border)] hover:border-[var(--accent)] disabled:opacity-50"
+                onClick={() =>
+                  run(async () => {
+                    await setMoviePoster(openMovie.id, o.url);
+                    setOpenFor(null);
+                  })
+                }
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={o.url} alt="" className="aspect-[2/3] w-full object-cover" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
