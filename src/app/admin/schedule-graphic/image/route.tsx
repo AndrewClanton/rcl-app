@@ -11,15 +11,16 @@ export const runtime = "nodejs";
 
 const CENTRAL_TZ = "America/Chicago";
 
-// Design concept: "the Royale Proof Sheet" -- treats the schedule graphic as
-// a piece of printed film-industry ephemera (part programming calendar,
-// part press proof, part movie poster) rather than a screenshot of a web
-// page. Devices -- halftone dot screens, filmstrip sprockets, pre-press
-// registration marks, a color-proof bar, rubber-stamped badges -- were
-// designed during the site's mockup phase and shelved as "reserved for
-// internal reference documents"; a printed/shared schedule graphic is
-// exactly the artifact category they were meant for, so they get a real
-// home here instead of the site's web pages.
+// Design concept: "the Royale Proof Sheet" -- a piece of printed
+// film-industry ephemera (part programming calendar, part press proof,
+// part movie poster) rather than a screenshot of a web page or a dense
+// spec sheet. First pass erred toward information density at UI-chrome
+// scale (11-18px text); this one is built for POSTER scale -- huge type,
+// big imagery, minimal small print, every zone either carrying a large
+// graphic or large text. Exact per-showtime detail lives on the site
+// (the QR code goes straight to it); the graphic's job is to be seen and
+// read from across a room or a thumb's-width on a phone, not to be a
+// complete database dump.
 //
 // Matches the site's own design tokens (src/app/globals.css) -- Satori
 // renders in total isolation from the app's CSS, so these have to be
@@ -106,6 +107,21 @@ interface DayGroup {
   entries: DayEntry[];
 }
 
+// One line's worth of content once same-title screenings on the same day
+// are collapsed together -- "BUDDY" at 12:00 and 4:00 becomes one line
+// with two times instead of two separate lines, which is both more
+// compact and closer to how a person actually thinks about "what's
+// playing" (by title, not as a flat chronological list).
+interface GroupedLine {
+  kind: "screening" | "event" | "note";
+  title: string;
+  times: string[];
+  outdoor: boolean;
+  rating?: string | null;
+  sub?: string;
+  sortMinutes: number;
+}
+
 interface Poster {
   title: string;
   url: string;
@@ -132,7 +148,8 @@ function dayPartsFromKey(dateKey: string) {
 
 function screeningTime(iso: string) {
   return new Date(iso)
-    .toLocaleTimeString("en-US", { timeZone: CENTRAL_TZ, hour: "2-digit", minute: "2-digit" })
+    .toLocaleTimeString("en-US", { timeZone: CENTRAL_TZ, hour: "numeric", minute: "2-digit" })
+    .replace(" ", "")
     .toUpperCase();
 }
 
@@ -162,7 +179,7 @@ function eventTimeRange(time: string, hours: number) {
     const mm = total % 60;
     const period = hh >= 12 ? "PM" : "AM";
     const hour12 = hh % 12 === 0 ? 12 : hh % 12;
-    return `${String(hour12).padStart(2, "0")}:${String(mm).padStart(2, "0")}${period}`;
+    return `${hour12}${mm ? ":" + String(mm).padStart(2, "0") : ""}${period}`;
   };
   return `${fmt(startMinutes)}-${fmt(endMinutes)}`;
 }
@@ -175,7 +192,7 @@ function noteTimeLabel(start: string | null, end: string | null): string {
     const [hh, mm] = t.split(":").map(Number);
     const period = hh >= 12 ? "PM" : "AM";
     const hour12 = hh % 12 === 0 ? 12 : hh % 12;
-    return `${String(hour12).padStart(2, "0")}:${String(mm).padStart(2, "0")}${period}`;
+    return `${hour12}${mm ? ":" + String(mm).padStart(2, "0") : ""}${period}`;
   };
   return end ? `${fmtOne(start)}-${fmtOne(end)}` : fmtOne(start);
 }
@@ -242,6 +259,37 @@ function groupByDay(screenings: ScreeningRow[], events: EventRow[], notes: NoteR
   return [...byDay.values()].sort((a, b) => a.dateKey.localeCompare(b.dateKey));
 }
 
+// Long titles get a hard cap so a poster-scale line can't unpredictably
+// wrap to 2-3 lines and blow the (carefully budgeted) canvas height.
+function truncateTitle(title: string, max = 28): string {
+  return title.length > max ? title.slice(0, max - 1).trimEnd() + "…" : title;
+}
+
+// Collapses same-title screenings on the same day into one line with all
+// their times -- both more compact and more natural to read than a flat
+// chronological list. Events/notes stay their own lines (they're one-off
+// by nature, not repeat showtimes).
+function groupDayEntries(entries: DayEntry[]): GroupedLine[] {
+  const out: GroupedLine[] = [];
+  const screeningIndex = new Map<string, GroupedLine>();
+  for (const e of entries) {
+    if (e.kind !== "screening") {
+      out.push({ kind: e.kind, title: e.title, times: [e.time], outdoor: e.outdoor, sub: e.sub, sortMinutes: e.sortMinutes });
+      continue;
+    }
+    const existing = screeningIndex.get(e.title);
+    if (existing) {
+      existing.times.push(e.time);
+      existing.outdoor = existing.outdoor || e.outdoor;
+    } else {
+      const line: GroupedLine = { kind: "screening", title: truncateTitle(e.title), times: [e.time], outdoor: e.outdoor, rating: e.rating, sortMinutes: e.sortMinutes };
+      screeningIndex.set(e.title, line);
+      out.push(line);
+    }
+  }
+  return out.sort((a, b) => a.sortMinutes - b.sortMinutes);
+}
+
 function uniquePosters(screenings: ScreeningRow[], limit: number): Poster[] {
   const seen = new Map<string, Poster>();
   for (const s of screenings) {
@@ -267,7 +315,7 @@ function pickFeatured(screenings: ScreeningRow[]): Poster | null {
   if (!chosen?.movie) return null;
   return {
     title: chosen.movie.title,
-    url: `https://image.tmdb.org/t/p/w342${chosen.movie.poster_path}`,
+    url: `https://image.tmdb.org/t/p/w500${chosen.movie.poster_path}`,
     rating: chosen.movie.rating,
     runtimeMinutes: chosen.movie.runtime_minutes,
   };
@@ -278,14 +326,26 @@ function pickFeatured(screenings: ScreeningRow[]): Poster | null {
 // A Ben-Day dot screen, hand-unrolled as a grid of small circles (Satori
 // doesn't support tiling a CSS radial-gradient background) -- fades in
 // across the band the way the real ink-on-ink halftone texture does on the
-// site's own hero panels. Kept to one modest grid (used once, on the
-// masthead) to stay within a reasonable render budget.
+// site's own hero panels. Dot count is kept modest (cols*rows, currently 24).
+//
+// Performance note (cost real debugging time, worth recording): this overlay
+// always sits inside a parent with `overflow: hidden` (for the rounded
+// corners). On Satori/resvg, an overflow:hidden clip's cost scales with BOTH
+// the number of descendants inside it AND the total canvas height -- not
+// with descendant size, opacity, or font size, which all had zero measured
+// effect. At the portrait format's ~4200px canvas height, 75 dots under one
+// clip cost ~9-10s by themselves; the same clip with 24 dots costs a small
+// fraction of that. The other half of this fix was removing overflow:hidden
+// entirely from the 7 day-list boxes below and the hero poster frame, since
+// their content no longer needs clipping (capped lines, exact-fit image) --
+// that alone cut another ~10s. Moral: on a tall generated canvas, prefer no
+// clip at all, and where one is unavoidable, keep what's inside it small.
 function HalftoneOverlay({ width, height, color = INK, maxOpacity = 0.16 }: { width: number; height: number; color?: string; maxOpacity?: number }) {
-  const cols = 22;
-  const rows = 7;
+  const cols = 8;
+  const rows = 3;
   const cellW = width / cols;
   const cellH = height / rows;
-  const dotSize = Math.min(cellW, cellH) * 0.5;
+  const dotSize = Math.min(cellW, cellH) * 0.55;
   const dots = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
@@ -308,11 +368,7 @@ function HalftoneOverlay({ width, height, color = INK, maxOpacity = 0.16 }: { wi
       );
     }
   }
-  return (
-    <div style={{ display: "flex", position: "absolute", top: 0, left: 0, width, height }}>
-      {dots}
-    </div>
-  );
+  return <div style={{ display: "flex", position: "absolute", top: 0, left: 0, width, height }}>{dots}</div>;
 }
 
 // Pre-press registration mark -- a crosshair-in-a-circle, the printer's
@@ -329,12 +385,12 @@ function RegistrationMark({ size = 22, color = MUTED }: { size?: number; color?:
 
 // A press color-proof bar -- swatches of the brand's actual print palette,
 // standing in for the CMYK bar a real film lab would strike on a proof.
-function ColorBar({ size = 13 }: { size?: number }) {
+function ColorBar({ size = 22 }: { size?: number }) {
   const swatches = [GOLD, ACCENT, INK, SURFACE];
   return (
-    <div style={{ display: "flex", flexDirection: "row", gap: 3 }}>
+    <div style={{ display: "flex", flexDirection: "row", gap: 5 }}>
       {swatches.map((c, i) => (
-        <div key={i} style={{ display: "flex", width: size, height: size, backgroundColor: c, border: c === SURFACE ? `1px solid ${BORDER}` : "none" }} />
+        <div key={i} style={{ display: "flex", width: size, height: size, backgroundColor: c, border: c === SURFACE ? `1.5px solid ${BORDER}` : "none" }} />
       ))}
     </div>
   );
@@ -342,24 +398,25 @@ function ColorBar({ size = 13 }: { size?: number }) {
 
 // The medium is the message: a strip of film with punched sprocket holes
 // (small circles matching the page background, so they read as "holes"),
-// carrying the week's poster thumbnails like frames on a reel.
-function Filmstrip({ posters, frameW, frameH, holeCount = 22 }: { posters: Poster[]; frameW: number; frameH: number; holeCount?: number }) {
+// carrying poster thumbnails like frames on a reel.
+function Filmstrip({ posters, frameW, frameH, holeCount }: { posters: Poster[]; frameW: number; frameH: number; holeCount: number }) {
+  const holeSize = Math.max(10, Math.round(frameH * 0.09));
   const holeRow = (
-    <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", padding: "0 16px" }}>
+    <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", padding: "0 20px" }}>
       {Array.from({ length: holeCount }).map((_, i) => (
-        <div key={i} style={{ display: "flex", width: 10, height: 10, borderRadius: 10, backgroundColor: BG }} />
+        <div key={i} style={{ display: "flex", width: holeSize, height: holeSize, borderRadius: holeSize, backgroundColor: BG }} />
       ))}
     </div>
   );
   return (
-    <div style={{ display: "flex", flexDirection: "column", backgroundColor: INK, borderRadius: 8, paddingTop: 7, paddingBottom: 7 }}>
+    <div style={{ display: "flex", flexDirection: "column", backgroundColor: INK, borderRadius: 10, paddingTop: 10, paddingBottom: 10 }}>
       {holeRow}
-      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 8, padding: "7px 10px" }}>
+      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 12, padding: "10px 14px" }}>
         {posters.length === 0 ? (
-          <div style={{ display: "flex", fontFamily: MONO, fontSize: 12, color: "#8a8378" }}>NO REEL SELECTED</div>
+          <div style={{ display: "flex", fontFamily: MONO, fontSize: 20, color: "#8a8378" }}>NO REEL SELECTED</div>
         ) : (
           posters.map((p) => (
-            <img key={p.title} src={p.url} width={frameW} height={frameH} style={{ width: frameW, height: frameH, borderRadius: 3, objectFit: "cover", border: "1px solid #3a352c" }} />
+            <img key={p.title} src={p.url} width={frameW} height={frameH} style={{ width: frameW, height: frameH, borderRadius: 4, objectFit: "cover", border: "1.5px solid #3a352c" }} />
           ))
         )}
       </div>
@@ -371,7 +428,7 @@ function Filmstrip({ posters, frameW, frameH, holeCount = 22 }: { posters: Poste
 // A rotated rubber-stamp callout advertising the Insiders+ perk directly
 // inside the schedule graphic -- the graphic doubles as a membership ad
 // wherever it's shared or posted.
-function MembershipStamp() {
+function MembershipStamp({ scale = 1 }: { scale?: number }) {
   return (
     <div
       style={{
@@ -380,22 +437,34 @@ function MembershipStamp() {
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: INK,
-        borderRadius: 8,
-        padding: "8px 14px",
+        borderRadius: 10,
+        padding: `${14 * scale}px ${22 * scale}px`,
         transform: "rotate(-2deg)",
       }}
     >
-      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 14, color: GOLD }}>INSIDERS+</div>
-      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 9, color: BG, letterSpacing: 0.3 }}>$15/MO · UNLIMITED FREE ENTRY</div>
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 30 * scale, color: GOLD }}>INSIDERS+</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 16 * scale, color: BG, letterSpacing: 0.5 }}>$15/MO · FREE ENTRY</div>
     </div>
   );
 }
 
-function BoothChip() {
+function BoothChip({ scale = 1 }: { scale?: number }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, padding: "8px 14px", transform: "rotate(1.5deg)" }}>
-      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 13, color: INK }}>8 LOUNGE BOOTHS</div>
-      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 9, color: ACCENT, letterSpacing: 0.3 }}>RESERVE ONLINE · $25</div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: SURFACE,
+        border: `2px solid ${INK}`,
+        borderRadius: 10,
+        padding: `${14 * scale}px ${22 * scale}px`,
+        transform: "rotate(1.5deg)",
+      }}
+    >
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 26 * scale, color: INK }}>8 LOUNGE BOOTHS</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 16 * scale, color: ACCENT, letterSpacing: 0.5 }}>RESERVE ONLINE · $25</div>
     </div>
   );
 }
@@ -403,344 +472,366 @@ function BoothChip() {
 // Real menu items, not invented copy -- the coffee bar's movie-themed
 // drinks (City of Stars, Oppenheimer, Titanic...) are exactly the kind of
 // charming specific detail worth surfacing here.
-function NowPouring({ items }: { items: string[] }) {
+function NowPouring({ items, scale = 1 }: { items: string[]; scale?: number }) {
   if (items.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2, justifyContent: "center" }}>
-      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 12, color: INK }}>NOW POURING</div>
-      <div style={{ display: "flex", fontFamily: MONO, fontSize: 10, color: MUTED }}>{items.join("  ·  ")}</div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 * scale, justifyContent: "center" }}>
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 24 * scale, color: INK }}>NOW POURING</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontSize: 17 * scale, color: MUTED }}>{items.join("  ·  ")}</div>
     </div>
   );
 }
 
-function QrBadge({ dataUrl, size = 96 }: { dataUrl: string; size?: number }) {
+function QrBadge({ dataUrl, size = 130 }: { dataUrl: string; size?: number }) {
   return (
-    <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10 }}>
-      <div style={{ display: "flex", position: "relative", padding: 6, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 6 }}>
+    <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 16 }}>
+      <div style={{ display: "flex", padding: 8, backgroundColor: SURFACE, border: `2px solid ${INK}`, borderRadius: 8 }}>
         <img src={dataUrl} width={size} height={size} style={{ width: size, height: size }} />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 13, color: INK }}>SCAN FOR</div>
-        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 13, color: ACCENT }}>SHOWTIMES</div>
+        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 26, color: INK }}>SCAN FOR</div>
+        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 26, color: ACCENT }}>SHOWTIMES</div>
       </div>
     </div>
   );
 }
 
-function RatingBadge({ rating }: { rating?: string | null }) {
+function RatingBadge({ rating, size = 20 }: { rating?: string | null; size?: number }) {
   if (!rating) return null;
   return (
-    <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 9, color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 3, padding: "1px 4px" }}>{rating}</span>
+    <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: size, color: MUTED, border: `1.5px solid ${BORDER}`, borderRadius: 5, padding: "3px 8px" }}>{rating}</span>
   );
 }
 
-// A closed/empty day reads as a small, deliberate tag instead of a lone
-// giant word floating in a sea of blank space.
-function ClosedTag({ size = "md" }: { size?: "sm" | "md" }) {
-  const fontSize = size === "sm" ? 11 : 13;
+// A closed/empty day reads as one bold compact tag, not a gap -- and takes
+// only the room it needs, so the day it belongs to stays short instead of
+// leaving a wasted block the height of a busy day.
+function ClosedTag() {
   return (
-    <div style={{ display: "flex", fontFamily: DISPLAY, fontSize, letterSpacing: 1, color: MUTED, border: `1.5px solid ${BORDER}`, borderRadius: 4, padding: size === "sm" ? "3px 8px" : "4px 10px" }}>
-      CLOSED
-    </div>
+    <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 28, letterSpacing: 1.5, color: MUTED, border: `2px solid ${BORDER}`, borderRadius: 6, padding: "8px 18px" }}>CLOSED</div>
   );
 }
 
-function EntryLine({ entry, compact = false, showRating = true }: { entry: DayEntry; compact?: boolean; showRating?: boolean }) {
-  const timeSize = compact ? 11 : 13;
-  const titleSize = compact ? 12.5 : 15;
-  if (entry.kind === "event") {
+// One grouped line (title + its time(s)) at poster scale. Time(s) sit
+// right after the title on the same baseline, in mono, so a title with 3
+// showtimes still reads as one confident line instead of stacking.
+// Simple stacked layout (title line, then a time/meta line below) instead
+// of a wrapped single row -- mirrors the grid format's day-column entries,
+// which render far faster in Satori than a flex-wrapped row with multiple
+// mixed-style children repeated across many lines.
+function GroupedLineView({ line, titleSize, timeSize }: { line: GroupedLine; titleSize: number; timeSize: number }) {
+  if (line.kind === "event") {
     return (
-      <div style={{ display: "flex", flexDirection: "column", backgroundColor: WARN_BG, border: `1px solid ${WARN_BORDER}`, borderRadius: 5, padding: "4px 8px" }}>
-        <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: titleSize, color: WARN_TEXT }}>
-          <span style={{ fontFamily: MONO, marginRight: 6 }}>{entry.time}</span>
-          {entry.title}
-        </div>
-        {entry.sub && !compact && <div style={{ display: "flex", fontFamily: SANS, fontSize: 10.5, color: MUTED }}>{entry.sub}</div>}
+      <div style={{ display: "flex", flexDirection: "column", backgroundColor: WARN_BG, border: `2px solid ${WARN_BORDER}`, borderRadius: 8, padding: "8px 16px" }}>
+        <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: titleSize, color: WARN_TEXT }}>{line.title}</div>
+        <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: WARN_TEXT, opacity: 0.8 }}>{line.times[0]}</div>
       </div>
     );
   }
-  if (entry.kind === "note") {
+  if (line.kind === "note") {
     return (
-      <div style={{ display: "flex", fontFamily: SANS, fontWeight: 600, fontStyle: "italic", fontSize: titleSize, color: NOTE_TEXT, backgroundColor: SURFACE_HOVER, border: `1px solid ${BORDER}`, borderRadius: 5, padding: "4px 8px" }}>
-        {entry.time && <span style={{ fontFamily: MONO, fontStyle: "normal", marginRight: 6 }}>{entry.time}</span>}
-        {entry.title}
+      <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontStyle: "italic", fontSize: titleSize, color: NOTE_TEXT, backgroundColor: SURFACE_HOVER, border: `2px solid ${BORDER}`, borderRadius: 8, padding: "8px 16px" }}>
+        {line.title}
       </div>
     );
   }
-  if (entry.outdoor) {
-    return (
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 5, padding: "4px 8px" }}>
-        <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: INK }}>{entry.time}</span>
-        <span style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: titleSize, color: INK }}>{entry.title}</span>
-        {showRating && <RatingBadge rating={entry.rating} />}
-        <span style={{ display: "flex", fontFamily: DISPLAY, fontSize: 9.5, color: GOLD_FG, backgroundColor: GOLD, borderRadius: 3, padding: "2px 5px", letterSpacing: 0.4 }}>OUTDOOR</span>
-      </div>
-    );
-  }
+  const meta = line.times.join(" · ") + (line.outdoor ? "  ☀ OUTDOOR" : "");
   return (
-    <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 6, padding: "2px 3px" }}>
-      <span style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: ACCENT }}>{entry.time}</span>
-      <span style={{ display: "flex", fontFamily: SANS, fontWeight: 600, fontSize: titleSize, color: INK }}>{entry.title}</span>
-      {showRating && <RatingBadge rating={entry.rating} />}
-    </div>
-  );
-}
-
-function DayCell({ day, colorIndex }: { day: DayGroup; colorIndex: number }) {
-  const header = DAY_HEADERS[colorIndex % DAY_HEADERS.length];
-  return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, overflow: "hidden" }}>
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 8, backgroundColor: header.bg, padding: "7px 12px" }}>
-        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 15, color: header.fg }}>{day.weekday}</div>
-        <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
-      </div>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: day.entries.length === 0 ? "center" : "stretch", padding: "9px 10px", gap: "5px" }}>
-        {day.entries.length === 0 ? <ClosedTag /> : day.entries.map((entry, i) => <EntryLine key={i} entry={entry} showRating={false} />)}
-      </div>
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: titleSize, color: INK, lineHeight: 1.05 }}>{line.title}</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: timeSize, color: line.outdoor ? GOLD_FG : ACCENT, backgroundColor: line.outdoor ? GOLD : "transparent" }}>{meta}</div>
     </div>
   );
 }
 
 function Masthead({ title, rangeLabel, width, height }: { title: string; rangeLabel: string; width: number; height: number }) {
   return (
-    <div style={{ display: "flex", position: "relative", flexDirection: "column", alignItems: "center", justifyContent: "center", width, height, backgroundColor: GOLD, border: `2px solid ${INK}`, borderRadius: 8, boxShadow: `4px 4px 0 ${INK}`, overflow: "hidden" }}>
-      <HalftoneOverlay width={width} height={height} color={ACCENT} maxOpacity={0.22} />
-      <div style={{ display: "flex", position: "absolute", top: 10, left: 12 }}>
-        <RegistrationMark size={18} color="rgba(20,17,12,0.4)" />
+    <div style={{ display: "flex", position: "relative", flexDirection: "column", alignItems: "center", justifyContent: "center", width, height, backgroundColor: GOLD, border: `3px solid ${INK}`, borderRadius: 12, boxShadow: `7px 7px 0 ${INK}` }}>
+      <HalftoneOverlay width={width} height={height} color={ACCENT} maxOpacity={0.24} />
+      <div style={{ display: "flex", position: "absolute", top: 16, left: 18 }}>
+        <RegistrationMark size={30} color="rgba(20,17,12,0.45)" />
       </div>
-      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, letterSpacing: 2, color: ACCENT }}>JOPLIN, MO</div>
-      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 38, color: INK, textAlign: "center", marginTop: 2 }}>{title}</div>
-      <div style={{ display: "flex", fontFamily: MONO, fontSize: 14, color: INK, opacity: 0.65, marginTop: 3 }}>{rangeLabel}</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 22, letterSpacing: 4, color: ACCENT }}>ROYALE CINEMA LOUNGE</div>
+      <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: Math.round(height * 0.34), color: INK, textAlign: "center", lineHeight: 1.02, marginTop: 4 }}>{title}</div>
+      <div style={{ display: "flex", fontFamily: MONO, fontSize: 22, color: INK, opacity: 0.7, marginTop: 6 }}>{rangeLabel}</div>
     </div>
   );
 }
 
-function Footer({ qrDataUrl, fontSize = 12 }: { qrDataUrl: string; fontSize?: number }) {
+function Footer({ qrDataUrl, addressSize = 22 }: { qrDataUrl: string; addressSize?: number }) {
   return (
     <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-      <QrBadge dataUrl={qrDataUrl} size={64} />
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-        <div style={{ display: "flex", fontFamily: MONO, fontSize, color: MUTED }}>715 E BROADWAY, JOPLIN MO · 417-281-4172</div>
-        <ColorBar size={11} />
+      <QrBadge dataUrl={qrDataUrl} />
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 10 }}>
+        <div style={{ display: "flex", fontFamily: MONO, fontSize: addressSize, color: MUTED }}>715 E BROADWAY, JOPLIN MO</div>
+        <div style={{ display: "flex", fontFamily: MONO, fontSize: addressSize, color: MUTED }}>417-281-4172</div>
+        <ColorBar />
       </div>
     </div>
   );
 }
+
+// ---- Grid (1920x1080, fixed -- landscape wall/monitor display) -----------
 
 async function renderGrid(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string, note: string, qrDataUrl: string, pouring: string[]) {
-  const posters = uniquePosters(allScreenings, 5);
+  const posters = uniquePosters(allScreenings, 4);
   const gridDays = days.slice(0, 7);
-  const firstRow = gridDays.slice(0, 4);
-  const secondRow = gridDays.slice(4, 7);
   const featured = pickFeatured(allScreenings);
 
   return (
-    <div style={{ width: "1920px", height: "1080px", display: "flex", flexDirection: "row", backgroundColor: BG, padding: "20px", gap: "18px", fontFamily: SANS }}>
-      {/* Main column */}
-      <div style={{ display: "flex", flexDirection: "column", flex: 1, gap: "12px" }}>
-        <Masthead title="ROYALE INSIDERS MOVIE LINEUP" rangeLabel={rangeLabel} width={1466} height={92} />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "10px" }}>
-          <div style={{ display: "flex", flexDirection: "row", gap: "10px", flex: 1 }}>
-            {firstRow.map((day, i) => (
-              <DayCell key={day.dateKey} day={day} colorIndex={i} />
-            ))}
-          </div>
-          <div style={{ display: "flex", flexDirection: "row", gap: "10px", flex: 1 }}>
-            {secondRow.map((day, i) => (
-              <DayCell key={day.dateKey} day={day} colorIndex={i + 4} />
-            ))}
-            <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${ACCENT}`, borderRadius: 8, overflow: "hidden" }}>
-              <div style={{ display: "flex", backgroundColor: ACCENT, padding: "7px 12px" }}>
-                <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 15, color: ACCENT_FG }}>PLAN AHEAD</div>
-              </div>
-              <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "10px 14px" }}>
-                {note ? (
-                  <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: 18, color: INK, textAlign: "center" }}>{note}</div>
-                ) : (
-                  <div style={{ display: "flex", fontFamily: MONO, fontSize: 13, color: MUTED, textAlign: "center" }}>—</div>
-                )}
-              </div>
+    <div style={{ width: "1920px", height: "1080px", display: "flex", flexDirection: "column", backgroundColor: BG, padding: "26px", gap: "16px", fontFamily: SANS }}>
+      <div style={{ display: "flex", flexDirection: "row", gap: "20px", flex: 1 }}>
+        {/* Hero: one big poster + huge pick, dominating the left third */}
+        <div style={{ display: "flex", flexDirection: "column", width: 480, gap: "14px" }}>
+          <div style={{ display: "flex", position: "relative", flexDirection: "column", alignItems: "center", backgroundColor: GOLD, border: `3px solid ${INK}`, borderRadius: 12, boxShadow: `6px 6px 0 ${INK}`, padding: "14px", overflow: "hidden" }}>
+            <HalftoneOverlay width={480} height={90} color={ACCENT} maxOpacity={0.22} />
+            <div style={{ display: "flex", position: "absolute", top: 10, left: 12 }}>
+              <RegistrationMark size={22} color="rgba(20,17,12,0.4)" />
             </div>
+            <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 16, letterSpacing: 2, color: ACCENT }}>JOPLIN, MO</div>
+            <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 46, color: INK, textAlign: "center", lineHeight: 1 }}>THIS WEEK</div>
+            <div style={{ display: "flex", fontFamily: MONO, fontSize: 16, color: INK, opacity: 0.7 }}>{rangeLabel}</div>
           </div>
-        </div>
-      </div>
 
-      {/* Right rail */}
-      <div style={{ display: "flex", flexDirection: "column", width: 420, gap: "12px" }}>
-        <Filmstrip posters={posters} frameW={64} frameH={94} holeCount={14} />
-
-        {featured && (
-          <div style={{ display: "flex", flexDirection: "row", gap: 10, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, padding: "10px", flex: 1 }}>
-            <img src={featured.url} width={90} height={128} style={{ width: 90, height: 128, borderRadius: 4, objectFit: "cover", border: `1px solid ${BORDER}` }} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, justifyContent: "center" }}>
-              <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 10, color: ACCENT, letterSpacing: 1 }}>THIS WEEK&apos;S PICK</div>
-              <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 18, color: INK }}>{featured.title}</div>
-              <div style={{ display: "flex", flexDirection: "row", gap: 6 }}>
-                {featured.rating && <RatingBadge rating={featured.rating} />}
+          {featured && (
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `3px solid ${INK}`, borderRadius: 12, boxShadow: `6px 6px 0 ${ACCENT}`, padding: "16px", gap: 10 }}>
+              <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 18, color: ACCENT, letterSpacing: 1.5 }}>THIS WEEK&apos;S PICK</div>
+              <img src={featured.url} width={448} height={300} style={{ width: 448, height: 300, borderRadius: 8, objectFit: "cover", objectPosition: "top", border: `2px solid ${BORDER}` }} />
+              <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 34, color: INK, lineHeight: 1.05 }}>{truncateTitle(featured.title, 22)}</div>
+              <div style={{ display: "flex", flexDirection: "row", gap: 8 }}>
+                <RatingBadge rating={featured.rating} size={18} />
                 {featured.runtimeMinutes && (
-                  <span style={{ display: "flex", fontFamily: MONO, fontSize: 9, color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 3, padding: "1px 4px" }}>{featured.runtimeMinutes}m</span>
+                  <span style={{ display: "flex", fontFamily: MONO, fontSize: 18, color: MUTED, border: `1.5px solid ${BORDER}`, borderRadius: 5, padding: "3px 8px" }}>{featured.runtimeMinutes}m</span>
                 )}
               </div>
             </div>
-          </div>
-        )}
-
-        <div style={{ display: "flex", flexDirection: "row", gap: 10 }}>
-          <MembershipStamp />
-          <BoothChip />
-        </div>
-
-        <div style={{ display: "flex", backgroundColor: SURFACE, border: `1.5px solid ${BORDER}`, borderRadius: 8, padding: "10px 12px" }}>
-          <NowPouring items={pouring} />
-        </div>
-
-        <div style={{ flex: 1 }} />
-        <Footer qrDataUrl={qrDataUrl} fontSize={11} />
-      </div>
-    </div>
-  );
-}
-
-function renderBanner(days: DayGroup[], rangeLabel: string, qrDataUrl: string) {
-  const shown = days.slice(0, 7);
-  const sprocketRow = (
-    <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", padding: "0 24px" }}>
-      {Array.from({ length: 40 }).map((_, i) => (
-        <div key={i} style={{ display: "flex", width: 6, height: 6, borderRadius: 6, backgroundColor: BG }} />
-      ))}
-    </div>
-  );
-  return (
-    <div style={{ width: "1200px", height: "628px", display: "flex", flexDirection: "column", backgroundColor: BG, fontFamily: SANS }}>
-      <div style={{ display: "flex", flexDirection: "column", backgroundColor: INK, paddingTop: 5 }}>{sprocketRow}</div>
-
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", padding: "18px 32px 12px" }}>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: "12px" }}>
-          <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 24, color: INK }}>ROYALE CINEMA LOUNGE</div>
-          <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: ACCENT }}>THIS WEEK</div>
-        </div>
-        <div style={{ display: "flex", fontFamily: MONO, fontSize: 13, color: MUTED }}>{rangeLabel}</div>
-      </div>
-
-      <div style={{ flex: 1, display: "flex", flexDirection: "row", padding: "4px 20px" }}>
-        {shown.length === 0 ? (
-          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: SANS, fontSize: 18, color: MUTED }}>No days selected</div>
-        ) : (
-          shown.map((day, i) => (
-            <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, padding: "0 8px", borderLeft: i === 0 ? "none" : `1px solid ${BORDER}`, gap: "3px" }}>
-              <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 5 }}>
-                <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 13, color: ACCENT }}>{day.weekday.slice(0, 3)}</div>
-                <div style={{ display: "flex", fontFamily: MONO, fontSize: 10, color: MUTED }}>{day.dateLabel}</div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "center", gap: "4px", marginTop: 2 }}>
-                {day.entries.length === 0 ? (
-                  <ClosedTag size="sm" />
-                ) : (
-                  day.entries.map((entry, i2) => (
-                    <div
-                      key={i2}
-                      style={{
-                        display: "flex",
-                        flexDirection: "row",
-                        flexWrap: "wrap",
-                        gap: 4,
-                        fontFamily: SANS,
-                        fontStyle: entry.kind === "note" ? "italic" : "normal",
-                        fontWeight: entry.kind === "event" || entry.kind === "note" || entry.outdoor ? 700 : 600,
-                        fontSize: 10.5,
-                        color: entry.kind === "event" ? WARN_TEXT : entry.kind === "note" ? NOTE_TEXT : INK,
-                      }}
-                    >
-                      <span style={{ display: "flex", fontFamily: MONO, color: entry.outdoor ? GOLD_FG : ACCENT }}>{entry.time}</span>
-                      <span style={{ display: "flex" }}>
-                        {entry.title}
-                        {entry.outdoor ? " (OUT)" : ""}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: "10px 24px 14px", borderTop: `2px solid ${INK}` }}>
-        <div style={{ display: "flex", fontFamily: MONO, fontSize: 11, color: MUTED }}>715 E BROADWAY, JOPLIN MO · 417-281-4172</div>
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", fontFamily: MONO, fontSize: 9, color: MUTED }}>SCAN ME</div>
-          <img src={qrDataUrl} width={44} height={44} style={{ width: 44, height: 44, border: `1px solid ${BORDER}`, borderRadius: 3 }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Phone-friendly: 7 days stacked full-width instead of a grid of narrow
-// columns, each getting an even share of the tall canvas (flex: 1) so a
-// light day reads as intentionally calm rather than as a gap in the
-// layout. Entries wrap left-to-right within a day's band instead of
-// forcing one entry per line, using the width as well as the height.
-function renderPortrait(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string, qrDataUrl: string, pouring: string[]) {
-  const shown = days.slice(0, 7);
-  const posters = uniquePosters(allScreenings, 7);
-  const featured = pickFeatured(allScreenings);
-
-  return (
-    <div style={{ width: "1080px", height: "1920px", display: "flex", flexDirection: "column", backgroundColor: BG, padding: "20px 22px 16px", gap: "10px", fontFamily: SANS }}>
-      <Masthead title="ROYALE INSIDERS MOVIE LINEUP" rangeLabel={rangeLabel} width={1036} height={128} />
-
-      <Filmstrip posters={posters} frameW={72} frameH={104} holeCount={24} />
-      {featured && (
-        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: -4 }}>
-          <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 10, color: ACCENT, letterSpacing: 1 }}>THIS WEEK&apos;S PICK:</div>
-          <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: 12, color: INK }}>{featured.title}</div>
-          {featured.rating && <RatingBadge rating={featured.rating} />}
-          {featured.runtimeMinutes && (
-            <span style={{ display: "flex", fontFamily: MONO, fontSize: 9, color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 3, padding: "1px 4px" }}>{featured.runtimeMinutes}m</span>
           )}
         </div>
-      )}
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "9px", marginTop: 4 }}>
-        {shown.length === 0 ? (
-          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: SANS, fontSize: 20, color: MUTED }}>No days selected</div>
-        ) : (
-          shown.map((day, i) => {
+        {/* 7-day columns -- title + times, grouped, poster-scale */}
+        <div style={{ display: "flex", flexDirection: "row", flex: 1, gap: "10px" }}>
+          {gridDays.map((day, i) => {
             const header = DAY_HEADERS[i % DAY_HEADERS.length];
+            const lines = groupDayEntries(day.entries);
             return (
-              <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${INK}`, borderRadius: 8, overflow: "hidden" }}>
-                <div style={{ display: "flex", flexDirection: "row", alignItems: "baseline", gap: 8, backgroundColor: header.bg, padding: "6px 14px" }}>
-                  <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 16, color: header.fg }}>{day.weekday}</div>
-                  <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 12, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
+              <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: SURFACE, border: `2.5px solid ${INK}`, borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ display: "flex", flexDirection: "column", backgroundColor: header.bg, padding: "10px 4px", alignItems: "center" }}>
+                  <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 24, color: header.fg }}>{day.weekday.slice(0, 3)}</div>
+                  <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 15, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
                 </div>
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    alignContent: "center",
-                    justifyContent: day.entries.length === 0 ? "center" : "flex-start",
-                    alignItems: day.entries.length === 0 ? "center" : "flex-start",
-                    padding: "8px 12px",
-                    gap: "6px",
-                  }}
-                >
-                  {day.entries.length === 0 ? <ClosedTag /> : day.entries.map((entry, i2) => <EntryLine key={i2} entry={entry} compact />)}
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: lines.length === 0 ? "center" : "flex-start", alignItems: lines.length === 0 ? "center" : "stretch", padding: "10px 8px", gap: "10px" }}>
+                  {lines.length === 0 ? (
+                    <ClosedTag />
+                  ) : (
+                    lines.slice(0, 5).map((line, li) => (
+                      <div key={li} style={{ display: "flex", flexDirection: "column" }}>
+                        <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 19, color: INK, lineHeight: 1.05 }}>{line.title}</div>
+                        <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 13, color: ACCENT }}>
+                          {line.times.join(" · ")}
+                          {line.outdoor ? " ☀" : ""}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                  {lines.length > 5 && <div style={{ display: "flex", fontFamily: MONO, fontSize: 12, color: MUTED }}>+{lines.length - 5} MORE</div>}
                 </div>
               </div>
             );
-          })
+          })}
+        </div>
+
+        {/* Right rail: promo stack */}
+        <div style={{ display: "flex", flexDirection: "column", width: 400, gap: "14px" }}>
+          <Filmstrip posters={posters} frameW={80} frameH={118} holeCount={10} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <MembershipStamp scale={0.85} />
+            <BoothChip scale={0.85} />
+          </div>
+          <div style={{ display: "flex", backgroundColor: SURFACE, border: `2px solid ${BORDER}`, borderRadius: 10, padding: "14px 16px" }}>
+            <NowPouring items={pouring} scale={0.85} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", flex: 1, backgroundColor: INK, borderRadius: 10, padding: "16px", justifyContent: "center", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 20, color: GOLD, textAlign: "center" }}>PLAN AHEAD</div>
+            <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: note ? 22 : 16, color: BG, textAlign: "center" }}>{note || "Ask us what's coming up next."}</div>
+          </div>
+          <Footer qrDataUrl={qrDataUrl} addressSize={14} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Banner (1200x628, fixed -- social link-preview card) ----------------
+// Small real-world display size demands the most restraint of the three:
+// one big hero image, a short punchy headline, and a handful of titles --
+// not a data grid. Exact times live behind the QR code.
+
+function renderBanner(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string, qrDataUrl: string) {
+  const featured = pickFeatured(allScreenings);
+  const titles: string[] = [];
+  for (const day of days) {
+    for (const line of groupDayEntries(day.entries)) {
+      if (line.kind === "screening" && !titles.includes(line.title)) titles.push(line.title);
+      if (titles.length >= 6) break;
+    }
+    if (titles.length >= 6) break;
+  }
+
+  return (
+    <div style={{ width: "1200px", height: "628px", display: "flex", flexDirection: "row", backgroundColor: BG, fontFamily: SANS }}>
+      {featured ? (
+        <div style={{ display: "flex", position: "relative", width: 420, height: 628 }}>
+          <img src={featured.url} width={420} height={628} style={{ width: 420, height: 628, objectFit: "cover" }} />
+          <div style={{ display: "flex", position: "absolute", top: 0, left: 0, width: 420, height: 628, backgroundColor: INK, opacity: 0.12 }} />
+        </div>
+      ) : (
+        <div style={{ display: "flex", width: 420, height: 628, backgroundColor: GOLD }} />
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "28px 32px", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 18, letterSpacing: 2, color: ACCENT }}>ROYALE CINEMA LOUNGE</div>
+          <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 64, color: INK, lineHeight: 0.95 }}>THIS WEEK</div>
+          <div style={{ display: "flex", fontFamily: MONO, fontSize: 18, color: MUTED }}>{rangeLabel}</div>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {titles.length === 0 ? (
+            <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: 24, color: MUTED }}>No screenings selected</div>
+          ) : (
+            titles.map((t) => (
+              <div key={t} style={{ display: "flex", fontFamily: DISPLAY, fontSize: 30, color: INK, lineHeight: 1 }}>
+                {truncateTitle(t, 30)}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", fontFamily: MONO, fontSize: 15, color: MUTED }}>715 E BROADWAY, JOPLIN MO</div>
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 16, color: ACCENT }}>SCAN FOR SHOWTIMES</div>
+            <img src={qrDataUrl} width={70} height={70} style={{ width: 70, height: 70, border: `2px solid ${INK}`, borderRadius: 5 }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Portrait (1080 wide, HEIGHT COMPUTED FROM CONTENT) -------------------
+// The flagship phone/share format. Rather than cramming poster-scale type
+// into an arbitrary fixed 1920px canvas, the canvas height is computed
+// from the actual grouped content (see estimatePortraitHeight, which uses
+// the exact same row constants as the render function below) so a light
+// week and a packed week both end up close to zero dead space instead of
+// one being crammed and the other mostly empty.
+
+const PORTRAIT_W = 1080;
+const P_PAD = 30;
+const P_MASTHEAD_H = 300;
+const P_HERO_H = 640;
+const P_PROMO_H = 170;
+const P_FOOTER_H = 170;
+const P_GAP = 20;
+const P_DAY_HEADER_H = 92;
+const P_DAY_LINE_H = 78; // per grouped line -- generous enough to absorb an occasional title wrap
+const P_DAY_PAD_V = 28;
+const P_DAY_CLOSED_H = P_DAY_HEADER_H + 78;
+// A day showing every grouped line has no upper bound on element count, which
+// both blows the canvas height on a packed day and -- far more importantly --
+// is the single biggest render-time cost in this file: Satori/resvg's cost
+// for a large field of sibling boxes on a big canvas scales steeply with
+// element count (confirmed empirically, independent of font size, box size,
+// or opacity), so an unbounded per-day line list is a real production-timeout
+// risk, not just a layout nicety. Capped the same way the grid format already
+// caps its columns.
+const P_DAY_MAX_LINES = 5;
+const P_DAY_MORE_H = 44;
+
+function estimateDayHeight(day: DayGroup): number {
+  const lines = groupDayEntries(day.entries);
+  if (lines.length === 0) return P_DAY_CLOSED_H;
+  const shown = Math.min(lines.length, P_DAY_MAX_LINES);
+  const moreH = lines.length > P_DAY_MAX_LINES ? P_DAY_MORE_H : 0;
+  return P_DAY_HEADER_H + shown * P_DAY_LINE_H + moreH + P_DAY_PAD_V;
+}
+
+function estimatePortraitHeight(days: DayGroup[]): number {
+  const shown = days.slice(0, 7);
+  const daysTotal = shown.reduce((sum, d) => sum + estimateDayHeight(d) + P_GAP, 0);
+  return P_PAD * 2 + P_MASTHEAD_H + P_GAP + P_HERO_H + P_GAP + daysTotal + P_PROMO_H + P_GAP + P_FOOTER_H;
+}
+
+function renderPortrait(days: DayGroup[], allScreenings: ScreeningRow[], rangeLabel: string, qrDataUrl: string, pouring: string[], height: number) {
+  const shown = days.slice(0, 7);
+  const featured = pickFeatured(allScreenings);
+  const contentW = PORTRAIT_W - P_PAD * 2;
+
+  return (
+    <div style={{ width: `${PORTRAIT_W}px`, height: `${height}px`, display: "flex", flexDirection: "column", backgroundColor: BG, padding: `${P_PAD}px`, gap: `${P_GAP}px`, fontFamily: SANS }}>
+      <Masthead title="THIS WEEK'S LINEUP" rangeLabel={rangeLabel} width={contentW} height={P_MASTHEAD_H} />
+
+      {/* Hero: one big poster, huge title treatment -- the primary eye-catcher */}
+      <div style={{ display: "flex", flexDirection: "row", height: P_HERO_H, backgroundColor: SURFACE, border: `3px solid ${INK}`, borderRadius: 14, boxShadow: `8px 8px 0 ${ACCENT}` }}>
+        {featured ? (
+          <div style={{ display: "flex", flexDirection: "row", flex: 1 }}>
+            <img src={featured.url} width={420} height={P_HERO_H} style={{ width: 420, height: P_HERO_H, objectFit: "cover", borderRadius: "11px 0 0 11px" }} />
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: "28px 26px", justifyContent: "center", gap: 14 }}>
+              <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 22, color: ACCENT, letterSpacing: 1.5 }}>THIS WEEK&apos;S PICK</div>
+              <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 56, color: INK, lineHeight: 1 }}>{truncateTitle(featured.title, 16)}</div>
+              <div style={{ display: "flex", flexDirection: "row", gap: 10 }}>
+                <RatingBadge rating={featured.rating} size={22} />
+                {featured.runtimeMinutes && (
+                  <span style={{ display: "flex", fontFamily: MONO, fontSize: 22, color: MUTED, border: `1.5px solid ${BORDER}`, borderRadius: 6, padding: "4px 10px" }}>{featured.runtimeMinutes}m</span>
+                )}
+              </div>
+              <div style={{ display: "flex", fontFamily: SANS, fontWeight: 700, fontSize: 24, color: ACCENT, marginTop: 6 }}>Scan below for showtimes ↓</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flex: 1, alignItems: "center", justifyContent: "center", fontFamily: DISPLAY, fontSize: 36, color: MUTED }}>ROYALE CINEMA LOUNGE</div>
         )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "row", gap: 10 }}>
+      {/* 7 days -- each band's height is set explicitly from the same
+          estimateDayHeight() used to size the overall canvas. Deliberately
+          no `overflow: hidden` here -- content is already length-capped
+          (P_DAY_MAX_LINES) so nothing needs clipping, and an overflow clip
+          on all 7 of these boxes was the single largest render-time cost in
+          this file. See the HalftoneOverlay comment above for why. */}
+      {shown.map((day, i) => {
+        const header = DAY_HEADERS[i % DAY_HEADERS.length];
+        const lines = groupDayEntries(day.entries);
+        const dayHeight = estimateDayHeight(day);
+        const overflowCount = lines.length - P_DAY_MAX_LINES;
+        return (
+          <div key={day.dateKey} style={{ display: "flex", flexDirection: "column", height: dayHeight, backgroundColor: SURFACE, border: `2.5px solid ${INK}`, borderRadius: 12 }}>
+            <div style={{ display: "flex", flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: header.bg, padding: "0 22px", height: P_DAY_HEADER_H }}>
+              <div style={{ display: "flex", fontFamily: DISPLAY, fontSize: 42, color: header.fg }}>{day.weekday}</div>
+              <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 22, color: header.fg, opacity: 0.75 }}>{day.dateLabel}</div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: lines.length === 0 ? "center" : "flex-start", alignItems: lines.length === 0 ? "center" : "stretch", padding: "16px 22px", gap: "14px" }}>
+              {lines.length === 0 ? (
+                <ClosedTag />
+              ) : (
+                lines.slice(0, P_DAY_MAX_LINES).map((line, li) => <GroupedLineView key={li} line={line} titleSize={42} timeSize={26} />)
+              )}
+              {overflowCount > 0 && (
+                <div style={{ display: "flex", fontFamily: MONO, fontWeight: 700, fontSize: 20, color: MUTED }}>+{overflowCount} MORE -- see site</div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Promo row */}
+      <div style={{ display: "flex", flexDirection: "row", gap: 16, height: P_PROMO_H }}>
         <MembershipStamp />
         <BoothChip />
-        <div style={{ display: "flex", flex: 1, backgroundColor: SURFACE, border: `1.5px solid ${BORDER}`, borderRadius: 8, padding: "8px 12px", alignItems: "center" }}>
-          <NowPouring items={pouring} />
-        </div>
+      </div>
+      <div style={{ display: "flex", backgroundColor: SURFACE, border: `2.5px solid ${BORDER}`, borderRadius: 12, padding: "16px 22px" }}>
+        <NowPouring items={pouring} />
       </div>
 
       <Footer qrDataUrl={qrDataUrl} />
@@ -796,7 +887,7 @@ export async function GET(request: NextRequest) {
     noteIds.length > 0
       ? supabase.from("calendar_notes").select("id, note_date, start_time, end_time, label").in("id", noteIds)
       : Promise.resolve({ data: [] as NoteRow[], error: null }),
-    QRCode.toDataURL(`${SITE_URL}/showtimes`, { margin: 1, width: 240, color: { dark: INK, light: SURFACE } }),
+    QRCode.toDataURL(`${SITE_URL}/showtimes`, { margin: 1, width: 280, color: { dark: INK, light: SURFACE } }),
   ]);
   if (screeningsRes.error) return new Response("Failed to load screenings", { status: 500 });
   if (eventsRes.error) return new Response("Failed to load events", { status: 500 });
@@ -809,13 +900,12 @@ export async function GET(request: NextRequest) {
   const pouring = await getNowPouring(supabase);
   const fonts = await fontsPromise;
 
-  const dims = format === "banner" ? { width: 1200, height: 628 } : format === "portrait" ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
-  const element =
-    format === "banner"
-      ? renderBanner(days, rangeLabel, qrDataUrl)
-      : format === "portrait"
-        ? renderPortrait(days, screenings, rangeLabel, qrDataUrl, pouring)
-        : await renderGrid(days, screenings, rangeLabel, note, qrDataUrl, pouring);
-
-  return new ImageResponse(element, { ...dims, fonts });
+  if (format === "banner") {
+    return new ImageResponse(renderBanner(days, screenings, rangeLabel, qrDataUrl), { width: 1200, height: 628, fonts });
+  }
+  if (format === "portrait") {
+    const height = estimatePortraitHeight(days);
+    return new ImageResponse(renderPortrait(days, screenings, rangeLabel, qrDataUrl, pouring, height), { width: PORTRAIT_W, height, fonts });
+  }
+  return new ImageResponse(await renderGrid(days, screenings, rangeLabel, note, qrDataUrl, pouring), { width: 1920, height: 1080, fonts });
 }
