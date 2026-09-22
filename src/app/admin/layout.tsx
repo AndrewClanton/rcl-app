@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { requireStaff } from "@/lib/auth";
+import { requireStaff, hasAdminAccess } from "@/lib/auth";
 import { signOut } from "@/app/login/actions";
 import { getOpenDevNoteCount } from "@/lib/data/devNotes";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
-  const openDevNotes = staff.role === "admin" ? await getOpenDevNoteCount() : 0;
+  const isAdmin = hasAdminAccess(staff.role);
+  const openDevNotes = isAdmin ? await getOpenDevNoteCount() : 0;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -39,9 +40,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/schedule-graphic" className="hover:underline">
             Schedule graphic
           </Link>
-          {staff.role === "admin" && (
+          {isAdmin && (
             <Link href="/admin/dev-notes" className="hover:underline">
               Develop Mate{openDevNotes > 0 && <span className="ml-1 rounded-full bg-[var(--accent)] px-1.5 py-0.5 text-[10px] font-bold text-white">{openDevNotes}</span>}
+            </Link>
+          )}
+          {staff.role === "owner" && (
+            <Link href="/admin/staff" className="hover:underline">
+              Staff
             </Link>
           )}
           <Link href="/" className="text-[var(--muted)] hover:underline">

@@ -58,11 +58,26 @@ export async function requireStaff(): Promise<StaffSession> {
   return session;
 }
 
-// Stricter than requireStaff() -- only the 'admin' role, not manager/cashier.
-// Used for the Develop Mate feedback tool (a small, deliberately-restricted
-// group per Andrew's own request) and its review queue.
+// 'owner' is a superset of 'admin' (the single primary admin, who can also
+// grant/revoke admin access for everyone else -- see requireOwner() below),
+// so anything gated to "admin-level" access should treat the two the same.
+export function hasAdminAccess(role: EmployeeRole): boolean {
+  return role === "admin" || role === "owner";
+}
+
+// Stricter than requireStaff() -- 'admin' or 'owner' only, not manager/
+// cashier. Used for the Develop Mate feedback tool (a small, deliberately-
+// restricted group per Andrew's own request) and its review queue.
 export async function requireAdmin(): Promise<StaffSession> {
   const session = await requireStaff();
-  if (session.role !== "admin") redirect("/admin");
+  if (!hasAdminAccess(session.role)) redirect("/admin");
+  return session;
+}
+
+// Stricter still -- only 'owner' (Andrew). Gates the staff/role-management
+// page, since deciding who else gets admin access is a one-person call.
+export async function requireOwner(): Promise<StaffSession> {
+  const session = await requireStaff();
+  if (session.role !== "owner") redirect("/admin");
   return session;
 }

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getStaffSession } from "@/lib/auth";
+import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 import type { DevNoteStatus } from "@/lib/types";
 
 function revalidate() {
@@ -14,7 +14,7 @@ function revalidate() {
 // depth against the action being invoked directly, not the primary gate.
 export async function submitDevNote(input: { pagePath: string; pageTitle: string; message: string }) {
   const staff = await getStaffSession();
-  if (!staff || staff.role !== "admin") throw new Error("Not authorized");
+  if (!staff || !hasAdminAccess(staff.role)) throw new Error("Not authorized");
 
   const message = input.message.trim();
   if (!message) return;

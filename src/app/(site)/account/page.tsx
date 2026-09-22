@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireMember } from "@/lib/member-auth";
+import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 import { getMemberBookings, getMemberOrders, getWatchedMovies } from "@/lib/data/member-account";
 import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
@@ -18,11 +19,13 @@ function dateLabel(iso: string) {
 
 export default async function AccountPage() {
   const member = await requireMember();
-  const [bookings, orders, watched] = await Promise.all([
+  const [bookings, orders, watched, staffSession] = await Promise.all([
     getMemberBookings(member.id),
     getMemberOrders(member.id),
     getWatchedMovies(member.id),
+    getStaffSession(),
   ]);
+  const isStaffAdmin = !!staffSession && hasAdminAccess(staffSession.role);
 
   const purchases = [
     ...bookings.map((b) => ({
@@ -52,7 +55,14 @@ export default async function AccountPage() {
             {member.tier === "Insiders+" && member.subscription_status ? ` (${member.subscription_status})` : ""}
           </p>
         </div>
-        <SignOutButton />
+        <div className="flex items-center gap-3">
+          {isStaffAdmin && (
+            <Link href="/admin" className="btn-secondary !px-4 !py-2 text-sm">
+              Back office
+            </Link>
+          )}
+          <SignOutButton />
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
