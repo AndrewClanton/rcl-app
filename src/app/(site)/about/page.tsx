@@ -77,7 +77,11 @@ export default function AboutPage() {
             cost, than a typical theater could justify. Members always know what&apos;s playing here first. And if there&apos;s
             something specific you want to see on the big screen, just{" "}
             <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="text-[var(--accent)] hover:underline">
-              request it
+              email us
+            </a>{" "}
+            at{" "}
+            <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="text-[var(--accent)] hover:underline">
+              info@royalecinemajoplin.com
             </a>{" "}
             — odds are, we can get it for you.
           </FaqItem>
