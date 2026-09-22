@@ -61,7 +61,7 @@ export default async function HomePage() {
               <Link key={s.id} href={`/showtimes/${s.id}`} className="panel relative block bg-[var(--surface)] transition-transform hover:-translate-y-0.5">
                 <div className="overflow-hidden rounded-[inherit]">
                   <div className="relative">
-                    <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
+                    <MoviePoster posterUrl={s.movie.poster_url} title={s.movie.title} sizes="(min-width: 1024px) 260px, (min-width: 640px) 45vw, 90vw" />
                     {s.room.name.toLowerCase().includes("outdoor") && (
                       <span className="stamp-tag stamp-tag-gold absolute top-2 left-2">Outdoor</span>
                     )}

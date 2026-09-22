@@ -55,7 +55,7 @@ export default async function ShowtimesPage() {
                 {list.map((s) => (
                   <Link key={s.id} href={`/showtimes/${s.id}`} className="card-flat flex items-center gap-4">
                     <div className="w-14 shrink-0 sm:w-16">
-                      <MoviePoster posterPath={s.movie.poster_path} title={s.movie.title} sizes="64px" />
+                      <MoviePoster posterUrl={s.movie.poster_url} title={s.movie.title} sizes="64px" />
                     </div>
                     <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
                       <div>

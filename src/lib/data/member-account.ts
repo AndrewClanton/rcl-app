@@ -10,7 +10,7 @@ export interface MemberBooking {
   screening: {
     id: string;
     starts_at: string;
-    movie: { title: string; poster_path: string | null };
+    movie: { title: string; poster_url: string | null };
     room: { name: string };
   };
 }
@@ -25,7 +25,7 @@ export interface MemberOrder {
 
 export interface WatchedMovie {
   title: string;
-  poster_path: string | null;
+  poster_url: string | null;
   watched_at: string;
 }
 
@@ -37,7 +37,7 @@ export async function getMemberBookings(memberId: string): Promise<MemberBooking
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("bookings")
-    .select("id, quantity, unit_price, status, created_at, screening:screenings(id, starts_at, movie:movies(title, poster_path), room:rooms(name))")
+    .select("id, quantity, unit_price, status, created_at, screening:screenings(id, starts_at, movie:movies(title, poster_url), room:rooms(name))")
     .eq("member_id", memberId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -72,7 +72,7 @@ export async function getWatchedMovies(memberId: string): Promise<WatchedMovie[]
     const key = b.screening.movie.title;
     const existing = seen.get(key);
     if (!existing || new Date(b.screening.starts_at) > new Date(existing.watched_at)) {
-      seen.set(key, { title: b.screening.movie.title, poster_path: b.screening.movie.poster_path, watched_at: b.screening.starts_at });
+      seen.set(key, { title: b.screening.movie.title, poster_url: b.screening.movie.poster_url, watched_at: b.screening.starts_at });
     }
   }
   return [...seen.values()].sort((a, b) => new Date(b.watched_at).getTime() - new Date(a.watched_at).getTime());

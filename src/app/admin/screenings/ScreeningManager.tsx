@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import type { Movie, Room, Screening } from "@/lib/types";
-import type { TmdbSearchResult } from "@/lib/tmdb";
+import type { OmdbSearchResult } from "@/lib/omdb";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { searchTmdbMovies, importMovieFromTmdb, addMovieManually, addScreening, deleteScreening } from "./actions";
+import { searchOmdbMovies, importMovieFromOmdb, addMovieManually, addScreening, deleteScreening } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -23,7 +23,7 @@ export default function ScreeningManager({ movies, rooms, screenings }: { movies
 function MovieImporter({ movies }: { movies: Movie[] }) {
   const [pending, run] = useRefreshingAction();
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<TmdbSearchResult[]>([]);
+  const [results, setResults] = useState<OmdbSearchResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualTitle, setManualTitle] = useState("");
@@ -34,7 +34,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   async function runSearch() {
     setError(null);
     try {
-      const res = await searchTmdbMovies(query);
+      const res = await searchOmdbMovies(query);
       setResults(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Search failed");
@@ -49,7 +49,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
       <div className="mb-3 flex gap-2">
         <input
           className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
-          placeholder="Search TMDb for a movie title..."
+          placeholder="Search OMDb (IMDb) for a movie title..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && runSearch()}
@@ -69,13 +69,13 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
         <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {results.map((r) => (
             <button
-              key={r.id}
+              key={r.imdbID}
               disabled={pending}
-              onClick={() => run(() => importMovieFromTmdb(r.id))}
+              onClick={() => run(() => importMovieFromOmdb(r.imdbID))}
               className="rounded border border-[var(--border)] p-2 text-left text-xs hover:border-[var(--border)] "
             >
               <div className="font-medium">{r.title}</div>
-              <div className="text-[var(--muted)]">{r.release_date?.slice(0, 4) || "—"}</div>
+              <div className="text-[var(--muted)]">{r.year || "—"}</div>
             </button>
           ))}
         </div>

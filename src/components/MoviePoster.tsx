@@ -1,23 +1,20 @@
 import Image from "next/image";
-import { tmdbPosterUrl } from "@/lib/tmdb";
 
 export default function MoviePoster({
-  posterPath,
+  posterUrl,
   title,
   sizes = "200px",
   priority = false,
 }: {
-  posterPath: string | null;
+  posterUrl: string | null;
   title: string;
   sizes?: string;
   priority?: boolean;
 }) {
-  const url = tmdbPosterUrl(posterPath);
-
   return (
     <div className="poster-frame">
-      {url ? (
-        <Image src={url} alt={`${title} poster`} fill sizes={sizes} className="object-cover" priority={priority} />
+      {posterUrl ? (
+        <Image src={posterUrl} alt={`${title} poster`} fill sizes={sizes} className="object-cover" priority={priority} />
       ) : (
         <div className="poster-placeholder">
           <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0 opacity-70" fill="none" stroke="currentColor" strokeWidth="1.5">

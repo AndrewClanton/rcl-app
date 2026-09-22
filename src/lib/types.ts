@@ -124,9 +124,10 @@ export interface Room {
 export interface Movie {
   id: string;
   tmdb_id: number | null;
+  imdb_id: string | null;
   title: string;
   synopsis: string | null;
-  poster_path: string | null;
+  poster_url: string | null;
   runtime_minutes: number | null;
   rating: string | null;
   local_notes: string | null;

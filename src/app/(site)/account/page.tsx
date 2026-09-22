@@ -113,7 +113,7 @@ export default async function AccountPage() {
           <div className="grid grid-cols-3 gap-3 sm:grid-cols-5">
             {watched.map((w) => (
               <div key={w.title}>
-                <MoviePoster posterPath={w.poster_path} title={w.title} sizes="150px" />
+                <MoviePoster posterUrl={w.poster_url} title={w.title} sizes="150px" />
                 <div className="mt-1 text-xs text-[var(--muted)]">{dateLabel(w.watched_at)}</div>
               </div>
             ))}

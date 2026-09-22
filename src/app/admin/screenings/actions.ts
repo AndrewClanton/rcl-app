@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { searchMovies, getMovieDetails, type TmdbSearchResult } from "@/lib/tmdb";
+import { searchMovies, getMovieDetails, type OmdbSearchResult } from "@/lib/omdb";
 
 function revalidate() {
   revalidatePath("/admin/screenings");
@@ -10,27 +10,56 @@ function revalidate() {
   revalidatePath("/");
 }
 
-export async function searchTmdbMovies(query: string): Promise<TmdbSearchResult[]> {
+export async function searchOmdbMovies(query: string): Promise<OmdbSearchResult[]> {
   if (!query.trim()) return [];
   return searchMovies(query.trim());
 }
 
-// Imports (or reuses, if already imported) a movie from TMDb by its id.
-export async function importMovieFromTmdb(tmdbId: number): Promise<string> {
+// Downloads a poster once and re-hosts it in our own Storage bucket, so the
+// live site never depends on a third party's server for it again. Returns
+// null (rather than throwing) on any failure -- a broken poster link
+// shouldn't block adding the movie to the schedule.
+async function downloadAndStorePoster(
+  supabase: ReturnType<typeof createAdminClient>,
+  imdbId: string,
+  posterUrl: string | null
+): Promise<string | null> {
+  if (!posterUrl) return null;
+  try {
+    const res = await fetch(posterUrl);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const path = `${imdbId}.${ext}`;
+    const { error: uploadErr } = await supabase.storage.from("movie-posters").upload(path, buffer, { contentType, upsert: true });
+    if (uploadErr) return null;
+    const { data: urlData } = supabase.storage.from("movie-posters").getPublicUrl(path);
+    return urlData.publicUrl;
+  } catch {
+    return null;
+  }
+}
+
+// Imports (or reuses, if already imported) a movie from OMDb (IMDb-sourced
+// data) by its IMDb id.
+export async function importMovieFromOmdb(imdbId: string): Promise<string> {
   const supabase = createAdminClient();
-  const { data: existing } = await supabase.from("movies").select("id").eq("tmdb_id", tmdbId).maybeSingle();
+  const { data: existing } = await supabase.from("movies").select("id").eq("imdb_id", imdbId).maybeSingle();
   if (existing) return existing.id;
 
-  const details = await getMovieDetails(tmdbId);
+  const details = await getMovieDetails(imdbId);
+  const posterUrl = await downloadAndStorePoster(supabase, imdbId, details.posterUrl);
+
   const { data, error } = await supabase
     .from("movies")
     .insert({
-      tmdb_id: details.id,
+      imdb_id: details.imdbID,
       title: details.title,
-      synopsis: details.overview,
-      poster_path: details.poster_path,
-      runtime_minutes: details.runtime,
-      rating: details.rating,
+      synopsis: details.synopsis,
+      poster_url: posterUrl,
+      runtime_minutes: details.runtimeMinutes,
+      rating: details.rated,
     })
     .select("id")
     .single();

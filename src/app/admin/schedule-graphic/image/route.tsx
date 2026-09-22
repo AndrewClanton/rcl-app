@@ -72,7 +72,7 @@ const fontsPromise = Promise.all([
 interface ScreeningRow {
   id: string;
   starts_at: string;
-  movie: { title: string; poster_path: string | null; runtime_minutes: number | null; rating: string | null } | null;
+  movie: { title: string; poster_url: string | null; runtime_minutes: number | null; rating: string | null } | null;
   room: { name: string } | null;
 }
 interface EventRow {
@@ -293,10 +293,10 @@ function groupDayEntries(entries: DayEntry[]): GroupedLine[] {
 function uniquePosters(screenings: ScreeningRow[], limit: number): Poster[] {
   const seen = new Map<string, Poster>();
   for (const s of screenings) {
-    if (s.movie?.poster_path && !seen.has(s.movie.title)) {
+    if (s.movie?.poster_url && !seen.has(s.movie.title)) {
       seen.set(s.movie.title, {
         title: s.movie.title,
-        url: `https://image.tmdb.org/t/p/w185${s.movie.poster_path}`,
+        url: s.movie.poster_url,
         rating: s.movie.rating,
         runtimeMinutes: s.movie.runtime_minutes,
       });
@@ -309,13 +309,13 @@ function uniquePosters(screenings: ScreeningRow[], limit: number): Poster[] {
 // weather-dependent one worth calling out) -- otherwise the first
 // screening in range that actually has a poster to show.
 function pickFeatured(screenings: ScreeningRow[]): Poster | null {
-  const withPoster = screenings.filter((s) => s.movie?.poster_path);
+  const withPoster = screenings.filter((s) => s.movie?.poster_url);
   const outdoor = withPoster.find((s) => isOutdoor(s.room?.name));
   const chosen = outdoor ?? withPoster[0];
   if (!chosen?.movie) return null;
   return {
     title: chosen.movie.title,
-    url: `https://image.tmdb.org/t/p/w500${chosen.movie.poster_path}`,
+    url: chosen.movie.poster_url!,
     rating: chosen.movie.rating,
     runtimeMinutes: chosen.movie.runtime_minutes,
   };
@@ -879,7 +879,7 @@ export async function GET(request: NextRequest) {
   const supabase = createAdminClient();
   const [screeningsRes, eventsRes, notesRes, qrDataUrl] = await Promise.all([
     screeningIds.length > 0
-      ? supabase.from("screenings").select("id, starts_at, movie:movies(title, poster_path, runtime_minutes, rating), room:rooms(name)").in("id", screeningIds).order("starts_at")
+      ? supabase.from("screenings").select("id, starts_at, movie:movies(title, poster_url, runtime_minutes, rating), room:rooms(name)").in("id", screeningIds).order("starts_at")
       : Promise.resolve({ data: [] as ScreeningRow[], error: null }),
     eventIds.length > 0
       ? supabase.from("events").select("id, event_name, event_date, event_time, hours, room:rooms(name)").in("id", eventIds)

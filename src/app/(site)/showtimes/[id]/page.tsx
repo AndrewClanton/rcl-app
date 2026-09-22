@@ -33,9 +33,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title: `${screening.movie.title} -- ${showtime}`,
     description,
-    openGraph: screening.movie.poster_path
-      ? { images: [{ url: `https://image.tmdb.org/t/p/w780${screening.movie.poster_path}` }] }
-      : undefined,
+    openGraph: screening.movie.poster_url ? { images: [{ url: screening.movie.poster_url }] } : undefined,
   };
 }
 
@@ -86,7 +84,7 @@ export default async function ScreeningDetailPage({
     <div className="mx-auto max-w-3xl">
       <div className="grid gap-8 sm:grid-cols-[200px_1fr]">
         <div className="mx-auto w-40 sm:mx-0 sm:w-full">
-          <MoviePoster posterPath={screening.movie.poster_path} title={screening.movie.title} sizes="200px" priority />
+          <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="200px" priority />
         </div>
 
         <div>
