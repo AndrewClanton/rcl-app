@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth";
+import { requireStaff, assertStaff } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 
@@ -20,6 +20,7 @@ function revalidate() {
 }
 
 export async function addMember(fields: { name: string; email?: string; phone?: string; tier: MemberTier }) {
+  await assertStaff();
   const name = fields.name.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -45,12 +46,14 @@ export async function updateMember(
     avatar_url: string | null;
   }>
 ) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("members").update(fields).eq("id", id);
   revalidate();
 }
 
 export async function deleteMember(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("members").delete().eq("id", id);
   revalidate();

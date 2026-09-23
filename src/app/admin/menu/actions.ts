@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slugify";
 import type { ModifierType, EventPriceMode } from "@/lib/types";
+import { assertStaff } from "@/lib/auth";
 
 // All writes here use the service-role client and bypass RLS. Menu tables
 // are public-read (see the initial migration); write access is gated by
@@ -18,6 +19,7 @@ function revalidate() {
 // ---------- categories ----------
 
 export async function addCategory(label: string) {
+  await assertStaff();
   const name = label.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -27,6 +29,7 @@ export async function addCategory(label: string) {
 }
 
 export async function addSubcategory(parentId: string, label: string) {
+  await assertStaff();
   const name = label.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -36,6 +39,7 @@ export async function addSubcategory(parentId: string, label: string) {
 }
 
 export async function renameCategory(id: string, label: string) {
+  await assertStaff();
   const name = label.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -44,6 +48,7 @@ export async function renameCategory(id: string, label: string) {
 }
 
 export async function deleteCategory(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   // ON DELETE CASCADE handles subcategories, items, modifier groups/options.
   await supabase.from("menu_categories").delete().eq("id", id);
@@ -51,6 +56,7 @@ export async function deleteCategory(id: string) {
 }
 
 export async function reorderCategory(id: string, direction: "up" | "down", siblingIds: string[]) {
+  await assertStaff();
   const idx = siblingIds.indexOf(id);
   const swapWith = direction === "up" ? idx - 1 : idx + 1;
   if (idx === -1 || swapWith < 0 || swapWith >= siblingIds.length) return;
@@ -73,6 +79,7 @@ export async function reorderCategory(id: string, direction: "up" | "down", sibl
 // ---------- items ----------
 
 export async function addItem(categoryId: string, name: string, price: number, isAlcohol = false): Promise<string | null> {
+  await assertStaff();
   const trimmed = name.trim();
   if (!trimmed || !(price >= 0)) return null;
   const supabase = createAdminClient();
@@ -91,12 +98,14 @@ export async function updateItem(
   id: string,
   fields: Partial<{ name: string; price: number; is_alcohol: boolean; is_event_item: boolean; event_price_mode: EventPriceMode | null; active: boolean }>
 ) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("menu_items").update(fields).eq("id", id);
   revalidate();
 }
 
 export async function deleteItem(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("menu_items").delete().eq("id", id);
   revalidate();
@@ -105,6 +114,7 @@ export async function deleteItem(id: string) {
 // ---------- modifier groups & options ----------
 
 export async function addModifierGroup(itemId: string, label: string, type: ModifierType) {
+  await assertStaff();
   const name = label.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -114,12 +124,14 @@ export async function addModifierGroup(itemId: string, label: string, type: Modi
 }
 
 export async function deleteModifierGroup(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("menu_modifier_groups").delete().eq("id", id);
   revalidate();
 }
 
 export async function addModifierOption(groupId: string, name: string, priceDelta: number) {
+  await assertStaff();
   const trimmed = name.trim();
   if (!trimmed) return;
   const supabase = createAdminClient();
@@ -129,12 +141,14 @@ export async function addModifierOption(groupId: string, name: string, priceDelt
 }
 
 export async function updateModifierOption(id: string, fields: Partial<{ name: string; price_delta: number }>) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("menu_modifier_options").update(fields).eq("id", id);
   revalidate();
 }
 
 export async function deleteModifierOption(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("menu_modifier_options").delete().eq("id", id);
   revalidate();
@@ -155,6 +169,7 @@ async function ensureRecipeId(supabase: ReturnType<typeof createAdminClient>, me
 }
 
 export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ instructions: string | null; glassware: string | null; garnish: string | null }>) {
+  await assertStaff();
   const supabase = createAdminClient();
   const recipeId = await ensureRecipeId(supabase, menuItemId);
   await supabase.from("recipes").update(fields).eq("id", recipeId);
@@ -162,6 +177,7 @@ export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ ins
 }
 
 export async function addRecipeIngredient(menuItemId: string, ingredientId: string, quantity: number) {
+  await assertStaff();
   if (!(quantity > 0)) return;
   const supabase = createAdminClient();
   const recipeId = await ensureRecipeId(supabase, menuItemId);
@@ -173,6 +189,7 @@ export async function addRecipeIngredient(menuItemId: string, ingredientId: stri
 }
 
 export async function updateRecipeIngredientQuantity(id: string, quantity: number) {
+  await assertStaff();
   if (!(quantity > 0)) return;
   const supabase = createAdminClient();
   await supabase.from("recipe_ingredients").update({ quantity }).eq("id", id);
@@ -180,6 +197,7 @@ export async function updateRecipeIngredientQuantity(id: string, quantity: numbe
 }
 
 export async function removeRecipeIngredient(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("recipe_ingredients").delete().eq("id", id);
   revalidate();

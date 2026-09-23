@@ -1,6 +1,7 @@
 "use server";
 
 import { getStripe } from "@/lib/stripe";
+import { assertStaff } from "@/lib/auth";
 
 // Server-driven Stripe Terminal integration: the POS never talks to the
 // reader directly (no local-network requirement, unlike the JS SDK) -- it
@@ -9,6 +10,7 @@ import { getStripe } from "@/lib/stripe";
 // on the physical device.
 
 export async function startReaderPayment(amountCents: number): Promise<{ paymentIntentId: string }> {
+  await assertStaff();
   const readerId = process.env.STRIPE_TERMINAL_READER_ID;
   if (!readerId) throw new Error("Card reader isn't configured yet.");
   if (!(amountCents > 0)) throw new Error("Nothing to charge.");
@@ -32,12 +34,14 @@ export async function startReaderPayment(amountCents: number): Promise<{ payment
 }
 
 export async function checkReaderPayment(paymentIntentId: string): Promise<{ status: string; errorMessage: string | null }> {
+  await assertStaff();
   const stripe = getStripe();
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
   return { status: paymentIntent.status, errorMessage: paymentIntent.last_payment_error?.message ?? null };
 }
 
 export async function cancelReaderPayment(paymentIntentId: string): Promise<void> {
+  await assertStaff();
   const readerId = process.env.STRIPE_TERMINAL_READER_ID;
   const stripe = getStripe();
   if (readerId) {

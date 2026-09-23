@@ -2,12 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertStaff } from "@/lib/auth";
 
 function revalidate() {
   revalidatePath("/admin/events");
 }
 
 export async function markEventPaid(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: event } = await supabase.from("events").select("estimate_total").eq("id", id).single();
   if (!event) return;
@@ -16,6 +18,7 @@ export async function markEventPaid(id: string) {
 }
 
 export async function markEventOutstanding(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: event } = await supabase.from("events").select("estimate_total").eq("id", id).single();
   if (!event) return;
@@ -24,12 +27,14 @@ export async function markEventOutstanding(id: string) {
 }
 
 export async function updateEventGuestCount(id: string, guestCount: number | null) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("events").update({ guest_count: guestCount }).eq("id", id);
   revalidate();
 }
 
 export async function deleteEvent(id: string) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("events").delete().eq("id", id);
   revalidate();

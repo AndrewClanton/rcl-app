@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getStaffSession, hasAdminAccess } from "@/lib/auth";
+import { assertAdmin, getStaffSession, hasAdminAccess } from "@/lib/auth";
 import type { DevNoteStatus } from "@/lib/types";
 
 function revalidate() {
@@ -54,22 +54,27 @@ export async function addDevNoteComment(id: string, message: string) {
 }
 
 export async function approveDevNote(id: string) {
+  await assertAdmin();
   await setStatus(id, "approved");
 }
 
 export async function dismissDevNote(id: string) {
+  await assertAdmin();
   await setStatus(id, "dismissed");
 }
 
 export async function markDevNoteDone(id: string) {
+  await assertAdmin();
   await setStatus(id, "done");
 }
 
 export async function reopenDevNote(id: string) {
+  await assertAdmin();
   await setStatus(id, "new");
 }
 
 export async function deleteDevNote(id: string) {
+  await assertAdmin();
   const supabase = createAdminClient();
   await supabase.from("dev_notes").delete().eq("id", id);
   revalidate();

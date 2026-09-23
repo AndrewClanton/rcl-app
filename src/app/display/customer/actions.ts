@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertStaff } from "@/lib/auth";
 
 function last10Digits(s: string) {
   return s.replace(/\D/g, "").slice(-10);
@@ -15,11 +16,13 @@ export interface FoundMember {
 
 // Looks up a member by phone number for the customer-facing kiosk -- self-
 // service, no password. Digit-only comparison (stripping formatting) since
-// phone numbers are stored as free-text elsewhere in the app. Only reachable
-// from a page already gated by requireStaff() (a physical, staff-set-up
-// device), and returns just enough to greet someone by name -- no email,
-// payment, or contact info.
+// phone numbers are stored as free-text elsewhere in the app. The kiosk
+// page is gated by requireStaff() (a physical, staff-set-up device), and
+// assertStaff() re-checks here so the lookup can't be called directly as a
+// phone-number-to-member-name oracle. Returns just enough to greet someone
+// by name -- no email, payment, or contact info.
 export async function findMemberByPhone(phone: string): Promise<FoundMember | null> {
+  await assertStaff();
   const target = last10Digits(phone);
   if (target.length !== 10) return null;
 

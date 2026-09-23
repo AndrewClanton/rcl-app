@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
+import { assertStaff } from "@/lib/auth";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -83,6 +84,7 @@ export async function completeOrder(params: DraftFields & {
   tip?: number;
   draftOrderId?: string | null;
 }): Promise<{ orderNumber: number }> {
+  await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
 
   const supabase = createAdminClient();
@@ -162,6 +164,7 @@ export async function completeOrder(params: DraftFields & {
 const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, tax: 0, total: 0 };
 
 export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields, totals: CheckoutTotals = ZERO_TOTALS): Promise<string> {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
   if (numberErr) throw numberErr;
@@ -196,6 +199,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
 }
 
 export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<void> {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase
     .from("orders")
@@ -220,6 +224,7 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
 }
 
 export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrderSummary[]> {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: orders, error } = await supabase
     .from("orders")
@@ -236,6 +241,7 @@ export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrder
 }
 
 export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: order, error } = await supabase
     .from("orders")
@@ -264,12 +270,14 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
 }
 
 export async function discardDraftOrder(id: string): Promise<void> {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("orders").delete().eq("id", id);
   revalidate();
 }
 
 export async function cancelTab(id: string, pin: string): Promise<void> {
+  await assertStaff();
   const supabase = createAdminClient();
   const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin"]).eq("active", true);
   const ok = (managers ?? []).some((m) => verifyPin(pin, m.pin_hash));

@@ -43,6 +43,26 @@ export async function getStaffSession(): Promise<StaffSession | null> {
   return { employeeId: employee.id, name: employee.name, role: employee.role, email: user.email ?? "" };
 }
 
+// For the top of every Server Action. A page/layout check (requireStaff()
+// below) only gates *rendering* -- an action defined under it is still a
+// public POST endpoint anyone holding its action ID can call (see Next's
+// data-security guide, "Always re-verify inside the action"). Throws rather
+// than redirects, since an action's caller is client code, not navigation.
+// The message is redacted in production builds, which is fine here.
+export async function assertStaff(): Promise<StaffSession> {
+  const session = await getStaffSession();
+  if (!session) throw new Error("Not authorized");
+  return session;
+}
+
+// assertStaff() plus admin-level role -- for actions behind admin-only
+// pages (e.g. the Dev Notes review queue).
+export async function assertAdmin(): Promise<StaffSession> {
+  const session = await assertStaff();
+  if (!hasAdminAccess(session.role)) throw new Error("Not authorized");
+  return session;
+}
+
 // Gates every /admin and /pos page. Distinguishes "not logged in" from
 // "logged in but not staff" so the login page can show the right message
 // (see src/app/login/LoginForm.tsx's `error=not_staff` handling).

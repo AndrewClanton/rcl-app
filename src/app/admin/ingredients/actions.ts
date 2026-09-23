@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff } from "@/lib/auth";
+import { requireStaff, assertStaff } from "@/lib/auth";
 import type { IngredientUnit } from "@/lib/types";
 
 function revalidate() {
@@ -17,6 +17,7 @@ export async function addIngredient(fields: {
   unitCost?: number | null;
   category?: string;
 }) {
+  await assertStaff();
   const name = fields.name.trim();
   if (!name) return;
   const supabase = createAdminClient();
@@ -34,12 +35,14 @@ export async function updateIngredient(
   id: string,
   fields: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }>
 ) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("ingredients").update(fields).eq("id", id);
   revalidate();
 }
 
 export async function setIngredientActive(id: string, active: boolean) {
+  await assertStaff();
   const supabase = createAdminClient();
   await supabase.from("ingredients").update({ active }).eq("id", id);
   revalidate();

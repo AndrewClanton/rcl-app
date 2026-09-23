@@ -6,9 +6,11 @@ import { getStripe } from "@/lib/stripe";
 import { verifyManagerPin } from "@/app/admin/reports/actions";
 import { getBoothReservationsForMonth } from "@/lib/data/booths";
 import type { BoothReservation } from "@/lib/types";
+import { assertStaff } from "@/lib/auth";
 
 // monthStart is the first day of the month, e.g. "2026-09-01".
 export async function getReservationsForMonth(monthStart: string): Promise<BoothReservation[]> {
+  await assertStaff();
   const [y, m] = monthStart.split("-").map(Number);
   const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
   return getBoothReservationsForMonth(monthStart, nextMonth);
@@ -19,6 +21,7 @@ function revalidate() {
 }
 
 export async function updateBooth(boothId: string, fields: { capacity: number; reservationFee: number; active: boolean }) {
+  await assertStaff();
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("booths")
@@ -29,6 +32,7 @@ export async function updateBooth(boothId: string, fields: { capacity: number; r
 }
 
 export async function uploadBoothPhoto(boothId: string, formData: FormData) {
+  await assertStaff();
   const file = formData.get("photo");
   if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo to upload.");
   if (!file.type.startsWith("image/")) throw new Error("File must be an image.");
@@ -51,6 +55,7 @@ export async function uploadBoothPhoto(boothId: string, formData: FormData) {
 }
 
 export async function cancelBoothReservation(reservationId: string, pin: string) {
+  await assertStaff();
   const ok = await verifyManagerPin(pin);
   if (!ok) throw new Error("Incorrect manager PIN.");
 

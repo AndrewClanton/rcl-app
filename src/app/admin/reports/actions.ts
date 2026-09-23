@@ -5,12 +5,21 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { getStripe } from "@/lib/stripe";
 import { getCashAllocationForDate, type CashAllocation } from "@/lib/data/reports";
+import { assertStaff } from "@/lib/auth";
 
 export async function getCashAllocation(date: string): Promise<CashAllocation> {
+  await assertStaff();
   return getCashAllocationForDate(date);
 }
 
 export async function verifyManagerPin(pin: string): Promise<boolean> {
+  await assertStaff();
+  return managerPinMatches(pin);
+}
+
+// Unguarded core of verifyManagerPin, for the refund actions below that
+// have already run assertStaff() -- saves a second auth round trip.
+async function managerPinMatches(pin: string): Promise<boolean> {
   if (!pin) return false;
   const supabase = createAdminClient();
   const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin"]).eq("active", true);
@@ -24,7 +33,8 @@ export async function verifyManagerPin(pin: string): Promise<boolean> {
 // the cashier hands back cash and the status flip is the whole story.
 
 export async function refundOrder(orderId: string, pin: string) {
-  const ok = await verifyManagerPin(pin);
+  await assertStaff();
+  const ok = await managerPinMatches(pin);
   if (!ok) throw new Error("Incorrect manager PIN.");
   const supabase = createAdminClient();
   const { data: order, error: fetchErr } = await supabase.from("orders").select("status, stripe_payment_intent_id").eq("id", orderId).single();
@@ -40,7 +50,8 @@ export async function refundOrder(orderId: string, pin: string) {
 }
 
 export async function refundBooking(bookingId: string, pin: string) {
-  const ok = await verifyManagerPin(pin);
+  await assertStaff();
+  const ok = await managerPinMatches(pin);
   if (!ok) throw new Error("Incorrect manager PIN.");
   const supabase = createAdminClient();
   const { data: booking, error: fetchErr } = await supabase
