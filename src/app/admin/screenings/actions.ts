@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { UserFacingError } from "@/lib/errors";
 import { searchMovies, getMovieDetails, type OmdbSearchResult } from "@/lib/omdb";
 import { getPosterOptionsByImdbId, type PosterOption } from "@/lib/tmdb-posters";
+import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 
 function revalidate() {
   revalidatePath("/admin/screenings");
@@ -33,20 +34,22 @@ export async function searchOmdbMovies(query: string, year?: string): Promise<Re
   return attempt(async () => ({ results: query.trim() ? await searchMovies(query.trim(), year) : [] }));
 }
 
-// Downloads a poster once and re-hosts it in our own Storage bucket, so the
-// live site never depends on a third party's server for it again. Returns
-// null (rather than throwing) on any failure -- a broken poster link
-// shouldn't block adding the movie to the schedule.
+// Downloads a poster once (as a high-res rendition, see lib/posters) and
+// re-hosts it in our own Storage bucket, so the live site never depends on
+// a third party's server for it again. Returns null (rather than throwing)
+// on any failure -- a broken poster link shouldn't block adding the movie
+// to the schedule.
 async function downloadAndStorePoster(
   supabase: ReturnType<typeof createAdminClient>,
   key: string,
   posterUrl: string | null
 ): Promise<string | null> {
-  if (!posterUrl) return null;
+  if (!posterUrl || !isAllowedPosterSource(posterUrl)) return null;
   try {
-    const res = await fetch(posterUrl);
+    const res = await fetch(highResPosterUrl(posterUrl));
     if (!res.ok) return null;
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
     const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
     const buffer = Buffer.from(await res.arrayBuffer());
     const path = `${key}.${ext}`;

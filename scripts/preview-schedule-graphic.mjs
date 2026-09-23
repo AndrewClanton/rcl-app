@@ -33,17 +33,17 @@ const render = await import(pathToFileURL(modPath).href);
 // ---- Fixture: the week of 2026-09-22, from the real schedule ------------------
 const P = "https://bfuwznfwickzeivnfrle.supabase.co/storage/v1/object/public/movie-posters/";
 const M = {
-  buddy: { title: "Buddy", poster_url: P + "10000000-0000-4000-8000-000000000004.jpg", rating: "R", runtime_minutes: 95, release_year: 2026 },
-  hope: { title: "Hope", poster_url: P + "cc787b85-90b0-40e9-b902-6de44425dfb9.jpg", rating: "R", runtime_minutes: 160, release_year: 2026 },
-  coyote: { title: "Coyote vs. Acme", poster_url: P + "10000000-0000-4000-8000-000000000003.jpg", rating: "PG", runtime_minutes: 103, release_year: 2026 },
-  musical: { title: "The Musical", poster_url: P + "e019f550-f5f0-44f6-95a0-493f2ba8bfeb-1790113286941.jpg", rating: null, runtime_minutes: 87, release_year: 2026 },
-  incomer: { title: "The Incomer", poster_url: P + "577e8e5c-78a7-4486-874d-3695313c0f23.jpg", rating: "R", runtime_minutes: 102, release_year: 2026 },
-  stunt: { title: "The Stunt Driver", poster_url: P + "145e7324-5f66-443d-9c21-551826f502cd.jpg", rating: "R", runtime_minutes: 99, release_year: 2026 },
+  buddy: { title: "Buddy", poster_url: P + "10000000-0000-4000-8000-000000000004-1790177862469.jpg", rating: "R", runtime_minutes: 95, release_year: 2026 },
+  hope: { title: "Hope", poster_url: P + "cc787b85-90b0-40e9-b902-6de44425dfb9-1790177867809.jpg", rating: "R", runtime_minutes: 160, release_year: 2026 },
+  coyote: { title: "Coyote vs. Acme", poster_url: P + "10000000-0000-4000-8000-000000000003-1790177864717.jpg", rating: "PG", runtime_minutes: 103, release_year: 2026 },
+  musical: { title: "The Musical", poster_url: P + "e019f550-f5f0-44f6-95a0-493f2ba8bfeb-1790177891848.jpg", rating: null, runtime_minutes: 87, release_year: 2026 },
+  incomer: { title: "The Incomer", poster_url: P + "577e8e5c-78a7-4486-874d-3695313c0f23-1790177890414.jpg", rating: "R", runtime_minutes: 102, release_year: 2026 },
+  stunt: { title: "The Stunt Driver", poster_url: P + "145e7324-5f66-443d-9c21-551826f502cd-1790177897043.jpg", rating: "R", runtime_minutes: 99, release_year: 2026 },
   // Older titles -- members' edition only.
-  revenant: { title: "The Revenant", poster_url: P + "20f9e08f-dbbb-42cb-a742-062cbd94a57a.jpg", rating: "R", runtime_minutes: 157, release_year: 2015 },
-  hairspray: { title: "Hairspray", poster_url: P + "f3522ddb-2f19-4ac7-b18f-19b831522ca9.jpg", rating: "PG", runtime_minutes: 92, release_year: 1988 },
-  hotrod: { title: "Hot Rod", poster_url: P + "ea4fb7fb-2007-475c-a163-78b16df23c47.jpg", rating: "PG-13", runtime_minutes: 88, release_year: 2007 },
-  indy: { title: "Indiana Jones and the Last Crusade", poster_url: P + "b644db38-7737-4154-a35c-391e46f6679b.jpg", rating: "PG-13", runtime_minutes: 127, release_year: 1989 },
+  revenant: { title: "The Revenant", poster_url: P + "20f9e08f-dbbb-42cb-a742-062cbd94a57a-1790177895542.jpg", rating: "R", runtime_minutes: 157, release_year: 2015 },
+  hairspray: { title: "Hairspray", poster_url: P + "f3522ddb-2f19-4ac7-b18f-19b831522ca9-1790177866418.jpg", rating: "PG", runtime_minutes: 92, release_year: 1988 },
+  hotrod: { title: "Hot Rod", poster_url: P + "ea4fb7fb-2007-475c-a163-78b16df23c47-1790177869139.jpg", rating: "PG-13", runtime_minutes: 88, release_year: 2007 },
+  indy: { title: "Indiana Jones and the Last Crusade", poster_url: P + "b644db38-7737-4154-a35c-391e46f6679b-1790177877000.jpg", rating: "PG-13", runtime_minutes: 127, release_year: 1989 },
 };
 const INDOOR = { name: "Indoor Cinema" };
 const OUTDOOR = { name: "Outdoor Cinema — patio, weather dependent" };
