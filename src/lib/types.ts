@@ -130,6 +130,7 @@ export interface Movie {
   poster_url: string | null;
   runtime_minutes: number | null;
   rating: string | null;
+  release_year: number | null;
   local_notes: string | null;
 }
 

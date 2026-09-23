@@ -1,4 +1,4 @@
-import { getUpcomingScreenings } from "@/lib/data/screenings";
+import { getUpcomingScreenings, excludeRestrictedReleases } from "@/lib/data/screenings";
 import { getUpcomingEvents } from "@/lib/data/events";
 import { getUpcomingCalendarNotes } from "@/lib/data/calendar-notes";
 import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
@@ -6,11 +6,15 @@ import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
 export const dynamic = "force-dynamic";
 
 export default async function ScheduleGraphicPage() {
-  const [screenings, events, notes] = await Promise.all([
+  const [allScreenings, events, notes] = await Promise.all([
     getUpcomingScreenings(),
     getUpcomingEvents(),
     getUpcomingCalendarNotes(),
   ]);
+  // This graphic gets posted publicly (in-window signage, social media),
+  // so anything our MPLC license doesn't let us advertise can't even be an
+  // option here -- not just unchecked by default. See excludeRestrictedReleases.
+  const screenings = excludeRestrictedReleases(allScreenings);
 
   return (
     <div>

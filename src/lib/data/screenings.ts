@@ -29,8 +29,21 @@ export async function getUpcomingScreenings(): Promise<Screening[]> {
   return (data ?? []) as unknown as Screening[];
 }
 
+// Our MPLC umbrella license covers public performance of anything, but only
+// lets us *advertise* the current year's releases -- an older title (like a
+// library/catalog screening) can be shown, but only people we've told about
+// it privately (the members' email list) are supposed to find out it's
+// playing. So it must never appear on a page anyone can just browse to.
+// A movie with no confirmed release year (not yet matched to OMDb/TMDb) is
+// treated as restricted too -- fail closed, not open.
+export function excludeRestrictedReleases(screenings: Screening[]): Screening[] {
+  const currentYear = new Date().getFullYear();
+  return screenings.filter((s) => s.movie.release_year === currentYear);
+}
+
 // Same as getUpcomingScreenings, but only screenings starting within the
-// next PUBLIC_SCHEDULE_WINDOW_DAYS -- this is what the public site (and
+// next PUBLIC_SCHEDULE_WINDOW_DAYS, and excluding anything our MPLC license
+// doesn't allow us to advertise -- this is what the public site (and
 // anything a visitor can see without being in the building) shows. Matches
 // the "we don't publish a full public schedule" policy: the schedule can be
 // entered into the system as far out as staff like, but times only appear
@@ -48,5 +61,5 @@ export async function getPubliclyVisibleScreenings(): Promise<Screening[]> {
     .order("starts_at");
 
   if (error) throw error;
-  return (data ?? []) as unknown as Screening[];
+  return excludeRestrictedReleases((data ?? []) as unknown as Screening[]);
 }

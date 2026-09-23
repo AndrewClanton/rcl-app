@@ -15,6 +15,7 @@ export interface OmdbMovieDetails {
   posterUrl: string | null;
   runtimeMinutes: number | null;
   rated: string | null;
+  releaseYear: number | null;
 }
 
 function requireApiKey(): string {
@@ -61,6 +62,9 @@ export async function getMovieDetails(imdbId: string): Promise<OmdbMovieDetails>
 
   // "91 min" -> 91; "N/A" -> null.
   const runtimeMatch = /^(\d+)/.exec(json.Runtime ?? "");
+  // "2026" -> 2026; "N/A" -> null. (Not expecting the "2019–2023"-style
+  // range OMDb uses for series -- this is always queried with type=movie.)
+  const yearMatch = /^(\d{4})/.exec(json.Year ?? "");
 
   return {
     imdbID: json.imdbID,
@@ -69,5 +73,6 @@ export async function getMovieDetails(imdbId: string): Promise<OmdbMovieDetails>
     posterUrl: naToNull(json.Poster),
     runtimeMinutes: runtimeMatch ? parseInt(runtimeMatch[1], 10) : null,
     rated: naToNull(json.Rated),
+    releaseYear: yearMatch ? parseInt(yearMatch[1], 10) : null,
   };
 }

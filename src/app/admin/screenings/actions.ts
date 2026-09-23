@@ -61,6 +61,7 @@ export async function importMovieFromOmdb(imdbId: string): Promise<string> {
       poster_url: posterUrl,
       runtime_minutes: details.runtimeMinutes,
       rating: details.rated,
+      release_year: details.releaseYear,
     })
     .select("id")
     .single();
