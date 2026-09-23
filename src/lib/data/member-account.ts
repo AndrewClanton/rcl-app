@@ -30,8 +30,8 @@ export interface WatchedMovie {
 }
 
 // All queries here are scoped to a single memberId already confirmed by
-// requireMember() -- using the service-role client is safe (same pattern as
-// getMembers()) since members has no public-read RLS policy.
+// requireMember() -- using the service-role client is safe since members
+// has no public-read RLS policy.
 
 export async function getMemberBookings(memberId: string): Promise<MemberBooking[]> {
   const supabase = createAdminClient();

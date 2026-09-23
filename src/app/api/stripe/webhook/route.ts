@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type Stripe from "stripe";
+import { tierForPriceId } from "@/lib/member-rate";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -114,6 +115,9 @@ export async function POST(request: NextRequest) {
     const customerId = typeof subscription.customer === "string" ? subscription.customer : subscription.customer.id;
     const status = event.type === "customer.subscription.deleted" ? "canceled" : subscription.status;
     const stillActive = status === "active" || status === "trialing";
+    // Rate switches made at the register already set price_tier; this only
+    // catches a price changed some other way (e.g. in the Stripe dashboard).
+    const rate = tierForPriceId(subscription.items?.data[0]?.price?.id);
 
     await supabase
       .from("members")
@@ -121,6 +125,7 @@ export async function POST(request: NextRequest) {
         subscription_status: status,
         tier: stillActive ? "Insiders+" : "Insiders",
         monthly_member: stillActive,
+        ...(rate ? { price_tier: rate } : {}),
       })
       .eq("stripe_customer_id", customerId);
   }

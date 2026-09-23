@@ -1,6 +1,5 @@
 import { getMenuTree } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
-import { getMembers } from "@/lib/data/members";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
@@ -12,10 +11,9 @@ export const dynamic = "force-dynamic";
 export default async function PosPage() {
   await requireStaff();
 
-  const [categories, employees, members, heldOrders, openTabs, recipesByItem] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
-    getMembers(),
     getDraftOrders("held"),
     getDraftOrders("tab"),
     getRecipesByItem(),
@@ -38,7 +36,6 @@ export default async function PosPage() {
       <PosApp
         categories={orderableCategories}
         employees={employees}
-        members={members}
         heldOrders={heldOrders}
         openTabs={openTabs}
         recipesByItem={recipesByItem}

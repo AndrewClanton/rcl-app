@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff, assertStaff } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
+import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 
 async function siteOrigin(): Promise<string> {
   const h = await headers();
@@ -42,7 +43,6 @@ export async function updateMember(
     tier: MemberTier;
     points: number;
     monthly_member: boolean;
-    price_tier: MemberPriceTier | null;
     avatar_url: string | null;
   }>
 ) {
@@ -50,6 +50,17 @@ export async function updateMember(
   const supabase = createAdminClient();
   await supabase.from("members").update(fields).eq("id", id);
   revalidate();
+}
+
+// Senior/student rates are set only after checking an ID in person. For a
+// paying Insiders+ member this also changes their Stripe price from their
+// next bill (see applyMemberRate).
+export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<RateChangeResult> {
+  const staff = await assertStaff();
+  const result = await applyMemberRate(id, tier, staff.employeeId);
+  revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return result;
 }
 
 export async function deleteMember(id: string) {

@@ -35,6 +35,7 @@ interface ApprovedRow {
   first_name: string | null;
   last_name: string | null;
   phone: string | null;
+  membership_type: string | null;
   membership_duration: string | null;
   membership_is_plus: boolean;
   subscription_billing_status: string | null;
@@ -54,7 +55,7 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("legacy_accounts")
-      .select("legacy_user_id, email, first_name, last_name, phone, membership_duration, membership_is_plus, subscription_billing_status")
+      .select("legacy_user_id, email, first_name, last_name, phone, membership_type, membership_duration, membership_is_plus, subscription_billing_status")
       .eq("decision", "import")
       .is("imported_member_id", null)
       .not("email", "is", null)
@@ -66,15 +67,18 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   }
   if (approved.length === 0) return { ok: true, added: 0, linked: 0, skipped: [] };
 
-  const existing = new Map<string, { id: string; legacy_user_id: number | null; phone: string | null }>();
+  const existing = new Map<string, { id: string; legacy_user_id: number | null; phone: string | null; price_tier: string | null }>();
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from("members").select("id, email, legacy_user_id, phone").not("email", "is", null).range(from, from + 999);
+    const { data, error } = await supabase.from("members").select("id, email, legacy_user_id, phone, price_tier").not("email", "is", null).range(from, from + 999);
     if (error) return { ok: false, error: "Couldn't read existing members." };
     for (const m of data) existing.set(m.email.toLowerCase(), m);
     if (data.length < 1000) break;
   }
 
   const now = new Date().toISOString();
+  // The old site's plan type was the rate ("Senior ($12.00)"). Carried over
+  // with no "set by", which staff screens show as "from old site".
+  const oldRate = (r: ApprovedRow) => (/^senior/i.test(r.membership_type ?? "") ? "senior" : /^student/i.test(r.membership_type ?? "") ? "student" : null);
   const wasPaying = (r: ApprovedRow) => !!r.subscription_billing_status || r.membership_is_plus || r.membership_duration === "monthly" || r.membership_duration === "annual";
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -96,14 +100,30 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
       }
       const { error } = await supabase
         .from("members")
-        .update({ legacy_user_id: r.legacy_user_id, legacy_plus: wasPaying(r), imported_at: now, ...(match.phone ? {} : { phone: r.phone }) })
+        .update({
+          legacy_user_id: r.legacy_user_id,
+          legacy_plus: wasPaying(r),
+          imported_at: now,
+          ...(match.phone ? {} : { phone: r.phone }),
+          ...(match.price_tier || !oldRate(r) ? {} : { price_tier: oldRate(r) }),
+        })
         .eq("id", match.id);
       if (error) return { ok: false, error: `Stopped while linking ${r.email}. Nothing after it was changed; run the import again to continue.` };
       linked++;
       continue;
     }
     const name = [r.first_name, r.last_name].filter(Boolean).join(" ").trim() || key.split("@")[0];
-    toInsert.push({ name, email: r.email.trim(), phone: r.phone, tier: "Insiders", points: 0, legacy_user_id: r.legacy_user_id, legacy_plus: wasPaying(r), imported_at: now });
+    toInsert.push({
+      name,
+      email: r.email.trim(),
+      phone: r.phone,
+      tier: "Insiders",
+      points: 0,
+      price_tier: oldRate(r),
+      legacy_user_id: r.legacy_user_id,
+      legacy_plus: wasPaying(r),
+      imported_at: now,
+    });
   }
 
   let added = 0;

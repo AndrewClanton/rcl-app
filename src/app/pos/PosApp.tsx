@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MenuCategory, Employee, Member, Recipe } from "@/lib/types";
+import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { REGISTER_CHANNEL, EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
+import PosMemberPanel from "./PosMemberPanel";
+import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -42,12 +44,14 @@ interface CartLine {
   isAlcohol: boolean;
 }
 
-function memberDiscountRate(member: Member | null) {
+type TotalsMember = { tier: MemberTier; points: number } | null;
+
+function memberDiscountRate(member: TotalsMember) {
   if (!member) return 0;
   return member.tier === "Insiders+" ? 0.1 : 0.05;
 }
 
-function computeTotals(cart: CartLine[], member: Member | null, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
+function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
   const subtotal = cart.reduce((s, l) => s + l.unit * l.qty, 0);
   const tierDiscount = subtotal * memberDiscountRate(member);
   const monthlyDiscount = monthlyMember ? subtotal * 0.1 : 0;
@@ -76,7 +80,6 @@ function totalsPayload(t: ReturnType<typeof computeTotals>): CheckoutTotals {
 export default function PosApp({
   categories,
   employees,
-  members,
   heldOrders,
   openTabs,
   recipesByItem,
@@ -84,7 +87,6 @@ export default function PosApp({
 }: {
   categories: MenuCategory[];
   employees: Employee[];
-  members: Member[];
   heldOrders: DraftOrderSummary[];
   openTabs: DraftOrderSummary[];
   recipesByItem: Record<string, Recipe>;
@@ -99,8 +101,8 @@ export default function PosApp({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderName, setOrderName] = useState("");
   const [employeeId, setEmployeeId] = useState<string>("");
-  const [memberId, setMemberId] = useState<string | null>(null);
-  const [memberQuery, setMemberQuery] = useState("");
+  const [member, setMember] = useState<PosMember | null>(null);
+  const memberId = member?.id ?? null;
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
@@ -130,12 +132,8 @@ export default function PosApp({
     return null;
   }, [categories, builderItemId]);
 
-  const member = useMemo(() => members.find((m) => m.id === memberId) ?? null, [members, memberId]);
   const totals = computeTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
-  const memberMatches = memberQuery.trim()
-    ? members.filter((m) => m.name.toLowerCase().includes(memberQuery.trim().toLowerCase()))
-    : [];
   const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
 
   function currentFields(): DraftFields {
@@ -170,7 +168,7 @@ export default function PosApp({
       }))
     );
     setOrderName(f.order_name ?? "");
-    setMemberId(f.member_id);
+    setMember(f.member);
     setTaxFree(f.tax_free);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
@@ -248,7 +246,7 @@ export default function PosApp({
   function resetOrder() {
     setCart([]);
     setOrderName("");
-    setMemberId(null);
+    setMember(null);
     setTaxFree(false);
     setMonthlyMember(false);
     setPointsRedeemed(false);
@@ -652,38 +650,7 @@ export default function PosApp({
           </div>
         )}
 
-        <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
-          <div className="eyebrow mb-2">Member</div>
-          <div className="mb-2 text-sm" style={{ color: "var(--muted)" }}>
-            {member ? `${member.name} — ${member.tier}` : "No member attached"}
-          </div>
-          <input className="input" placeholder="Search members..." value={memberQuery} onChange={(e) => setMemberQuery(e.target.value)} />
-          {memberMatches.length > 0 && (
-            <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
-              {memberMatches.map((m) => (
-                <div
-                  key={m.id}
-                  className="cursor-pointer px-2 py-1.5 text-sm"
-                  style={{ color: "var(--foreground)" }}
-                  onClick={() => {
-                    setMemberId(m.id);
-                    setMemberQuery("");
-                  }}
-                >
-                  {m.name} — {m.tier}
-                </div>
-              ))}
-            </div>
-          )}
-          {member && (
-            <button className="mt-2 text-xs hover:underline" style={{ color: "var(--accent)" }} onClick={() => setMemberId(null)}>
-              Remove member
-            </button>
-          )}
-          <div className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
-            {member ? `Loyalty points: ${Math.round(member.points)}` : "Loyalty points: — (attach a member)"}
-          </div>
-        </div>
+        <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
       </div>
 
       {/* Menu panel */}

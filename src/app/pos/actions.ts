@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { assertStaff } from "@/lib/auth";
+import { getPosMember, type PosMember } from "./member-actions";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -51,6 +52,7 @@ export interface DraftOrderFull {
   id: string;
   order_name: string | null;
   member_id: string | null;
+  member: PosMember | null;
   tax_free: boolean;
   monthly_member: boolean;
   points_redeemed: boolean;
@@ -254,6 +256,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
     id: order.id,
     order_name: order.order_name,
     member_id: order.member_id,
+    member: order.member_id ? await getPosMember(order.member_id) : null,
     tax_free: order.tax_free,
     monthly_member: order.monthly_member,
     points_redeemed: order.points_redeemed,

@@ -168,6 +168,10 @@ export interface Member {
   points: number;
   monthly_member: boolean;
   price_tier: MemberPriceTier | null;
+  price_tier_set_by: string | null;
+  price_tier_set_at: string | null;
+  // Joined by the admin member queries (who set a senior/student rate).
+  rate_set_by?: { name: string } | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   subscription_status: string | null;

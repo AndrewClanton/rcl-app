@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CommunityProgram, Member } from "@/lib/types";
 
-const MEMBER_SELECT = "*, community_program:community_programs(name)";
+const MEMBER_SELECT = "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name)";
 
 export interface MembersPage {
   members: Member[];
@@ -36,16 +36,6 @@ export async function getMembersPage(opts: { query?: string; page?: number; page
   const { data, error, count } = await q.order("name").range(from, to);
   if (error) throw error;
   return { members: (data ?? []) as unknown as Member[], total: count ?? 0, page, pageSize };
-}
-
-// Full unpaginated list -- used only by the POS register's client-side
-// member search (a bounded, staff-facing typeahead), not the admin members
-// list above which is paginated for the ~3,000-member scale.
-export async function getMembers(): Promise<Member[]> {
-  const supabase = createAdminClient();
-  const { data, error } = await supabase.from("members").select(MEMBER_SELECT).order("name");
-  if (error) throw error;
-  return (data ?? []) as unknown as Member[];
 }
 
 export async function getMemberById(id: string): Promise<Member | null> {

@@ -100,6 +100,7 @@ export default async function MembershipPage({
           <span>
             Students <strong className="text-[var(--accent)]">$10/mo</strong>
           </span>
+          <span>Senior and student rates are set at the box office with a valid ID.</span>
         </div>
       </div>
 

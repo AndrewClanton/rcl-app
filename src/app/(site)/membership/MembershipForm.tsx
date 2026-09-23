@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { submitMembershipSignup, startMembershipCheckout } from "./actions";
 
-type Plan = "free" | "adult" | "senior";
+type Plan = "free" | "plus";
 
 export default function MembershipForm() {
   const [plan, setPlan] = useState<Plan>("free");
@@ -30,7 +30,7 @@ export default function MembershipForm() {
         }
         setDone(true);
       } else {
-        const result = await startMembershipCheckout({ name, email, phone, priceTier: plan });
+        const result = await startMembershipCheckout({ name, email, phone });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -61,15 +61,18 @@ export default function MembershipForm() {
           <button className={`chip ${plan === "free" ? "chip-selected" : ""}`} onClick={() => setPlan("free")}>
             Insiders (free)
           </button>
-          <button className={`chip ${plan === "adult" ? "chip-selected" : ""}`} onClick={() => setPlan("adult")}>
-            Insiders+ Adult ($15/mo)
-          </button>
-          <button className={`chip ${plan === "senior" ? "chip-selected" : ""}`} onClick={() => setPlan("senior")}>
-            Insiders+ Senior ($12/mo)
+          <button className={`chip ${plan === "plus" ? "chip-selected" : ""}`} onClick={() => setPlan("plus")}>
+            Insiders+ ($15/mo)
           </button>
         </div>
-        {plan !== "free" && (
-          <div className="mt-2 text-xs text-[var(--muted)]">You&apos;ll be redirected to Stripe to set up your recurring monthly payment.</div>
+        {plan === "plus" && (
+          <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+            <p>You&apos;ll be redirected to Stripe to set up your monthly payment. You&apos;re billed on the same day each month.</p>
+            <p>
+              Senior ($12/mo) or student ($10/mo)? Join here, then show your ID at the box office and we&apos;ll switch your rate. The lower price
+              starts with your next bill.
+            </p>
+          </div>
         )}
       </div>
 
@@ -93,10 +96,6 @@ export default function MembershipForm() {
       <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
         {submitting ? "Please wait..." : plan === "free" ? "Join Insiders — it's free" : "Continue to payment"}
       </button>
-
-      <div className="mt-3 text-xs text-[var(--muted)]">
-        Want the discounted Student rate ($10/mo)? Visit the counter in person with a valid student ID.
-      </div>
     </div>
   );
 }

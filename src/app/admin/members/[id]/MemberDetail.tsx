@@ -11,7 +11,8 @@ import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
-import { createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, updateMember } from "../actions";
+import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
+import { createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -148,21 +149,7 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
             <option value="Insiders+">Insiders+</option>
           </select>
         </Field>
-        {member.tier === "Insiders+" && (
-          <Field label="Price tier" hint="Set to 'student' for an in-person counter upgrade (not sold online).">
-            <select
-              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-              value={member.price_tier ?? ""}
-              disabled={pending}
-              onChange={(e) => run(() => updateMember(member.id, { price_tier: (e.target.value || null) as MemberPriceTier | null }))}
-            >
-              <option value="">Not set...</option>
-              <option value="adult">Adult ($15/mo)</option>
-              <option value="senior">Senior ($12/mo)</option>
-              <option value="student">Student ($10/mo, in-person)</option>
-            </select>
-          </Field>
-        )}
+        <RateField member={member} />
         <Field label="Monthly member">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -181,6 +168,49 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
         )}
       </div>
     </div>
+  );
+}
+
+// Senior/student rates are only set after checking an ID in person. For a
+// paying Insiders+ member the Stripe price changes from their next bill.
+function RateField({ member }: { member: Member }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const rate: MemberPriceTier = member.price_tier ?? "adult";
+  const setAt = member.price_tier_set_at
+    ? new Date(member.price_tier_set_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })
+    : null;
+  const source =
+    rate === "adult" ? null : member.rate_set_by?.name && setAt ? `Set by ${member.rate_set_by.name}, ${setAt}` : setAt ? `Set ${setAt}` : "Carried over from the old website";
+
+  return (
+    <Field label="Rate" hint="Senior and student rates need an ID checked in person. For Insiders+ members, the new price starts with their next bill.">
+      <select
+        className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
+        value={rate}
+        disabled={pending}
+        onChange={(e) => {
+          const t = e.target.value as MemberPriceTier;
+          const check = t === "adult" ? "" : " Only after checking their ID in person.";
+          if (!confirm(`Switch ${member.name} to the ${RATE_LABEL[t]} rate (${RATE_PRICE[t]}/mo for Insiders+)?${check}`)) return;
+          setResult(null);
+          startTransition(async () => {
+            const r = await setMemberRate(member.id, t);
+            setResult(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
+            router.refresh();
+          });
+        }}
+      >
+        {RATE_ORDER.map((t) => (
+          <option key={t} value={t}>
+            {RATE_LABEL[t]} (${RATE_PRICE[t]}/mo)
+          </option>
+        ))}
+      </select>
+      {source && <p className="mt-1 text-xs text-[var(--muted)]">{source}</p>}
+      {result && <p className={`mt-1 text-xs ${result.ok ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}`}>{result.text}</p>}
+    </Field>
   );
 }
 
