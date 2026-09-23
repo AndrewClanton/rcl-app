@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { getStaffSession } from "@/lib/auth";
+import { assertStaff, getStaffSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { UserFacingError } from "@/lib/errors";
 import { searchMovies, getMovieDetails, type OmdbSearchResult } from "@/lib/omdb";
@@ -13,14 +13,9 @@ function revalidate() {
   revalidatePath("/");
 }
 
-// The /admin layout's login check doesn't cover Server Actions -- they're
-// reachable by direct POST -- so each one checks for itself.
-async function assertStaff() {
-  if (!(await getStaffSession())) throw new Error("Not authorized");
-}
-
 // Actions the UI needs a readable error from return it instead of throwing:
 // production replaces a thrown message with "Minified React error #441".
+// Checks the staff session itself, like assertStaff() on the actions below.
 export type Result<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 async function attempt<T>(fn: () => Promise<T>): Promise<Result<T>> {
