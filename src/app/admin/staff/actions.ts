@@ -10,7 +10,11 @@ import type { EmployeeRole } from "@/lib/types";
 // creating a second one or an accidental self-demotion. Changing who the
 // owner is is a one-off, done directly against the database, not a routine
 // admin action.
-const ASSIGNABLE_ROLES: EmployeeRole[] = ["cashier", "manager", "admin"];
+const ASSIGNABLE_ROLES: EmployeeRole[] = ["cashier", "manager", "admin", "display"];
+
+// Display accounts are screens, not people -- they never enter a PIN, and a
+// PIN hash that can't parse (see verifyPin) can never match.
+const NO_PIN = "none";
 
 function revalidate() {
   revalidatePath("/admin/staff");
@@ -51,7 +55,9 @@ export async function createEmployee(input: { name: string; email: string; passw
     authUserId = userRes.user.id;
   }
 
-  const { error: empErr } = await supabase.from("employees").insert({ name, auth_user_id: authUserId, role: input.role, pin_hash: DEFAULT_PIN_HASH });
+  const { error: empErr } = await supabase
+    .from("employees")
+    .insert({ name, auth_user_id: authUserId, role: input.role, pin_hash: input.role === "display" ? NO_PIN : DEFAULT_PIN_HASH });
   if (empErr) throw empErr;
   revalidate();
 }

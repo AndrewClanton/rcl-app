@@ -1,6 +1,6 @@
 import type { MemberStaffInfo } from "@/lib/data/employees";
 
-const ROLE_LABEL = { owner: "Owner", admin: "Admin", manager: "Manager", cashier: "Staff" } as const;
+const ROLE_LABEL = { owner: "Owner", admin: "Admin", manager: "Manager", cashier: "Staff", display: "Display" } as const;
 
 export default function StaffBadge({ info }: { info: MemberStaffInfo | undefined }) {
   if (!info) return null;

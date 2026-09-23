@@ -25,7 +25,17 @@ export interface StaffSession {
 // schedule-graphic image endpoint), where an <img> tag or a download
 // request needs a plain 401/403 response, not a redirect() built for page
 // rendering. Page-level gating should use requireStaff() below instead.
+//
+// A 'display' account (an unattended signage login, like the ramp TV) is
+// deliberately NOT staff here, so every existing staff check -- pages, the
+// register, every Server Action, route handlers -- locks it out without
+// each one having to remember to. Its screens use requireDisplayScreen().
 export async function getStaffSession(): Promise<StaffSession | null> {
+  const session = await getEmployeeSession();
+  return session && session.role !== "display" ? session : null;
+}
+
+async function getEmployeeSession(): Promise<StaffSession | null> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -41,6 +51,18 @@ export async function getStaffSession(): Promise<StaffSession | null> {
   if (!employee || !employee.active) return null;
 
   return { employeeId: employee.id, name: employee.name, role: employee.role, email: user.email ?? "" };
+}
+
+// Where a display account lands if it's pointed anywhere else.
+export const DISPLAY_HOME = "/display/ramp";
+
+// For signage pages: any active staff login *or* a display account. Sends
+// someone signed out to the login page and back here afterwards, so a TV
+// pointed straight at its screen only has to be signed in once.
+export async function requireDisplayScreen(returnTo: string): Promise<StaffSession> {
+  const session = await getEmployeeSession();
+  if (!session) redirect(`/login?redirect=${encodeURIComponent(returnTo)}`);
+  return session;
 }
 
 // For the top of every Server Action. A page/layout check (requireStaff()
@@ -74,7 +96,11 @@ export async function requireStaff(): Promise<StaffSession> {
   if (!user) redirect("/login");
 
   const session = await getStaffSession();
-  if (!session) redirect("/login?error=not_staff");
+  if (!session) {
+    // A display account that wandered off its screen goes back to it.
+    if ((await getEmployeeSession())?.role === "display") redirect(DISPLAY_HOME);
+    redirect("/login?error=not_staff");
+  }
   return session;
 }
 

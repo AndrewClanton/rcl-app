@@ -25,7 +25,11 @@ export default function LoginForm() {
       setSubmitting(false);
       return;
     }
-    router.push(searchParams.get("redirect") || "/admin");
+    // Only same-site paths -- otherwise a crafted link could send someone
+    // off to another site right after they sign in.
+    const requested = searchParams.get("redirect") ?? "";
+    const safe = requested.startsWith("/") && !requested.startsWith("//") && !requested.includes("\\");
+    router.push(safe ? requested : "/admin");
     router.refresh();
   }
 

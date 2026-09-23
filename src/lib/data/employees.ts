@@ -28,7 +28,8 @@ export async function getStaffInfoForMembers(members: Pick<Member, "id" | "auth_
 // No public-read RLS policy on employees -- always read via service role.
 export async function getActiveEmployees(): Promise<Employee[]> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from("employees").select("id, name, role, active").eq("active", true).order("name");
+  // Display accounts are screens, not people -- never offered on the register.
+  const { data, error } = await supabase.from("employees").select("id, name, role, active").eq("active", true).neq("role", "display").order("name");
   if (error) throw error;
   return data ?? [];
 }

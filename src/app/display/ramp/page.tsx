@@ -1,4 +1,4 @@
-import { requireStaff } from "@/lib/auth";
+import { requireDisplayScreen } from "@/lib/auth";
 import { getScreeningsForCountdown } from "@/lib/data/screenings";
 import RampCountdown from "./RampCountdown";
 import { NOW_PLAYING_MINUTES, type RampScreening } from "./schedule";
@@ -11,11 +11,13 @@ export const dynamic = "force-dynamic";
 //
 // Shows every title in full, including older MPLC-restricted ones -- Andrew's
 // call for an in-building screen (2026-09-23). That's only OK because this
-// page is behind the staff login; an open URL (like /display/box-office)
-// would put those titles on the public web.
+// page is behind a login (staff, or the TV's own signage-only 'display'
+// account); an open URL (like /display/box-office) would put those titles
+// on the public web.
 export default async function RampDisplayPage({ searchParams }: { searchParams: Promise<{ rotate?: string }> }) {
-  await requireStaff();
-  const [{ rotate }, { screenings, fetchedAt }] = await Promise.all([searchParams, getScreeningsForCountdown(NOW_PLAYING_MINUTES)]);
+  const { rotate } = await searchParams;
+  await requireDisplayScreen(rotate ? `/display/ramp?rotate=${encodeURIComponent(rotate)}` : "/display/ramp");
+  const { screenings, fetchedAt } = await getScreeningsForCountdown(NOW_PLAYING_MINUTES);
 
   const items: RampScreening[] = screenings.map((s) => ({
     id: s.id,

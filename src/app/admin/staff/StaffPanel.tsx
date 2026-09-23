@@ -12,7 +12,10 @@ const ROLE_LABEL: Record<EmployeeRole, string> = {
   admin: "Admin",
   manager: "Manager",
   cashier: "Cashier",
+  display: "Display screen",
 };
+
+const ASSIGNABLE = ["cashier", "manager", "admin", "display"] as const;
 
 const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px] items-center gap-3";
 
@@ -75,7 +78,7 @@ function AddEmployeeForm() {
         <div className="notice notice-success mb-3 !p-3 text-sm">
           Added {justAdded.name} ({justAdded.email}) as {ROLE_LABEL[justAdded.role]}. Their password is{" "}
           <span className="font-mono font-semibold select-all">{justAdded.password}</span> -- share it with them
-          directly; there's no self-service way for them to change it yet, so pick something you're both fine with
+          directly; there&apos;s no self-service way for them to change it yet, so pick something you&apos;re both fine with
           long-term.
         </div>
       )}
@@ -101,7 +104,7 @@ function AddEmployeeForm() {
         <div>
           <label className="mb-1 block text-xs text-[var(--muted)]">Role</label>
           <select className="rounded border border-[var(--border)] px-2 py-1 text-sm" value={role} onChange={(e) => setRole(e.target.value as EmployeeRole)}>
-            {(["cashier", "manager", "admin"] as const).map((r) => (
+            {ASSIGNABLE.map((r) => (
               <option key={r} value={r}>
                 {ROLE_LABEL[r]}
               </option>
@@ -112,6 +115,13 @@ function AddEmployeeForm() {
           {pending ? "Adding…" : "Add"}
         </button>
       </div>
+      {role === "display" && (
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          For a TV or other unattended screen. It can only open the display screens (like the ramp countdown) -- no back office, no
+          register, no member data -- so a tampered-with screen can&apos;t reach anything else. The email just has to be unique; a
+          Gmail alias like you+ramptv@gmail.com works.
+        </p>
+      )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
     </div>
   );
@@ -136,7 +146,7 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
           disabled={pending}
           onChange={(e) => run(() => updateEmployeeRole(employee.id, e.target.value as EmployeeRole))}
         >
-          {(["cashier", "manager", "admin"] as const).map((r) => (
+          {ASSIGNABLE.map((r) => (
             <option key={r} value={r}>
               {ROLE_LABEL[r]}
             </option>
