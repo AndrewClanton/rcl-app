@@ -1,9 +1,18 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
+import { isGoogleSignInEnabled } from "@/lib/auth-providers";
 import AccountForm from "./AccountForm";
 
-export default async function AccountLoginPage() {
+const ERRORS: Record<string, string> = {
+  google_cancelled: "Google sign-in was cancelled. Try again, or use your email.",
+  google_failed: "Google sign-in didn't finish. Try again, or use your email.",
+  link_failed: "We couldn't connect that Google account to your membership. Sign in with your email and password, or ask us at the box office.",
+};
+
+export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+  const { error } = await searchParams;
+  const googleEnabled = await isGoogleSignInEnabled();
   const supabase = await createClient();
   const {
     data: { user },
@@ -26,7 +35,7 @@ export default async function AccountLoginPage() {
         Royale Insider.
       </p>
       <div className="mt-6">
-        <AccountForm />
+        <AccountForm googleEnabled={googleEnabled} initialError={error ? (ERRORS[error] ?? null) : null} />
       </div>
     </div>
   );

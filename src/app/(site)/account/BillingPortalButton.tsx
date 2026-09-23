@@ -29,7 +29,7 @@ export default function BillingPortalButton() {
           }
         }}
       >
-        {pending ? "Loading..." : "Manage subscription"}
+        {pending ? "Opening…" : "Update card or cancel"}
       </button>
       {error && <div className="mt-1 text-xs text-[var(--danger-text)]">{error}</div>}
     </div>

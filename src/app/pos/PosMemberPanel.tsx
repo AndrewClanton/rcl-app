@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
+import MemberAvatar from "@/components/MemberAvatar";
+import MemberFinder from "./MemberFinder";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
@@ -49,6 +51,7 @@ export default function PosMemberPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [finderOpen, setFinderOpen] = useState(false);
   const latest = useRef(0);
 
   useEffect(() => {
@@ -113,17 +116,22 @@ export default function PosMemberPanel({
 
       {member ? (
         <div className="rounded-lg border p-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="font-semibold">{member.name}</span>
-            <span className="text-xs" style={{ color: "var(--muted)" }}>
-              {member.tier}
-            </span>
-          </div>
-          {(member.email || member.phone) && (
-            <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
-              {member.email ?? member.phone}
+          <div className="flex items-center gap-3">
+            <MemberAvatar name={member.name} url={member.avatar_url} size={44} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate font-semibold">{member.name}</span>
+                <span className="shrink-0 text-xs" style={{ color: "var(--muted)" }}>
+                  {member.tier}
+                </span>
+              </div>
+              {(member.email || member.phone) && (
+                <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
+                  {member.email ?? member.phone}
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             <span>
@@ -176,6 +184,11 @@ export default function PosMemberPanel({
         </div>
       ) : (
         <>
+          <div className="mb-2">
+            <button type="button" className="btn-secondary w-full !py-2 text-sm" onClick={() => setFinderOpen(true)}>
+              Find by photo
+            </button>
+          </div>
           <input
             className="input"
             placeholder="Name, email, phone, or scan their QR"
@@ -195,18 +208,21 @@ export default function PosMemberPanel({
           {results.length > 0 && (
             <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
               {results.map((m) => (
-                <button key={m.id} className="block w-full px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => attach(m)}>
-                  <span className="font-medium">{m.name}</span>
-                  <span style={{ color: "var(--muted)" }}>
-                    {" "}
-                    — {m.tier}
-                    {m.price_tier && m.price_tier !== "adult" ? ` · ${RATE_LABEL[m.price_tier]}` : ""}
-                  </span>
-                  {(m.email || m.phone) && (
-                    <span className="block truncate text-xs" style={{ color: "var(--muted)" }}>
-                      {[m.email, m.phone].filter(Boolean).join(" · ")}
+                <button key={m.id} className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => attach(m)}>
+                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{m.name}</span>
+                    <span style={{ color: "var(--muted)" }}>
+                      {" "}
+                      — {m.tier}
+                      {m.price_tier && m.price_tier !== "adult" ? ` · ${RATE_LABEL[m.price_tier]}` : ""}
                     </span>
-                  )}
+                    {(m.email || m.phone) && (
+                      <span className="block truncate text-xs" style={{ color: "var(--muted)" }}>
+                        {[m.email, m.phone].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
@@ -225,6 +241,16 @@ export default function PosMemberPanel({
             Loyalty points: — (attach a member)
           </div>
         </>
+      )}
+
+      {finderOpen && (
+        <MemberFinder
+          onPick={(m) => {
+            setFinderOpen(false);
+            attach(m);
+          }}
+          onClose={() => setFinderOpen(false)}
+        />
       )}
 
       {member && confirmTier && (

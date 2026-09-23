@@ -21,10 +21,11 @@ export interface PosMember {
   price_tier: MemberPriceTier | null;
   price_tier_set_at: string | null;
   price_tier_set_by_name: string | null;
+  avatar_url: string | null;
 }
 
 const POS_MEMBER_SELECT =
-  "id, name, email, phone, tier, points, comped, stripe_subscription_id, subscription_status, price_tier, price_tier_set_at, set_by:employees!members_price_tier_set_by_fkey(name)";
+  "id, name, email, phone, tier, points, comped, avatar_url, stripe_subscription_id, subscription_status, price_tier, price_tier_set_at, set_by:employees!members_price_tier_set_by_fkey(name)";
 
 type Row = {
   id: string;
@@ -38,6 +39,7 @@ type Row = {
   subscription_status: string | null;
   price_tier: MemberPriceTier | null;
   price_tier_set_at: string | null;
+  avatar_url: string | null;
   set_by: { name: string } | { name: string }[] | null;
 };
 
@@ -55,6 +57,7 @@ function toPosMember(r: Row): PosMember {
     price_tier: r.price_tier,
     price_tier_set_at: r.price_tier_set_at,
     price_tier_set_by_name: setBy?.name ?? null,
+    avatar_url: r.avatar_url,
   };
 }
 
@@ -69,7 +72,7 @@ export async function getPosMember(id: string): Promise<PosMember | null> {
 }
 
 // Name, email, phone (any formatting), or a scanned member QR code.
-export async function searchPosMembers(query: string): Promise<PosMember[]> {
+export async function searchPosMembers(query: string, limit = 8): Promise<PosMember[]> {
   await assertStaff();
   const q = query.trim();
   const qr = q.match(QR_PATTERN);
@@ -84,7 +87,7 @@ export async function searchPosMembers(query: string): Promise<PosMember[]> {
   const filters = [`name.ilike.%${text}%`, `email.ilike.%${text}%`];
   if (digits.length >= 3) filters.push(`phone_digits.like.%${digits}%`);
 
-  const { data, error } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).or(filters.join(",")).order("name").limit(8);
+  const { data, error } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).or(filters.join(",")).order("name").limit(Math.min(Math.max(limit, 1), 40));
   if (error) return [];
   return (data as unknown as Row[]).map(toPosMember);
 }
@@ -102,4 +105,40 @@ export async function setPosMemberRate(
   revalidatePath("/admin/members");
   if (!result.ok) return result;
   return { ...result, member: await getPosMember(memberId) };
+}
+
+export interface Regular {
+  member: PosMember;
+  visits: number;
+  lastVisit: string | null;
+}
+
+// Suggestions for the register's photo lookup: whoever came in on the most
+// different days in the last 90. Until there's enough history, fills in
+// with members who've added a photo.
+export async function getRegulars(): Promise<Regular[]> {
+  await assertStaff();
+  const supabase = createAdminClient();
+  const since = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  const { data: freq } = await supabase.rpc("frequent_members", { p_since: since, p_limit: 24 });
+  const ranked = (freq ?? []) as { member_id: string; visits: number; last_visit: string }[];
+
+  const out: Regular[] = [];
+  if (ranked.length) {
+    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).in("id", ranked.map((r) => r.member_id));
+    const byId = new Map((data as unknown as Row[] | null ?? []).map((r) => [r.id, toPosMember(r)]));
+    for (const r of ranked) {
+      const m = byId.get(r.member_id);
+      if (m) out.push({ member: m, visits: Number(r.visits), lastVisit: r.last_visit });
+    }
+  }
+  if (out.length < 24) {
+    const have = new Set(out.map((r) => r.member.id));
+    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).not("avatar_url", "is", null).order("created_at", { ascending: false }).limit(24);
+    for (const r of (data as unknown as Row[] | null) ?? []) {
+      if (out.length >= 24) break;
+      if (!have.has(r.id)) out.push({ member: toPosMember(r), visits: 0, lastVisit: null });
+    }
+  }
+  return out;
 }

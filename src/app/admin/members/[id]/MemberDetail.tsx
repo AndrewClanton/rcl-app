@@ -12,7 +12,7 @@ import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
-import { createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
+import { adjustMemberPoints, createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -134,7 +134,7 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
             onChange={(e) => setPoints(e.target.value)}
             onBlur={() => {
               const v = parseFloat(points);
-              if (!isNaN(v) && v !== member.points) run(() => updateMember(member.id, { points: v }));
+              if (!isNaN(v) && v !== Number(member.points)) run(() => adjustMemberPoints(member.id, v));
             }}
           />
         </Field>

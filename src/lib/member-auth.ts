@@ -1,33 +1,28 @@
 import "server-only";
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Member } from "@/lib/types";
 
-// Gates /account/*. A logged-in Supabase Auth session alone isn't a member
-// -- it must be linked to a `members` row via auth_user_id, which happens
-// automatically the first time someone completes the magic-link flow (see
-// /account/callback): claims an existing member row by matching email, or
-// creates a fresh free-Insiders row if this is a brand new customer.
-export async function requireMember(): Promise<Member> {
+// The signed-in member, or null. A Supabase Auth session alone isn't a
+// member -- it has to be linked to a `members` row via auth_user_id (see
+// linkMemberForUser, run after every sign-in). Cached per request, so the
+// account layout and page share one lookup.
+export const getSignedInMember = cache(async (): Promise<Member | null> => {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: member } = await createAdminClient().from("members").select("*").eq("auth_user_id", user.id).maybeSingle();
+  return (member as Member) ?? null;
+});
 
-  if (!user) {
-    redirect("/account/login");
-  }
-
-  const admin = createAdminClient();
-  const { data: member } = await admin.from("members").select("*").eq("auth_user_id", user.id).maybeSingle();
-
-  if (!member) {
-    // Session exists but the callback linking step hasn't run (e.g. an
-    // old session from before this account system existed). Send back
-    // through login to re-establish the link.
-    redirect("/account/login");
-  }
-
+// Gates /account/*. No session, or a session that isn't linked to a member
+// yet, goes back through sign-in (which re-establishes the link).
+export async function requireMember(): Promise<Member> {
+  const member = await getSignedInMember();
+  if (!member) redirect("/account/login");
   return member;
 }

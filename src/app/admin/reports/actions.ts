@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { getStripe } from "@/lib/stripe";
+import { reversePurchasePoints } from "@/lib/points";
 import { getCashAllocationForDate, type CashAllocation } from "@/lib/data/reports";
 import { assertStaff } from "@/lib/auth";
 
@@ -33,7 +34,7 @@ async function managerPinMatches(pin: string): Promise<boolean> {
 // the cashier hands back cash and the status flip is the whole story.
 
 export async function refundOrder(orderId: string, pin: string) {
-  await assertStaff();
+  const staff = await assertStaff();
   const ok = await managerPinMatches(pin);
   if (!ok) throw new Error("Incorrect manager PIN.");
   const supabase = createAdminClient();
@@ -45,12 +46,13 @@ export async function refundOrder(orderId: string, pin: string) {
   }
   const { error } = await supabase.from("orders").update({ status: "refunded" }).eq("id", orderId);
   if (error) throw error;
+  await reversePurchasePoints({ orderId }, staff.employeeId);
   revalidatePath("/admin/reports");
   revalidatePath("/admin/members");
 }
 
 export async function refundBooking(bookingId: string, pin: string) {
-  await assertStaff();
+  const staff = await assertStaff();
   const ok = await managerPinMatches(pin);
   if (!ok) throw new Error("Incorrect manager PIN.");
   const supabase = createAdminClient();
@@ -66,5 +68,6 @@ export async function refundBooking(bookingId: string, pin: string) {
   }
   const { error } = await supabase.from("bookings").update({ status: "refunded" }).eq("id", bookingId);
   if (error) throw error;
+  await reversePurchasePoints({ bookingId }, staff.employeeId);
   revalidatePath("/admin/members");
 }

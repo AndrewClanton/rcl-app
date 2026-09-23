@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
+import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -141,14 +142,13 @@ export async function completeOrder(params: DraftFields & {
     await replaceOrderItems(supabase, orderId, params.lines);
   }
 
+  // 1 point per $1 of the order, and 100 back out when a reward was used.
+  // Each change lands in the member's points history, tied to this order.
   if (params.memberId) {
-    const { data: member } = await supabase.from("members").select("points").eq("id", params.memberId).single();
-    if (member) {
-      let points = Number(member.points);
-      if (params.pointsRedeemed && params.totals.redemption_discount > 0) points -= 100;
-      points += params.totals.subtotal;
-      await supabase.from("members").update({ points }).eq("id", params.memberId);
+    if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
+      await applyPoints({ memberId: params.memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
     }
+    await applyPoints({ memberId: params.memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
   revalidate();

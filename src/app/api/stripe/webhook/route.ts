@@ -3,6 +3,7 @@ import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type Stripe from "stripe";
 import { tierForPriceId } from "@/lib/member-rate";
+import { applyPoints } from "@/lib/points";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -74,6 +75,18 @@ export async function POST(request: NextRequest) {
           })
           .eq("id", bookingId)
           .eq("status", "pending");
+        // 1 point per $1, like the register. The ledger's unique index keeps
+        // a re-delivered webhook from paying out twice.
+        const { data: booking } = await supabase.from("bookings").select("member_id, quantity, unit_price, status").eq("id", bookingId).maybeSingle();
+        if (booking?.member_id && booking.status === "confirmed") {
+          await applyPoints({
+            memberId: booking.member_id,
+            delta: Number(booking.unit_price) * booking.quantity,
+            reason: "purchase",
+            bookingId,
+            note: `${booking.quantity} ticket${booking.quantity === 1 ? "" : "s"}, bought online`,
+          });
+        }
       }
 
       const boothReservationId = session.metadata?.booth_reservation_id;

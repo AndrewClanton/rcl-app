@@ -7,6 +7,7 @@ import { requireStaff, assertStaff } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
+import { applyPoints } from "@/lib/points";
 
 async function siteOrigin(): Promise<string> {
   const h = await headers();
@@ -41,7 +42,6 @@ export async function updateMember(
     email: string | null;
     phone: string | null;
     tier: MemberTier;
-    points: number;
     monthly_member: boolean;
     avatar_url: string | null;
   }>
@@ -61,6 +61,18 @@ export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<
   revalidate();
   revalidatePath(`/admin/members/${id}`);
   return result;
+}
+
+// Sets a member's balance by hand. Recorded in their points history as an
+// adjustment by this staff member, so the member can see what changed.
+export async function adjustMemberPoints(id: string, newBalance: number, note?: string) {
+  const staff = await assertStaff();
+  const { data: member } = await createAdminClient().from("members").select("points").eq("id", id).single();
+  if (!member) return;
+  const delta = Math.round((newBalance - Number(member.points)) * 100) / 100;
+  if (delta) await applyPoints({ memberId: id, delta, reason: "adjustment", note: note?.trim() || "Adjusted by staff", by: staff.employeeId });
+  revalidate();
+  revalidatePath(`/admin/members/${id}`);
 }
 
 export async function deleteMember(id: string) {
