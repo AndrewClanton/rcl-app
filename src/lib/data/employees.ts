@@ -1,5 +1,29 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Employee } from "@/lib/types";
+import type { Employee, EmployeeRole, Member } from "@/lib/types";
+
+export interface MemberStaffInfo {
+  role: EmployeeRole;
+  isViewer: boolean;
+}
+
+// A staff login doubles as a member account (same auth user), so the admin
+// members screens can say whose account is whose -- e.g. that a given
+// "Insiders" row is actually the owner. Keyed by member id; members with no
+// active staff login are simply absent.
+export async function getStaffInfoForMembers(members: Pick<Member, "id" | "auth_user_id">[], viewerEmployeeId: string | null): Promise<Record<string, MemberStaffInfo>> {
+  const authIds = members.map((m) => m.auth_user_id).filter((id): id is string => !!id);
+  if (authIds.length === 0) return {};
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.from("employees").select("id, role, auth_user_id").eq("active", true).in("auth_user_id", authIds);
+  if (error) throw error;
+  const byAuthId = new Map((data ?? []).map((e) => [e.auth_user_id as string, e]));
+  const out: Record<string, MemberStaffInfo> = {};
+  for (const m of members) {
+    const e = m.auth_user_id ? byAuthId.get(m.auth_user_id) : undefined;
+    if (e) out[m.id] = { role: e.role as EmployeeRole, isViewer: e.id === viewerEmployeeId };
+  }
+  return out;
+}
 
 // No public-read RLS policy on employees -- always read via service role.
 export async function getActiveEmployees(): Promise<Employee[]> {

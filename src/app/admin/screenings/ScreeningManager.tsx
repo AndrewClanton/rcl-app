@@ -34,15 +34,11 @@ function MovieLibrary({ movies }: { movies: Movie[] }) {
     setOptions([]);
     setOptionsError(null);
     setLoadingOptions(true);
-    try {
-      const opts = await getPosterOptions(movieId);
-      if (opts.length === 0) setOptionsError("No alternate posters found for this movie.");
-      setOptions(opts);
-    } catch (e) {
-      setOptionsError(e instanceof Error ? e.message : "Couldn't load poster options.");
-    } finally {
-      setLoadingOptions(false);
-    }
+    const result = await getPosterOptions(movieId);
+    setLoadingOptions(false);
+    if (!result.ok) return setOptionsError(result.error);
+    if (result.options.length === 0) setOptionsError("No alternate posters found for this movie.");
+    setOptions(result.options);
   }
 
   const openMovie = movies.find((m) => m.id === openFor);
@@ -90,7 +86,8 @@ function MovieLibrary({ movies }: { movies: Movie[] }) {
                 className="overflow-hidden rounded border border-[var(--border)] hover:border-[var(--accent)] disabled:opacity-50"
                 onClick={() =>
                   run(async () => {
-                    await setMoviePoster(openMovie.id, o.url);
+                    const result = await setMoviePoster(openMovie.id, o.url);
+                    if (!result.ok) return setOptionsError(result.error);
                     setOpenFor(null);
                   })
                 }
@@ -111,6 +108,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   const [query, setQuery] = useState("");
   const [year, setYear] = useState("");
   const [results, setResults] = useState<OmdbSearchResult[]>([]);
+  const [searchedFor, setSearchedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualTitle, setManualTitle] = useState("");
@@ -120,13 +118,15 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
 
   async function runSearch() {
     setError(null);
-    try {
-      const res = await searchOmdbMovies(query, year);
-      setResults(res);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Search failed");
+    setSearchedFor(null);
+    const result = await searchOmdbMovies(query, year);
+    if (!result.ok) {
+      setError(result.error);
       setResults([]);
+      return;
     }
+    setResults(result.results);
+    setSearchedFor(query.trim() + (year.trim() ? ` (${year.trim()})` : ""));
   }
 
   return (
@@ -162,13 +162,24 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
         </div>
       )}
 
+      {searchedFor && results.length === 0 && (
+        <div className="mb-3 text-sm text-[var(--muted)]">
+          No movies found for &quot;{searchedFor}&quot;. Try a different spelling or year, or add it manually below.
+        </div>
+      )}
+
       {results.length > 0 && (
         <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {results.map((r) => (
             <button
               key={r.imdbID}
               disabled={pending}
-              onClick={() => run(() => importMovieFromOmdb(r.imdbID))}
+              onClick={() =>
+                run(async () => {
+                  const result = await importMovieFromOmdb(r.imdbID);
+                  if (!result.ok) setError(result.error);
+                })
+              }
               className="rounded border border-[var(--border)] p-2 text-left text-xs hover:border-[var(--border)] "
             >
               <div className="font-medium">{r.title}</div>

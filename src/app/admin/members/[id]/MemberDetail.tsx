@@ -6,7 +6,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/lib/types";
 import type { MemberPurchase } from "@/lib/data/members";
+import type { MemberStaffInfo } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
+import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, updateMember } from "../actions";
@@ -19,10 +21,12 @@ export default function MemberDetail({
   member,
   purchases,
   communityPrograms,
+  staffInfo,
 }: {
   member: Member;
   purchases: MemberPurchase[];
   communityPrograms: CommunityProgram[];
+  staffInfo: MemberStaffInfo | undefined;
 }) {
   return (
     <div className="space-y-6">
@@ -32,7 +36,7 @@ export default function MemberDetail({
         </Link>
       </div>
 
-      <ProfileCard member={member} />
+      <ProfileCard member={member} staffInfo={staffInfo} />
       <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
       <BillingCard member={member} />
       <PurchaseHistoryCard purchases={purchases} />
@@ -41,7 +45,7 @@ export default function MemberDetail({
   );
 }
 
-function ProfileCard({ member }: { member: Member }) {
+function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberStaffInfo | undefined }) {
   const [pending, run] = useRefreshingAction();
   const [name, setName] = useState(member.name);
   const [email, setEmail] = useState(member.email ?? "");
@@ -57,6 +61,7 @@ function ProfileCard({ member }: { member: Member }) {
           </div>
         )}
         <h1 className="text-xl font-semibold">{member.name}</h1>
+        <StaffBadge info={staffInfo} />
         {member.avatar_url && (
           <button
             className="text-xs text-[var(--muted)] hover:underline"

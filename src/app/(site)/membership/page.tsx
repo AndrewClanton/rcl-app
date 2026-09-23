@@ -58,13 +58,16 @@ export default async function MembershipPage({
             </tr>
             <tr>
               <td className="px-4 py-3 text-[var(--muted)]">Lounge entry</td>
-              <td className="px-4 py-3">$5 day pass (+$3 new releases)</td>
+              <td className="px-4 py-3">Buy a ticket per screening</td>
               <td className="px-4 py-3 font-medium text-[var(--accent)]">Free, unlimited, always</td>
             </tr>
             <tr>
-              <td className="px-4 py-3 text-[var(--muted)]">Points on every purchase</td>
-              <td className="px-4 py-3">Standard rate</td>
-              <td className="px-4 py-3">Faster rate</td>
+              <td className="px-4 py-3 text-[var(--muted)]">
+                Loyalty points
+                <div className="mt-0.5 text-xs">100 points = $5 off</div>
+              </td>
+              <td className="px-4 py-3">1 point per $1 spent</td>
+              <td className="px-4 py-3">1 point per $1 spent</td>
             </tr>
             <tr>
               <td className="px-4 py-3 text-[var(--muted)]">Priority access to weekly titles &amp; exclusive events</td>

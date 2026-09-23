@@ -3,10 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { CommunityProgram, Member, MemberTier } from "@/lib/types";
+import type { CommunityProgram, MemberTier } from "@/lib/types";
 import type { MembersPage } from "@/lib/data/members";
+import type { MemberStaffInfo } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCommunityProgram, addMember, setCommunityProgramActive } from "./actions";
+import StaffBadge from "./StaffBadge";
 
 function tierBadgeClass(tier: MemberTier) {
   return tier === "Insiders+"
@@ -17,11 +19,13 @@ function tierBadgeClass(tier: MemberTier) {
 export default function MemberManager({
   membersPage,
   communityPrograms,
+  staffInfo,
   query,
   compedOnly,
 }: {
   membersPage: MembersPage;
   communityPrograms: CommunityProgram[];
+  staffInfo: Record<string, MemberStaffInfo>;
   query: string;
   compedOnly: boolean;
 }) {
@@ -92,7 +96,10 @@ export default function MemberManager({
               href={`/admin/members/${m.id}`}
               className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-[var(--surface-hover)] "
             >
-              <span className="min-w-[160px] flex-1 font-medium">{m.name}</span>
+              <span className="flex min-w-[160px] flex-1 flex-wrap items-center gap-1.5 font-medium">
+                {m.name}
+                <StaffBadge info={staffInfo[m.id]} />
+              </span>
               <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>
               <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(m.tier)}`}>{m.tier}</span>
               {m.comped && (

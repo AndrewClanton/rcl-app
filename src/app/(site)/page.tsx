@@ -126,7 +126,7 @@ export default async function HomePage() {
 
       <section>
         <div className="eyebrow mb-2">Become a member</div>
-        <h2 className="font-display max-w-xl text-2xl">Skip the day pass. Walk in free, every time.</h2>
+        <h2 className="font-display max-w-xl text-2xl">Stop buying tickets. Walk in free, every time.</h2>
         <p className="mt-2 max-w-xl text-sm text-[var(--muted)]">
           Insiders is free to join. Insiders+ members never pay at the door again — one flat monthly rate covers
           unlimited entry to every screening.
@@ -136,8 +136,8 @@ export default async function HomePage() {
             <div className="text-xs font-bold tracking-wide text-[var(--muted)] uppercase">Insiders</div>
             <div className="font-display mt-1 text-3xl">Free</div>
             <ul className="mt-4 flex-1 space-y-2 text-sm text-[var(--muted)]">
-              <li>$5 day pass (+$3 new releases)</li>
-              <li>Points on every purchase</li>
+              <li>Buy a ticket per screening</li>
+              <li>1 point per $1 spent · 100 points = $5 off</li>
               <li>Mailing list &amp; weekly updates</li>
             </ul>
             <Link href="/membership" className="btn-secondary mt-5 self-start">
@@ -163,7 +163,7 @@ export default async function HomePage() {
               </li>
               <li className="flex gap-2">
                 <span style={{ color: "var(--gold)" }}>✓</span>
-                <span>Faster points on every purchase</span>
+                <span>1 point per $1 spent · 100 points = $5 off</span>
               </li>
               <li className="flex gap-2">
                 <span style={{ color: "var(--gold)" }}>✓</span>

@@ -175,6 +175,9 @@ export interface Member {
   comped_by: string | null;
   comped_at: string | null;
   avatar_url: string | null;
+  // Set once the member has a website login. Staff logins share it (an
+  // employee's auth user doubles as their member account).
+  auth_user_id: string | null;
   // Only present when the query joins community_programs (see
   // getMembersPage/getMemberById) -- not selected by every members query.
   community_program?: { name: string } | null;
