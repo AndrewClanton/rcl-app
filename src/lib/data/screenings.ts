@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isRestrictedRelease } from "@/lib/mplc";
 import type { Screening } from "@/lib/types";
 
 export const PUBLIC_SCHEDULE_WINDOW_DAYS = 14;
@@ -29,16 +30,28 @@ export async function getUpcomingScreenings(): Promise<Screening[]> {
   return (data ?? []) as unknown as Screening[];
 }
 
-// Our MPLC umbrella license covers public performance of anything, but only
-// lets us *advertise* the current year's releases -- an older title (like a
-// library/catalog screening) can be shown, but only people we've told about
-// it privately (the members' email list) are supposed to find out it's
-// playing. So it must never appear on a page anyone can just browse to.
-// A movie with no confirmed release year (not yet matched to OMDb/TMDb) is
-// treated as restricted too -- fail closed, not open.
-export function isRestrictedRelease(movie: { release_year: number | null }): boolean {
-  return movie.release_year !== new Date().getFullYear();
+// For in-venue countdown screens: every screening from `sinceMinutes` ago
+// onward, so the film that just started stays up while latecomers arrive.
+// Unfiltered by MPLC restriction -- only call this from a staff-gated page.
+// Also returns the server's clock at fetch time, which the screen uses as
+// its time reference instead of the TV's own clock.
+export async function getScreeningsForCountdown(sinceMinutes: number, limit = 40): Promise<{ screenings: Screening[]; fetchedAt: number }> {
+  const supabase = await createClient();
+  const fetchedAt = Date.now();
+  const since = new Date(fetchedAt - sinceMinutes * 60 * 1000);
+
+  const { data, error } = await supabase
+    .from("screenings")
+    .select("*, movie:movies(*), room:rooms(*, addons:room_addons(*))")
+    .gte("starts_at", since.toISOString())
+    .order("starts_at")
+    .limit(limit);
+
+  if (error) throw error;
+  return { screenings: (data ?? []) as unknown as Screening[], fetchedAt };
 }
+
+export { isRestrictedRelease };
 
 export function excludeRestrictedReleases(screenings: Screening[]): Screening[] {
   return screenings.filter((s) => !isRestrictedRelease(s.movie));

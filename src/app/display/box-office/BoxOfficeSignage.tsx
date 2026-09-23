@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { isRestrictedRelease } from "@/lib/mplc";
 import type { Screening } from "@/lib/types";
 
 function formatShowtime(iso: string) {
@@ -14,8 +15,12 @@ async function fetchUpcoming(supabase: ReturnType<typeof createClient>): Promise
     .select("*, movie:movies(*), room:rooms(*, addons:room_addons(*))")
     .gte("starts_at", new Date().toISOString())
     .order("starts_at")
-    .limit(12);
-  return (data ?? []) as unknown as Screening[];
+    .limit(40);
+  // This board is an unauthenticated URL, so the same MPLC filter as the
+  // server render applies here -- otherwise the first live update would
+  // put older titles on screen.
+  const screenings = (data ?? []) as unknown as Screening[];
+  return screenings.filter((s) => !isRestrictedRelease(s.movie)).slice(0, 12);
 }
 
 export default function BoxOfficeSignage({ initialScreenings }: { initialScreenings: Screening[] }) {
