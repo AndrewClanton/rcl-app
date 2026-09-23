@@ -36,9 +36,12 @@ export async function getUpcomingScreenings(): Promise<Screening[]> {
 // playing. So it must never appear on a page anyone can just browse to.
 // A movie with no confirmed release year (not yet matched to OMDb/TMDb) is
 // treated as restricted too -- fail closed, not open.
+export function isRestrictedRelease(movie: { release_year: number | null }): boolean {
+  return movie.release_year !== new Date().getFullYear();
+}
+
 export function excludeRestrictedReleases(screenings: Screening[]): Screening[] {
-  const currentYear = new Date().getFullYear();
-  return screenings.filter((s) => s.movie.release_year === currentYear);
+  return screenings.filter((s) => !isRestrictedRelease(s.movie));
 }
 
 // Same as getUpcomingScreenings, but only screenings starting within the

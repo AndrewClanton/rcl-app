@@ -1,4 +1,4 @@
-import { getUpcomingScreenings, excludeRestrictedReleases } from "@/lib/data/screenings";
+import { getUpcomingScreenings, isRestrictedRelease } from "@/lib/data/screenings";
 import { getUpcomingEvents } from "@/lib/data/events";
 import { getUpcomingCalendarNotes } from "@/lib/data/calendar-notes";
 import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
@@ -6,28 +6,22 @@ import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
 export const dynamic = "force-dynamic";
 
 export default async function ScheduleGraphicPage() {
-  const [allScreenings, events, notes] = await Promise.all([
-    getUpcomingScreenings(),
-    getUpcomingEvents(),
-    getUpcomingCalendarNotes(),
-  ]);
-  // This graphic gets posted publicly (in-window signage, social media),
-  // so anything our MPLC license doesn't let us advertise can't even be an
-  // option here -- not just unchecked by default. See excludeRestrictedReleases.
-  const screenings = excludeRestrictedReleases(allScreenings);
+  const [screenings, events, notes] = await Promise.all([getUpcomingScreenings(), getUpcomingEvents(), getUpcomingCalendarNotes()]);
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Weekly schedule graphic</h1>
+      <h1 className="mb-1 text-lg font-semibold">Weekly flyer</h1>
       <p className="mb-4 max-w-2xl text-sm text-[var(--muted)]">
         Pulls straight from the live showtimes and booked private events -- no re-typing the schedule into Canva.
-        Grouped day by day, so a booked-out room (private event, entire building, outdoor cinema, etc.) shows up
-        right alongside that day's screenings instead of getting lost. Add a custom note for anything that isn't a
-        real screening or booking (e.g. "6-9pm: closed for a private party"). Pick a date range, uncheck anything
-        you don't want on it, then download the image.
+        Pick a date range, choose the audience, uncheck anything you don&apos;t want on it, then download the image.
+        &quot;Public&quot; only includes this year&apos;s releases (all our license lets us advertise); &quot;Members&quot; adds
+        the older titles and is marked on the image itself as email-list only.
       </p>
       <ScheduleGraphicBuilder
-        screenings={screenings.map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at, room: s.room.name }))}
+        // Every upcoming screening, with the ones our MPLC license doesn't let
+        // us advertise flagged -- the builder hides those for a Public flyer
+        // and the image route enforces the same rule server-side.
+        screenings={screenings.map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at, room: s.room.name, restricted: isRestrictedRelease(s.movie) }))}
         events={events.map((e) => ({
           id: e.id,
           name: e.event_name,

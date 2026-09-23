@@ -15,6 +15,14 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  // The flyer route reads its fonts and the wordmark straight from disk at
+  // runtime (Satori needs raw font data; the logo is embedded as a data
+  // URL). Inference has picked these up so far, but make the dependency
+  // explicit so a future refactor of how the paths are built can't silently
+  // drop them from the deployed function.
+  outputFileTracingIncludes: {
+    "/admin/schedule-graphic/image": ["src/app/admin/schedule-graphic/fonts/**/*", "src/app/admin/schedule-graphic/assets/**/*"],
+  },
 };
 
 export default nextConfig;

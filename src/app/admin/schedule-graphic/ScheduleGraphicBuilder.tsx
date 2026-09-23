@@ -6,11 +6,14 @@ import { addCalendarNote, deleteCalendarNote } from "./actions";
 
 const CENTRAL_TZ = "America/Chicago";
 
+type Audience = "public" | "members";
+
 interface ScreeningLite {
   id: string;
   title: string;
   startsAt: string;
   room: string;
+  restricted: boolean; // not a current-year release -- members-only per our MPLC license
 }
 interface EventLite {
   id: string;
@@ -89,7 +92,7 @@ export default function ScheduleGraphicBuilder({
   const [isPending, startTransition] = useTransition();
   const [startDate, setStartDate] = useState(todayCentral());
   const [days, setDays] = useState(7);
-  const [format, setFormat] = useState<"grid" | "banner" | "portrait">("grid");
+  const [audience, setAudience] = useState<Audience>("public");
   const [planAheadNote, setPlanAheadNote] = useState("");
   const [excludedScreeningIds, setExcludedScreeningIds] = useState<Set<string>>(new Set());
   const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
@@ -104,20 +107,16 @@ export default function ScheduleGraphicBuilder({
   const endDate = addDays(startDate, days - 1);
 
   const screeningsInRange = useMemo(
-    () => screenings.filter((s) => {
-      const key = centralDateKey(s.startsAt);
-      return key >= startDate && key <= endDate;
-    }),
-    [screenings, startDate, endDate]
+    () =>
+      screenings.filter((s) => {
+        if (audience === "public" && s.restricted) return false;
+        const key = centralDateKey(s.startsAt);
+        return key >= startDate && key <= endDate;
+      }),
+    [screenings, startDate, endDate, audience]
   );
-  const eventsInRange = useMemo(
-    () => events.filter((e) => e.date >= startDate && e.date <= endDate),
-    [events, startDate, endDate]
-  );
-  const notesInRange = useMemo(
-    () => notes.filter((n) => n.date >= startDate && n.date <= endDate),
-    [notes, startDate, endDate]
-  );
+  const eventsInRange = useMemo(() => events.filter((e) => e.date >= startDate && e.date <= endDate), [events, startDate, endDate]);
+  const notesInRange = useMemo(() => notes.filter((n) => n.date >= startDate && n.date <= endDate), [notes, startDate, endDate]);
 
   const groupedDays = useMemo(() => {
     const byDay = new Map<string, { screenings: ScreeningLite[]; events: EventLite[]; notes: NoteLite[] }>();
@@ -135,24 +134,8 @@ export default function ScheduleGraphicBuilder({
     return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
   }, [screeningsInRange, eventsInRange, notesInRange]);
 
-  function toggleScreening(id: string) {
-    setExcludedScreeningIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-  function toggleEvent(id: string) {
-    setExcludedEventIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-  function toggleNote(id: string) {
-    setExcludedNoteIds((prev) => {
+  function toggleIn(setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) {
+    setter((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -186,8 +169,9 @@ export default function ScheduleGraphicBuilder({
   const includedNoteIds = notesInRange.filter((n) => !excludedNoteIds.has(n.id)).map((n) => n.id);
   const totalIncluded = includedScreeningIds.length + includedEventIds.length + includedNoteIds.length;
   const totalInRange = screeningsInRange.length + eventsInRange.length + notesInRange.length;
+  const hiddenForPublic = audience === "public" ? screenings.filter((s) => s.restricted && centralDateKey(s.startsAt) >= startDate && centralDateKey(s.startsAt) <= endDate).length : 0;
   const rangeLabel = `${dayHeading(startDate)} – ${dayHeading(endDate)}`;
-  const imageUrl = `/admin/schedule-graphic/image?format=${format}&label=${encodeURIComponent(rangeLabel)}&note=${encodeURIComponent(planAheadNote)}&start=${startDate}&days=${days}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}&noteIds=${includedNoteIds.join(",")}`;
+  const imageUrl = `/admin/schedule-graphic/image?audience=${audience}&label=${encodeURIComponent(rangeLabel)}&note=${encodeURIComponent(planAheadNote)}&start=${startDate}&days=${days}&screeningIds=${includedScreeningIds.join(",")}&eventIds=${includedEventIds.join(",")}&noteIds=${includedNoteIds.join(",")}`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
@@ -196,12 +180,7 @@ export default function ScheduleGraphicBuilder({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="mb-1 block text-xs text-[var(--muted)]">Starting</label>
-              <input
-                type="date"
-                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
+              <input type="date" className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm " value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </div>
             <div>
               <label className="mb-1 block text-xs text-[var(--muted)]">For how many days</label>
@@ -217,58 +196,51 @@ export default function ScheduleGraphicBuilder({
           </div>
 
           <div className="mt-3">
-            <label className="mb-1 block text-xs text-[var(--muted)]">Shape</label>
-            <div className="flex flex-wrap gap-2">
+            <label className="mb-1 block text-xs text-[var(--muted)]">Audience</label>
+            <div className="flex gap-2">
               <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "grid" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
-                onClick={() => setFormat("grid")}
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${audience === "public" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
+                onClick={() => setAudience("public")}
               >
-                Full-page grid (1920×1080)
+                Public
               </button>
               <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "portrait" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
-                onClick={() => setFormat("portrait")}
+                className={`flex-1 rounded border px-2 py-1.5 text-sm ${audience === "members" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
+                onClick={() => setAudience("members")}
               >
-                Portrait, for phones (1080×1920)
-              </button>
-              <button
-                className={`flex-1 rounded border px-2 py-1.5 text-sm ${format === "banner" ? "border-[var(--foreground)] bg-[var(--accent)] text-white " : "border-[var(--border)] "}`}
-                onClick={() => setFormat("banner")}
-              >
-                Banner (1200×628)
+                Members (email list)
               </button>
             </div>
+            <p className="mt-1.5 text-xs text-[var(--muted)]">
+              {audience === "public"
+                ? hiddenForPublic > 0
+                  ? `Safe to post anywhere. ${hiddenForPublic} older title${hiddenForPublic === 1 ? "" : "s"} in this range ${hiddenForPublic === 1 ? "is" : "are"} left off -- switch to Members to include ${hiddenForPublic === 1 ? "it" : "them"}.`
+                  : "Safe to post anywhere -- everything in this range is a current-year release."
+                : "Includes older titles. Email list and DMs only -- the image is marked members-only in case it gets forwarded."}
+            </p>
           </div>
 
-          {format === "grid" && (
-            <div className="mt-3">
-              <label className="mb-1 block text-xs text-[var(--muted)]">&quot;Plan ahead&quot; note (optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. Halloween double feature next Fri"
-                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-                value={planAheadNote}
-                onChange={(e) => setPlanAheadNote(e.target.value)}
-              />
-            </div>
-          )}
+          <div className="mt-3">
+            <label className="mb-1 block text-xs text-[var(--muted)]">&quot;Plan ahead&quot; line (optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Halloween double feature next Fri"
+              className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
+              value={planAheadNote}
+              onChange={(e) => setPlanAheadNote(e.target.value)}
+            />
+          </div>
         </div>
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 ">
           <h2 className="mb-2 text-sm font-semibold">Add a custom note</h2>
           <p className="mb-2 text-xs text-[var(--muted)]">
-            For anything that isn&apos;t a real screening or a billed booking -- e.g. &quot;closed for a private
-            party&quot; at a specific hour, or closed all day.
+            For anything that isn&apos;t a real screening or a billed booking -- e.g. &quot;closed for a private party&quot; at a specific hour, or closed all day.
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="mb-1 block text-xs text-[var(--muted)]">Date</label>
-              <input
-                type="date"
-                className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-                value={newNoteDate}
-                onChange={(e) => setNewNoteDate(e.target.value)}
-              />
+              <input type="date" className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm " value={newNoteDate} onChange={(e) => setNewNoteDate(e.target.value)} />
             </div>
             <div className="flex items-end pb-1.5">
               <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
@@ -281,21 +253,11 @@ export default function ScheduleGraphicBuilder({
             <div className="mt-2 grid grid-cols-2 gap-2">
               <div>
                 <label className="mb-1 block text-xs text-[var(--muted)]">From</label>
-                <input
-                  type="time"
-                  className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-                  value={newNoteStart}
-                  onChange={(e) => setNewNoteStart(e.target.value)}
-                />
+                <input type="time" className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm " value={newNoteStart} onChange={(e) => setNewNoteStart(e.target.value)} />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-[var(--muted)]">To</label>
-                <input
-                  type="time"
-                  className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-                  value={newNoteEnd}
-                  onChange={(e) => setNewNoteEnd(e.target.value)}
-                />
+                <input type="time" className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm " value={newNoteEnd} onChange={(e) => setNewNoteEnd(e.target.value)} />
               </div>
             </div>
           )}
@@ -309,11 +271,7 @@ export default function ScheduleGraphicBuilder({
               onChange={(e) => setNewNoteLabel(e.target.value)}
             />
           </div>
-          <button
-            onClick={submitNewNote}
-            disabled={isPending || !newNoteLabel.trim()}
-            className="mt-3 w-full rounded border border-[var(--border)] py-1.5 text-sm font-medium disabled:opacity-40 "
-          >
+          <button onClick={submitNewNote} disabled={isPending || !newNoteLabel.trim()} className="mt-3 w-full rounded border border-[var(--border)] py-1.5 text-sm font-medium disabled:opacity-40 ">
             {isPending ? "Saving…" : "Add note"}
           </button>
         </div>
@@ -335,7 +293,7 @@ export default function ScheduleGraphicBuilder({
                   <div className="space-y-1">
                     {list.notes.map((n) => (
                       <div key={n.id} className="flex items-start gap-2 text-sm">
-                        <input type="checkbox" checked={!excludedNoteIds.has(n.id)} onChange={() => toggleNote(n.id)} className="mt-0.5" />
+                        <input type="checkbox" checked={!excludedNoteIds.has(n.id)} onChange={() => toggleIn(setExcludedNoteIds, n.id)} className="mt-0.5" />
                         <span className={`flex-1 ${excludedNoteIds.has(n.id) ? "text-[var(--muted)] line-through" : "text-[var(--muted)] "}`}>
                           {n.startTime ? `${fmtWallClock(n.startTime)}${n.endTime ? `–${fmtWallClock(n.endTime)}` : ""}` : "All day"} — {n.label}
                         </span>
@@ -346,20 +304,20 @@ export default function ScheduleGraphicBuilder({
                     ))}
                     {list.events.map((e) => (
                       <label key={e.id} className="flex items-start gap-2 text-sm">
-                        <input type="checkbox" checked={!excludedEventIds.has(e.id)} onChange={() => toggleEvent(e.id)} className="mt-0.5" />
+                        <input type="checkbox" checked={!excludedEventIds.has(e.id)} onChange={() => toggleIn(setExcludedEventIds, e.id)} className="mt-0.5" />
                         <span className={excludedEventIds.has(e.id) ? "text-[var(--muted)] line-through" : "text-[var(--warn-text)] "}>
-                          {eventTimeRange(e.time, e.hours)} — {e.name}{" "}
-                          <span className="text-xs text-[var(--muted)]">({e.room})</span>
+                          {eventTimeRange(e.time, e.hours)} — {e.name} <span className="text-xs text-[var(--muted)]">({e.room})</span>
                         </span>
                       </label>
                     ))}
                     {list.screenings.map((s) => (
                       <label key={s.id} className="flex items-center gap-2 text-sm">
-                        <input type="checkbox" checked={!excludedScreeningIds.has(s.id)} onChange={() => toggleScreening(s.id)} />
+                        <input type="checkbox" checked={!excludedScreeningIds.has(s.id)} onChange={() => toggleIn(setExcludedScreeningIds, s.id)} />
                         <span className={excludedScreeningIds.has(s.id) ? "text-[var(--muted)] line-through" : s.room.toLowerCase().includes("outdoor") ? "text-[var(--success-text)] " : ""}>
                           {screeningTime(s.startsAt)} — {s.title}
                           {s.room.toLowerCase().includes("outdoor") && !excludedScreeningIds.has(s.id) ? " (outdoor)" : ""}
                         </span>
+                        {s.restricted && <span className="rounded border border-[var(--warn-border)] bg-[var(--warn-bg)] px-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--warn-text)]">members only</span>}
                       </label>
                     ))}
                   </div>
@@ -371,7 +329,7 @@ export default function ScheduleGraphicBuilder({
 
         <a
           href={imageUrl}
-          download={`royale-cinema-schedule-${startDate}.png`}
+          download={`royale-cinema-flyer-${startDate}${audience === "members" ? "-members" : ""}.png`}
           className="block rounded-lg bg-[var(--accent)] py-2.5 text-center text-sm font-semibold text-white disabled:opacity-40 "
         >
           Download PNG
@@ -380,13 +338,7 @@ export default function ScheduleGraphicBuilder({
 
       <div className="flex items-start justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-hover)] p-6 ">
         {/* eslint-disable-next-line @next/next/no-img-element -- server-generated PNG, not a static asset next/image can optimize */}
-        <img
-          key={imageUrl}
-          src={imageUrl}
-          alt="Schedule graphic preview"
-          className="max-w-full rounded-lg shadow-lg"
-          style={{ maxHeight: "80vh" }}
-        />
+        <img key={imageUrl} src={imageUrl} alt="Flyer preview" className="max-w-full rounded-lg shadow-lg" style={{ maxHeight: "80vh" }} />
       </div>
     </div>
   );
