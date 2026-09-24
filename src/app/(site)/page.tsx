@@ -1,3 +1,5 @@
+import { RATE_PRICE } from "@/lib/membership-rates";
+import { LOYALTY_SUMMARY } from "@/lib/loyalty";
 import Image from "next/image";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
@@ -137,7 +139,7 @@ export default async function HomePage() {
             <div className="font-display mt-1 text-3xl">Free</div>
             <ul className="mt-4 flex-1 space-y-2 text-sm text-[var(--muted)]">
               <li>Buy a ticket per screening</li>
-              <li>1 point per $1 spent · 100 points = $5 off</li>
+              <li>{LOYALTY_SUMMARY}</li>
               <li>Mailing list &amp; weekly updates</li>
             </ul>
             <Link href="/membership" className="btn-secondary mt-5 self-start">
@@ -150,7 +152,7 @@ export default async function HomePage() {
             <div className="font-display mt-4 text-3xl">Insiders+</div>
             <div className="mt-1 flex items-baseline gap-1.5">
               <span className="font-display text-5xl" style={{ color: "var(--gold)" }}>
-                $15
+                ${RATE_PRICE.adult}
               </span>
               <span className="text-sm opacity-70">/ month</span>
             </div>
@@ -163,7 +165,7 @@ export default async function HomePage() {
               </li>
               <li className="flex gap-2">
                 <span style={{ color: "var(--gold)" }}>✓</span>
-                <span>1 point per $1 spent · 100 points = $5 off</span>
+                <span>{LOYALTY_SUMMARY}</span>
               </li>
               <li className="flex gap-2">
                 <span style={{ color: "var(--gold)" }}>✓</span>
@@ -181,7 +183,7 @@ export default async function HomePage() {
             <Link href="/membership" className="btn-primary mt-5 self-start">
               Join Insiders+
             </Link>
-            <div className="mt-3 text-xs opacity-60">Seniors $12/mo · Students $10/mo in person with ID</div>
+            <div className="mt-3 text-xs opacity-60">Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo in person with ID</div>
           </div>
         </div>
       </section>

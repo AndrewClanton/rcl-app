@@ -2,10 +2,6 @@
 
 import { useState } from "react";
 
-function money(n: number) {
-  return `$${n.toFixed(2)}`;
-}
-
 export default function TipModal({ subtotal, tabName, onConfirm, onCancel }: { subtotal: number; tabName: string; onConfirm: (tip: number) => void; onCancel: () => void }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState("");

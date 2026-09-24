@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
 import type { Member } from "@/lib/types";
 import { RATE_LABEL, RATE_PRICE } from "@/lib/membership-rates";
-import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/points";
+import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
 import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";

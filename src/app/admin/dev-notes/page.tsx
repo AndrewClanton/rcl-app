@@ -12,7 +12,7 @@ export default async function AdminDevNotesPage() {
       <h1 className="mb-1 text-lg font-semibold">Dev Notes</h1>
       <p className="mb-4 text-sm text-[var(--muted)]">
         Notes admins jotted down from the Dev Notes widget, with the page they were on. Approve the ones worth
-        doing -- that's the backlog to hand to Claude.
+        doing -- that&apos;s the backlog to hand to Claude.
       </p>
       <DevNotesPanel notes={notes} />
     </div>

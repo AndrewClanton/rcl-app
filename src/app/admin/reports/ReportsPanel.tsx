@@ -178,7 +178,7 @@ export default function ReportsPanel({
       <section>
         <h2 className="mb-1 text-lg font-semibold">Pour cost by drink</h2>
         <p className="mb-3 text-sm text-[var(--muted)]">
-          Ingredient cost as a share of menu price for each alcohol item -- the standard bar-industry "pour cost" metric. Bars typically
+          Ingredient cost as a share of menu price for each alcohol item -- the standard bar-industry &ldquo;pour cost&rdquo; metric. Bars typically
           target 16-20%; higher means less margin on that drink. Only shown once every ingredient in a recipe has a cost set.
         </p>
         {pourCost.length === 0 ? (

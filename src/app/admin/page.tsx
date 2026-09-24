@@ -89,7 +89,7 @@ export default async function AdminDashboardPage() {
         className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
       >
         <div className="text-base font-medium">Weekly schedule graphic</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Download an image of this week's lineup for email.</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Download an image of this week&apos;s lineup for email.</div>
       </Link>
       </div>
     </div>

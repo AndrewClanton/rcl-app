@@ -1,6 +1,6 @@
 "use server";
 
-import { headers } from "next/headers";
+import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
 import { getBoothReservationsForDate } from "@/lib/data/booths";
@@ -8,13 +8,6 @@ import type { BoothReservation } from "@/lib/types";
 
 export async function getAvailabilityForDate(date: string): Promise<BoothReservation[]> {
   return getBoothReservationsForDate(date);
-}
-
-async function siteOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
 }
 
 function timeToMinutes(t: string) {

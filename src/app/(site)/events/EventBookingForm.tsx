@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { Room } from "@/lib/types";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import { submitEventInquiry } from "./actions";

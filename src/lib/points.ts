@@ -5,8 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // the history members see on their account always agree (both are written
 // in one database transaction by apply_member_points).
 
-export const POINTS_PER_REWARD = 100;
-export const REWARD_VALUE = 5;
+export { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 
 export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { RATE_PRICE } from "@/lib/membership-rates";
 import { submitMembershipSignup, startMembershipCheckout } from "./actions";
 
 type Plan = "free" | "plus";
@@ -62,14 +63,14 @@ export default function MembershipForm() {
             Insiders (free)
           </button>
           <button className={`chip ${plan === "plus" ? "chip-selected" : ""}`} onClick={() => setPlan("plus")}>
-            Insiders+ ($15/mo)
+            Insiders+ (${RATE_PRICE.adult}/mo)
           </button>
         </div>
         {plan === "plus" && (
           <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
             <p>You&apos;ll be redirected to Stripe to set up your monthly payment. You&apos;re billed on the same day each month.</p>
             <p>
-              Senior ($12/mo) or student ($10/mo)? Join here, then show your ID at the box office and we&apos;ll switch your rate. The lower price
+              Senior (${RATE_PRICE.senior}/mo) or student (${RATE_PRICE.student}/mo)? Join here, then show your ID at the box office and we&apos;ll switch your rate. The lower price
               starts with your next bill.
             </p>
           </div>

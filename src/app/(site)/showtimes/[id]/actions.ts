@@ -1,19 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
+import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
 // would have to differ between local/preview/production.
-async function siteOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
-}
-
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only a generic "Minified React error..." reaches the client --
 // the real text only ever shows in dev). Expected, user-actionable errors

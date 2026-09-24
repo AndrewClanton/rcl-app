@@ -1,7 +1,7 @@
 "use server";
 
+import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -19,13 +19,6 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   if (!user) return { ok: false, error: "Not signed in." };
   const result = await linkMemberForUser(user, name);
   return result.ok ? { ok: true } : { ok: false, error: result.error };
-}
-
-async function siteOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
 }
 
 export async function signOut(): Promise<void> {

@@ -8,6 +8,7 @@ import { REGISTER_CHANNEL, EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
+import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
@@ -27,8 +28,6 @@ import {
 } from "./actions";
 
 const TAX_RATE = 0.08;
-const POINTS_REDEEM_COST = 100;
-const POINTS_REDEEM_VALUE = 5;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -55,8 +54,8 @@ function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: bo
   const subtotal = cart.reduce((s, l) => s + l.unit * l.qty, 0);
   const tierDiscount = subtotal * memberDiscountRate(member);
   const monthlyDiscount = monthlyMember ? subtotal * 0.1 : 0;
-  const canRedeem = !!member && member.points >= POINTS_REDEEM_COST;
-  const redemptionDiscount = canRedeem && pointsRedeemed ? POINTS_REDEEM_VALUE : 0;
+  const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
+  const redemptionDiscount = canRedeem && pointsRedeemed ? REWARD_VALUE : 0;
   const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   const tax = taxFree ? 0 : taxable * TAX_RATE;
@@ -240,7 +239,6 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, orderName, totals.subtotal, totals.tax, totals.total]);
 
   function resetOrder() {
@@ -529,7 +527,7 @@ export default function PosApp({
           {totals.canRedeem && (
             <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
               <input type="checkbox" checked={pointsRedeemed} onChange={(e) => setPointsRedeemed(e.target.checked)} />
-              Redeem {POINTS_REDEEM_COST} pts for {money(POINTS_REDEEM_VALUE)} off
+              Redeem {POINTS_PER_REWARD} pts for {money(REWARD_VALUE)} off
             </label>
           )}
         </div>

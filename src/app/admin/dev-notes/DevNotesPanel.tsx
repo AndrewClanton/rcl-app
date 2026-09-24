@@ -16,7 +16,7 @@ export default function DevNotesPanel({ notes }: { notes: DevNote[] }) {
   const history = notes.filter((n) => n.status === "done" || n.status === "dismissed");
 
   if (notes.length === 0) {
-    return <p className="text-sm text-[var(--muted)]">No notes yet -- they'll show up here as admins send them from the site.</p>;
+    return <p className="text-sm text-[var(--muted)]">No notes yet -- they&apos;ll show up here as admins send them from the site.</p>;
   }
 
   return (

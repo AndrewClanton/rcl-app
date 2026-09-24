@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
+import { RATE_PRICE } from "@/lib/membership-rates";
+import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import MembershipForm from "./MembershipForm";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +48,7 @@ export default async function MembershipPage({
               </th>
               <th className="px-4 py-3 font-medium text-[var(--accent)]">
                 Insiders+
-                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">$15/mo</div>
+                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">${RATE_PRICE.adult}/mo</div>
               </th>
             </tr>
           </thead>
@@ -64,7 +66,9 @@ export default async function MembershipPage({
             <tr>
               <td className="px-4 py-3 text-[var(--muted)]">
                 Loyalty points
-                <div className="mt-0.5 text-xs">100 points = $5 off</div>
+                <div className="mt-0.5 text-xs">
+                  {POINTS_PER_REWARD} points = ${REWARD_VALUE} off
+                </div>
               </td>
               <td className="px-4 py-3">1 point per $1 spent</td>
               <td className="px-4 py-3">1 point per $1 spent</td>
@@ -92,13 +96,13 @@ export default async function MembershipPage({
         </table>
         <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-[var(--border)] px-4 py-3 text-sm text-[var(--muted)]">
           <span>
-            Insiders+ pricing: Adults <strong className="text-[var(--accent)]">$15/mo</strong>
+            Insiders+ pricing: Adults <strong className="text-[var(--accent)]">${RATE_PRICE.adult}/mo</strong>
           </span>
           <span>
-            Seniors <strong className="text-[var(--accent)]">$12/mo</strong>
+            Seniors <strong className="text-[var(--accent)]">${RATE_PRICE.senior}/mo</strong>
           </span>
           <span>
-            Students <strong className="text-[var(--accent)]">$10/mo</strong>
+            Students <strong className="text-[var(--accent)]">${RATE_PRICE.student}/mo</strong>
           </span>
           <span>Senior and student rates are set at the box office with a valid ID.</span>
         </div>

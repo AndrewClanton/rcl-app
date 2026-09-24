@@ -1,6 +1,6 @@
 "use server";
 
-import { headers } from "next/headers";
+import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireStaff, assertStaff } from "@/lib/auth";
@@ -8,13 +8,6 @@ import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
-
-async function siteOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  return `${proto}://${host}`;
-}
 
 function revalidate() {
   revalidatePath("/admin/members");

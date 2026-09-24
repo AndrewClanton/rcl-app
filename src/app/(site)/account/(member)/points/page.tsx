@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireMember } from "@/lib/member-auth";
 import { getPointsLedger, type LedgerEntry } from "@/lib/data/member-account";
-import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/points";
+import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { dateShort, points } from "../format";
 
 export const metadata = { title: "Points" };
