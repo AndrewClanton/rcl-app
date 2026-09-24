@@ -19,7 +19,27 @@ function GoogleMark() {
   );
 }
 
-export default function AccountForm({ googleEnabled = false, initialError = null }: { googleEnabled?: boolean; initialError?: string | null }) {
+// Facebook's "f" mark, as Meta's login button guidelines ask for.
+function FacebookMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="#fff"
+        d="M24 12.07C24 5.41 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.04V9.41c0-3.02 1.8-4.7 4.54-4.7 1.31 0 2.68.24 2.68.24v2.97h-1.5c-1.5 0-1.96.93-1.96 1.89v2.26h3.32l-.53 3.5h-2.8V24C19.62 23.1 24 18.1 24 12.07"
+      />
+    </svg>
+  );
+}
+
+type Provider = "google" | "facebook";
+
+export default function AccountForm({
+  providers = { google: false, facebook: false },
+  initialError = null,
+}: {
+  providers?: { google: boolean; facebook: boolean };
+  initialError?: string | null;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("signin");
   const [name, setName] = useState("");
@@ -27,21 +47,21 @@ export default function AccountForm({ googleEnabled = false, initialError = null
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
-  const [googleBusy, setGoogleBusy] = useState(false);
+  const [oauthBusy, setOauthBusy] = useState<Provider | null>(null);
 
-  async function handleGoogle() {
-    setGoogleBusy(true);
+  async function handleOAuth(provider: Provider) {
+    setOauthBusy(provider);
     setError(null);
     const { error } = await createClient().auth.signInWithOAuth({
-      provider: "google",
+      provider,
       options: {
         redirectTo: `${window.location.origin}/account/callback?next=/account`,
-        queryParams: { prompt: "select_account" },
+        ...(provider === "google" ? { queryParams: { prompt: "select_account" } } : { scopes: "email" }),
       },
     });
     if (error) {
-      setError("Google sign-in isn't available right now. Use your email and password instead.");
-      setGoogleBusy(false);
+      setError(`${provider === "google" ? "Google" : "Facebook"} sign-in isn't available right now. Use your email and password instead.`);
+      setOauthBusy(null);
     }
   }
   const [resetSent, setResetSent] = useState(false);
@@ -117,17 +137,32 @@ export default function AccountForm({ googleEnabled = false, initialError = null
 
   return (
     <form onSubmit={handleSubmit} className="card">
-      {googleEnabled && (
+      {(providers.google || providers.facebook) && (
         <>
-          <button
-            type="button"
-            onClick={handleGoogle}
-            disabled={googleBusy}
-            className="flex w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
-          >
-            <GoogleMark />
-            {googleBusy ? "Opening Google…" : "Continue with Google"}
-          </button>
+          <div className="space-y-2.5">
+            {providers.google && (
+              <button
+                type="button"
+                onClick={() => handleOAuth("google")}
+                disabled={!!oauthBusy}
+                className="flex w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
+              >
+                <GoogleMark />
+                {oauthBusy === "google" ? "Opening Google…" : "Continue with Google"}
+              </button>
+            )}
+            {providers.facebook && (
+              <button
+                type="button"
+                onClick={() => handleOAuth("facebook")}
+                disabled={!!oauthBusy}
+                className="flex w-full items-center justify-center gap-3 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#166fe5] disabled:opacity-60"
+              >
+                <FacebookMark />
+                {oauthBusy === "facebook" ? "Opening Facebook…" : "Continue with Facebook"}
+              </button>
+            )}
+          </div>
           <div className="my-5 flex items-center gap-3 text-xs text-[var(--muted)]">
             <span className="h-px flex-1 bg-[var(--border)]" />
             or use your email

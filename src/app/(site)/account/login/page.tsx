@@ -1,18 +1,19 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
-import { isGoogleSignInEnabled } from "@/lib/auth-providers";
+import { getSignInProviders } from "@/lib/auth-providers";
 import AccountForm from "./AccountForm";
 
 const ERRORS: Record<string, string> = {
-  google_cancelled: "Google sign-in was cancelled. Try again, or use your email.",
-  google_failed: "Google sign-in didn't finish. Try again, or use your email.",
-  link_failed: "We couldn't connect that Google account to your membership. Sign in with your email and password, or ask us at the box office.",
+  oauth_cancelled: "Sign-in was cancelled. Try again, or use your email.",
+  oauth_failed: "That sign-in didn't finish. Try again, or use your email.",
+  no_email: "Facebook didn't share an email address with us, and your account needs one. Try Google, or sign up with your email.",
+  link_failed: "We couldn't connect that sign-in to your membership. Sign in with your email and password, or ask us at the box office.",
 };
 
 export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const { error } = await searchParams;
-  const googleEnabled = await isGoogleSignInEnabled();
+  const providers = await getSignInProviders();
   const supabase = await createClient();
   const {
     data: { user },
@@ -35,7 +36,7 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
         Royale Insider.
       </p>
       <div className="mt-6">
-        <AccountForm googleEnabled={googleEnabled} initialError={error ? (ERRORS[error] ?? null) : null} />
+        <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} />
       </div>
     </div>
   );

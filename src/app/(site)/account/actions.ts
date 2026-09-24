@@ -18,7 +18,7 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
   const result = await linkMemberForUser(user, name);
-  return result.ok ? { ok: true } : result;
+  return result.ok ? { ok: true } : { ok: false, error: result.error };
 }
 
 async function siteOrigin(): Promise<string> {

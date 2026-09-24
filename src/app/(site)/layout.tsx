@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SITE_URL } from "@/lib/site";
+import { LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
 
 const JSON_LD = {
   "@context": "https://schema.org",
@@ -67,6 +68,17 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             info@royalecinemajoplin.com
           </a>
         </div>
+        {LEGAL_PAGES_PUBLISHED && (
+          <div className="mt-1">
+            <Link href="/privacy" className="hover:text-[var(--accent)]">
+              Privacy policy
+            </Link>
+            {" · "}
+            <Link href="/data-deletion" className="hover:text-[var(--accent)]">
+              Deleting your data
+            </Link>
+          </div>
+        )}
       </footer>
     </div>
   );

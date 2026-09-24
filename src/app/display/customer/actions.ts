@@ -26,8 +26,10 @@ export async function findMemberByPhone(phone: string): Promise<FoundMember | nu
   const target = last10Digits(phone);
   if (target.length !== 10) return null;
 
+  // phone_digits is the stored phone with formatting stripped (it may carry
+  // a leading country code, hence the suffix match).
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from("members").select("name, phone, avatar_url, points, tier").not("phone", "is", null);
+  const { data, error } = await supabase.from("members").select("name, phone, avatar_url, points, tier").like("phone_digits", `%${target}`).limit(5);
   if (error) throw error;
 
   const match = (data ?? []).find((m) => m.phone && last10Digits(m.phone) === target);

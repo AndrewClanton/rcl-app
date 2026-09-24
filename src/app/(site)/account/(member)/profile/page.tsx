@@ -1,7 +1,7 @@
 import { requireMember } from "@/lib/member-auth";
 import { createClient } from "@/lib/supabase/server";
 import { googlePhotoUrl } from "@/lib/member-link";
-import { isGoogleSignInEnabled } from "@/lib/auth-providers";
+import { getSignInProviders } from "@/lib/auth-providers";
 import MemberAvatar from "@/components/MemberAvatar";
 import SignOutButton from "../../SignOutButton";
 import { GooglePhotoButton, PhotoUploadButton, RemovePhotoButton } from "../../PhotoButtons";
@@ -17,7 +17,7 @@ export default async function ProfilePage() {
   } = await supabase.auth.getUser();
   const providers = new Set((user?.identities ?? []).map((i) => i.provider));
   const googlePhoto = user ? googlePhotoUrl(user) : null;
-  const googleEnabled = await isGoogleSignInEnabled();
+  const enabled = await getSignInProviders();
 
   return (
     <div className="space-y-6">
@@ -51,17 +51,22 @@ export default async function ProfilePage() {
 
       <Section title="Signing in">
         <ul className="mb-4 space-y-2 text-sm">
-          <li className="flex items-center gap-2">
-            <Dot on={providers.has("google")} />
-            <span>
-              <strong>Google</strong>{" "}
-              {providers.has("google")
-                ? "is connected. You can sign in with the Google button."
-                : googleEnabled
-                  ? `isn't connected. Use "Continue with Google" with ${member.email} and it connects automatically.`
-                  : "sign-in is coming soon."}
-            </span>
-          </li>
+          {(["google", "facebook"] as const)
+            .filter((p) => enabled[p] || providers.has(p))
+            .map((p) => {
+              const label = p === "google" ? "Google" : "Facebook";
+              return (
+                <li key={p} className="flex items-center gap-2">
+                  <Dot on={providers.has(p)} />
+                  <span>
+                    <strong>{label}</strong>{" "}
+                    {providers.has(p)
+                      ? `is connected. You can sign in with the ${label} button.`
+                      : `isn't connected. Use "Continue with ${label}" with ${member.email} and it connects automatically.`}
+                  </span>
+                </li>
+              );
+            })}
           <li className="flex items-center gap-2">
             <Dot on={providers.has("email")} />
             <span>
