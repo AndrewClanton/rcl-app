@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireMember } from "@/lib/member-auth";
 import { createClient } from "@/lib/supabase/server";
 import { googlePhotoUrl } from "@/lib/member-link";
@@ -84,7 +85,15 @@ export default async function ProfilePage() {
       <Section title="Your data">
         <p className="text-sm text-[var(--muted)]">
           Want a copy of everything on your account, or want it closed and deleted? Email info@royalecinemajoplin.com and we&apos;ll take care of it.
-          Receipts and statements are on the Purchases and Billing tabs.
+          Receipts and statements are on the Purchases and Billing tabs. See our{" "}
+          <Link href="/privacy" className="font-bold text-[var(--accent)] hover:underline">
+            privacy policy
+          </Link>{" "}
+          and{" "}
+          <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">
+            how deleting your data works
+          </Link>
+          .
         </p>
         <div className="mt-4">
           <SignOutButton />
