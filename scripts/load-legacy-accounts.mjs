@@ -195,6 +195,16 @@ for (let from = 0; ; from += 1000) {
   if (page.length < 1000) break;
 }
 
+// People who asked for their info to be removed stay removed.
+const erased = new Set();
+for (let from = 0; ; from += 1000) {
+  const { data: page, error } = await supabase.from("legacy_accounts").select("legacy_user_id").not("erased_at", "is", null).range(from, from + 999);
+  if (error) throw error;
+  page.forEach((r) => erased.add(r.legacy_user_id));
+  if (page.length < 1000) break;
+}
+rows.splice(0, rows.length, ...rows.filter((r) => !erased.has(r.legacy_user_id)));
+
 const strip = ({ defaultDecision, ...row }) => row;
 const fresh = rows.filter((r) => !decidedByHand.has(r.legacy_user_id)).map((r) => ({ ...strip(r), decision: r.defaultDecision }));
 const kept = rows.filter((r) => decidedByHand.has(r.legacy_user_id)).map(strip);

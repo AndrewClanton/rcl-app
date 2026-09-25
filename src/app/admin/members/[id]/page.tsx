@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getStaffSession } from "@/lib/auth";
+import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 import { getCommunityPrograms, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import MemberDetail from "./MemberDetail";
@@ -14,5 +14,13 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const [purchases, communityPrograms, session] = await Promise.all([getMemberPurchaseHistory(id), getCommunityPrograms(), getStaffSession()]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
 
-  return <MemberDetail member={member} purchases={purchases} communityPrograms={communityPrograms} staffInfo={staffInfo[member.id]} />;
+  return (
+    <MemberDetail
+      member={member}
+      purchases={purchases}
+      communityPrograms={communityPrograms}
+      staffInfo={staffInfo[member.id]}
+      viewerIsAdmin={!!session && hasAdminAccess(session.role)}
+    />
+  );
 }

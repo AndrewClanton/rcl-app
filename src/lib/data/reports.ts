@@ -107,17 +107,27 @@ export interface MembershipAnalytics {
 // receiving free access through the Community Access Program."
 export async function getMembershipAnalytics(): Promise<MembershipAnalytics> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("members")
-    .select("tier, comped, stripe_subscription_id, created_at, community_program:community_programs(name)");
-  if (error) throw error;
-  const members = (data ?? []) as unknown as {
+  type Row = {
     tier: string;
     comped: boolean;
     stripe_subscription_id: string | null;
     created_at: string;
     community_program: { name: string } | null;
-  }[];
+  };
+  // Paged: the database returns at most 1,000 rows per request, and there
+  // are more members than that since the old-site import.
+  const members: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("members")
+      .select("tier, comped, stripe_subscription_id, created_at, community_program:community_programs(name)")
+      .is("erased_at", null)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    members.push(...((data ?? []) as unknown as Row[]));
+    if (!data || data.length < 1000) break;
+  }
 
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
@@ -451,8 +461,8 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 
   const [todaysOrdersRes, memberCountRes, compedCountRes, screeningsCountRes] = await Promise.all([
     supabase.from("orders").select("total").eq("status", "completed").gte("created_at", startOfDay.toISOString()),
-    supabase.from("members").select("id", { count: "exact", head: true }),
-    supabase.from("members").select("id", { count: "exact", head: true }).eq("comped", true),
+    supabase.from("members").select("id", { count: "exact", head: true }).is("erased_at", null),
+    supabase.from("members").select("id", { count: "exact", head: true }).is("erased_at", null).eq("comped", true),
     supabase.from("screenings").select("id", { count: "exact", head: true }).gte("starts_at", new Date().toISOString()),
   ]);
   if (todaysOrdersRes.error) throw todaysOrdersRes.error;

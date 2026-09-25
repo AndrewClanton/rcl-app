@@ -67,7 +67,7 @@ const QR_PATTERN = /^RCL:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 
 export async function getPosMember(id: string): Promise<PosMember | null> {
   await assertStaff();
-  const { data } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).eq("id", id).maybeSingle();
+  const { data } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).eq("id", id).is("erased_at", null).maybeSingle();
   return data ? toPosMember(data as unknown as Row) : null;
 }
 
@@ -87,7 +87,7 @@ export async function searchPosMembers(query: string, limit = 8): Promise<PosMem
   const filters = [`name.ilike.%${text}%`, `email.ilike.%${text}%`];
   if (digits.length >= 3) filters.push(`phone_digits.like.%${digits}%`);
 
-  const { data, error } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).or(filters.join(",")).order("name").limit(Math.min(Math.max(limit, 1), 40));
+  const { data, error } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).is("erased_at", null).or(filters.join(",")).order("name").limit(Math.min(Math.max(limit, 1), 40));
   if (error) return [];
   return (data as unknown as Row[]).map(toPosMember);
 }
@@ -125,7 +125,7 @@ export async function getRegulars(): Promise<Regular[]> {
 
   const out: Regular[] = [];
   if (ranked.length) {
-    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).in("id", ranked.map((r) => r.member_id));
+    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).is("erased_at", null).in("id", ranked.map((r) => r.member_id));
     const byId = new Map((data as unknown as Row[] | null ?? []).map((r) => [r.id, toPosMember(r)]));
     for (const r of ranked) {
       const m = byId.get(r.member_id);
@@ -134,7 +134,7 @@ export async function getRegulars(): Promise<Regular[]> {
   }
   if (out.length < 24) {
     const have = new Set(out.map((r) => r.member.id));
-    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).not("avatar_url", "is", null).order("created_at", { ascending: false }).limit(24);
+    const { data } = await supabase.from("members").select(POS_MEMBER_SELECT).is("erased_at", null).not("avatar_url", "is", null).order("created_at", { ascending: false }).limit(24);
     for (const r of (data as unknown as Row[] | null) ?? []) {
       if (out.length >= 24) break;
       if (!have.has(r.id)) out.push({ member: toPosMember(r), visits: 0, lastVisit: null });

@@ -1,7 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CommunityProgram, Member } from "@/lib/types";
 
-const MEMBER_SELECT = "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name)";
+const MEMBER_SELECT =
+  "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name), erased_by_staff:employees!members_erased_by_fkey(name)";
 
 export interface MembersPage {
   members: Member[];
@@ -22,7 +23,7 @@ export async function getMembersPage(opts: { query?: string; page?: number; page
   const page = Math.max(1, opts.page ?? 1);
   const supabase = createAdminClient();
 
-  let q = supabase.from("members").select(MEMBER_SELECT, { count: "exact" });
+  let q = supabase.from("members").select(MEMBER_SELECT, { count: "exact" }).is("erased_at", null);
   const query = opts.query?.trim();
   if (query) {
     // Escape wildcard chars so a search for e.g. "50% off" doesn't become a pattern.

@@ -44,6 +44,7 @@ export async function applyMemberRate(memberId: string, tier: MemberPriceTier, s
     .from("members")
     .select("id, name, tier, price_tier, comped, stripe_subscription_id, subscription_status")
     .eq("id", memberId)
+    .is("erased_at", null)
     .maybeSingle();
   if (error || !member) return { ok: false, error: "Couldn't find that member." };
 

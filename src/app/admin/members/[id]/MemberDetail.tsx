@@ -12,7 +12,7 @@ import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
-import { adjustMemberPoints, createMemberBillingPortalLink, deleteMember, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
+import { adjustMemberPoints, createMemberBillingPortalLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -23,12 +23,38 @@ export default function MemberDetail({
   purchases,
   communityPrograms,
   staffInfo,
+  viewerIsAdmin,
 }: {
   member: Member;
   purchases: MemberPurchase[];
   communityPrograms: CommunityProgram[];
   staffInfo: MemberStaffInfo | undefined;
+  viewerIsAdmin: boolean;
 }) {
+  // Personal info removed on request: nothing left to edit, but the
+  // purchases stay visible for refunds and bookkeeping.
+  if (member.erased_at) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <Link href="/admin/members" className="text-sm text-[var(--muted)] hover:underline">
+            ← All members
+          </Link>
+        </div>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+          <h1 className="text-xl font-semibold">Removed member</h1>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            Personal info removed on{" "}
+            {new Date(member.erased_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}
+            {member.erased_by_staff?.name ? ` by ${member.erased_by_staff.name}` : ""}, at their request. Their purchases below stay for taxes and
+            refunds, without their name.
+          </p>
+        </div>
+        <PurchaseHistoryCard purchases={purchases} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -41,7 +67,7 @@ export default function MemberDetail({
       <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
       <BillingCard member={member} />
       <PurchaseHistoryCard purchases={purchases} />
-      <DangerZone member={member} />
+      <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
     </div>
   );
 }
@@ -406,26 +432,115 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
   );
 }
 
-function DangerZone({ member }: { member: Member }) {
+// For deletion requests (the promise on /data-deletion): cancels Stripe
+// billing, deletes their login, and clears their details everywhere they
+// were copied, keeping anonymous purchase records for taxes. Admin only,
+// behind a type-to-confirm step.
+function RemovePersonalInfo({
+  member,
+  purchaseCount,
+  isStaffLogin,
+  viewerIsAdmin,
+}: {
+  member: Member;
+  purchaseCount: number;
+  isStaffLogin: boolean;
+  viewerIsAdmin: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const subscribed = !!member.stripe_subscription_id && ["active", "trialing", "past_due"].includes(member.subscription_status ?? "");
+  const points = Math.floor(Number(member.points));
 
   return (
-    <div className="rounded-xl border border-red-200 bg-[var(--surface)] p-5 ">
-      <h2 className="mb-3 text-lg font-semibold text-[var(--danger-text)]">Danger zone</h2>
-      <button
-        className="rounded border border-[var(--danger-text)] px-3 py-1.5 text-sm text-[var(--danger-text)] disabled:opacity-50 "
-        disabled={pending}
-        onClick={() => {
-          if (!confirm(`Permanently remove member "${member.name}"? This cannot be undone.`)) return;
-          startTransition(async () => {
-            await deleteMember(member.id);
-            router.push("/admin/members");
-          });
-        }}
-      >
-        Remove member
-      </button>
+    <div className="rounded-xl border border-red-200 bg-[var(--surface)] p-5">
+      <h2 className="text-lg font-semibold text-[var(--danger-text)]">Remove personal info</h2>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        For when a member asks to be deleted. This does what the site&apos;s{" "}
+        <a href="/data-deletion" className="underline" target="_blank" rel="noreferrer">
+          Deleting your data
+        </a>{" "}
+        page promises.
+      </p>
+
+      {!viewerIsAdmin ? (
+        <p className="mt-3 text-sm text-[var(--muted)]">Only an admin or the owner can do this.</p>
+      ) : isStaffLogin ? (
+        <p className="mt-3 text-sm text-[var(--danger-text)]">
+          This member is also an active staff login. Remove their staff access in Admin → Staff first.
+        </p>
+      ) : !open ? (
+        <button
+          className="mt-3 rounded border border-[var(--danger-text)] px-3 py-1.5 text-sm text-[var(--danger-text)]"
+          onClick={() => {
+            setOpen(true);
+            setTyped("");
+            setError(null);
+          }}
+        >
+          Remove this member&apos;s personal info…
+        </button>
+      ) : (
+        <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] p-4">
+          <ul className="list-disc space-y-1 pl-5 text-sm">
+            <li>Deletes their name, email, phone, photo and email preferences.</li>
+            <li>
+              Deletes their {points} point{points === 1 ? "" : "s"} and their points history.
+            </li>
+            {member.auth_user_id && <li>Deletes their website login (password, Google or Facebook).</li>}
+            {subscribed && (
+              <li>
+                <strong>Cancels their Insiders+ in Stripe right away</strong> and removes their saved card. No refund is issued automatically.
+              </li>
+            )}
+            <li>
+              {purchaseCount > 0
+                ? `Keeps their ${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"} for taxes and refunds, shown as "Removed member".`
+                : "They have no purchases, so nothing else is kept except an empty placeholder."}
+            </li>
+            <li>Also clears their name and email from ticket, booth and private-event bookings, and from the old-site copy.</li>
+          </ul>
+          <p className="text-sm font-bold">This can&apos;t be undone.</p>
+          <label className="block text-sm">
+            Type <strong>DELETE</strong> to confirm
+            <input
+              id="erase-confirm"
+              className="mt-1 block w-48 rounded border border-[var(--border)] px-2 py-1.5 text-sm"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              className="rounded bg-[var(--danger-text)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+              disabled={pending || typed.trim() !== "DELETE"}
+              onClick={() => {
+                setError(null);
+                startTransition(async () => {
+                  const r = await eraseMemberPersonalInfo(member.id).catch(() => ({ ok: false as const, error: "Something went wrong. Nothing may have changed; try again." }));
+                  if (!r.ok) {
+                    setError(r.error);
+                    return;
+                  }
+                  const warn = r.summary.warning ? `&warn=${encodeURIComponent(r.summary.warning)}` : "";
+                  router.push(`/admin/members?removed=1${warn}`);
+                  router.refresh();
+                });
+              }}
+            >
+              {pending ? "Removing…" : "Remove personal info"}
+            </button>
+            <button className="text-sm text-[var(--muted)] hover:underline" disabled={pending} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+          {error && <p className="text-sm text-[var(--danger-text)]">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }

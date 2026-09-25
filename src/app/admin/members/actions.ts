@@ -3,11 +3,12 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff, assertStaff } from "@/lib/auth";
+import { requireStaff, assertStaff, assertAdmin } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
+import { eraseMember, type EraseResult } from "@/lib/member-erase";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -41,7 +42,7 @@ export async function updateMember(
 ) {
   await assertStaff();
   const supabase = createAdminClient();
-  await supabase.from("members").update(fields).eq("id", id);
+  await supabase.from("members").update(fields).eq("id", id).is("erased_at", null);
   revalidate();
 }
 
@@ -60,7 +61,7 @@ export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<
 // adjustment by this staff member, so the member can see what changed.
 export async function adjustMemberPoints(id: string, newBalance: number, note?: string) {
   const staff = await assertStaff();
-  const { data: member } = await createAdminClient().from("members").select("points").eq("id", id).single();
+  const { data: member } = await createAdminClient().from("members").select("points").eq("id", id).is("erased_at", null).maybeSingle();
   if (!member) return;
   const delta = Math.round((newBalance - Number(member.points)) * 100) / 100;
   if (delta) await applyPoints({ memberId: id, delta, reason: "adjustment", note: note?.trim() || "Adjusted by staff", by: staff.employeeId });
@@ -68,11 +69,15 @@ export async function adjustMemberPoints(id: string, newBalance: number, note?: 
   revalidatePath(`/admin/members/${id}`);
 }
 
-export async function deleteMember(id: string) {
-  await assertStaff();
-  const supabase = createAdminClient();
-  await supabase.from("members").delete().eq("id", id);
+// Removes a member's personal info on request (see /data-deletion): cancels
+// Stripe billing, deletes their login, and clears their details everywhere,
+// keeping anonymous purchase records for taxes. Admin only.
+export async function eraseMemberPersonalInfo(id: string): Promise<EraseResult> {
+  const staff = await assertAdmin();
+  const result = await eraseMember(id, staff.employeeId);
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return result;
 }
 
 // Comps a membership for a community/social program -- upgrades to
@@ -92,7 +97,8 @@ export async function grantFreeMembership(id: string, fields: { communityProgram
       comped_by: staff.employeeId,
       comped_at: new Date().toISOString(),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .is("erased_at", null);
   revalidate();
 }
 

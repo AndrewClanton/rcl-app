@@ -171,6 +171,9 @@ export interface Member {
   price_tier_set_by: string | null;
   price_tier_set_at: string | null;
   email_opt_in?: boolean;
+  // Set when staff removed this member's personal info on request.
+  erased_at?: string | null;
+  erased_by_staff?: { name: string } | null;
   // Joined by the admin member queries (who set a senior/student rate).
   rate_set_by?: { name: string } | null;
   stripe_customer_id: string | null;

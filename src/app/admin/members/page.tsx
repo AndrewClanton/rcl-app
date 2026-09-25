@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminMembersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string; comped?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; comped?: string; removed?: string; warn?: string }>;
 }) {
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
@@ -26,6 +26,13 @@ export default async function AdminMembersPage({
 
   return (
     <div className="space-y-4">
+      {params.removed === "1" && (
+        <div className="notice notice-success text-sm">
+          <strong>Personal info removed.</strong> Reply to their request to let them know it&apos;s done. The privacy page promises a confirmation
+          email.
+          {params.warn && <div className="mt-1 text-[var(--warn-text)]">{params.warn}</div>}
+        </div>
+      )}
       {legacy && legacyTotal > 0 && (
         <Link
           href="/admin/members/old-site"
