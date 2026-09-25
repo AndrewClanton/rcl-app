@@ -5,6 +5,7 @@ import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { terminalConfigured } from "./terminal-config";
 import PosApp from "./PosApp";
+import ShiftBar from "./shift/ShiftBar";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,7 @@ export default async function PosPage() {
           {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
         </span>
       </div>
+      <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name }))} />
       <PosApp
         categories={orderableCategories}
         employees={employees}
