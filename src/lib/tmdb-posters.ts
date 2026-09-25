@@ -1,47 +1,25 @@
 import "server-only";
-import { UserFacingError } from "@/lib/errors";
+import { tmdbGet } from "@/lib/tmdb";
 
-const TMDB_API = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w342";
-
-function requireApiKey(): string {
-  const key = process.env.TMDB_API_KEY;
-  if (!key) {
-    throw new UserFacingError(
-      "Alternate posters aren't set up on this server: TMDB_API_KEY is missing. Add it in Vercel → Settings → Environment Variables, then redeploy."
-    );
-  }
-  return key;
-}
-
-async function tmdbGet(path: string, key: string) {
-  let res: Response;
-  try {
-    res = await fetch(`${TMDB_API}${path}`, { headers: { Authorization: `Bearer ${key}` } });
-  } catch {
-    throw new UserFacingError("Couldn't reach TMDb. Check the connection and try again.");
-  }
-  if (res.status === 401) throw new UserFacingError("TMDb rejected the API key. Check TMDB_API_KEY in Vercel's environment variables.");
-  if (!res.ok) throw new UserFacingError(`TMDb isn't responding right now (HTTP ${res.status}). Try again in a minute.`);
-  return res.json();
-}
+const NO_KEY = "Alternate posters aren't set up on this server: TMDB_API_KEY is missing. Add it in Vercel → Settings → Environment Variables, then redeploy.";
 
 export interface PosterOption {
   url: string;
 }
 
-// OMDb only ever returns one poster per movie. TMDb keeps many variants per
-// title (different releases, regions, fan submissions), so it's used here
-// purely as a secondary source of alternatives to pick from -- looked up by
-// IMDb id so it stays in sync with the OMDb-imported movie, not a separate
-// search.
-export async function getPosterOptionsByImdbId(imdbId: string): Promise<PosterOption[]> {
-  const key = requireApiKey();
-  const findJson = await tmdbGet(`/find/${imdbId}?external_source=imdb_id`, key);
-  const tmdbMovie = findJson.movie_results?.[0];
-  if (!tmdbMovie) return [];
+// TMDb keeps many poster variants per title (different releases, regions,
+// fan submissions) to pick from. Looked up by TMDb id when the movie has one,
+// else by its IMDb id.
+export async function getPosterOptions(ids: { tmdbId: number | null; imdbId: string | null }): Promise<PosterOption[]> {
+  let tmdbId = ids.tmdbId;
+  if (!tmdbId && ids.imdbId) {
+    const findJson = await tmdbGet(`/find/${ids.imdbId}?external_source=imdb_id`, NO_KEY);
+    tmdbId = findJson.movie_results?.[0]?.id ?? null;
+  }
+  if (!tmdbId) return [];
 
-  const imagesJson = await tmdbGet(`/movie/${tmdbMovie.id}/images`, key);
+  const imagesJson = await tmdbGet(`/movie/${tmdbId}/images`, NO_KEY);
   const posters = (imagesJson.posters ?? []) as { file_path: string }[];
   return posters.slice(0, 16).map((p) => ({ url: `${TMDB_IMAGE_BASE}${p.file_path}` }));
 }

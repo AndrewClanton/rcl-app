@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 import type { Movie, Room, Screening } from "@/lib/types";
-import type { OmdbSearchResult } from "@/lib/omdb";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import type { PosterOption } from "@/lib/tmdb-posters";
-import { searchOmdbMovies, importMovieFromOmdb, getPosterOptions, setMoviePoster, addMovieManually, addScreening, deleteScreening } from "./actions";
+import { searchMovieDatabase, importMovie, getPosterOptions, setMoviePoster, addMovieManually, addScreening, deleteScreening, type MovieSearchResult } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -107,7 +106,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   const [pending, run] = useRefreshingAction();
   const [query, setQuery] = useState("");
   const [year, setYear] = useState("");
-  const [results, setResults] = useState<OmdbSearchResult[]>([]);
+  const [results, setResults] = useState<MovieSearchResult[]>([]);
   const [searchedFor, setSearchedFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
@@ -119,7 +118,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   async function runSearch() {
     setError(null);
     setSearchedFor(null);
-    const result = await searchOmdbMovies(query, year);
+    const result = await searchMovieDatabase(query, year);
     if (!result.ok) {
       setError(result.error);
       setResults([]);
@@ -136,7 +135,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
       <div className="mb-3 flex gap-2">
         <input
           className="flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
-          placeholder="Search OMDb (IMDb) for a movie title..."
+          placeholder="Search for a movie title..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && runSearch()}
@@ -153,7 +152,7 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
         </button>
       </div>
       <div className="mb-3 -mt-2 text-xs text-[var(--muted)]">
-        Common titles (e.g. &quot;Hope&quot;) get buried under hundreds of results without a year -- add one if your search doesn&apos;t find the right movie.
+        Best matches come first. If the right one isn&apos;t there, add the release year.
       </div>
 
       {error && (
@@ -169,21 +168,31 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
       )}
 
       {results.length > 0 && (
-        <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {results.map((r) => (
             <button
-              key={r.imdbID}
+              key={r.id}
               disabled={pending}
               onClick={() =>
                 run(async () => {
-                  const result = await importMovieFromOmdb(r.imdbID);
+                  const result = await importMovie(r.id);
                   if (!result.ok) setError(result.error);
                 })
               }
-              className="rounded border border-[var(--border)] p-2 text-left text-xs hover:border-[var(--border)] "
+              className="flex gap-2 rounded border border-[var(--border)] p-2 text-left text-xs hover:border-[var(--foreground)]"
+              title={r.overview ?? undefined}
             >
-              <div className="font-medium">{r.title}</div>
-              <div className="text-[var(--muted)]">{r.year || "—"}</div>
+              {r.posterThumb ? (
+                // eslint-disable-next-line @next/next/no-img-element -- tiny remote thumbnail; next/image would need TMDb whitelisted
+                <img src={r.posterThumb} alt="" width={40} height={60} className="h-[60px] w-10 shrink-0 rounded object-cover" loading="lazy" />
+              ) : (
+                <div className="h-[60px] w-10 shrink-0 rounded bg-[var(--surface-hover)]" />
+              )}
+              <div className="min-w-0">
+                <div className="font-medium">{r.title}</div>
+                <div className="text-[var(--muted)]">{r.year || "—"}</div>
+                {r.overview && <div className="mt-0.5 line-clamp-2 text-[var(--muted)]">{r.overview}</div>}
+              </div>
             </button>
           ))}
         </div>

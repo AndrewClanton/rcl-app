@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { assertStaff, getStaffSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { UserFacingError } from "@/lib/errors";
-import { searchMovies, getMovieDetails, type OmdbSearchResult } from "@/lib/omdb";
-import { getPosterOptionsByImdbId, type PosterOption } from "@/lib/tmdb-posters";
+import { searchMovies, getMovieDetails } from "@/lib/omdb";
+import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
+import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 
 function revalidate() {
@@ -30,8 +31,29 @@ async function attempt<T>(fn: () => Promise<T>): Promise<Result<T>> {
   }
 }
 
-export async function searchOmdbMovies(query: string, year?: string): Promise<Result<{ results: OmdbSearchResult[] }>> {
-  return attempt(async () => ({ results: query.trim() ? await searchMovies(query.trim(), year) : [] }));
+// A search hit from either database. `id` says which: "tmdb:603" or
+// "imdb:tt0133093".
+export interface MovieSearchResult {
+  id: string;
+  title: string;
+  year: string;
+  posterThumb: string | null;
+  overview: string | null;
+}
+
+// TMDb when its key is set (better ranking, has brand-new releases), else
+// OMDb.
+export async function searchMovieDatabase(query: string, year?: string): Promise<Result<{ results: MovieSearchResult[] }>> {
+  return attempt(async () => {
+    const q = query.trim();
+    if (!q) return { results: [] };
+    if (hasTmdbKey()) {
+      const hits = await searchTmdbMovies(q, year);
+      return { results: hits.map((h) => ({ id: `tmdb:${h.tmdbId}`, title: h.title, year: h.year, posterThumb: h.posterThumb, overview: h.overview })) };
+    }
+    const hits = await searchMovies(q, year);
+    return { results: hits.map((h) => ({ id: `imdb:${h.imdbID}`, title: h.title, year: h.year, posterThumb: null, overview: null })) };
+  });
 }
 
 // Downloads a poster once (as a high-res rendition, see lib/posters) and
@@ -62,11 +84,42 @@ async function downloadAndStorePoster(
   }
 }
 
-// Imports (or reuses, if already imported) a movie from OMDb (IMDb-sourced
-// data) by its IMDb id.
-export async function importMovieFromOmdb(imdbId: string): Promise<Result<{ id: string }>> {
+// Adds a search hit to the movie library (or reuses it if it's already
+// there, matched by TMDb or IMDb id), re-hosting its poster.
+export async function importMovie(resultId: string): Promise<Result<{ id: string }>> {
   return attempt(async () => {
     const supabase = createAdminClient();
+    const [source, rawId] = resultId.split(":");
+
+    if (source === "tmdb") {
+      const tmdbId = Number(rawId);
+      if (!Number.isInteger(tmdbId)) throw new UserFacingError("That search result is invalid. Search again.");
+      const details = await getTmdbMovie(tmdbId);
+      const match = details.imdbId ? `tmdb_id.eq.${tmdbId},imdb_id.eq.${details.imdbId}` : `tmdb_id.eq.${tmdbId}`;
+      const { data: existing } = await supabase.from("movies").select("id").or(match).limit(1).maybeSingle();
+      if (existing) return { id: existing.id as string };
+      const posterUrl = await downloadAndStorePoster(supabase, details.imdbId ?? `tmdb-${tmdbId}`, details.posterUrl);
+      const { data, error } = await supabase
+        .from("movies")
+        .insert({
+          tmdb_id: tmdbId,
+          imdb_id: details.imdbId,
+          title: details.title,
+          synopsis: details.synopsis,
+          poster_url: posterUrl,
+          runtime_minutes: details.runtimeMinutes,
+          rating: details.rated,
+          release_year: details.releaseYear,
+        })
+        .select("id")
+        .single();
+      if (error) throw error;
+      revalidate();
+      return { id: data.id as string };
+    }
+
+    if (source !== "imdb" || !rawId) throw new UserFacingError("That search result is invalid. Search again.");
+    const imdbId = rawId;
     const { data: existing } = await supabase.from("movies").select("id").eq("imdb_id", imdbId).maybeSingle();
     if (existing) return { id: existing.id as string };
 
@@ -92,14 +145,15 @@ export async function importMovieFromOmdb(imdbId: string): Promise<Result<{ id: 
   });
 }
 
-// Alternate poster art for a movie already in the library, pulled from TMDb
-// by the movie's IMDb id. Empty if the movie has no imdb_id on file (added
-// manually) or TMDb has no matching entry.
+// Alternate poster art for a movie already in the library, from TMDb.
+// Empty if the movie was added manually (no TMDb or IMDb id) or TMDb has no
+// matching entry.
 export async function getPosterOptions(movieId: string): Promise<Result<{ options: PosterOption[] }>> {
   return attempt(async () => {
     const supabase = createAdminClient();
-    const { data: movie } = await supabase.from("movies").select("imdb_id").eq("id", movieId).single();
-    return { options: movie?.imdb_id ? await getPosterOptionsByImdbId(movie.imdb_id) : [] };
+    const { data: movie } = await supabase.from("movies").select("tmdb_id, imdb_id").eq("id", movieId).single();
+    if (!movie?.tmdb_id && !movie?.imdb_id) return { options: [] };
+    return { options: await tmdbPosterOptions({ tmdbId: movie.tmdb_id, imdbId: movie.imdb_id }) };
   });
 }
 
