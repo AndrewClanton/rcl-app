@@ -2,13 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
+import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import type { Screening } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+// "Movie showtimes in Joplin" is what people actually search for, so the
+// title and description say it plainly.
 export const metadata: Metadata = {
-  title: "Showtimes",
-  description: "See what's playing at Royale Cinema Lounge in Joplin, MO, and reserve your seat.",
+  title: "Movie Showtimes in Joplin, MO",
+  description: "Today's movie showtimes at Royale Cinema Lounge, a dine-in cinema and bar at 715 E Broadway in Joplin, MO. See what's playing and reserve your seat.",
+  alternates: { canonical: "/showtimes" },
 };
 
 function dateKey(iso: string) {
@@ -33,9 +37,11 @@ function groupByDate(screenings: Screening[]) {
 export default async function ShowtimesPage() {
   const screenings = await getPubliclyVisibleScreenings();
   const groups = groupByDate(screenings);
+  const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
 
   return (
     <div>
+      {events.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(events) }} />}
       <h1 className="font-display mb-2 text-3xl font-semibold">Showtimes</h1>
       <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
         Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Check back regularly, or{" "}

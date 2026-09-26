@@ -1,25 +1,18 @@
 import Link from "next/link";
-import { SITE_URL } from "@/lib/site";
+import { SITE_NAME, SITE_URL, THEATER_ADDRESS } from "@/lib/site";
 import { LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
 
 const JSON_LD = {
   "@context": "https://schema.org",
   "@type": "MovieTheater",
-  name: "Royale Cinema Lounge",
+  name: SITE_NAME,
   description: "A dine-in cinema, bar, and members' lounge showing independent and repertory film in a historic 1920 building on Route 66.",
   url: SITE_URL,
   telephone: "+1-417-281-4172",
   email: "info@royalecinemajoplin.com",
   priceRange: "$$",
   image: `${SITE_URL}/photos/hero-couple.jpg`,
-  address: {
-    "@type": "PostalAddress",
-    streetAddress: "715 E Broadway",
-    addressLocality: "Joplin",
-    addressRegion: "MO",
-    postalCode: "64801",
-    addressCountry: "US",
-  },
+  address: THEATER_ADDRESS,
 };
 
 export default function SiteLayout({ children }: { children: React.ReactNode }) {

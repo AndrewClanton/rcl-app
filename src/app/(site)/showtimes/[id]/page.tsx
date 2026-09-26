@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getScreeningById } from "@/lib/data/screening-detail";
-import { isWithinPublicWindow } from "@/lib/data/screenings";
+import { isRestrictedRelease, isWithinPublicWindow } from "@/lib/data/screenings";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
+import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import TicketReservation from "./TicketReservation";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +18,19 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const screening = await getScreeningById(id);
   if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime" };
+
+  // An older title (MPLC) can be reached by direct link -- the members'
+  // email -- but must not be advertised. Keep it out of search results, and
+  // give link previews (a share on Facebook, a text message) nothing that
+  // names the movie.
+  if (isRestrictedRelease(screening.movie)) {
+    return {
+      title: "Members' screening",
+      robots: { index: false, follow: false },
+      openGraph: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
+      twitter: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
+    };
+  }
 
   const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
     weekday: "long",
@@ -33,6 +47,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   return {
     title: `${screening.movie.title} -- ${showtime}`,
     description,
+    alternates: { canonical: `/showtimes/${screening.id}` },
     openGraph: screening.movie.poster_url ? { images: [{ url: screening.movie.poster_url }] } : undefined,
   };
 }
@@ -50,6 +65,7 @@ export default async function ScreeningDetailPage({
   if (!screening || !isWithinPublicWindow(screening.starts_at)) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
+  const eventJsonLd = screeningEventJsonLd(screening, seatsLeft);
 
   // Never trust the ?checkout=success URL param on its own -- verify the
   // session actually shows as paid with Stripe before showing a
@@ -82,6 +98,7 @@ export default async function ScreeningDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl">
+      {eventJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(eventJsonLd) }} />}
       <div className="grid gap-8 sm:grid-cols-[200px_1fr]">
         <div className="mx-auto w-40 sm:mx-0 sm:w-full">
           <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="200px" priority />

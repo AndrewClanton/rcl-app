@@ -23,6 +23,21 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/admin/schedule-graphic/image": ["src/app/admin/schedule-graphic/fonts/**/*", "src/app/admin/schedule-graphic/assets/**/*"],
   },
+  // Keep search engines off the *.vercel.app addresses. Until switch-over the
+  // real domain still serves the old site, and Stripe here is in test mode --
+  // a customer who found this copy on Google could "buy" a ticket that was
+  // never paid for. After switch-over, royalecinemajoplin.com doesn't match
+  // this rule, so it's indexed normally and the vercel.app copy never
+  // competes with it.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        has: [{ type: "host", value: ".*\\.vercel\\.app" }],
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
