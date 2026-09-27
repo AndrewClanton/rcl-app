@@ -14,6 +14,10 @@ import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
+import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
+import { sendToPrinter } from "@/lib/print/epos-client";
+import PrinterPanel from "./printer/PrinterPanel";
+import { usePrinterSettings } from "./printer/settings";
 import {
   completeOrder,
   saveDraftOrder,
@@ -118,6 +122,10 @@ export default function PosApp({
     null
   );
   const [toast, setToast] = useState<string | null>(null);
+  const printer = usePrinterSettings();
+  // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
+  const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
+  const [printNote, setPrintNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const category = useMemo(() => categories.find((c) => c.id === nav.categoryId) ?? null, [categories, nav.categoryId]);
@@ -379,6 +387,17 @@ export default function PosApp({
     else setPayOpen(true);
   }
 
+  // Never blocks or undoes a sale: the order is already saved when this runs,
+  // so a printer problem only shows a note with a way to try again.
+  async function printAfterSale(receipt: ReceiptData, tookCash: boolean) {
+    setPrintNote(null);
+    if (!printer.address) return;
+    const openDrawer = tookCash && printer.drawerOnCash;
+    if (!printer.autoPrint && !openDrawer) return;
+    const r = await sendToPrinter(printer.address, printer.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
+    if (!r.ok) setPrintNote(r.error);
+  }
+
   async function finalizeCheckout(payment: CheckoutPayment) {
     setPayOpen(false);
     setBusy(true);
@@ -398,6 +417,29 @@ export default function PosApp({
         tip,
         draftOrderId: activeTabId,
       });
+      const receipt: ReceiptData = {
+        orderNumber,
+        at: new Date().toISOString(),
+        cashier: employees.find((e) => e.id === employeeId)?.name ?? null,
+        member: member?.name ?? null,
+        orderName: orderName.trim() || null,
+        lines: cart.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit, mods: l.mods })),
+        subtotal: totals.subtotal,
+        discounts: [
+          { label: "Member discount", amount: totals.tierDiscount },
+          { label: "Monthly member discount", amount: totals.monthlyDiscount },
+          { label: "Points reward", amount: totals.redemptionDiscount },
+        ],
+        tax: totals.tax,
+        tip,
+        total: totals.total + tip,
+        payments: [
+          { label: "Cash", amount: payment.cash },
+          { label: "Card", amount: payment.card },
+        ],
+      };
+      setLastReceipt(receipt);
+      void printAfterSale(receipt, payment.cash > 0);
       const parts = [`Order #${orderNumber} complete — ${money(totals.total + tip)} charged (${payment.method})`];
       if (tip > 0) parts.push(`${money(tip)} tip`);
       setToast(parts.join(" — "));
@@ -428,6 +470,7 @@ export default function PosApp({
               </option>
             ))}
           </select>
+          <PrinterPanel onReprint={lastReceipt ? () => sendToPrinter(printer.address, receiptXml(lastReceipt)) : null} />
         </div>
 
         <div className="mb-3 flex items-center justify-between">
@@ -645,6 +688,20 @@ export default function PosApp({
         {toast && (
           <div className="notice notice-success mt-3 p-2.5 text-xs">
             {toast}
+          </div>
+        )}
+        {lastReceipt && printer.address && (printNote || !printer.autoPrint) && (
+          <div className={`notice ${printNote ? "notice-warn" : ""} mt-2 flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
+            <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
+            <button
+              className="chip !px-3 !py-1"
+              onClick={async () => {
+                const r = await sendToPrinter(printer.address, receiptXml(lastReceipt));
+                setPrintNote(r.ok ? null : r.error);
+              }}
+            >
+              {printNote ? "Try printing again" : "Print receipt"}
+            </button>
           </div>
         )}
 
