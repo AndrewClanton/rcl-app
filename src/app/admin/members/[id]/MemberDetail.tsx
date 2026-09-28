@@ -12,7 +12,8 @@ import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
-import { adjustMemberPoints, createMemberBillingPortalLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
+import { plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
+import { adjustMemberPoints, createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -111,6 +112,11 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
         >
           {member.tier}
         </span>
+        {plusNeedsCard(member) && (
+          <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]" title="Set to Insiders+ by hand; nothing is billing them. See Billing below.">
+            No card on file
+          </span>
+        )}
         {member.monthly_member && (
           <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-0.5 text-xs text-[var(--success-text)]">
             Monthly
@@ -337,11 +343,69 @@ function FreeMembershipCard({ member, communityPrograms }: { member: Member; com
 function BillingCard({ member }: { member: Member }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [firstCharge, setFirstCharge] = useState("");
+  const [link, setLink] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  // Stripe won't hold a first charge less than 2 days out.
+  const [minFirstCharge] = useState(() => new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
+  const needsCard = plusNeedsCard(member);
+
+  function cardLink(open: boolean) {
+    setError(null);
+    setCopied(false);
+    startTransition(async () => {
+      const r = await createMemberCardLink(member.id, firstCharge || null);
+      if (!r.ok) return setError(r.error);
+      setLink(r.url);
+      if (open) window.open(r.url, "_blank", "noopener,noreferrer");
+    });
+  }
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Billing</h2>
-      {member.stripe_customer_id ? (
+      {!member.comped && !plusPaidFor(member) ? (
+        // No card billing them: someone set to Insiders+ by hand, or anyone
+        // joining in person. Stripe's page takes the card; we never see it.
+        <div className="space-y-3">
+          <p className="text-sm">
+            {needsCard ? (
+              <>
+                <strong>Insiders+ with no card on file.</strong> They have the perks, but nothing is billing them. Put a card on it:
+              </>
+            ) : (
+              "No card on file. To start their Insiders+ billing:"
+            )}
+          </p>
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            First charge
+            <input type="date" className="rounded border border-[var(--border)] px-2 py-1 text-sm" min={minFirstCharge} value={firstCharge} onChange={(e) => setFirstCharge(e.target.value)} />
+            <span className="text-xs text-[var(--muted)]">{firstCharge ? "Card saved now, first charge that day" : "Blank = charge today"}</span>
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50" disabled={pending} onClick={() => cardLink(true)}>
+              {pending ? "Opening..." : "Open card page"}
+            </button>
+            <button className="rounded border border-[var(--border)] px-3 py-1.5 text-sm disabled:opacity-50" disabled={pending} onClick={() => cardLink(false)}>
+              Get a link to text them
+            </button>
+          </div>
+          {link && (
+            <div className="flex gap-2">
+              <input readOnly className="min-w-0 flex-1 rounded border border-[var(--border)] px-2 py-1 text-xs" value={link} onFocus={(e) => e.target.select()} />
+              <button
+                className="rounded border border-[var(--border)] px-3 py-1 text-xs"
+                onClick={() => navigator.clipboard.writeText(link).then(() => setCopied(true), () => setCopied(false))}
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          )}
+          <p className="text-xs text-[var(--muted)]">
+            Set a later first charge for someone who already paid this month another way (cash, or the old site). The link works for 24 hours.
+          </p>
+        </div>
+      ) : member.stripe_customer_id ? (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm text-[var(--muted)]">Subscription: {member.subscription_status ?? "unknown"}</span>
           <button

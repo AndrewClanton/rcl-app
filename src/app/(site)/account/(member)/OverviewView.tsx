@@ -8,6 +8,7 @@ import MoviePoster from "@/components/MoviePoster";
 import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dateShort, dayMonth, money, points, showtime } from "./format";
 import PlusLink from "@/components/PlusLink";
+import { plusNeedsCard } from "@/lib/plus-status";
 
 export default function OverviewView({
   member,
@@ -162,7 +163,19 @@ export default function OverviewView({
         )}
       </section>
 
-      {member.tier === "Insiders+" ? (
+      {plusNeedsCard(member) ? (
+        // Insiders+ set at the box office with nothing paying for it yet.
+        <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border-2 border-[var(--foreground)] bg-[var(--gold)] p-6 text-[var(--gold-foreground)]">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.14em]">Insiders+</div>
+            <p className="font-display mt-1 text-2xl">Add a card to keep your Insiders+.</p>
+            <p className="mt-1 text-sm">It was set up at the box office. ${RATE_PRICE[rate]}/month; your perks stay on in the meantime.</p>
+          </div>
+          <PlusLink next="/account" className="btn-primary">
+            Add a card
+          </PlusLink>
+        </section>
+      ) : member.tier === "Insiders+" ? (
         <section className="card flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="eyebrow mb-1">Insiders+</div>

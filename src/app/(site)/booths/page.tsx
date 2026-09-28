@@ -5,7 +5,7 @@ import { getActiveBooths, getBoothReservationsForDate } from "@/lib/data/booths"
 import BoothReservationForm from "./BoothReservationForm";
 import PlusLink from "@/components/PlusLink";
 import { getSignedInMember } from "@/lib/member-auth";
-import { hasPlus } from "@/lib/plus-checkout";
+import { hasPlusPerks } from "@/lib/plus-checkout";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +53,7 @@ export default async function BoothsPage({
   }
 
   const member = await getSignedInMember();
-  const me = member?.email ? { name: member.name, email: member.email, phone: member.phone, plus: hasPlus(member) } : null;
+  const me = member?.email ? { name: member.name, email: member.email, phone: member.phone, plus: hasPlusPerks(member) } : null;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -61,10 +61,16 @@ export default async function BoothsPage({
       <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
         Pick a booth below to hold it for a two-hour window with a flat reservation fee — food, drinks, and any movie
         tickets are ordered separately once you&apos;re seated.{" "}
-        <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
-          Insiders+ members get 2 free reservations every month
-        </PlusLink>
-        .
+        {me?.plus ? (
+          <strong>Your Insiders+ includes 2 free reservations every month.</strong>
+        ) : (
+          <>
+            <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
+              Insiders+ members get 2 free reservations every month
+            </PlusLink>
+            .
+          </>
+        )}
       </p>
 
       {paymentConfirmed || freeReservationConfirmed ? (

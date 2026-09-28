@@ -6,12 +6,19 @@ import { monthYear, points } from "./format";
 
 export default function AccountHeader({ member, showBackOffice }: { member: Member; showBackOffice: boolean }) {
   const rate = member.price_tier && member.price_tier !== "adult" ? `${RATE_LABEL[member.price_tier]} rate` : null;
+  const plus = member.tier === "Insiders+";
   return (
     <header className="flex flex-wrap items-center gap-5">
       <Link href="/account/profile" className="group relative" title={member.avatar_url ? "Change your photo" : "Add your photo"}>
-        <MemberAvatar name={member.name} url={member.avatar_url} size={76} className="ring-2 ring-[var(--foreground)] ring-offset-2 ring-offset-[var(--background)]" />
+        <MemberAvatar
+          name={member.name}
+          url={member.avatar_url}
+          size={76}
+          plus={plus}
+          className={plus ? "" : "ring-2 ring-[var(--foreground)] ring-offset-2 ring-offset-[var(--background)]"}
+        />
         {!member.avatar_url && (
-          <span className="absolute -bottom-1 -right-1 rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-bold leading-5 text-white">+</span>
+          <span className={`absolute -right-1 ${plus ? "-top-1" : "-bottom-1"} rounded-full bg-[var(--accent)] px-1.5 text-[11px] font-bold leading-5 text-white`}>+</span>
         )}
       </Link>
       <div className="min-w-0 flex-1">

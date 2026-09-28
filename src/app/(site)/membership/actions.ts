@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createPlusCheckout, hasPlus } from "@/lib/plus-checkout";
+import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 
@@ -57,10 +57,10 @@ export async function startMembershipCheckout(fields: {
   const supabase = createAdminClient();
   const { data: existing } = await supabase
     .from("members")
-    .select("id, tier, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier")
+    .select("id, tier, comped, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier")
     .ilike("email", email)
     .maybeSingle();
-  if (existing && hasPlus(existing)) {
+  if (existing && plusPaidFor(existing)) {
     return { ok: false, error: "This email already has Insiders+. Sign in to see your membership." };
   }
 

@@ -6,6 +6,7 @@ import { RATE_LABEL, RATE_PRICE } from "@/lib/membership-rates";
 import BillingPortalButton from "../../BillingPortalButton";
 import { dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
+import { plusNeedsCard } from "@/lib/plus-checkout";
 
 export const metadata = { title: "Billing" };
 
@@ -29,7 +30,20 @@ export default async function BillingPage() {
     <div className="space-y-10">
       <section>
         <h2 className="font-display mb-3 text-xl">Insiders+ membership</h2>
-        {plus && member.comped ? (
+        {plusNeedsCard(member) ? (
+          // Set to Insiders+ at the box office, with nothing paying for it yet.
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border-2 border-[var(--foreground)] bg-[var(--gold)] p-6 text-[var(--gold-foreground)]">
+            <div>
+              <p className="font-display text-2xl">Your Insiders+ has no card on file.</p>
+              <p className="mt-1 max-w-md text-sm">
+                It was set up at the box office. Add a card to keep it going, ${RATE_PRICE[rate]}/month. Your perks stay on in the meantime.
+              </p>
+            </div>
+            <PlusLink next="/account/billing" className="btn-primary">
+              Add a card
+            </PlusLink>
+          </div>
+        ) : plus && member.comped ? (
           <div className="card text-sm">
             Your Insiders+ is complimentary{member.comp_notes ? ` (${member.comp_notes})` : ""}. There&apos;s nothing to pay.
           </div>

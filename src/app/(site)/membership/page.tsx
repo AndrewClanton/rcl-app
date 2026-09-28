@@ -4,7 +4,8 @@ import { RATE_PRICE } from "@/lib/membership-rates";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import Link from "next/link";
 import { getSignedInMember } from "@/lib/member-auth";
-import { hasPlus } from "@/lib/plus-checkout";
+import { hasPlusPerks, plusNeedsCard } from "@/lib/plus-checkout";
+import MemberAvatar from "@/components/MemberAvatar";
 import { safePath } from "@/lib/safe-path";
 import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
@@ -24,7 +25,10 @@ export default async function MembershipPage({
   const { checkout, session_id, plan, next: nextParam } = await searchParams;
   const next = safePath(nextParam);
   const member = await getSignedInMember();
-  const isPlus = !!member && hasPlus(member);
+  const perks = !!member && hasPlusPerks(member);
+  // Insiders+ set by staff at the register, with no card behind it yet.
+  const needsCard = !!member && plusNeedsCard(member);
+  const price = RATE_PRICE[member?.price_tier ?? "adult"];
 
   let subscriptionConfirmed = false;
   if (checkout === "success" && session_id) {
@@ -40,19 +44,32 @@ export default async function MembershipPage({
 
   return (
     <div>
-      <h1 className="font-display mb-2 text-3xl font-semibold">Join Insiders</h1>
+      {/* Just joined: say so first thing, not at the bottom of the page. */}
+      {subscriptionConfirmed && (
+        <div className="notice notice-success mb-8 flex flex-wrap items-center gap-5">
+          {member && <MemberAvatar name={member.name} url={member.avatar_url} size={72} plus />}
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-2xl">Welcome to Insiders+{member ? `, ${member.name.split(" ")[0]}` : ""}!</h2>
+            <p className="mt-1 text-sm opacity-90">Your membership is active. Give your name or email at the door and walk in free to any screening.</p>
+          </div>
+          <Link href={next ?? "/showtimes"} className="btn-primary">
+            {next ? "Continue where you left off" : "See what's playing"}
+          </Link>
+        </div>
+      )}
+      <h1 className="font-display mb-2 text-3xl font-semibold">{perks && !needsCard ? "Your Insiders+ membership" : "Join Insiders"}</h1>
       <p className="mb-5 max-w-2xl text-[var(--muted)]">
-        Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever.
+        {perks && !needsCard ? "Unlimited entry to every screening, no ticket cost, ever. Here's everything it includes." : "Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever."}
       </p>
       {!subscriptionConfirmed && (
         <div className="mb-8">
-          {isPlus ? (
+          {perks && !needsCard ? (
             <Link href="/account/billing" className="btn-secondary">
-              You&apos;re Insiders+ · See your membership
+              See your membership
             </Link>
           ) : (
             <PlusLink next={next ?? undefined} className="btn-primary">
-              Get Insiders+ · ${member?.price_tier ? RATE_PRICE[member.price_tier] : RATE_PRICE.adult}/month
+              {needsCard ? `Add a card to your Insiders+ · ${price}/month` : `Get Insiders+ · ${price}/month`}
             </PlusLink>
           )}
         </div>
@@ -130,15 +147,7 @@ export default async function MembershipPage({
       </div>
 
       <div id="join" className="scroll-mt-40">
-        {subscriptionConfirmed ? (
-          <div className="notice notice-success">
-            <h2 className="text-lg font-semibold">Welcome to Insiders+!</h2>
-            <p className="mt-2 text-sm opacity-90">Your membership is active. Give your name or email at the door for free entry to any screening.</p>
-            <Link href={next ?? "/showtimes"} className="btn-primary mt-4 inline-block">
-              {next ? "Continue where you left off" : "See what's playing"}
-            </Link>
-          </div>
-        ) : isPlus ? null : (
+        {subscriptionConfirmed || (perks && !needsCard) ? null : (
           <>
             {checkout === "cancelled" && <div className="notice notice-warn mb-4">Checkout was cancelled — no charge was made. Feel free to try again.</div>}
             {checkout === "unavailable" && <div className="notice notice-warn mb-4">Insiders+ checkout isn&apos;t available right now. Please try again in a bit, or join at the box office.</div>}
@@ -146,14 +155,21 @@ export default async function MembershipPage({
               // Signed in: we already have their name and email, so the only
               // thing left is the card, on Stripe's page.
               <div className="card flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <div className="font-semibold">You&apos;re signed in as {member.name}.</div>
-                  <div className="text-sm text-[var(--muted)]">
-                    Insiders+ will be billed monthly to {member.email}. Senior or student? Join here, then show your ID at the box office and we&apos;ll switch your rate.
+                {needsCard ? (
+                  <div>
+                    <div className="font-semibold">Your Insiders+ was set up at the box office and doesn&apos;t have a card on file yet.</div>
+                    <div className="text-sm text-[var(--muted)]">Add one to keep it going, ${price}/month billed to {member.email}. You keep all your perks in the meantime.</div>
                   </div>
-                </div>
+                ) : (
+                  <div>
+                    <div className="font-semibold">You&apos;re signed in as {member.name}.</div>
+                    <div className="text-sm text-[var(--muted)]">
+                      Insiders+ will be billed monthly to {member.email}. Senior or student? Join here, then show your ID at the box office and we&apos;ll switch your rate.
+                    </div>
+                  </div>
+                )}
                 <PlusLink next={next ?? undefined} className="btn-primary">
-                  Continue to payment
+                  {needsCard ? "Add a card" : "Continue to payment"}
                 </PlusLink>
               </div>
             ) : (

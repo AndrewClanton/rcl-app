@@ -117,7 +117,7 @@ export default function PosMemberPanel({
       {member ? (
         <div className="rounded-lg border p-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
           <div className="flex items-center gap-3">
-            <MemberAvatar name={member.name} url={member.avatar_url} size={44} />
+            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={member.tier === "Insiders+"} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-semibold">{member.name}</span>
@@ -209,7 +209,7 @@ export default function PosMemberPanel({
             <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
               {results.map((m) => (
                 <button key={m.id} className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => attach(m)}>
-                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} />
+                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} plus={m.tier === "Insiders+"} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium">{m.name}</span>
                     <span style={{ color: "var(--muted)" }}>

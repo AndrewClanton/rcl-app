@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSignedInMember } from "@/lib/member-auth";
-import { createPlusCheckout, hasPlus } from "@/lib/plus-checkout";
+import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
 
 // Every "Get Insiders+" button on the site points here.
 // - Signed in: straight to Stripe's payment page; we already have their
 //   name and email, so the card is the only thing left to ask.
-// - Already Insiders+: their billing page.
+// - Already paying (or complimentary): their billing page.
+// - Insiders+ set by staff with no card: checkout, to put a card on it.
 // - Not signed in: the short join form, with Insiders+ already picked.
 // ?next= is where to come back to afterwards (e.g. the showtime they were on).
 // Link to it with a plain <a> (components/PlusLink), never next/link: a
@@ -19,7 +20,9 @@ export async function GET(req: NextRequest) {
 
   const member = await getSignedInMember();
   if (!member || !member.email) return go(joinForm);
-  if (hasPlus(member)) return go("/account/billing");
+  // Paid for or complimentary: nothing to buy. (Insiders+ set by hand at the
+  // register with no card falls through to checkout, to add one.)
+  if (plusPaidFor(member)) return go("/account/billing");
 
   const checkoutUrl = await createPlusCheckout({
     memberId: member.id,

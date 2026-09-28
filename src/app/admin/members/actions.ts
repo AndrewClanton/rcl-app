@@ -9,6 +9,7 @@ import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
 import { eraseMember, type EraseResult } from "@/lib/member-erase";
+import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -144,6 +145,44 @@ export async function setCommunityProgramActive(id: string, active: boolean) {
 // staff can hand a tablet to the member and let them enter a new card
 // directly into Stripe's PCI-compliant page. We never see or store the
 // card number ourselves.
+// Stripe's secure card page for putting a member on Insiders+ billing --
+// someone set to Insiders+ by hand at the register, or anyone joining in
+// person. Staff hand over the device or text the link (good for 24 hours).
+// `firstChargeDate` (YYYY-MM-DD, optional) saves the card now but holds the
+// first charge until that day, for someone who already paid this month
+// another way (cash, or the old site's Fortis billing).
+export async function createMemberCardLink(memberId: string, firstChargeDate: string | null): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  await requireStaff();
+  const { data: m } = await createAdminClient()
+    .from("members")
+    .select("id, name, email, phone, tier, comped, price_tier, stripe_customer_id, stripe_subscription_id, subscription_status, erased_at")
+    .eq("id", memberId)
+    .maybeSingle();
+  if (!m || m.erased_at) return { ok: false, error: "Member not found." };
+  if (!m.email) return { ok: false, error: "Add the member's email first. Stripe sends their receipts there." };
+  if (plusPaidFor(m)) return { ok: false, error: m.comped ? "This membership is complimentary, so there's nothing to pay." : "This member already has a card and an active membership. Use the card-on-file button to change it." };
+
+  let firstChargeAt: Date | null = null;
+  if (firstChargeDate) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate)) return { ok: false, error: "Pick a valid first-charge date." };
+    firstChargeAt = new Date(`${firstChargeDate}T12:00:00-05:00`); // noon Central
+    // Stripe won't hold a first charge for less than 48 hours.
+    if (firstChargeAt.getTime() < Date.now() + 49 * 3_600_000) return { ok: false, error: "The first charge has to be at least 2 days out. Leave the date blank to charge today." };
+  }
+
+  const url = await createPlusCheckout({
+    memberId: m.id,
+    customerId: m.stripe_customer_id,
+    name: m.name,
+    email: m.email,
+    phone: m.phone,
+    priceTier: (m.price_tier as MemberPriceTier | null) ?? "adult",
+    returnTo: null,
+    firstChargeAt,
+  }).catch(() => null);
+  return url ? { ok: true, url } : { ok: false, error: "Couldn't open Stripe's card page. Try again." };
+}
+
 export async function createMemberBillingPortalLink(memberId: string): Promise<{ url: string }> {
   await requireStaff();
   const supabase = createAdminClient();

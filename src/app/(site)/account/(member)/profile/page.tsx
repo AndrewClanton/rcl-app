@@ -24,7 +24,7 @@ export default async function ProfilePage() {
     <div className="space-y-6">
       <Section title="Your photo">
         <div className="flex flex-wrap items-center gap-5">
-          <MemberAvatar name={member.name} url={member.avatar_url} size={96} />
+          <MemberAvatar name={member.name} url={member.avatar_url} size={96} plus={member.tier === "Insiders+"} />
           <div className="space-y-2">
             <p className="max-w-md text-sm text-[var(--muted)]">
               Staff use your photo to find your account at the register, and it shows on the screen facing you when you check out. Only staff and you

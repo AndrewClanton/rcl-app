@@ -2,6 +2,8 @@ import Link from "next/link";
 import { SITE_NAME, SITE_URL, THEATER_ADDRESS } from "@/lib/site";
 import { LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
 import PlusLink from "@/components/PlusLink";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlusPerks } from "@/lib/plus-checkout";
 
 const JSON_LD = {
   "@context": "https://schema.org",
@@ -16,7 +18,11 @@ const JSON_LD = {
   address: THEATER_ADDRESS,
 };
 
-export default function SiteLayout({ children }: { children: React.ReactNode }) {
+export default async function SiteLayout({ children }: { children: React.ReactNode }) {
+  // Insiders+ members aren't sold Insiders+: they get their badge instead.
+  // (No session cookie means no lookup, so visitors cost nothing here.)
+  const member = await getSignedInMember();
+  const plus = !!member && hasPlusPerks(member);
   return (
     <div className="flex min-h-full flex-col">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }} />
@@ -47,7 +53,13 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/account" className="transition-colors hover:text-[var(--accent)]">
               My Account
             </Link>
-            <PlusLink className="rounded-full bg-[var(--accent)] px-3 text-white transition-opacity hover:opacity-90">Get Insiders+</PlusLink>
+            {plus ? (
+              <Link href="/account" className="rounded-full border-2 border-[var(--foreground)] bg-[var(--gold)] px-3 text-[var(--gold-foreground)]" title="You're an Insiders+ member">
+                Insiders+ ✓
+              </Link>
+            ) : (
+              <PlusLink className="rounded-full bg-[var(--accent)] px-3 text-white transition-opacity hover:opacity-90">Get Insiders+</PlusLink>
+            )}
           </nav>
         </div>
       </header>

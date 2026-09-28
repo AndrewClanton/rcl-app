@@ -5,6 +5,8 @@ import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import PlusLink from "@/components/PlusLink";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlusPerks } from "@/lib/plus-checkout";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +24,9 @@ function formatShowtime(iso: string) {
 const DIRECTIONS_URL = "https://www.google.com/maps/search/?api=1&query=715+E+Broadway,+Joplin,+MO+64801";
 
 export default async function HomePage() {
-  const screenings = (await getPubliclyVisibleScreenings()).slice(0, 6);
+  const [allScreenings, member] = await Promise.all([getPubliclyVisibleScreenings(), getSignedInMember()]);
+  const screenings = allScreenings.slice(0, 6);
+  const plus = !!member && hasPlusPerks(member);
 
   return (
     <div className="space-y-16">
@@ -127,6 +131,8 @@ export default async function HomePage() {
         </div>
       </section>
 
+      {/* Insiders+ members don't need the pitch. */}
+      {!plus && (
       <section>
         <div className="eyebrow mb-2">Become a member</div>
         <h2 className="font-display max-w-xl text-2xl">Stop buying tickets. Walk in free, every time.</h2>
@@ -186,6 +192,7 @@ export default async function HomePage() {
           </div>
         </div>
       </section>
+      )}
 
       <section className="card">
         <div className="grid gap-6 sm:grid-cols-[1.2fr_1fr] sm:items-center">

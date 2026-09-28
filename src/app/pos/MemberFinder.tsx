@@ -99,7 +99,7 @@ export default function MemberFinder({
                   style={{ borderColor: "var(--border)" }}
                   onClick={() => onPick(member)}
                 >
-                  <MemberAvatar name={member.name} url={member.avatar_url} size={76} />
+                  <MemberAvatar name={member.name} url={member.avatar_url} size={76} plus={member.tier === "Insiders+"} />
                   <span className="line-clamp-2 text-sm font-bold leading-tight">{member.name}</span>
                   <span className="text-[11px]" style={{ color: "var(--muted)" }}>
                     {note}

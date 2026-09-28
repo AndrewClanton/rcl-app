@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type Stripe from "stripe";
 import { tierForPriceId } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
+import { activatePlusFromCheckout } from "@/lib/plus-activate";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -32,43 +33,9 @@ export async function POST(request: NextRequest) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     if (session.mode === "subscription") {
-      // Insiders+ signup: create or upgrade the member row keyed by email.
-      // The customer's own row is the source of truth for tier from here
-      // on -- customer.subscription.updated/deleted below keep it in sync
-      // with the subscription's actual lifecycle.
-      const email = session.metadata?.pending_email;
-      const name = session.metadata?.pending_name;
-      const priceTier = session.metadata?.price_tier;
-      const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;
-      const subscriptionId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
-
-      if (email && name && customerId && subscriptionId) {
-        const memberFields = {
-          tier: "Insiders+" as const,
-          price_tier: priceTier ?? null,
-          stripe_customer_id: customerId,
-          stripe_subscription_id: subscriptionId,
-          subscription_status: "active",
-          monthly_member: true,
-        };
-        // A signed-in member's checkout names their row directly; the join
-        // form (not signed in) is matched by email.
-        const memberId = session.metadata?.member_id || null;
-        const { data: existing } = memberId
-          ? await supabase.from("members").select("id").eq("id", memberId).maybeSingle()
-          : await supabase.from("members").select("id").ilike("email", email).maybeSingle();
-        if (existing) {
-          await supabase.from("members").update(memberFields).eq("id", existing.id);
-        } else {
-          await supabase.from("members").insert({
-            name,
-            email,
-            phone: session.metadata?.pending_phone || null,
-            points: 0,
-            ...memberFields,
-          });
-        }
-      }
+      // Insiders+ signup. customer.subscription.updated/deleted below keep
+      // the member in step with the subscription after this.
+      await activatePlusFromCheckout(session);
     } else {
       const bookingId = session.metadata?.booking_id;
       if (bookingId) {
