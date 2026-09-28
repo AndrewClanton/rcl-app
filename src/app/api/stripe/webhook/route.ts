@@ -51,7 +51,12 @@ export async function POST(request: NextRequest) {
           subscription_status: "active",
           monthly_member: true,
         };
-        const { data: existing } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
+        // A signed-in member's checkout names their row directly; the join
+        // form (not signed in) is matched by email.
+        const memberId = session.metadata?.member_id || null;
+        const { data: existing } = memberId
+          ? await supabase.from("members").select("id").eq("id", memberId).maybeSingle()
+          : await supabase.from("members").select("id").ilike("email", email).maybeSingle();
         if (existing) {
           await supabase.from("members").update(memberFields).eq("id", existing.id);
         } else {

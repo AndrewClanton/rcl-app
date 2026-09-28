@@ -2,6 +2,11 @@ import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import Link from "next/link";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlus } from "@/lib/plus-checkout";
+import { safePath } from "@/lib/safe-path";
+import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +19,12 @@ export const metadata: Metadata = {
 export default async function MembershipPage({
   searchParams,
 }: {
-  searchParams: Promise<{ checkout?: string; session_id?: string }>;
+  searchParams: Promise<{ checkout?: string; session_id?: string; plan?: string; next?: string }>;
 }) {
-  const { checkout, session_id } = await searchParams;
+  const { checkout, session_id, plan, next: nextParam } = await searchParams;
+  const next = safePath(nextParam);
+  const member = await getSignedInMember();
+  const isPlus = !!member && hasPlus(member);
 
   let subscriptionConfirmed = false;
   if (checkout === "success" && session_id) {
@@ -33,9 +41,22 @@ export default async function MembershipPage({
   return (
     <div>
       <h1 className="font-display mb-2 text-3xl font-semibold">Join Insiders</h1>
-      <p className="mb-8 max-w-2xl text-[var(--muted)]">
+      <p className="mb-5 max-w-2xl text-[var(--muted)]">
         Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever.
       </p>
+      {!subscriptionConfirmed && (
+        <div className="mb-8">
+          {isPlus ? (
+            <Link href="/account/billing" className="btn-secondary">
+              You&apos;re Insiders+ · See your membership
+            </Link>
+          ) : (
+            <PlusLink next={next ?? undefined} className="btn-primary">
+              Get Insiders+ · ${member?.price_tier ? RATE_PRICE[member.price_tier] : RATE_PRICE.adult}/month
+            </PlusLink>
+          )}
+        </div>
+      )}
 
       <div className="card mb-8 overflow-x-auto !p-0">
         <table className="w-full min-w-[420px] text-sm">
@@ -108,17 +129,39 @@ export default async function MembershipPage({
         </div>
       </div>
 
-      {subscriptionConfirmed ? (
-        <div className="notice notice-success">
-          <h2 className="text-lg font-semibold">Welcome to Insiders+!</h2>
-          <p className="mt-2 text-sm opacity-90">Your subscription is active. Show your email at the door for free entry to any screening.</p>
-        </div>
-      ) : (
-        <>
-          {checkout === "cancelled" && <div className="notice notice-warn mb-4">Checkout was cancelled — no charge was made. Feel free to try again.</div>}
-          <MembershipForm />
-        </>
-      )}
+      <div id="join" className="scroll-mt-40">
+        {subscriptionConfirmed ? (
+          <div className="notice notice-success">
+            <h2 className="text-lg font-semibold">Welcome to Insiders+!</h2>
+            <p className="mt-2 text-sm opacity-90">Your membership is active. Give your name or email at the door for free entry to any screening.</p>
+            <Link href={next ?? "/showtimes"} className="btn-primary mt-4 inline-block">
+              {next ? "Continue where you left off" : "See what's playing"}
+            </Link>
+          </div>
+        ) : isPlus ? null : (
+          <>
+            {checkout === "cancelled" && <div className="notice notice-warn mb-4">Checkout was cancelled — no charge was made. Feel free to try again.</div>}
+            {checkout === "unavailable" && <div className="notice notice-warn mb-4">Insiders+ checkout isn&apos;t available right now. Please try again in a bit, or join at the box office.</div>}
+            {member ? (
+              // Signed in: we already have their name and email, so the only
+              // thing left is the card, on Stripe's page.
+              <div className="card flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <div className="font-semibold">You&apos;re signed in as {member.name}.</div>
+                  <div className="text-sm text-[var(--muted)]">
+                    Insiders+ will be billed monthly to {member.email}. Senior or student? Join here, then show your ID at the box office and we&apos;ll switch your rate.
+                  </div>
+                </div>
+                <PlusLink next={next ?? undefined} className="btn-primary">
+                  Continue to payment
+                </PlusLink>
+              </div>
+            ) : (
+              <MembershipForm initialPlan={plan === "plus" ? "plus" : "free"} returnTo={next} />
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

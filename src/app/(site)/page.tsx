@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
+import PlusLink from "@/components/PlusLink";
 
 export const dynamic = "force-dynamic";
 
@@ -180,9 +181,7 @@ export default async function HomePage() {
                 <span>2 free booth reservations every month</span>
               </li>
             </ul>
-            <Link href="/membership" className="btn-primary mt-5 self-start">
-              Join Insiders+
-            </Link>
+            <PlusLink className="btn-primary mt-5 self-start">Get Insiders+</PlusLink>
             <div className="mt-3 text-xs opacity-60">Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo in person with ID</div>
           </div>
         </div>

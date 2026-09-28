@@ -33,12 +33,16 @@ function FacebookMark() {
 
 type Provider = "google" | "facebook";
 
+const AFTER_SIGN_IN_COOKIE = "rcl_after_sign_in";
+
 export default function AccountForm({
   providers = { google: false, facebook: false },
   initialError = null,
+  next = null,
 }: {
   providers?: { google: boolean; facebook: boolean };
   initialError?: string | null;
+  next?: string | null;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("signin");
@@ -52,6 +56,9 @@ export default function AccountForm({
   async function handleOAuth(provider: Provider) {
     setOauthBusy(provider);
     setError(null);
+    // Where to land afterwards rides in a short-lived cookie, so the
+    // return address Google/Facebook are allowed to use never changes.
+    document.cookie = `${AFTER_SIGN_IN_COOKIE}=${next ? encodeURIComponent(next) : ""}; path=/; max-age=${next ? 900 : 0}; samesite=lax`;
     const { error } = await createClient().auth.signInWithOAuth({
       provider,
       options: {
@@ -103,6 +110,12 @@ export default function AccountForm({
       return;
     }
 
+    // A full page load for `next`: it can be the Insiders+ link, which
+    // hands off to Stripe and can't be opened by client-side navigation.
+    if (next) {
+      window.location.assign(next);
+      return;
+    }
     router.push("/account");
     router.refresh();
   }

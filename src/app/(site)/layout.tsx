@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { SITE_NAME, SITE_URL, THEATER_ADDRESS } from "@/lib/site";
 import { LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
+import PlusLink from "@/components/PlusLink";
 
 const JSON_LD = {
   "@context": "https://schema.org",
@@ -46,6 +47,7 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
             <Link href="/account" className="transition-colors hover:text-[var(--accent)]">
               My Account
             </Link>
+            <PlusLink className="rounded-full bg-[var(--accent)] px-3 text-white transition-opacity hover:opacity-90">Get Insiders+</PlusLink>
           </nav>
         </div>
       </header>

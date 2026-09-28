@@ -1,16 +1,35 @@
 "use client";
 
 import { useState } from "react";
+import PlusLink from "@/components/PlusLink";
 import { startCheckout } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-export default function TicketReservation({ screeningId, ticketPrice, seatsLeft }: { screeningId: string; ticketPrice: number; seatsLeft: number }) {
+// `me` is the signed-in member, if any: their name and email are already
+// on file, so they aren't asked for again.
+export default function TicketReservation({
+  screeningId,
+  ticketPrice,
+  seatsLeft,
+  me = null,
+  plusPrice,
+}: {
+  screeningId: string;
+  ticketPrice: number;
+  seatsLeft: number;
+  me?: { name: string; email: string; plus: boolean } | null;
+  plusPrice: number;
+}) {
   const [quantity, setQuantity] = useState(seatsLeft > 0 ? 1 : 0);
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [editing, setEditing] = useState(!me);
+  const [name, setName] = useState(me?.name ?? "");
+  const [email, setEmail] = useState(me?.email ?? "");
+  // Insiders+ covers the member's own seat; guests they bring still pay.
+  const freeSeats = me?.plus && !editing ? Math.min(1, quantity) : 0;
+  const due = ticketPrice * (quantity - freeSeats);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,26 +77,49 @@ export default function TicketReservation({ screeningId, ticketPrice, seatsLeft 
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block">
-          <div className="label-xs">Name</div>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="block">
-          <div className="label-xs">Email</div>
-          <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
-        </label>
-      </div>
+      {editing ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <div className="label-xs">Name</div>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="block">
+            <div className="label-xs">Email</div>
+            <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span>
+            Booking as <strong>{name}</strong> <span className="text-[var(--muted)]">· {email}</span>
+            {me?.plus && <span className="ml-2 font-bold text-[var(--accent)]">Insiders+ · your ticket is free</span>}
+          </span>
+          <button className="text-xs text-[var(--muted)] underline" onClick={() => setEditing(true)}>
+            Booking for someone else?
+          </button>
+        </div>
+      )}
 
       {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
       <div className="mt-4 flex items-center justify-between">
-        <span className="text-lg font-semibold">{money(ticketPrice * quantity)}</span>
+        <span className="text-lg font-semibold">{money(due)}</span>
         <button className="btn-primary" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-          {submitting ? "Redirecting to checkout..." : "Buy tickets — pay now"}
+          {submitting ? "One moment..." : due === 0 ? "Reserve my seat" : "Buy tickets — pay now"}
         </button>
       </div>
-      <div className="mt-2 text-xs text-[var(--muted)]">You&apos;ll be redirected to Stripe to pay securely. Your seats are held for 30 minutes.</div>
+      {due > 0 && <div className="mt-2 text-xs text-[var(--muted)]">You&apos;ll be redirected to Stripe to pay securely. Your seats are held for 30 minutes.</div>}
+
+      {!me?.plus && ticketPrice > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--accent)] px-4 py-3 text-sm">
+          <span>
+            <strong>Skip the ticket.</strong> Insiders+ members walk in free to every screening, ${plusPrice}/month.
+          </span>
+          <PlusLink next={`/showtimes/${screeningId}`} className="btn-primary !py-1.5 text-sm">
+            Get Insiders+
+          </PlusLink>
+        </div>
+      )}
     </div>
   );
 }

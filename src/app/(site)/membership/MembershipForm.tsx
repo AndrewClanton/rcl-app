@@ -6,8 +6,10 @@ import { submitMembershipSignup, startMembershipCheckout } from "./actions";
 
 type Plan = "free" | "plus";
 
-export default function MembershipForm() {
-  const [plan, setPlan] = useState<Plan>("free");
+// For visitors who aren't signed in. Signed-in members never see this: they
+// go straight to payment (see join/route.ts).
+export default function MembershipForm({ initialPlan = "free", returnTo = null }: { initialPlan?: Plan; returnTo?: string | null }) {
+  const [plan, setPlan] = useState<Plan>(initialPlan);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -16,6 +18,10 @@ export default function MembershipForm() {
   const [done, setDone] = useState(false);
 
   const canSubmit = name.trim() && email.includes("@");
+  // Signing in brings them back here with everything filled in -- or, for
+  // Insiders+, straight to payment.
+  const afterSignIn = plan === "plus" ? `/membership/join${returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""}` : "/account";
+  const signInHref = `/account/login?next=${encodeURIComponent(afterSignIn)}`;
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -31,7 +37,7 @@ export default function MembershipForm() {
         }
         setDone(true);
       } else {
-        const result = await startMembershipCheckout({ name, email, phone });
+        const result = await startMembershipCheckout({ name, email, phone, returnTo });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -97,6 +103,13 @@ export default function MembershipForm() {
       <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
         {submitting ? "Please wait..." : plan === "free" ? "Join Insiders — it's free" : "Continue to payment"}
       </button>
+      <p className="mt-3 text-center text-sm text-[var(--muted)]">
+        Already have an account?{" "}
+        <a href={signInHref} className="font-bold text-[var(--accent)] hover:underline">
+          Sign in
+        </a>{" "}
+        and {plan === "plus" ? "go straight to payment" : "skip this form"}.
+      </p>
     </div>
   );
 }

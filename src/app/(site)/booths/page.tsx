@@ -3,6 +3,9 @@ import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveBooths, getBoothReservationsForDate } from "@/lib/data/booths";
 import BoothReservationForm from "./BoothReservationForm";
+import PlusLink from "@/components/PlusLink";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlus } from "@/lib/plus-checkout";
 
 export const dynamic = "force-dynamic";
 
@@ -49,15 +52,18 @@ export default async function BoothsPage({
     freeReservationConfirmed = reservation?.status === "confirmed";
   }
 
+  const member = await getSignedInMember();
+  const me = member?.email ? { name: member.name, email: member.email, phone: member.phone, plus: hasPlus(member) } : null;
+
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="font-display mb-1 text-3xl font-semibold">Reserve a Booth</h1>
       <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
         Pick a booth below to hold it for a two-hour window with a flat reservation fee — food, drinks, and any movie
         tickets are ordered separately once you&apos;re seated.{" "}
-        <a href="/membership" className="font-bold text-[var(--accent)] hover:underline">
+        <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
           Insiders+ members get 2 free reservations every month
-        </a>
+        </PlusLink>
         .
       </p>
 
@@ -75,7 +81,7 @@ export default async function BoothsPage({
           {checkout === "cancelled" && (
             <div className="notice notice-warn mb-4">Checkout was cancelled — the booth wasn&apos;t held. Feel free to try again.</div>
           )}
-          <BoothReservationForm booths={booths} initialDate={startDate} initialReservations={reservationsForStartDate} />
+          <BoothReservationForm booths={booths} initialDate={startDate} initialReservations={reservationsForStartDate} me={me} />
         </>
       )}
     </div>

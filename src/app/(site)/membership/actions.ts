@@ -1,9 +1,8 @@
 "use server";
 
-import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getStripe } from "@/lib/stripe";
-import { insidersPlusPriceId } from "@/lib/member-rate";
+import { createPlusCheckout, hasPlus } from "@/lib/plus-checkout";
+import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 
 // Next.js redacts a *thrown* Server Action error's message in production
@@ -42,10 +41,13 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
 
 export type CheckoutResult = { ok: true; url: string } | { ok: false; error: string };
 
+// The join form for someone who isn't signed in. (Signed-in members skip
+// the form entirely -- see membership/join/route.ts.)
 export async function startMembershipCheckout(fields: {
   name: string;
   email: string;
   phone: string;
+  returnTo?: string | null;
 }): Promise<CheckoutResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
@@ -53,34 +55,28 @@ export async function startMembershipCheckout(fields: {
   if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
 
   const supabase = createAdminClient();
-  const { data: existing } = await supabase.from("members").select("id, tier, subscription_status, price_tier").ilike("email", email).maybeSingle();
-  if (existing?.tier === "Insiders+" && existing.subscription_status === "active") {
-    return { ok: false, error: "This email already has an active Insiders+ membership." };
+  const { data: existing } = await supabase
+    .from("members")
+    .select("id, tier, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier")
+    .ilike("email", email)
+    .maybeSingle();
+  if (existing && hasPlus(existing)) {
+    return { ok: false, error: "This email already has Insiders+. Sign in to see your membership." };
   }
 
   // Everyone joins online at the adult rate. Senior and student rates are
   // only set by staff after checking an ID in person -- so an existing
   // member already switched at the register is charged their rate here.
   const priceTier: MemberPriceTier = existing?.price_tier ?? "adult";
-  const priceId = insidersPlusPriceId(priceTier);
-  if (!priceId) return { ok: false, error: "Membership pricing isn't configured yet." };
-
-  const origin = await siteOrigin();
-  const stripe = getStripe();
-  const session = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    line_items: [{ price: priceId, quantity: 1 }],
-    customer_email: email,
-    success_url: `${origin}/membership?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${origin}/membership?checkout=cancelled`,
-    metadata: {
-      pending_name: name,
-      pending_email: email,
-      pending_phone: fields.phone.trim(),
-      price_tier: priceTier,
-    },
+  const url = await createPlusCheckout({
+    memberId: existing?.id ?? null,
+    customerId: existing?.stripe_customer_id ?? null,
+    name,
+    email,
+    phone: fields.phone.trim() || null,
+    priceTier,
+    returnTo: safePath(fields.returnTo),
   });
-
-  if (!session.url) return { ok: false, error: "Could not start checkout. Please try again." };
-  return { ok: true, url: session.url };
+  if (!url) return { ok: false, error: "Could not start checkout. Please try again." };
+  return { ok: true, url };
 }

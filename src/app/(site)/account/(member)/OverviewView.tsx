@@ -7,6 +7,7 @@ import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
 import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dateShort, dayMonth, money, points, showtime } from "./format";
+import PlusLink from "@/components/PlusLink";
 
 export default function OverviewView({
   member,
@@ -182,9 +183,9 @@ export default function OverviewView({
               Unlimited screenings, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month.
             </p>
           </div>
-          <Link href="/membership" className="btn-primary">
-            Upgrade
-          </Link>
+          <PlusLink next="/account" className="btn-primary">
+            Get Insiders+
+          </PlusLink>
         </section>
       )}
     </div>

@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
 import { getSignInProviders } from "@/lib/auth-providers";
+import { safePath } from "@/lib/safe-path";
 import AccountForm from "./AccountForm";
 
 const ERRORS: Record<string, string> = {
@@ -11,8 +12,10 @@ const ERRORS: Record<string, string> = {
   link_failed: "We couldn't connect that sign-in to your membership. Sign in with your email and password, or ask us at the box office.",
 };
 
-export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
+export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
+  const { error, next: nextParam } = await searchParams;
+  // Where to go once signed in, e.g. straight on to Insiders+ payment.
+  const next = safePath(nextParam);
   const providers = await getSignInProviders();
   const supabase = await createClient();
   const {
@@ -24,7 +27,7 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
   // longer) linked.
   if (user) {
     const { data: member } = await createAdminClient().from("members").select("id").eq("auth_user_id", user.id).maybeSingle();
-    if (member) redirect("/account");
+    if (member) redirect(next ?? "/account");
   }
 
   return (
@@ -36,7 +39,7 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
         Royale Insider.
       </p>
       <div className="mt-6">
-        <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} />
+        <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} next={next} />
       </div>
     </div>
   );

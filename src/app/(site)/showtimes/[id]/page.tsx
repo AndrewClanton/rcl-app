@@ -7,6 +7,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import TicketReservation from "./TicketReservation";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlus } from "@/lib/plus-checkout";
+import { RATE_PRICE } from "@/lib/membership-rates";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +68,8 @@ export default async function ScreeningDetailPage({
   if (!screening || !isWithinPublicWindow(screening.starts_at)) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
+  const member = await getSignedInMember();
+  const me = member?.email ? { name: member.name, email: member.email, plus: hasPlus(member) } : null;
   const eventJsonLd = screeningEventJsonLd(screening, seatsLeft);
 
   // Never trust the ?checkout=success URL param on its own -- verify the
@@ -140,7 +145,7 @@ export default async function ScreeningDetailPage({
             {checkout === "cancelled" && (
               <div className="notice notice-warn mb-4">Checkout was cancelled — your seats weren&apos;t held. Feel free to try again.</div>
             )}
-            <TicketReservation screeningId={screening.id} ticketPrice={screening.ticket_price} seatsLeft={seatsLeft} />
+            <TicketReservation screeningId={screening.id} ticketPrice={screening.ticket_price} seatsLeft={seatsLeft} me={me} plusPrice={RATE_PRICE[member?.price_tier ?? "adult"]} />
           </>
         )}
       </div>

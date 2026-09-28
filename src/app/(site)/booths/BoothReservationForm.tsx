@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import type { Booth, BoothReservation } from "@/lib/types";
 import { startBoothCheckout, getAvailabilityForDate } from "./actions";
 import BoothPhotoGrid from "./BoothPhotoGrid";
+import PlusLink from "@/components/PlusLink";
 
 const RESERVATION_HOURS = 2;
 
@@ -34,6 +35,7 @@ function BoothDetailModal({
   loadingAvailability,
   bookedWindows,
   onClose,
+  me,
 }: {
   booth: Booth;
   date: string;
@@ -42,12 +44,15 @@ function BoothDetailModal({
   loadingAvailability: boolean;
   bookedWindows: string[];
   onClose: () => void;
+  me: BoothMe | null;
 }) {
   const [startTime, setStartTime] = useState("18:00");
   const [partySize, setPartySize] = useState(Math.min(2, booth.capacity));
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
+  // A signed-in member's details are already on file: not asked again.
+  const [editing, setEditing] = useState(!me);
+  const [name, setName] = useState(me?.name ?? "");
+  const [email, setEmail] = useState(me?.email ?? "");
+  const [phone, setPhone] = useState(me?.phone ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -126,26 +131,46 @@ function BoothDetailModal({
           </label>
         </div>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <div className="label-xs">Name</div>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="block">
-            <div className="label-xs">Email</div>
-            <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </label>
-          <label className="block sm:col-span-2">
-            <div className="label-xs">Phone (optional)</div>
-            <input type="tel" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </label>
-        </div>
+        {editing ? (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <div className="label-xs">Name</div>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+            </label>
+            <label className="block">
+              <div className="label-xs">Email</div>
+              <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </label>
+            <label className="block sm:col-span-2">
+              <div className="label-xs">Phone (optional)</div>
+              <input type="tel" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </label>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>
+              Reserving as <strong>{name}</strong> <span className="text-[var(--muted)]">· {email}</span>
+            </span>
+            <button type="button" className="text-xs text-[var(--muted)] underline" onClick={() => setEditing(true)}>
+              For someone else?
+            </button>
+          </div>
+        )}
 
         {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
         <div className="notice mt-3 !p-2.5 text-xs" style={{ background: "var(--accent-soft)", color: "var(--foreground)" }}>
-          <strong className="text-[var(--accent)]">Insiders+ perk:</strong> 2 free booth reservations every month. Enter your
-          membership email above and we&apos;ll apply it automatically if you have one left this month.
+          <strong className="text-[var(--accent)]">Insiders+ perk:</strong> 2 free booth reservations every month.{" "}
+          {me?.plus ? (
+            "We'll apply one automatically if you have one left this month."
+          ) : (
+            <>
+              <PlusLink next="/booths" className="font-bold text-[var(--accent)] underline">
+                Get Insiders+
+              </PlusLink>{" "}
+              and this one could be free.
+            </>
+          )}
         </div>
 
         <div className="mt-4 flex items-center justify-between">
@@ -163,14 +188,18 @@ function BoothDetailModal({
   );
 }
 
+export type BoothMe = { name: string; email: string; phone: string | null; plus: boolean };
+
 export default function BoothReservationForm({
   booths,
   initialDate,
   initialReservations,
+  me = null,
 }: {
   booths: Booth[];
   initialDate: string;
   initialReservations: BoothReservation[];
+  me?: BoothMe | null;
 }) {
   // Same-day booking is disabled (see actions.ts) so no one reserves a seat
   // out from under a customer who's currently sitting in it -- initialDate
@@ -217,6 +246,7 @@ export default function BoothReservationForm({
           loadingAvailability={loadingAvailability}
           bookedWindows={bookedWindowsByBooth.get(selectedBooth.id) ?? []}
           onClose={() => setBoothId(null)}
+          me={me}
         />
       )}
     </div>

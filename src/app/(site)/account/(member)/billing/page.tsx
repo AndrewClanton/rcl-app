@@ -5,6 +5,7 @@ import { getMembershipBilling } from "@/lib/data/member-billing";
 import { RATE_LABEL, RATE_PRICE } from "@/lib/membership-rates";
 import BillingPortalButton from "../../BillingPortalButton";
 import { dateShort, money } from "../format";
+import PlusLink from "@/components/PlusLink";
 
 export const metadata = { title: "Billing" };
 
@@ -60,9 +61,9 @@ export default async function BillingPage() {
               <p className="font-display text-2xl">Walk in free, every time.</p>
               <p className="mt-1 text-sm opacity-80">Insiders+ is ${RATE_PRICE[rate]}/month, billed on the day you join. Cancel anytime.</p>
             </div>
-            <Link href="/membership" className="btn-primary">
-              Upgrade to Insiders+
-            </Link>
+            <PlusLink next="/account/billing" className="btn-primary">
+              Get Insiders+
+            </PlusLink>
           </div>
         )}
       </section>
