@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
 import { startReaderPayment, checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
+import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -60,12 +61,23 @@ export default function PaymentModal({
             // requires_payment_method after a decline -- reader auto-prompts retry, but surface the message.
             setReader({ state: "waiting", paymentIntentId, message: errorMessage });
           }
-        } catch {
-          // transient poll failure -- keep waiting, next tick retries
+        } catch (e) {
+          // A deploy landed mid-payment: this page can't check the charge
+          // anymore, and the card may already be charged. Stop and say so,
+          // rather than waiting forever or inviting a second charge.
+          if (isStaleBuildError(e)) {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setReader({
+              state: "failed",
+              paymentIntentId,
+              message: "The register was updated during this payment. Refresh the page, then check Stripe's Payments list before charging again: the card may already be charged.",
+            });
+          }
+          // Anything else is a transient poll failure -- keep waiting, next tick retries.
         }
       }, 1500);
     } catch (e) {
-      setReader({ state: "failed", paymentIntentId: "", message: e instanceof Error ? e.message : "Could not reach the card reader." });
+      setReader({ state: "failed", paymentIntentId: "", message: isStaleBuildError(e) ? STALE_BUILD_MESSAGE : e instanceof Error ? e.message : "Could not reach the card reader." });
     }
   }
 

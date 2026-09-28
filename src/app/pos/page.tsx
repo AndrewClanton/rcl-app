@@ -6,6 +6,8 @@ import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import PosApp from "./PosApp";
 import ShiftBar from "./shift/ShiftBar";
+import UpdateBanner from "./UpdateBanner";
+import { deploymentId } from "@/lib/deployment";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,7 @@ export default async function PosPage() {
           {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
         </span>
       </div>
+      <UpdateBanner current={deploymentId()} />
       <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name }))} />
       <PosApp
         categories={orderableCategories}
