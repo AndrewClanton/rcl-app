@@ -151,6 +151,22 @@ export async function completeOrder(params: DraftFields & {
     await applyPoints({ memberId: params.memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
+  // A custom item usually means the menu couldn't describe the sale, so each
+  // one becomes a dev note to review. Best-effort: never blocks the sale.
+  const customLines = params.lines.filter((l) => !l.menu_item_id);
+  if (customLines.length) {
+    const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
+    await supabase
+      .from("dev_notes")
+      .insert({
+        page_path: "/pos",
+        page_title: "Register: custom item used",
+        message: `Custom item rung up on order #${orderNumber}: ${items}. Should the register have a proper button or menu item for this?`,
+        submitted_by: params.employeeId || null,
+      })
+      .then(() => {}, () => {});
+  }
+
   revalidate();
   return { orderNumber };
 }
