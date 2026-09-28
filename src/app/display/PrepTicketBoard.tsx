@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { PrepTicket, Station } from "@/lib/data/prepTickets";
+import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
 import { setItemReady } from "./actions";
 
 function timeAgo(iso: string) {
@@ -12,12 +12,12 @@ function timeAgo(iso: string) {
   return `${minutes} min ago`;
 }
 
-// Shared by /display/kitchen and /display/bar -- same board, filtered to a
-// different prep station. Real-time via Supabase (order_items INSERT/UPDATE),
+// Shared by /display/kitchen, /display/bar and /display/prep (both at once)
+// -- same board, filtered to a prep station or not. Real-time via Supabase (order_items INSERT/UPDATE),
 // and interactive: tapping an item marks it ready, which also broadcasts to
 // every other tablet watching the same board (another kitchen screen, or
 // the customer-facing display if it's ever extended to show prep status).
-export default function PrepTicketBoard({ title, station, initialTickets }: { title: string; station: Station; initialTickets: PrepTicket[] }) {
+export default function PrepTicketBoard({ title, station, initialTickets }: { title: string; station: Board; initialTickets: PrepTicket[] }) {
   const [tickets, setTickets] = useState(initialTickets);
   const [connected, setConnected] = useState(false);
   const [, forceTick] = useState(0);
@@ -74,7 +74,7 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
               : row.is_alcohol
                 ? "bar"
                 : "kitchen";
-            if (rowStation !== station) return;
+            if (!rowStation || (station !== "all" && rowStation !== station)) return;
 
             setTickets((prev) =>
               [
@@ -89,6 +89,7 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                   created_at: row.created_at,
                   order_number: order.order_number,
                   order_name: order.order_name,
+                  station: rowStation,
                 },
                 ...prev,
               ].slice(0, 60)
@@ -173,6 +174,14 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                       }}
                     >
                       <div className="min-w-0">
+                        {station === "all" && (
+                          <span
+                            className="mr-1.5 rounded px-1 py-px align-middle text-[10px] font-bold uppercase tracking-wide"
+                            style={item.station === "bar" ? { background: "var(--gold)", color: "var(--gold-foreground)" } : { background: "var(--foreground)", color: "var(--background)" }}
+                          >
+                            {item.station === "bar" ? "Bar" : "Kitchen"}
+                          </span>
+                        )}
                         <span className="text-sm font-medium" style={item.ready ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>
                           {item.quantity > 1 ? `${item.quantity}× ` : ""}
                           {item.name}

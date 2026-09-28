@@ -32,6 +32,7 @@ export interface CheckoutPayment {
   card: number;
   stripePaymentIntentId?: string | null;
   tip?: number; // tip the customer chose on the card reader, already inside `card`
+  tendered?: number; // cash handed over, for the change shown and printed (not stored)
 }
 
 export interface DraftFields {

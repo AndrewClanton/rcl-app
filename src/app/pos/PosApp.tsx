@@ -490,6 +490,7 @@ export default function PosApp({
     // A tab's tip is asked on the register (TipModal); any other card sale
     // can get one on the reader. Either way it's one tip on the order.
     const allTip = tip + (payment.tip ?? 0);
+    const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
     try {
       const { orderNumber } = await completeOrder({
         ...currentFields(),
@@ -525,6 +526,7 @@ export default function PosApp({
         payments: [
           { label: "Cash", amount: payment.cash },
           { label: "Card", amount: payment.card },
+          ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
         ],
       };
       setLastReceipt(receipt);
@@ -533,6 +535,7 @@ export default function PosApp({
       void printAfterSale(receipt, payment.cash > 0, tickets);
       const parts = [`Order #${orderNumber} complete — ${money(totals.total + allTip)} charged (${payment.method})`];
       if (allTip > 0) parts.push(`${money(allTip)} tip`);
+      if (change > 0) parts.push(`give ${money(change)} change`);
       setToast(parts.join(" — "));
       resetOrder();
       setTip(0);

@@ -11,9 +11,13 @@ export interface PrepTicket {
   created_at: string;
   order_number: number;
   order_name: string | null;
+  station: Station;
 }
 
 export type Station = "kitchen" | "bar";
+// A board shows one station, or both at once (the kitchen and bar sit side
+// by side, so one screen can serve both).
+export type Board = Station | "all";
 
 // Which prep station an item belongs to, by its menu category -- food goes
 // to the kitchen, everything poured/mixed/brewed goes to the bar. Candy and
@@ -34,7 +38,7 @@ function stationFor(categoryKey: string | null, isAlcohol: boolean): Station | n
 }
 
 // Last couple hours of completed POS orders' items for one prep station.
-async function getRecentTickets(station: Station): Promise<PrepTicket[]> {
+async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
   const supabase = createAdminClient();
   const since = new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString();
 
@@ -65,9 +69,10 @@ async function getRecentTickets(station: Station): Promise<PrepTicket[]> {
   }[];
 
   return rows
-    .filter((row) => stationFor(row.menu_item?.category?.key ?? null, row.is_alcohol) === station)
+    .map((row) => ({ row, station: stationFor(row.menu_item?.category?.key ?? null, row.is_alcohol) }))
+    .filter(({ station }) => station !== null && (board === "all" || station === board))
     .slice(0, 60)
-    .map((row) => ({
+    .map(({ row, station }) => ({
       id: row.id,
       order_id: row.order_id,
       name: row.name,
@@ -78,6 +83,7 @@ async function getRecentTickets(station: Station): Promise<PrepTicket[]> {
       created_at: row.created_at,
       order_number: row.order.order_number,
       order_name: row.order.order_name,
+      station: station as Station,
     }));
 }
 
@@ -87,4 +93,8 @@ export function getKitchenTickets() {
 
 export function getBarTickets() {
   return getRecentTickets("bar");
+}
+
+export function getAllPrepTickets() {
+  return getRecentTickets("all");
 }

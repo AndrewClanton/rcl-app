@@ -230,10 +230,10 @@ export default async function HomePage() {
           </div>
           <div>
             <div className="eyebrow mb-2">Video lounge</div>
-            <h2 className="font-display text-xl">Revisit classics on our VHS archive</h2>
+            <h2 className="font-display text-xl">Revisit the classics, anytime, in our VHS lounge</h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              A haven for film lovers who want to experience the magic of &quot;dead formats.&quot; Members have exclusive access to
-              our treasure trove of VHS tapes — curl up in a comfy seat, pop in a cassette, and travel back in time.
+              Thousands of movies on hand to choose from. Pull a tape off the shelf, curl up in a comfy seat, pop it in, and travel back in
+              time.
             </p>
           </div>
         </div>

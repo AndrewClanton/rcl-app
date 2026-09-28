@@ -9,6 +9,72 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+// What the customer is likely handing over: the exact amount, then the next
+// whole dollar and the usual bills above the total.
+function tenderChoices(total: number) {
+  const cents = Math.round(total * 100);
+  const options = [cents, Math.ceil(cents / 100) * 100, Math.ceil(cents / 500) * 500, Math.ceil(cents / 1000) * 1000, 2000, 5000, 10000];
+  return [...new Set(options.filter((c) => c >= cents))].slice(0, 6).map((c) => c / 100);
+}
+
+// Cash: tap what they handed you (or type it) and the change due shows big
+// before the sale is finished.
+function CashTender({ total, onBack, onDone }: { total: number; onBack: () => void; onDone: (tendered: number) => void }) {
+  const [given, setGiven] = useState<number | null>(null);
+  const [typed, setTyped] = useState("");
+  const tendered = typed ? parseFloat(typed) || 0 : given;
+  const short = tendered !== null && tendered + 0.001 < total;
+  const change = tendered !== null && !short ? Math.round((tendered - total) * 100) / 100 : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-sm text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          Cash · {money(total)} due
+        </h3>
+        <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+          How much did they hand you?
+        </p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {tenderChoices(total).map((amt, i) => (
+            <button
+              key={amt}
+              className={`chip !py-3 !text-base font-bold ${given === amt && !typed ? "chip-selected" : ""}`}
+              onClick={() => {
+                setTyped("");
+                setGiven(amt);
+              }}
+            >
+              {i === 0 ? "Exact" : money(amt).replace(".00", "")}
+            </button>
+          ))}
+        </div>
+        <input
+          className="input mt-3 text-center"
+          inputMode="decimal"
+          placeholder="Other amount"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value.replace(/[^0-9.]/g, ""))}
+        />
+        <div className="mt-4 rounded-lg py-3" style={{ background: "var(--surface-hover)" }}>
+          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+            Change due
+          </div>
+          <div className="font-display text-4xl" style={{ color: short ? "var(--danger-text)" : "var(--accent)" }}>
+            {short ? `${money(total - (tendered ?? 0))} short` : change === null ? "—" : money(change)}
+          </div>
+        </div>
+        <button className="btn-primary mt-4 w-full py-3 text-base" disabled={change === null} onClick={() => change !== null && tendered !== null && onDone(tendered)}>
+          {change === null ? "Pick the amount given" : change > 0 ? `Done · give ${money(change)} change` : "Done · no change"}
+        </button>
+        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+          Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
 type ReaderState = "waiting" | "failed";
 
 export default function PaymentModal({
@@ -25,6 +91,7 @@ export default function PaymentModal({
   onCancel: () => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
+  const [cashOpen, setCashOpen] = useState(false);
   const [cash, setCash] = useState("");
   const [card, setCard] = useState("");
   const [error, setError] = useState(false);
@@ -106,6 +173,10 @@ export default function PaymentModal({
     setReader(null);
   }
 
+  if (cashOpen) {
+    return <CashTender total={total} onBack={() => setCashOpen(false)} onDone={(tendered) => onConfirm({ method: "cash", cash: total, card: 0, tendered })} />;
+  }
+
   if (reader) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -171,7 +242,7 @@ export default function PaymentModal({
 
         {!splitOpen ? (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "cash", cash: total, card: 0 })}>
+            <button className="btn-secondary px-4 py-2" onClick={() => setCashOpen(true)}>
               Cash
             </button>
             {readerId ? (
