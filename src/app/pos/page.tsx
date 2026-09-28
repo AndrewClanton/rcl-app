@@ -1,3 +1,4 @@
+import type { Metadata, Viewport } from "next";
 import { getMenuTree } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
@@ -10,6 +11,21 @@ import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
 
 export const dynamic = "force-dynamic";
+
+// "Add to Home Screen" on the register iPad opens this full-screen, without
+// Safari's bars.
+export const metadata: Metadata = {
+  title: "Register",
+  appleWebApp: { capable: true, title: "RCL Register" },
+};
+
+// No zooming: iPad Safari zooms in when a small text box gets focus, which
+// shoves the register off the screen until someone pinches back out.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+};
 
 export default async function PosPage() {
   await requireStaff();
@@ -27,17 +43,21 @@ export default async function PosPage() {
   const orderableCategories = categories.filter((c) => c.key !== "tickets");
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h1 className="font-display text-2xl" style={{ color: "var(--foreground)" }}>
+    // On a tablet or bigger the register is locked to the screen: this fills
+    // exactly one screen height and the panels inside scroll on their own.
+    <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-3 md:h-dvh md:overflow-hidden md:overscroll-none">
+      <div className="mb-2 flex shrink-0 items-baseline justify-between">
+        <h1 className="font-display text-xl" style={{ color: "var(--foreground)" }}>
           Royale Cinema Lounge <span style={{ color: "var(--accent)" }}>· Point of Sale</span>
         </h1>
         <span className="eyebrow">
           {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
         </span>
       </div>
-      <UpdateBanner current={deploymentId()} />
-      <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name }))} />
+      <div className="shrink-0">
+        <UpdateBanner current={deploymentId()} />
+        <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name }))} />
+      </div>
       <PosApp
         categories={orderableCategories}
         employees={employees}

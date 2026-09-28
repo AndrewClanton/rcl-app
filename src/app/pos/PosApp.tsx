@@ -467,111 +467,183 @@ export default function PosApp({
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-      {/* Cart panel */}
-      <div className="card flex flex-col">
-        <div className="mb-3 flex items-center gap-2">
-          <span className="text-xs" style={{ color: "var(--muted)" }}>
-            Cashier
-          </span>
-          <select className="input flex-1" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-            <option value="">Not logged in</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-          <DevicesPanel fallbackReaderId={defaultReaderId} onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
-        </div>
-
-        <div className="mb-3 flex items-center justify-between">
-          <span className="eyebrow">Current order</span>
-          <span className="text-sm" style={{ color: "var(--muted)" }}>
-            {itemCount} item{itemCount === 1 ? "" : "s"}
-          </span>
-        </div>
-
-        {activeTab && (
-          <div className="chip chip-selected mb-2 inline-flex w-fit">
-            Tab: {activeTab.order_name}
+    <div className="grid gap-3 md:min-h-0 md:flex-1 md:grid-cols-[350px_1fr] lg:grid-cols-[380px_1fr]">
+      {/* Cart panel. On a tablet the page is locked to the screen: the header
+          and the checkout block stay put, and only the middle scrolls. */}
+      <div className="card flex flex-col md:min-h-0">
+        <div className="shrink-0">
+          <div className="mb-3 flex items-center gap-2">
+            <span className="text-xs" style={{ color: "var(--muted)" }}>
+              Cashier
+            </span>
+            <select className="input flex-1" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+              <option value="">Not logged in</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+            <DevicesPanel fallbackReaderId={defaultReaderId} onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
           </div>
-        )}
 
-        <input className="input mb-3" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
+          <div className="mb-2 flex items-center gap-2">
+            <span className="eyebrow whitespace-nowrap">Order</span>
+            <span className="whitespace-nowrap text-sm" style={{ color: "var(--muted)" }}>
+              {itemCount} item{itemCount === 1 ? "" : "s"}
+            </span>
+            <button className={`chip ml-auto whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
+              Held {heldOrders.length}
+            </button>
+            <button className={`chip whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
+              Tabs {openTabs.length}
+            </button>
+          </div>
 
-        <div className="max-h-[320px] space-y-2 overflow-y-auto">
+          {activeTab && (
+            <div className="chip chip-selected mb-2 inline-flex w-fit">
+              Tab: {activeTab.order_name}
+            </div>
+          )}
+
+          <input className="input mb-3" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
+        </div>
+
+        <div className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
+          {heldListOpen && (
+            <div className="card-flat p-3" style={{ background: "var(--surface-hover)" }}>
+              <div className="eyebrow mb-2">Held orders</div>
+              {heldOrders.length === 0 ? (
+                <div className="text-sm" style={{ color: "var(--muted)" }}>
+                  No held orders.
+                </div>
+              ) : (
+                heldOrders.map((h) => (
+                  <div key={h.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
+                    <span style={{ color: "var(--foreground)" }}>
+                      {h.order_name || "Held order"} — {money(h.total)} ({h.item_count} item{h.item_count === 1 ? "" : "s"})
+                    </span>
+                    <div className="flex gap-1">
+                      <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleResumeHeld(h.id)}>
+                        Resume
+                      </button>
+                      <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleDiscardHeld(h.id)}>
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {tabsListOpen && (
+            <div className="card-flat p-3" style={{ background: "var(--surface-hover)" }}>
+              <div className="eyebrow mb-2">Open tabs</div>
+              {openTabs.length === 0 ? (
+                <div className="text-sm" style={{ color: "var(--muted)" }}>
+                  No open tabs.
+                </div>
+              ) : (
+                openTabs.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
+                    <span style={{ color: "var(--foreground)" }}>
+                      {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"})
+                      {t.id === activeTabId ? " · active now" : ""}
+                    </span>
+                    <div className="flex gap-1">
+                      {t.id !== activeTabId && (
+                        <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleSwitchTab(t.id)}>
+                          Switch to
+                        </button>
+                      )}
+                      <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => setCancelTabId(t.id)}>
+                        Cancel tab
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {toast && (
+            <div className="notice notice-success p-2.5 text-xs">
+              {toast}
+            </div>
+          )}
+          {lastReceipt && devices.printerAddress && (printNote || !devices.autoPrint) && (
+            <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
+              <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
+              <button
+                className="chip !px-3 !py-1"
+                onClick={async () => {
+                  const r = await sendToPrinter(devices.printerAddress, receiptXml(lastReceipt));
+                  setPrintNote(r.ok ? null : r.error);
+                }}
+              >
+                {printNote ? "Try printing again" : "Print receipt"}
+              </button>
+            </div>
+          )}
+
           {cart.length === 0 ? (
             <div className="rounded-lg border border-dashed py-6 text-center text-sm" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
               No items yet
             </div>
           ) : (
             cart.map((line) => (
-              <div key={line.key} className="card-flat p-2.5">
-                <div className="flex justify-between gap-2 text-sm">
-                  <span className="font-medium" style={{ color: "var(--foreground)" }}>
-                    {line.qty > 1 ? `${line.qty}× ` : ""}
+              // One compact row per line (quantity, name, price, remove) so a
+              // longer order still fits the iPad without scrolling much.
+              <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
+                <button
+                  className="h-9 w-9 shrink-0 rounded-md border text-base"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  onClick={() => updateQty(line.key, -1)}
+                  aria-label={`One less ${line.name}`}
+                >
+                  −
+                </button>
+                <span className="w-5 shrink-0 text-center text-sm font-bold" style={{ color: "var(--foreground)" }}>
+                  {line.qty}
+                </span>
+                <button
+                  className="h-9 w-9 shrink-0 rounded-md border text-base"
+                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+                  onClick={() => updateQty(line.key, 1)}
+                  aria-label={`One more ${line.name}`}
+                >
+                  +
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium" style={{ color: "var(--foreground)" }}>
                     {line.name}
-                  </span>
-                  <span style={{ color: "var(--foreground)" }}>{money(line.unit * line.qty)}</span>
-                </div>
-                {line.mods.length > 0 && (
-                  <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
-                    {line.mods.join(", ")}
                   </div>
-                )}
-                <div className="mt-1.5 flex items-center gap-2">
-                  <button
-                    className="h-7 w-7 rounded-md border text-sm"
-                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                    onClick={() => updateQty(line.key, -1)}
-                  >
-                    −
-                  </button>
-                  <span className="text-xs" style={{ color: "var(--foreground)" }}>
-                    {line.qty}
-                  </span>
-                  <button
-                    className="h-7 w-7 rounded-md border text-sm"
-                    style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                    onClick={() => updateQty(line.key, 1)}
-                  >
-                    +
-                  </button>
-                  <button className="ml-auto text-xs hover:underline" style={{ color: "var(--danger-text)" }} onClick={() => removeLine(line.key)}>
-                    Remove
-                  </button>
+                  {line.mods.length > 0 && (
+                    <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
+                      {line.mods.join(", ")}
+                    </div>
+                  )}
                 </div>
+                <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
+                  {money(line.unit * line.qty)}
+                </span>
+                <button
+                  className="h-9 w-9 shrink-0 rounded-md text-lg"
+                  style={{ color: "var(--danger-text)" }}
+                  onClick={() => removeLine(line.key)}
+                  aria-label={`Remove ${line.name}`}
+                >
+                  ×
+                </button>
               </div>
             ))
           )}
-        </div>
 
-        <div className="mt-3 border-t pt-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
-          <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-            <span>Subtotal</span>
-            <span>{money(totals.subtotal)}</span>
-          </div>
-          {totals.discount > 0 && (
-            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-              <span>Discount</span>
-              <span>-{money(totals.discount)}</span>
-            </div>
-          )}
-          <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-            <span>Tax</span>
-            <span>{money(totals.tax)}</span>
-          </div>
-          <div className="mt-1.5 flex items-baseline justify-between border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
-            <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
-              Total
-            </span>
-            <span className="text-2xl font-semibold" style={{ color: "var(--accent)" }}>
-              {money(totals.total)}
-            </span>
-          </div>
+          <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
 
-          <label className="mt-2.5 flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+          <div className="space-y-1 pt-1">
+          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
             <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
             Monthly member (10% off)
           </label>
@@ -585,144 +657,85 @@ export default function PosApp({
               Redeem {POINTS_PER_REWARD} pts for {money(REWARD_VALUE)} off
             </label>
           )}
+          </div>
         </div>
 
-        <button className="btn-primary mt-3 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
-          Complete order
-        </button>
-        <div className="mt-2 flex gap-2">
-          <button
-            className="btn-secondary flex-1 py-2 text-sm"
-            style={activeTabId ? undefined : { color: "var(--danger-text)" }}
-            disabled={(cart.length === 0 && !activeTabId) || busy}
-            onClick={() => {
-              // Leaving a tab is a routine, non-destructive action (it saves
-              // first) -- only skip the confirm step for that case. Clearing
-              // a walk-up order with items actually discards them, so that
-              // one still asks first.
-              if (activeTabId) {
-                setBusy(true);
-                stashCurrentWork()
-                  .then(() => {
+        <div className="shrink-0">
+          <div className="mt-3 border-t pt-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
+            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
+              <span>Subtotal</span>
+              <span>{money(totals.subtotal)}</span>
+            </div>
+            {totals.discount > 0 && (
+              <div className="flex justify-between" style={{ color: "var(--muted)" }}>
+                <span>Discount</span>
+                <span>-{money(totals.discount)}</span>
+              </div>
+            )}
+            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
+              <span>Tax</span>
+              <span>{money(totals.tax)}</span>
+            </div>
+            <div className="mt-1.5 flex items-baseline justify-between border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
+              <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
+                Total
+              </span>
+              <span className="text-2xl font-semibold" style={{ color: "var(--accent)" }}>
+                {money(totals.total)}
+              </span>
+            </div>
+
+          </div>
+          <button className="btn-primary mt-3 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
+            Complete order
+          </button>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <button
+              className="btn-secondary whitespace-nowrap py-2.5 text-sm"
+              style={activeTabId ? undefined : { color: "var(--danger-text)" }}
+              disabled={(cart.length === 0 && !activeTabId) || busy}
+              onClick={() => {
+                // Leaving a tab is a routine, non-destructive action (it saves
+                // first) -- only skip the confirm step for that case. Clearing
+                // a walk-up order with items actually discards them, so that
+                // one still asks first.
+                if (activeTabId) {
+                  setBusy(true);
+                  stashCurrentWork()
+                    .then(() => {
+                      resetOrder();
+                      router.refresh();
+                    })
+                    .finally(() => setBusy(false));
+                  return;
+                }
+                setConfirmState({
+                  title: "Clear the current order?",
+                  danger: true,
+                  confirmLabel: "Clear",
+                  onConfirm: () => {
+                    setConfirmState(null);
                     resetOrder();
                     router.refresh();
-                  })
-                  .finally(() => setBusy(false));
-                return;
-              }
-              setConfirmState({
-                title: "Clear the current order?",
-                danger: true,
-                confirmLabel: "Clear",
-                onConfirm: () => {
-                  setConfirmState(null);
-                  resetOrder();
-                  router.refresh();
-                },
-              });
-            }}
-          >
-            {activeTabId ? "Put tab away" : "Clear order"}
-          </button>
-          <button className="btn-secondary flex-1 py-2 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
-            Hold order
-          </button>
-        </div>
-        <button className="btn-secondary mt-2 w-full py-2 text-sm" onClick={() => setHeldListOpen((v) => !v)}>
-          Held orders ({heldOrders.length})
-        </button>
-        <div className="mt-2 flex gap-2">
-          <button className="btn-secondary flex-1 py-2 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
-            Open a tab
-          </button>
-          <button className="btn-secondary flex-1 py-2 text-sm" onClick={() => setTabsListOpen((v) => !v)}>
-            Tabs ({openTabs.length})
-          </button>
-        </div>
-
-        {heldListOpen && (
-          <div className="card-flat mt-2 p-3" style={{ background: "var(--surface-hover)" }}>
-            <div className="eyebrow mb-2">Held orders</div>
-            {heldOrders.length === 0 ? (
-              <div className="text-sm" style={{ color: "var(--muted)" }}>
-                No held orders.
-              </div>
-            ) : (
-              heldOrders.map((h) => (
-                <div key={h.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
-                  <span style={{ color: "var(--foreground)" }}>
-                    {h.order_name || "Held order"} — {money(h.total)} ({h.item_count} item{h.item_count === 1 ? "" : "s"})
-                  </span>
-                  <div className="flex gap-1">
-                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleResumeHeld(h.id)}>
-                      Resume
-                    </button>
-                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleDiscardHeld(h.id)}>
-                      Discard
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {tabsListOpen && (
-          <div className="card-flat mt-2 p-3" style={{ background: "var(--surface-hover)" }}>
-            <div className="eyebrow mb-2">Open tabs</div>
-            {openTabs.length === 0 ? (
-              <div className="text-sm" style={{ color: "var(--muted)" }}>
-                No open tabs.
-              </div>
-            ) : (
-              openTabs.map((t) => (
-                <div key={t.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
-                  <span style={{ color: "var(--foreground)" }}>
-                    {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"})
-                    {t.id === activeTabId ? " · active now" : ""}
-                  </span>
-                  <div className="flex gap-1">
-                    {t.id !== activeTabId && (
-                      <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => handleSwitchTab(t.id)}>
-                        Switch to
-                      </button>
-                    )}
-                    <button className="rounded-md border px-2 py-0.5 text-xs" style={{ borderColor: "var(--border)" }} onClick={() => setCancelTabId(t.id)}>
-                      Cancel tab
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {toast && (
-          <div className="notice notice-success mt-3 p-2.5 text-xs">
-            {toast}
-          </div>
-        )}
-        {lastReceipt && devices.printerAddress && (printNote || !devices.autoPrint) && (
-          <div className={`notice ${printNote ? "notice-warn" : ""} mt-2 flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
-            <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
-            <button
-              className="chip !px-3 !py-1"
-              onClick={async () => {
-                const r = await sendToPrinter(devices.printerAddress, receiptXml(lastReceipt));
-                setPrintNote(r.ok ? null : r.error);
+                  },
+                });
               }}
             >
-              {printNote ? "Try printing again" : "Print receipt"}
+              {activeTabId ? "Put away" : "Clear"}
+            </button>
+            <button className="btn-secondary whitespace-nowrap py-2.5 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
+              Hold
+            </button>
+            <button className="btn-secondary whitespace-nowrap py-2.5 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
+              New tab
             </button>
           </div>
-        )}
-
-        <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
+        </div>
       </div>
 
-      {/* Menu panel */}
-      <div className="card">
-        <div className="mb-3 flex flex-wrap gap-2">
+      {/* Menu panel: category buttons pinned, items scroll. */}
+      <div className="card flex flex-col md:min-h-0">
+        <div className="mb-3 flex shrink-0 flex-wrap gap-2">
           {categories.map((c) => (
             <button
               key={c.id}
@@ -750,7 +763,7 @@ export default function PosApp({
         )}
 
         {category?.subcategories.length ? (
-          <div className="mb-3 flex flex-wrap gap-2 text-sm">
+          <div className="mb-3 flex shrink-0 flex-wrap gap-2 text-sm">
             {!nav.subcategoryId
               ? category.subcategories.map((s) => (
                   <button key={s.id} className="chip" onClick={() => setNav({ categoryId: category.id, subcategoryId: s.id })}>
@@ -771,10 +784,11 @@ export default function PosApp({
           </div>
         ) : null}
 
+        <div className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
         {builderItem ? (
           <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
             {items.map((item) => (
               <button key={item.id} className="card-flat flex min-h-[92px] flex-col items-center justify-center gap-1.5 p-3 text-center" onClick={() => setBuilderItemId(item.id)}>
                 <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
@@ -787,6 +801,7 @@ export default function PosApp({
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {tipOpen && (
