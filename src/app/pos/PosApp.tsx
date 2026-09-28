@@ -16,8 +16,8 @@ import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
 import { sendToPrinter } from "@/lib/print/epos-client";
-import PrinterPanel from "./printer/PrinterPanel";
-import { usePrinterSettings } from "./printer/settings";
+import DevicesPanel from "./devices/DevicesPanel";
+import { useDeviceSettings } from "./devices/settings";
 import {
   completeOrder,
   saveDraftOrder,
@@ -86,14 +86,14 @@ export default function PosApp({
   heldOrders,
   openTabs,
   recipesByItem,
-  readerAvailable,
+  defaultReaderId,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
   heldOrders: DraftOrderSummary[];
   openTabs: DraftOrderSummary[];
   recipesByItem: Record<string, Recipe>;
-  readerAvailable: boolean;
+  defaultReaderId: string | null;
 }) {
   const router = useRouter();
   const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({
@@ -122,7 +122,8 @@ export default function PosApp({
     null
   );
   const [toast, setToast] = useState<string | null>(null);
-  const printer = usePrinterSettings();
+  const devices = useDeviceSettings();
+  const readerId = devices.readerId || defaultReaderId;
   // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [printNote, setPrintNote] = useState<string | null>(null);
@@ -391,10 +392,10 @@ export default function PosApp({
   // so a printer problem only shows a note with a way to try again.
   async function printAfterSale(receipt: ReceiptData, tookCash: boolean) {
     setPrintNote(null);
-    if (!printer.address) return;
-    const openDrawer = tookCash && printer.drawerOnCash;
-    if (!printer.autoPrint && !openDrawer) return;
-    const r = await sendToPrinter(printer.address, printer.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
+    if (!devices.printerAddress) return;
+    const openDrawer = tookCash && devices.drawerOnCash;
+    if (!devices.autoPrint && !openDrawer) return;
+    const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
     if (!r.ok) setPrintNote(r.error);
   }
 
@@ -470,7 +471,7 @@ export default function PosApp({
               </option>
             ))}
           </select>
-          <PrinterPanel onReprint={lastReceipt ? () => sendToPrinter(printer.address, receiptXml(lastReceipt)) : null} />
+          <DevicesPanel fallbackReaderId={defaultReaderId} onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
         </div>
 
         <div className="mb-3 flex items-center justify-between">
@@ -690,13 +691,13 @@ export default function PosApp({
             {toast}
           </div>
         )}
-        {lastReceipt && printer.address && (printNote || !printer.autoPrint) && (
+        {lastReceipt && devices.printerAddress && (printNote || !devices.autoPrint) && (
           <div className={`notice ${printNote ? "notice-warn" : ""} mt-2 flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
             <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
             <button
               className="chip !px-3 !py-1"
               onClick={async () => {
-                const r = await sendToPrinter(printer.address, receiptXml(lastReceipt));
+                const r = await sendToPrinter(devices.printerAddress, receiptXml(lastReceipt));
                 setPrintNote(r.ok ? null : r.error);
               }}
             >
@@ -797,7 +798,7 @@ export default function PosApp({
       )}
 
       {payOpen && (
-        <PaymentModal total={totals.total + tip} readerAvailable={readerAvailable} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
+        <PaymentModal total={totals.total + tip} readerId={readerId} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
       )}
 
       {cancelTabId && (

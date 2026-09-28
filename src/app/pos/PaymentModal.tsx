@@ -12,12 +12,12 @@ type ReaderState = "waiting" | "failed";
 
 export default function PaymentModal({
   total,
-  readerAvailable,
+  readerId,
   onConfirm,
   onCancel,
 }: {
   total: number;
-  readerAvailable: boolean;
+  readerId: string | null; // this register's card reader, or null if none is set up
   onConfirm: (payment: CheckoutPayment) => void;
   onCancel: () => void;
 }) {
@@ -37,7 +37,13 @@ export default function PaymentModal({
   async function handleReaderCharge() {
     setReader(null);
     try {
-      const { paymentIntentId } = await startReaderPayment(Math.round(total * 100));
+      if (!readerId) return;
+      const started = await startReaderPayment(Math.round(total * 100), readerId);
+      if (!started.ok) {
+        setReader({ state: "failed", paymentIntentId: "", message: started.error });
+        return;
+      }
+      const { paymentIntentId } = started;
       setReader({ state: "waiting", paymentIntentId });
       pollRef.current = setInterval(async () => {
         try {
@@ -63,7 +69,7 @@ export default function PaymentModal({
 
   async function handleCancelReader() {
     if (pollRef.current) clearInterval(pollRef.current);
-    if (reader?.paymentIntentId) await cancelReaderPayment(reader.paymentIntentId).catch(() => {});
+    if (reader?.paymentIntentId && readerId) await cancelReaderPayment(reader.paymentIntentId, readerId).catch(() => {});
     setReader(null);
   }
 
@@ -135,7 +141,7 @@ export default function PaymentModal({
             <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "cash", cash: total, card: 0 })}>
               Cash
             </button>
-            {readerAvailable ? (
+            {readerId ? (
               <button className="btn-secondary px-4 py-2" onClick={handleReaderCharge}>
                 Card (reader)
               </button>

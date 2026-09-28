@@ -3,7 +3,7 @@ import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
-import { terminalConfigured } from "./terminal-config";
+import { defaultReaderId } from "./terminal-config";
 import PosApp from "./PosApp";
 import ShiftBar from "./shift/ShiftBar";
 
@@ -41,7 +41,7 @@ export default async function PosPage() {
         heldOrders={heldOrders}
         openTabs={openTabs}
         recipesByItem={recipesByItem}
-        readerAvailable={terminalConfigured()}
+        defaultReaderId={defaultReaderId()}
       />
     </div>
   );
