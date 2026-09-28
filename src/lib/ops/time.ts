@@ -23,6 +23,27 @@ export function businessDay(now = new Date()) {
   return { date: p.date, dow: WEEKDAYS.indexOf(p.weekday) };
 }
 
+// The instants a business date covers: 4 a.m. Central that day until 4 a.m.
+// the next, as ISO strings for database range queries. DST-aware.
+export function businessDayWindow(date: string) {
+  const fourAm = (d: string) => {
+    let t = new Date(`${d}T09:00:00Z`).getTime(); // 4 a.m. CDT
+    const hour = parts(new Date(t)).hour;
+    if (hour !== DAY_STARTS_AT_HOUR) t += (DAY_STARTS_AT_HOUR - hour) * 3_600_000; // CST: 10:00Z
+    return new Date(t).toISOString();
+  };
+  const next = new Date(`${date}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return { start: fourAm(date), end: fourAm(next.toISOString().slice(0, 10)) };
+}
+
+// The business date `days` before/after a "YYYY-MM-DD" date.
+export function shiftDate(date: string, days: number) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 // Minutes since midnight Central, right now.
 export function centralMinutes(now = new Date()) {
   const p = parts(now);

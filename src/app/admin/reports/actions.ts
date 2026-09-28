@@ -5,13 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { verifyPin } from "@/lib/pin";
 import { getStripe } from "@/lib/stripe";
 import { reversePurchasePoints } from "@/lib/points";
-import { getCashAllocationForDate, type CashAllocation } from "@/lib/data/reports";
 import { assertStaff } from "@/lib/auth";
-
-export async function getCashAllocation(date: string): Promise<CashAllocation> {
-  await assertStaff();
-  return getCashAllocationForDate(date);
-}
 
 export async function verifyManagerPin(pin: string): Promise<boolean> {
   await assertStaff();
