@@ -32,7 +32,9 @@ import {
   type DraftFields,
 } from "./actions";
 
-const TAX_RATE = 0.08;
+// Joplin, MO combined sales tax (state + county + city): 8.725%. This is the
+// rate the business's quarterly Missouri filings are figured at.
+const TAX_RATE = 0.08725;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -56,15 +58,19 @@ function memberDiscountRate(member: TotalsMember) {
 }
 
 function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
-  const subtotal = cart.reduce((s, l) => s + l.unit * l.qty, 0);
-  const tierDiscount = subtotal * memberDiscountRate(member);
-  const monthlyDiscount = monthlyMember ? subtotal * 0.1 : 0;
+  // Every money figure is rounded to the cent, so the tax shown, the total
+  // charged on the card and the order saved all agree to the penny.
+  const cents = (n: number) => Math.round(n * 100) / 100;
+  const subtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
+  const tierDiscount = cents(subtotal * memberDiscountRate(member));
+  const monthlyDiscount = monthlyMember ? cents(subtotal * 0.1) : 0;
   const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
   const redemptionDiscount = canRedeem && pointsRedeemed ? REWARD_VALUE : 0;
   const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
-  const tax = taxFree ? 0 : taxable * TAX_RATE;
-  const total = Math.max(0, taxable) + tax;
+  // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
+  const tax = taxFree ? 0 : cents(Math.max(0, taxable) * TAX_RATE);
+  const total = cents(Math.max(0, taxable) + tax);
   return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
 }
 
