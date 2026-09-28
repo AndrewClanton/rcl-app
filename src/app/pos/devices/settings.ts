@@ -12,10 +12,11 @@ export interface DeviceSettings {
   printerAddress: string; // printer's IP on the local network, e.g. 192.168.1.50
   autoPrint: boolean; // print a receipt after every sale
   drawerOnCash: boolean; // open the cash drawer when a sale takes cash
+  printTickets: boolean; // print a keepsake ticket for every movie admission sold
 }
 
 const KEY = "rcl.register-devices.v1";
-const DEFAULTS: DeviceSettings = { readerId: "", printerAddress: "", autoPrint: true, drawerOnCash: true };
+const DEFAULTS: DeviceSettings = { readerId: "", printerAddress: "", autoPrint: true, drawerOnCash: true, printTickets: true };
 
 let cached: DeviceSettings | null = null;
 const listeners = new Set<() => void>();

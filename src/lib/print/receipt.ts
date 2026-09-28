@@ -3,6 +3,7 @@
 // Pure string building, no browser or server APIs, so it can be tested
 // directly with node.
 import { SITE_NAME, THEATER_ADDRESS } from "@/lib/site";
+import type { Raster } from "./raster";
 
 // 80mm paper, Font A: 48 characters per line (24 at double width).
 const COLS = 48;
@@ -70,6 +71,21 @@ export function columns(left: string, right: string, width = COLS): string[] {
 
 const rule = (ch = "-") => ch.repeat(COLS);
 
+function wrap(text: string, width: number): string[] {
+  const rows: string[] = [];
+  let cur = "";
+  for (const w of plain(text).split(/\s+/).filter(Boolean)) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (next.length <= width) cur = next;
+    else {
+      if (cur) rows.push(cur);
+      cur = w.slice(0, width);
+    }
+  }
+  if (cur) rows.push(cur);
+  return rows;
+}
+
 class Doc {
   private parts: string[] = [];
   raw(xml: string) {
@@ -94,6 +110,18 @@ class Doc {
   }
   drawer() {
     return this.raw(`<pulse drawer="drawer_1" time="pulse_100"/>`);
+  }
+  reverse(on: boolean) {
+    return this.raw(`<text reverse="${on}"/>`);
+  }
+  feed(lines = 1) {
+    return this.raw(`<feed line="${lines}"/>`);
+  }
+  image(r: Raster) {
+    return this.raw(`<image width="${r.width}" height="${r.height}" align="center" color="color_1" mode="mono">${r.data}</image>`);
+  }
+  qr(data: string) {
+    return this.raw(`<symbol type="qrcode_model_2" level="level_m" width="6" align="center">${escapeXml(data)}</symbol>`);
   }
   cut() {
     return this.raw(`<feed line="2"/><cut type="feed"/>`);
@@ -158,6 +186,44 @@ export function testPageXml(atIso: string): string {
   d.line(when(atIso));
   d.line();
   d.line("If you can read this, the register can print.");
+  d.cut();
+  return d.toString();
+}
+
+// ---------- movie tickets ----------
+// One per admission, printed after the receipt. It gets people in the door
+// and is meant to be kept: logo, the film in big type, the showing, the
+// poster, and a code the door can scan later.
+
+export interface TicketPrint {
+  title: string;
+  startsAt: string; // ISO
+  room: string;
+  rating: string | null;
+  runtime: number | null;
+  orderNumber: number;
+  code: string; // what the QR code holds
+}
+
+export function ticketXml(t: TicketPrint, pics: { logo?: Raster | null; poster?: Raster | null } = {}): string {
+  const d = new Doc().align("center");
+  if (pics.logo) d.image(pics.logo).feed(1);
+  else d.big(true).bold(true).line(SITE_NAME.toUpperCase()).big(false).bold(false);
+  d.align("center").big(true).bold(true).reverse(true).line("  ADMIT ONE  ").reverse(false).feed(1);
+  d.lines(wrap(t.title.toUpperCase(), 24)).big(false).bold(false).feed(1);
+  const day = new Date(t.startsAt).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+  const time = new Date(t.startsAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  d.bold(true).line(day.toUpperCase()).bold(false);
+  d.big(true).bold(true).line(time).big(false).bold(false);
+  d.line([t.room, t.rating, t.runtime ? `${t.runtime} min` : null].filter(Boolean).join("  ·  "));
+  if (pics.poster) d.feed(1).image(pics.poster);
+  d.feed(1).align("left").line(rule("="));
+  d.align("center").line(`Order #${t.orderNumber}`).align("left");
+  d.line(rule("=")).feed(1).align("center");
+  d.qr(t.code).feed(1);
+  d.line("Thanks for spending the night at the Royale.");
+  d.line("Keep this ticket as a souvenir.");
+  d.bold(true).line("royalecinemajoplin.com").bold(false);
   d.cut();
   return d.toString();
 }

@@ -9,7 +9,15 @@ import { saveDeviceSettings, useDeviceSettings } from "./settings";
 // The "Devices" button on the register: which card reader and receipt
 // printer are next to this device, whether receipts print on their own, and
 // test buttons for the printer and the cash drawer.
-export default function DevicesPanel({ onReprint, fallbackReaderId }: { onReprint: (() => Promise<PrintResult>) | null; fallbackReaderId: string | null }) {
+export default function DevicesPanel({
+  onReprint,
+  onReprintTickets,
+  fallbackReaderId,
+}: {
+  onReprint: (() => Promise<PrintResult>) | null;
+  onReprintTickets: (() => Promise<PrintResult>) | null;
+  fallbackReaderId: string | null;
+}) {
   const settings = useDeviceSettings();
   const [open, setOpen] = useState(false);
   const [address, setAddress] = useState(settings.printerAddress);
@@ -129,6 +137,11 @@ export default function DevicesPanel({ onReprint, fallbackReaderId }: { onReprin
                     {busy === "reprint" ? "Printing…" : "Reprint last receipt"}
                   </button>
                 )}
+                {onReprintTickets && (
+                  <button className="btn-secondary" disabled={!printerSet || !!busy} onClick={() => run("tickets", onReprintTickets, "Last sale's tickets sent to the printer.")}>
+                    {busy === "tickets" ? "Printing…" : "Reprint last tickets"}
+                  </button>
+                )}
               </div>
 
               {result && (
@@ -149,6 +162,10 @@ export default function DevicesPanel({ onReprint, fallbackReaderId }: { onReprin
               <label className="flex items-center gap-2 text-sm">
                 <input id="printer-autoprint" type="checkbox" checked={settings.autoPrint} onChange={(e) => saveDeviceSettings({ autoPrint: e.target.checked })} />
                 Print a receipt after every sale
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input id="printer-tickets" type="checkbox" checked={settings.printTickets} onChange={(e) => saveDeviceSettings({ printTickets: e.target.checked })} />
+                Print a movie ticket for every admission sold
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <input id="printer-drawer" type="checkbox" checked={settings.drawerOnCash} onChange={(e) => saveDeviceSettings({ drawerOnCash: e.target.checked })} />

@@ -15,7 +15,8 @@ register(
       `export async function resolve(s, c, next) { return next(s.startsWith("@/") ? ${JSON.stringify(srcRoot)} + s.slice(2) + ".ts" : s, c); }`,
     ),
 );
-const { receiptXml, drawerXml, testPageXml, columns } = await import("../src/lib/print/receipt.ts");
+const { receiptXml, drawerXml, testPageXml, ticketXml, columns } = await import("../src/lib/print/receipt.ts");
+const { ditherToRaster, rgbaToGray } = await import("../src/lib/print/raster.ts");
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -75,6 +76,22 @@ check("long item wraps, indented, with price on its last line", /\n  truffle sal
 check("columns right-aligns within 48", columns("Tax", "$2.72")[0].length === 48 && columns("Tax", "$2.72")[0].endsWith("$2.72"));
 check("drawer-only job has no paper output", !drawerXml().includes("<text>") && drawerXml().includes("<pulse"));
 check("test page renders", render(testPageXml(sample.at)).some((l) => l.text === "PRINTER TEST"));
+
+// Movie ticket: fits the paper, carries the pictures, code and cut.
+const px = new Uint8Array(16 * 4 * 4).fill(255); // 16x4 white
+for (let i = 0; i < 16; i++) px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = 0; // first row black
+const r = ditherToRaster(rgbaToGray(px, 16, 4), 16, 4);
+check("dithered raster packs 1 bit per dot", r.width === 16 && Buffer.from(r.data, "base64").length === 8);
+const tXml = ticketXml(
+  { title: "Wallace & Gromit: The Curse of the Were-Rabbit", startsAt: "2026-10-03T01:00:00Z", room: "Outdoor Cinema", rating: "G", runtime: 85, orderNumber: 7, code: "RCL-TKT:7:abcd1234:2" },
+  { logo: r, poster: r },
+);
+const tLines = render(tXml);
+const tooWideT = tLines.filter((l) => l.text.length > (l.big ? 24 : 48));
+check("ticket lines fit the paper", tooWideT.length === 0, tooWideT.map((l) => l.text).join(" | "));
+check("ticket has logo and poster, QR code and a cut", (tXml.match(/<image /g) || []).length === 2 && tXml.includes('<symbol type="qrcode_model_2"') && /<cut type="feed"\/><\/epos-print>$/.test(tXml));
+check("ticket says ADMIT ONE, no price or ticket count", tLines.some((l) => l.text.trim() === "ADMIT ONE") && !/Ticket \d+ of|\$\d/.test(tLines.map((l) => l.text).join("\n")));
+check("ticket title escaped and wrapped", tXml.includes("WALLACE &amp; GROMIT") && tLines.filter((l) => l.big && /GROMIT|CURSE|RABBIT/.test(l.text)).length >= 2);
 
 console.log("\nSample receipt:\n" + "=".repeat(48));
 for (const l of lines) {

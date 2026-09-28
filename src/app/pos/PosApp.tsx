@@ -10,14 +10,16 @@ import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
 import MovieTickets from "./MovieTickets";
-import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
+import { checkTicketSeats, getTicketPrintInfo, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
-import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
+import { receiptXml, drawerXml, ticketXml, type ReceiptData } from "@/lib/print/receipt";
+import { imageToRaster, type Raster } from "@/lib/print/raster";
+import { LOGO_RASTER } from "@/lib/print/logo-raster";
 import { sendToPrinter } from "@/lib/print/epos-client";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
@@ -55,6 +57,39 @@ interface CartLine {
 
 // The Movies tab sits alongside the menu categories.
 const MOVIES_TAB = "__movies";
+
+// Movie tickets on a sale, for printing one keepsake ticket per admission.
+type TicketSale = { screeningId: string; qty: number };
+
+// Poster pictures are converted for the printer once per register session.
+const posterCache = new Map<string, Promise<Raster | null>>();
+function posterRaster(url: string) {
+  if (!posterCache.has(url)) posterCache.set(url, imageToRaster(url, 320, 520));
+  return posterCache.get(url)!;
+}
+
+// One ticket per admission, sent one at a time so the printer never gets a
+// huge job. Returns the first failure, if any.
+async function printTickets(printerAddress: string, orderNumber: number, sales: TicketSale[]) {
+  const info = await getTicketPrintInfo([...new Set(sales.map((t) => t.screeningId))]).catch(() => null);
+  if (!info) return { ok: false as const, error: "Couldn't look up the showings to print tickets. Tap Reprint last tickets under Devices." };
+  let index = 0;
+  for (const sale of sales) {
+    const show = info[sale.screeningId];
+    if (!show) continue;
+    const poster = show.posterUrl ? await posterRaster(show.posterUrl) : null;
+    for (let n = 0; n < sale.qty; n++) {
+      index++;
+      const xml = ticketXml(
+        { title: show.title, startsAt: show.startsAt, room: show.room, rating: show.rating, runtime: show.runtime, orderNumber, code: `RCL-TKT:${orderNumber}:${sale.screeningId.slice(0, 8)}:${index}` },
+        { logo: LOGO_RASTER, poster },
+      );
+      const r = await sendToPrinter(printerAddress, xml);
+      if (!r.ok) return r;
+    }
+  }
+  return { ok: true as const };
+}
 
 type TotalsMember = { tier: MemberTier; points: number } | null;
 
@@ -143,6 +178,8 @@ export default function PosApp({
   // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [printNote, setPrintNote] = useState<string | null>(null);
+  // The last sale's movie tickets, kept for "Reprint last tickets".
+  const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const category = useMemo(() => categories.find((c) => c.id === nav.categoryId) ?? null, [categories, nav.categoryId]);
@@ -424,13 +461,18 @@ export default function PosApp({
 
   // Never blocks or undoes a sale: the order is already saved when this runs,
   // so a printer problem only shows a note with a way to try again.
-  async function printAfterSale(receipt: ReceiptData, tookCash: boolean) {
+  async function printAfterSale(receipt: ReceiptData, tookCash: boolean, tickets: TicketSale[]) {
     setPrintNote(null);
     if (!devices.printerAddress) return;
     const openDrawer = tookCash && devices.drawerOnCash;
-    if (!devices.autoPrint && !openDrawer) return;
-    const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
-    if (!r.ok) setPrintNote(r.error);
+    if (devices.autoPrint || openDrawer) {
+      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
+      if (!r.ok) return setPrintNote(r.error);
+    }
+    if (devices.printTickets && tickets.length) {
+      const t = await printTickets(devices.printerAddress, receipt.orderNumber, tickets);
+      if (!t.ok) setPrintNote(`Tickets didn't print: ${t.error}`);
+    }
   }
 
   async function finalizeCheckout(payment: CheckoutPayment) {
@@ -477,7 +519,9 @@ export default function PosApp({
         ],
       };
       setLastReceipt(receipt);
-      void printAfterSale(receipt, payment.cash > 0);
+      const tickets: TicketSale[] = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, qty: l.qty }));
+      setLastTickets(tickets.length ? { orderNumber, lines: tickets } : null);
+      void printAfterSale(receipt, payment.cash > 0, tickets);
       const parts = [`Order #${orderNumber} complete — ${money(totals.total + allTip)} charged (${payment.method})`];
       if (allTip > 0) parts.push(`${money(allTip)} tip`);
       setToast(parts.join(" — "));
@@ -510,7 +554,10 @@ export default function PosApp({
                 </option>
               ))}
             </select>
-            <DevicesPanel fallbackReaderId={defaultReaderId} onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
+            <DevicesPanel
+            fallbackReaderId={defaultReaderId}
+            onReprintTickets={lastTickets ? () => printTickets(devices.printerAddress, lastTickets.orderNumber, lastTickets.lines) : null}
+            onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
           </div>
 
           <div className="mb-2 flex items-center gap-2">

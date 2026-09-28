@@ -107,3 +107,27 @@ export async function checkTicketSeats(lines: { screeningId: string; quantity: n
     return { ok: false, error: "Couldn't check seats. Check the connection and try again." };
   }
 }
+
+export interface TicketShowing {
+  title: string;
+  startsAt: string;
+  room: string;
+  rating: string | null;
+  runtime: number | null;
+  posterUrl: string | null;
+}
+
+// For printing tickets after a sale (including a tab loaded from the database).
+export async function getTicketPrintInfo(screeningIds: string[]): Promise<Record<string, TicketShowing>> {
+  await assertStaff();
+  if (!screeningIds.length) return {};
+  const { data } = await createAdminClient()
+    .from("screenings")
+    .select("id, starts_at, movie:movies(title, poster_url, runtime_minutes, rating), room:rooms(name)")
+    .in("id", screeningIds);
+  const out: Record<string, TicketShowing> = {};
+  for (const r of (data ?? []) as unknown as { id: string; starts_at: string; movie: { title: string; poster_url: string | null; runtime_minutes: number | null; rating: string | null } | null; room: { name: string } | null }[]) {
+    out[r.id] = { title: r.movie?.title ?? "Movie", startsAt: r.starts_at, room: r.room?.name ?? "", rating: r.movie?.rating ?? null, runtime: r.movie?.runtime_minutes ?? null, posterUrl: r.movie?.poster_url ?? null };
+  }
+  return out;
+}
