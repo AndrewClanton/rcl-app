@@ -46,6 +46,8 @@ export async function refundOrder(orderId: string, pin: string) {
   }
   const { error } = await supabase.from("orders").update({ status: "refunded" }).eq("id", orderId);
   if (error) throw error;
+  // Movie tickets sold on this order give their seats back.
+  await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
   await reversePurchasePoints({ orderId }, staff.employeeId);
   revalidatePath("/admin/reports");
   revalidatePath("/admin/members");

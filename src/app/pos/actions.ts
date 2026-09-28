@@ -14,6 +14,7 @@ export interface CheckoutLine {
   quantity: number;
   modifiers: string[];
   is_alcohol: boolean;
+  screening_id?: string | null; // a movie ticket for this screening
 }
 
 export interface CheckoutTotals {
@@ -77,8 +78,50 @@ async function replaceOrderItems(supabase: ReturnType<typeof createAdminClient>,
       quantity: l.quantity,
       modifiers: l.modifiers,
       is_alcohol: l.is_alcohol,
+      screening_id: l.screening_id ?? null,
+      // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
+      is_event: !!l.screening_id,
     }))
   );
+}
+
+// A register ticket sale also books the seats (bookings.order_id = the
+// order), so they count against capacity and show in attendance, box-office
+// numbers and the member's movies. Rewritten whole on each save so a
+// re-saved order never double-books. Never throws: the customer has already
+// paid by the time this runs, so a failure here must not look like a failed
+// sale.
+async function syncTicketBookings(
+  supabase: ReturnType<typeof createAdminClient>,
+  order: { id: string; memberId: string | null; name: string | null },
+  lines: CheckoutLine[],
+) {
+  try {
+    await supabase.from("bookings").delete().eq("order_id", order.id);
+    const byKey = new Map<string, { screening_id: string; unit_price: number; quantity: number }>();
+    for (const l of lines) {
+      if (!l.screening_id) continue;
+      const key = `${l.screening_id}|${l.unit_price}`;
+      const cur = byKey.get(key) ?? { screening_id: l.screening_id, unit_price: l.unit_price, quantity: 0 };
+      cur.quantity += l.quantity;
+      byKey.set(key, cur);
+    }
+    if (!byKey.size) return;
+    const { error } = await supabase.from("bookings").insert(
+      [...byKey.values()].map((b) => ({
+        screening_id: b.screening_id,
+        order_id: order.id,
+        member_id: order.memberId,
+        customer_name: order.name,
+        quantity: b.quantity,
+        unit_price: b.unit_price,
+        status: "confirmed",
+      })),
+    );
+    if (error) console.error("register ticket bookings failed", order.id, error.message);
+  } catch (e) {
+    console.error("register ticket bookings failed", order.id, e);
+  }
 }
 
 export async function completeOrder(params: DraftFields & {
@@ -152,9 +195,11 @@ export async function completeOrder(params: DraftFields & {
     await applyPoints({ memberId: params.memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
+  await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
+
   // A custom item usually means the menu couldn't describe the sale, so each
   // one becomes a dev note to review. Best-effort: never blocks the sale.
-  const customLines = params.lines.filter((l) => !l.menu_item_id);
+  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id);
   if (customLines.length) {
     const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
     await supabase
@@ -264,11 +309,11 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const supabase = createAdminClient();
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol)")
+    .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id)")
     .eq("id", id)
     .single();
   if (error || !order) throw new Error("Order not found");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -285,6 +330,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       quantity: i.quantity,
       modifiers: i.modifiers,
       is_alcohol: i.is_alcohol,
+      screening_id: i.screening_id,
     })),
   };
 }

@@ -9,6 +9,8 @@ import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
+import MovieTickets from "./MovieTickets";
+import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
@@ -43,12 +45,16 @@ function money(n: number) {
 interface CartLine {
   key: string;
   menuItemId: string | null;
+  screeningId?: string | null; // a movie ticket for this showing
   name: string;
   unit: number;
   qty: number;
   mods: string[];
   isAlcohol: boolean;
 }
+
+// The Movies tab sits alongside the menu categories.
+const MOVIES_TAB = "__movies";
 
 type TotalsMember = { tier: MemberTier; points: number } | null;
 
@@ -94,6 +100,7 @@ export default function PosApp({
   openTabs,
   recipesByItem,
   defaultReaderId,
+  initialScreenings,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -101,6 +108,7 @@ export default function PosApp({
   openTabs: DraftOrderSummary[];
   recipesByItem: Record<string, Recipe>;
   defaultReaderId: string | null;
+  initialScreenings: RegisterScreening[];
 }) {
   const router = useRouter();
   const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({
@@ -138,6 +146,11 @@ export default function PosApp({
   const [busy, setBusy] = useState(false);
 
   const category = useMemo(() => categories.find((c) => c.id === nav.categoryId) ?? null, [categories, nav.categoryId]);
+  const ticketsInCart = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of cart) if (l.screeningId) m.set(l.screeningId, (m.get(l.screeningId) ?? 0) + l.qty);
+    return m;
+  }, [cart]);
   const subcategory = useMemo(() => category?.subcategories.find((s) => s.id === nav.subcategoryId) ?? null, [category, nav.subcategoryId]);
   const items = subcategory ? subcategory.items : category?.subcategories.length ? [] : category?.items ?? [];
   const builderItem = useMemo(() => {
@@ -167,6 +180,7 @@ export default function PosApp({
         quantity: l.qty,
         modifiers: l.mods,
         is_alcohol: l.isAlcohol,
+        screening_id: l.screeningId ?? null,
       })),
     };
   }
@@ -181,6 +195,7 @@ export default function PosApp({
         qty: l.quantity,
         mods: l.modifiers,
         isAlcohol: l.is_alcohol,
+        screeningId: l.screening_id ?? null,
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -379,8 +394,19 @@ export default function PosApp({
     router.refresh();
   }
 
-  function startCheckout() {
+  async function startCheckout() {
     if (!employeeId || cart.length === 0) return;
+    // Movie tickets: make sure the seats are still there before anyone pays.
+    const tickets = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, quantity: l.qty }));
+    if (tickets.length) {
+      setBusy(true);
+      const r = await checkTicketSeats(tickets).catch(() => null);
+      setBusy(false);
+      if (!r || !r.ok) {
+        setToast(r && !r.ok ? r.error : "Couldn't check seats. Check the connection and try again.");
+        return;
+      }
+    }
     if (activeTabId) {
       setTipOpen(true);
     } else {
@@ -736,6 +762,15 @@ export default function PosApp({
       {/* Menu panel: category buttons pinned, items scroll. */}
       <div className="card flex flex-col md:min-h-0">
         <div className="mb-3 flex shrink-0 flex-wrap gap-2">
+          <button
+            className={nav.categoryId === MOVIES_TAB ? "chip chip-selected px-4 py-2 text-sm font-bold" : "chip px-4 py-2 text-sm font-bold"}
+            onClick={() => {
+              setNav({ categoryId: MOVIES_TAB, subcategoryId: null });
+              setBuilderItemId(null);
+            }}
+          >
+            Movies
+          </button>
           {categories.map((c) => (
             <button
               key={c.id}
@@ -785,7 +820,14 @@ export default function PosApp({
         ) : null}
 
         <div className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
-        {builderItem ? (
+        {nav.categoryId === MOVIES_TAB ? (
+          <MovieTickets
+            initial={initialScreenings}
+            inCart={ticketsInCart}
+            insidersPlus={member?.tier === "Insiders+"}
+            onAdd={(t) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, screeningId: t.screeningId, name: t.name, unit: t.unit, qty: t.qty, mods: t.mods, isAlcohol: false }])}
+          />
+        ) : builderItem ? (
           <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">

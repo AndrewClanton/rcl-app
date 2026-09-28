@@ -65,7 +65,8 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
 
   const [{ data: orders, error: ordersErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
     supabase.from("orders").select("total, source, created_at").eq("status", "completed").gte("created_at", since.toISOString()),
-    supabase.from("bookings").select("quantity, unit_price, created_at").eq("status", "confirmed").gte("created_at", since.toISOString()),
+    // Register tickets are already inside their order's total.
+    supabase.from("bookings").select("quantity, unit_price, created_at").eq("status", "confirmed").is("order_id", null).gte("created_at", since.toISOString()),
   ]);
   if (ordersErr) throw ordersErr;
   if (bookingsErr) throw bookingsErr;
@@ -408,15 +409,17 @@ export async function getCashAllocationForDate(date: string): Promise<CashAlloca
   const bucketByMenuItemId = new Map((menuItems ?? []).map((m) => [m.id, CATEGORY_BUCKET[categoryKeyById.get(m.category_id) ?? ""]]));
 
   const orderIds = (orders ?? []).map((o) => o.id);
-  let orderItems: { menu_item_id: string | null; unit_price: number; quantity: number; is_alcohol: boolean }[] = [];
+  let orderItems: { menu_item_id: string | null; unit_price: number; quantity: number; is_alcohol: boolean; screening_id: string | null }[] = [];
   if (orderIds.length > 0) {
-    const { data, error } = await supabase.from("order_items").select("menu_item_id, unit_price, quantity, is_alcohol").in("order_id", orderIds);
+    const { data, error } = await supabase.from("order_items").select("menu_item_id, unit_price, quantity, is_alcohol, screening_id").in("order_id", orderIds);
     if (error) throw error;
     orderItems = data ?? [];
   }
 
   const categoryRevenue = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   for (const oi of orderItems) {
+    // Register movie tickets are counted with the other tickets (bookings), not as bar sales.
+    if (oi.screening_id) continue;
     const lineTotal = oi.unit_price * oi.quantity;
     const bucket = oi.is_alcohol ? "liquor" : oi.menu_item_id ? bucketByMenuItemId.get(oi.menu_item_id) : undefined;
     categoryRevenue[bucket ?? "other"] += lineTotal;

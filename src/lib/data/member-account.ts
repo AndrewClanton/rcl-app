@@ -41,6 +41,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       .from("bookings")
       .select("id, quantity, unit_price, status, created_at, screening:screenings(starts_at, movie:movies(title))")
       .eq("member_id", memberId)
+      .is("order_id", null)
       .in("status", ["confirmed", "refunded"])
       .order("created_at", { ascending: false }),
   ]);

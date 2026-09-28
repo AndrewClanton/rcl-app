@@ -80,6 +80,8 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
       .from("bookings")
       .select("id, quantity, unit_price, status, stripe_payment_intent_id, created_at, screening:screenings(starts_at, movie:movies(title))")
       .eq("member_id", memberId)
+      // Register tickets are part of their order (refunded with it).
+      .is("order_id", null)
       .order("created_at", { ascending: false }),
   ]);
   if (ordersErr) throw ordersErr;

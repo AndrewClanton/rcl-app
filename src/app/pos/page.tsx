@@ -5,6 +5,7 @@ import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
+import { getRegisterScreenings } from "./ticket-actions";
 import PosApp from "./PosApp";
 import ShiftBar from "./shift/ShiftBar";
 import UpdateBanner from "./UpdateBanner";
@@ -30,12 +31,13 @@ export const viewport: Viewport = {
 export default async function PosPage() {
   await requireStaff();
 
-  const [categories, employees, heldOrders, openTabs, recipesByItem] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getDraftOrders("held"),
     getDraftOrders("tab"),
     getRecipesByItem(),
+    getRegisterScreenings(),
   ]);
 
   // Tickets/events aren't ready for POS ordering yet (event booking flow,
@@ -65,6 +67,7 @@ export default async function PosPage() {
         openTabs={openTabs}
         recipesByItem={recipesByItem}
         defaultReaderId={defaultReaderId()}
+        initialScreenings={showings.ok ? showings.screenings : []}
       />
     </div>
   );
