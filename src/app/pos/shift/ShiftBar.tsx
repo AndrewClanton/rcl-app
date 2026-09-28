@@ -24,6 +24,26 @@ const writeMe = (id: string | null) => {
   } catch {}
 };
 
+// "Remind me later" hides a reminder on this tablet for an hour. Kept on the
+// device (not the database) since it's about this moment at this register;
+// Done is still what clears it for good.
+const SNOOZE_KEY = "rcl.shift.snoozed";
+const SNOOZE_MS = 60 * 60 * 1000;
+const readSnoozed = (): Record<string, number> => {
+  try {
+    const all = JSON.parse(localStorage.getItem(SNOOZE_KEY) || "{}") as Record<string, number>;
+    const now = Date.now();
+    return Object.fromEntries(Object.entries(all).filter(([, until]) => until > now));
+  } catch {
+    return {};
+  }
+};
+const writeSnoozed = (m: Record<string, number>) => {
+  try {
+    localStorage.setItem(SNOOZE_KEY, JSON.stringify(m));
+  } catch {}
+};
+
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 
 export default function ShiftBar({ staff }: { staff: { id: string; name: string }[] }) {
@@ -35,12 +55,14 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const [endOpen, setEndOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const prompted = useRef(false);
+  const [snoozed, setSnoozed] = useState<Record<string, number>>({});
 
   const refresh = useCallback(async () => {
     const s = await api.getShiftStatus().catch(() => null);
     if (!s) return setError("The shift tools couldn't reach the server. Check the connection.");
     setError(null);
     setStatus(s);
+    setSnoozed(readSnoozed());
     // Who's using this tablet: the person picked here before, if they're
     // still on shift, else whoever started most recently.
     const saved = readMe();
@@ -66,6 +88,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   }, [refresh]);
 
   const me: OnShift | null = status?.onShift.find((o) => o.shiftId === meShift) ?? null;
+  const reminders = (status?.reminders ?? []).filter((r) => !snoozed[`${r.reminderId}:${r.occurrence}`]);
   const tasksLeft = status?.tasks.filter((t) => !t.done).length ?? 0;
 
   async function begin(employeeId: string) {
@@ -142,9 +165,9 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
         )}
       </div>
 
-      {status && status.reminders.length > 0 && (
+      {reminders.length > 0 && (
         <div className="mb-3 grid gap-2">
-          {status.reminders.map((r) => (
+          {reminders.map((r) => (
             <div
               key={`${r.reminderId}:${r.occurrence}`}
               className="flex flex-wrap items-center gap-3 rounded-lg border-2 px-4 py-2.5"
@@ -158,6 +181,16 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                 </div>
                 <div className="text-sm opacity-90">{r.detail}</div>
               </div>
+              <button
+                className="rounded-lg px-3 py-2 text-sm font-bold underline"
+                onClick={() => {
+                  const next = { ...readSnoozed(), [`${r.reminderId}:${r.occurrence}`]: Date.now() + SNOOZE_MS };
+                  writeSnoozed(next);
+                  setSnoozed(next);
+                }}
+              >
+                Remind me later
+              </button>
               <button
                 className="rounded-lg border-2 px-4 py-2 text-sm font-bold"
                 style={{ borderColor: "currentColor" }}
