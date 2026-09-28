@@ -161,6 +161,17 @@ export async function completeOrder(params: DraftFields & {
     completed_at: new Date().toISOString(),
   };
 
+  // One card payment is one sale. If this payment already has its order
+  // (the register asked twice), hand back that order instead of a copy.
+  const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
+  const orderForPayment = async () => {
+    if (!paymentIntentId) return null;
+    const { data } = await supabase.from("orders").select("order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+    return data?.[0] ? Number(data[0].order_number) : null;
+  };
+  const already = await orderForPayment();
+  if (already !== null) return { orderNumber: already };
+
   let orderId: string;
   let orderNumber: number;
 
@@ -169,8 +180,14 @@ export async function completeOrder(params: DraftFields & {
     if (fetchErr || !existing) throw new Error("Tab no longer exists");
     orderId = params.draftOrderId;
     orderNumber = Number(existing.order_number);
-    const { error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId);
+    // Only an open tab or held order can be closed, so two closes racing
+    // can't both award points and write items.
+    const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId).in("status", ["draft", "held", "tab"]).select("id");
     if (updateErr) throw updateErr;
+    if (!closed?.length) {
+      if ((await orderForPayment()) !== null) return { orderNumber };
+      throw new Error("This tab was already closed. Check Reports before taking payment again.");
+    }
     await replaceOrderItems(supabase, orderId, params.lines);
   } else {
     const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
@@ -181,7 +198,13 @@ export async function completeOrder(params: DraftFields & {
       .insert({ order_number: orderNumber, ...orderFields })
       .select("id")
       .single();
-    if (orderErr) throw orderErr;
+    if (orderErr) {
+      // Lost a race with a repeat of this same card payment (the database
+      // allows one order per payment): the other call saved it.
+      const saved = orderErr.code === "23505" ? await orderForPayment() : null;
+      if (saved !== null) return { orderNumber: saved };
+      throw orderErr;
+    }
     orderId = order.id;
     await replaceOrderItems(supabase, orderId, params.lines);
   }

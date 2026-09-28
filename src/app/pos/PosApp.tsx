@@ -279,6 +279,7 @@ export default function PosApp({
   // effect below and the request-state handler in the subscribe effect),
   // which avoids a stale closure in the long-lived channel subscription.
   const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
+  const finalizingRef = useRef(false);
   cartSnapshotRef.current = {
     orderName,
     items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods })),
@@ -476,6 +477,10 @@ export default function PosApp({
   }
 
   async function finalizeCheckout(payment: CheckoutPayment) {
+    // A double tap (or a second "paid" answer from the reader) must not save
+    // or print the sale twice.
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
     setPayOpen(false);
     setBusy(true);
     // A tab's tip is asked on the register (TipModal); any other card sale
@@ -532,6 +537,7 @@ export default function PosApp({
     } catch (e) {
       setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
     } finally {
+      finalizingRef.current = false;
       setBusy(false);
     }
   }
