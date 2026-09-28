@@ -48,7 +48,8 @@ export default function DevicesPanel({
   return (
     <>
       <button
-        className="chip !px-3 !py-1.5 text-sm"
+        className="chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm"
+        title={missing.length ? `No ${missing.join(" or ")} set up on this register` : undefined}
         onClick={() => {
           setAddress(settings.printerAddress);
           setResult(null);
@@ -56,7 +57,7 @@ export default function DevicesPanel({
           void loadReaders();
         }}
       >
-        Devices{missing.length ? ` (no ${missing.join(" or ")})` : ""}
+        Devices{missing.length ? <span style={{ color: "var(--danger-text)" }}> · set up</span> : null}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>

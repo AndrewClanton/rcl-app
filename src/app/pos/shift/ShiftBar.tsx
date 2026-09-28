@@ -112,54 +112,58 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
 
   return (
     <>
-      <div className="card mb-3 flex flex-wrap items-center gap-x-4 gap-y-3 !py-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="eyebrow">On shift</span>
-          {status && status.onShift.length === 0 && (
-            <span className="text-sm" style={{ color: "var(--muted)" }}>
-              Nobody yet
-            </span>
-          )}
-          {status?.onShift.map((o) => (
-            <button
-              key={o.shiftId}
-              className={`chip !px-3 !py-1.5 !text-sm ${o.shiftId === meShift ? "chip-selected font-bold" : ""}`}
-              onClick={() => {
-                writeMe(o.shiftId);
-                setMeShift(o.shiftId);
-              }}
-              title="Tap to say this is you"
-            >
-              {o.name} <span style={{ color: "var(--muted)" }}>· since {time(o.startedAt)}</span>
+      {/* One slim row on the iPad: who's on (scrolls sideways if it's a
+          crowd) on the left, shift tools on the right. */}
+      <div className="card mb-2 !px-3 !py-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:flex-nowrap">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 md:flex-1 md:flex-nowrap md:overflow-x-auto">
+            <span className="eyebrow shrink-0">On shift</span>
+            {status && status.onShift.length === 0 && (
+              <span className="shrink-0 text-sm" style={{ color: "var(--muted)" }}>
+                Nobody yet
+              </span>
+            )}
+            {status?.onShift.map((o) => (
+              <button
+                key={o.shiftId}
+                className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 !text-sm ${o.shiftId === meShift ? "chip-selected font-bold" : ""}`}
+                onClick={() => {
+                  writeMe(o.shiftId);
+                  setMeShift(o.shiftId);
+                }}
+                title="Tap to say this is you"
+              >
+                {o.name} <span style={{ color: "var(--muted)" }}>· {time(o.startedAt)}</span>
+              </button>
+            ))}
+            <button className="btn-secondary shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setStartOpen(true)}>
+              Start shift
             </button>
-          ))}
-          <button className="btn-secondary !px-3 !py-1.5 text-sm" onClick={() => setStartOpen(true)}>
-            Start shift
-          </button>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button className="btn-secondary !px-3 !py-2 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
-            Checklist
-            {tasksLeft > 0 && <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>{tasksLeft}</span>}
-          </button>
-          <button className="btn-secondary !px-3 !py-2 text-sm" onClick={() => setPanel({ tab: "par" })}>
-            Par sheet
-          </button>
-          <button className="btn-secondary !px-3 !py-2 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
-            Shopping list
-            {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
-          </button>
-          <button className="btn-secondary !px-3 !py-2 text-sm" onClick={() => setPanel({ tab: "history" })}>
-            History
-          </button>
-          {me && (
-            <button className="btn-primary !px-3 !py-2 text-sm" onClick={() => setEndOpen(true)}>
-              End shift
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
+            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
+              Checklist
+              {tasksLeft > 0 && <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>{tasksLeft}</span>}
             </button>
-          )}
+            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "par" })}>
+              Par sheet
+            </button>
+            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
+              Shopping
+              {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
+            </button>
+            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "history" })}>
+              History
+            </button>
+            {me && (
+              <button className="btn-primary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setEndOpen(true)}>
+                End shift
+              </button>
+            )}
+          </div>
         </div>
         {error && (
-          <div className="w-full text-xs" style={{ color: "var(--danger-text)" }}>
+          <div className="mt-1.5 text-xs" style={{ color: "var(--danger-text)" }}>
             {error}
           </div>
         )}

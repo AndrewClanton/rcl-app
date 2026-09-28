@@ -146,10 +146,7 @@ export default function PosApp({
   initialScreenings: RegisterScreening[];
 }) {
   const router = useRouter();
-  const [nav, setNav] = useState<{ categoryId: string | null; subcategoryId: string | null }>({
-    categoryId: categories[0]?.id ?? null,
-    subcategoryId: null,
-  });
+  const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
   const [builderItemId, setBuilderItemId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderName, setOrderName] = useState("");
@@ -182,14 +179,21 @@ export default function PosApp({
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const category = useMemo(() => categories.find((c) => c.id === nav.categoryId) ?? null, [categories, nav.categoryId]);
+  const category = useMemo(() => categories.find((c) => c.id === categoryId) ?? null, [categories, categoryId]);
   const ticketsInCart = useMemo(() => {
     const m = new Map<string, number>();
     for (const l of cart) if (l.screeningId) m.set(l.screeningId, (m.get(l.screeningId) ?? 0) + l.qty);
     return m;
   }, [cart]);
-  const subcategory = useMemo(() => category?.subcategories.find((s) => s.id === nav.subcategoryId) ?? null, [category, nav.subcategoryId]);
-  const items = subcategory ? subcategory.items : category?.subcategories.length ? [] : category?.items ?? [];
+  // Everything in the category on one screen: its own items, then each
+  // subcategory (Beer, Wine, ...) under a heading -- no extra tap to drill in.
+  const menuSections = useMemo(
+    () => [
+      { id: "top", label: null as string | null, items: category?.items ?? [] },
+      ...(category?.subcategories ?? []).map((s) => ({ id: s.id, label: s.label as string | null, items: s.items })),
+    ].filter((s) => s.items.length > 0),
+    [category],
+  );
   const builderItem = useMemo(() => {
     for (const c of categories) {
       for (const i of c.items) if (i.id === builderItemId) return i;
@@ -543,49 +547,42 @@ export default function PosApp({
   }
 
   return (
-    <div className="grid gap-3 md:min-h-0 md:flex-1 md:grid-cols-[350px_1fr] lg:grid-cols-[380px_1fr]">
+    <div className="grid gap-3 md:min-h-0 md:flex-1 md:grid-cols-[370px_1fr] lg:grid-cols-[440px_1fr]">
       {/* Cart panel. On a tablet the page is locked to the screen: the header
-          and the checkout block stay put, and only the middle scrolls. */}
-      <div className="card flex flex-col md:min-h-0">
+          and the checkout block stay put, and only the middle (the order
+          itself) scrolls -- so the header and footer are kept to two rows each. */}
+      <div className="card flex flex-col !p-3 md:min-h-0">
         <div className="shrink-0">
-          <div className="mb-3 flex items-center gap-2">
-            <span className="text-xs" style={{ color: "var(--muted)" }}>
-              Cashier
-            </span>
-            <select className="input flex-1" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
-              <option value="">Not logged in</option>
+          <div className="mb-2 flex items-center gap-2">
+            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+              <option value="">Choose cashier</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}
                 </option>
               ))}
             </select>
+            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
+              Held {heldOrders.length}
+            </button>
+            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
+              Tabs {openTabs.length}
+            </button>
             <DevicesPanel
-            fallbackReaderId={defaultReaderId}
-            onReprintTickets={lastTickets ? () => printTickets(devices.printerAddress, lastTickets.orderNumber, lastTickets.lines) : null}
-            onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null} />
+              fallbackReaderId={defaultReaderId}
+              onReprintTickets={lastTickets ? () => printTickets(devices.printerAddress, lastTickets.orderNumber, lastTickets.lines) : null}
+              onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null}
+            />
           </div>
 
           <div className="mb-2 flex items-center gap-2">
-            <span className="eyebrow whitespace-nowrap">Order</span>
-            <span className="whitespace-nowrap text-sm" style={{ color: "var(--muted)" }}>
-              {itemCount} item{itemCount === 1 ? "" : "s"}
-            </span>
-            <button className={`chip ml-auto whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
-              Held {heldOrders.length}
-            </button>
-            <button className={`chip whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
-              Tabs {openTabs.length}
-            </button>
+            {activeTab && (
+              <span className="chip chip-selected max-w-[45%] shrink-0 truncate !px-3 !py-1.5 text-sm font-bold">
+                Tab: {activeTab.order_name}
+              </span>
+            )}
+            <input className="input min-w-0 flex-1 !py-2" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
           </div>
-
-          {activeTab && (
-            <div className="chip chip-selected mb-2 inline-flex w-fit">
-              Tab: {activeTab.order_name}
-            </div>
-          )}
-
-          <input className="input mb-3" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
         </div>
 
         <div className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
@@ -740,37 +737,27 @@ export default function PosApp({
         </div>
 
         <div className="shrink-0">
-          <div className="mt-3 border-t pt-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
-            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-              <span>Subtotal</span>
-              <span>{money(totals.subtotal)}</span>
+          <div className="mt-2 flex items-end justify-between gap-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
+            <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
+              <div>Subtotal {money(totals.subtotal)}</div>
+              {totals.discount > 0 && <div>Discount -{money(totals.discount)}</div>}
+              <div>Tax {money(totals.tax)}</div>
             </div>
-            {totals.discount > 0 && (
-              <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-                <span>Discount</span>
-                <span>-{money(totals.discount)}</span>
+            <div className="text-right">
+              <div className="text-xs" style={{ color: "var(--muted)" }}>
+                Total · {itemCount} item{itemCount === 1 ? "" : "s"}
               </div>
-            )}
-            <div className="flex justify-between" style={{ color: "var(--muted)" }}>
-              <span>Tax</span>
-              <span>{money(totals.tax)}</span>
-            </div>
-            <div className="mt-1.5 flex items-baseline justify-between border-t pt-1.5" style={{ borderColor: "var(--border)" }}>
-              <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
-                Total
-              </span>
-              <span className="text-2xl font-semibold" style={{ color: "var(--accent)" }}>
+              <div className="text-2xl font-semibold leading-tight tabular-nums" style={{ color: "var(--accent)" }}>
                 {money(totals.total)}
-              </span>
+              </div>
             </div>
-
           </div>
-          <button className="btn-primary mt-3 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
+          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
             Complete order
           </button>
           <div className="mt-2 grid grid-cols-3 gap-2">
             <button
-              className="btn-secondary whitespace-nowrap py-2.5 text-sm"
+              className="btn-secondary whitespace-nowrap py-2 text-sm"
               style={activeTabId ? undefined : { color: "var(--danger-text)" }}
               disabled={(cart.length === 0 && !activeTabId) || busy}
               onClick={() => {
@@ -802,10 +789,10 @@ export default function PosApp({
             >
               {activeTabId ? "Put away" : "Clear"}
             </button>
-            <button className="btn-secondary whitespace-nowrap py-2.5 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
+            <button className="btn-secondary whitespace-nowrap py-2 text-sm" disabled={cart.length === 0 || busy} onClick={handleHold}>
               Hold
             </button>
-            <button className="btn-secondary whitespace-nowrap py-2.5 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
+            <button className="btn-secondary whitespace-nowrap py-2 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
               New tab
             </button>
           </div>
@@ -813,12 +800,13 @@ export default function PosApp({
       </div>
 
       {/* Menu panel: category buttons pinned, items scroll. */}
-      <div className="card flex flex-col md:min-h-0">
+      <div className="card flex flex-col !p-3 md:min-h-0">
+        {/* Category buttons share the row evenly, big enough to hit fast. */}
         <div className="mb-3 flex shrink-0 flex-wrap gap-2">
           <button
-            className={nav.categoryId === MOVIES_TAB ? "chip chip-selected px-4 py-2 text-sm font-bold" : "chip px-4 py-2 text-sm font-bold"}
+            className={`chip min-w-[5.5rem] flex-1 !px-3 !py-2.5 !text-base font-bold ${categoryId === MOVIES_TAB ? "chip-selected" : ""}`}
             onClick={() => {
-              setNav({ categoryId: MOVIES_TAB, subcategoryId: null });
+              setCategoryId(MOVIES_TAB);
               setBuilderItemId(null);
             }}
           >
@@ -827,18 +815,15 @@ export default function PosApp({
           {categories.map((c) => (
             <button
               key={c.id}
-              className={nav.categoryId === c.id ? "chip chip-selected px-4 py-2 text-sm" : "chip px-4 py-2 text-sm"}
+              className={`chip min-w-[5.5rem] flex-1 !px-3 !py-2.5 !text-base ${categoryId === c.id ? "chip-selected" : ""}`}
               onClick={() => {
-                setNav({ categoryId: c.id, subcategoryId: null });
+                setCategoryId(c.id);
                 setBuilderItemId(null);
               }}
             >
               {c.label}
             </button>
           ))}
-          <button className="chip px-4 py-2 text-sm" style={{ borderStyle: "dashed" }} onClick={() => setCustomOpen(true)}>
-            + Custom item
-          </button>
         </div>
         {customOpen && (
           <CustomItemModal
@@ -850,30 +835,8 @@ export default function PosApp({
           />
         )}
 
-        {category?.subcategories.length ? (
-          <div className="mb-3 flex shrink-0 flex-wrap gap-2 text-sm">
-            {!nav.subcategoryId
-              ? category.subcategories.map((s) => (
-                  <button key={s.id} className="chip" onClick={() => setNav({ categoryId: category.id, subcategoryId: s.id })}>
-                    {s.label}
-                  </button>
-                ))
-              : (
-                  <button
-                    className="chip"
-                    onClick={() => {
-                      setNav({ categoryId: category.id, subcategoryId: null });
-                      setBuilderItemId(null);
-                    }}
-                  >
-                    ← Back
-                  </button>
-                )}
-          </div>
-        ) : null}
-
         <div className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
-        {nav.categoryId === MOVIES_TAB ? (
+        {categoryId === MOVIES_TAB ? (
           <MovieTickets
             initial={initialScreenings}
             inCart={ticketsInCart}
@@ -883,17 +846,35 @@ export default function PosApp({
         ) : builderItem ? (
           <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-            {items.map((item) => (
-              <button key={item.id} className="card-flat flex min-h-[92px] flex-col items-center justify-center gap-1.5 p-3 text-center" onClick={() => setBuilderItemId(item.id)}>
-                <span className="text-sm font-medium" style={{ color: "var(--foreground)" }}>
-                  {item.name}
-                </span>
-                <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
-                  {money(item.price)}
-                </span>
-              </button>
+          <div className="space-y-4">
+            {menuSections.map((section, i) => (
+              <section key={section.id}>
+                {section.label && <div className="eyebrow mb-2">{section.label}</div>}
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
+                  {section.items.map((item) => (
+                    <button key={item.id} className="card-flat flex min-h-[84px] flex-col items-center justify-center gap-1 p-3 text-center" onClick={() => setBuilderItemId(item.id)}>
+                      <span className="text-base font-medium leading-snug" style={{ color: "var(--foreground)" }}>
+                        {item.name}
+                      </span>
+                      <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+                        {money(item.price)}
+                      </span>
+                    </button>
+                  ))}
+                  {/* Anything the menu can't describe; each use files a dev note. */}
+                  {i === menuSections.length - 1 && (
+                    <button className="card-flat flex min-h-[84px] items-center justify-center p-3 text-center text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
+                      + Custom item
+                    </button>
+                  )}
+                </div>
+              </section>
             ))}
+            {menuSections.length === 0 && (
+              <button className="card-flat flex min-h-[84px] w-40 items-center justify-center p-3 text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
+                + Custom item
+              </button>
+            )}
           </div>
         )}
         </div>
