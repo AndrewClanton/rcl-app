@@ -48,12 +48,15 @@ async function assertReader(readerId: string) {
   if (!reader || ("deleted" in reader && reader.deleted)) throw new UserFacingError("That card reader isn't registered in Stripe anymore. Pick another under Devices.");
 }
 
-export async function startReaderPayment(amountCents: number, readerId: string): Promise<ReaderStart> {
+// tipEligibleCents: the pre-tax amount the reader's suggested tip
+// percentages are based on, or null to skip the tip screen (a tab already
+// asked for its tip on the register).
+export async function startReaderPayment(amountCents: number, readerId: string, tipEligibleCents: number | null): Promise<ReaderStart> {
   await assertStaff();
   if (!(amountCents > 0)) return { ok: false, error: "Nothing to charge." };
   try {
     await assertReader(readerId);
-    return { ok: true, paymentIntentId: await sendToReader(amountCents, readerId) };
+    return { ok: true, paymentIntentId: await sendToReader(amountCents, readerId, tipEligibleCents) };
   } catch (e) {
     // UserFacingError is ours; Stripe's own messages ("Reader is currently
     // offline...") are written for merchants, so both are fine to show.
@@ -62,7 +65,7 @@ export async function startReaderPayment(amountCents: number, readerId: string):
   }
 }
 
-async function sendToReader(amountCents: number, readerId: string): Promise<string> {
+async function sendToReader(amountCents: number, readerId: string, tipEligibleCents: number | null): Promise<string> {
   const stripe = getStripe();
   const paymentIntent = await stripe.paymentIntents.create({
     amount: amountCents,
@@ -73,7 +76,11 @@ async function sendToReader(amountCents: number, readerId: string): Promise<stri
   });
 
   try {
-    await stripe.terminal.readers.processPaymentIntent(readerId, { payment_intent: paymentIntent.id });
+    await stripe.terminal.readers.processPaymentIntent(readerId, {
+      payment_intent: paymentIntent.id,
+      // Stripe errors if a tip-eligible amount is sent while skipping tips.
+      process_config: tipEligibleCents && tipEligibleCents > 0 ? { tipping: { amount_eligible: tipEligibleCents } } : { skip_tipping: true },
+    });
   } catch (e) {
     await stripe.paymentIntents.cancel(paymentIntent.id).catch(() => {});
     throw e;
@@ -82,11 +89,18 @@ async function sendToReader(amountCents: number, readerId: string): Promise<stri
   return paymentIntent.id;
 }
 
-export async function checkReaderPayment(paymentIntentId: string): Promise<{ status: string; errorMessage: string | null }> {
+// Once it succeeds, `amount` includes any tip picked on the reader, and the
+// tip itself is in amount_details.tip.amount.
+export async function checkReaderPayment(paymentIntentId: string): Promise<{ status: string; errorMessage: string | null; amountCents: number; tipCents: number }> {
   await assertStaff();
   const stripe = getStripe();
   const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-  return { status: paymentIntent.status, errorMessage: paymentIntent.last_payment_error?.message ?? null };
+  return {
+    status: paymentIntent.status,
+    errorMessage: paymentIntent.last_payment_error?.message ?? null,
+    amountCents: paymentIntent.amount,
+    tipCents: paymentIntent.amount_details?.tip?.amount ?? 0,
+  };
 }
 
 export async function cancelReaderPayment(paymentIntentId: string, readerId: string): Promise<void> {

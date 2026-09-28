@@ -404,6 +404,9 @@ export default function PosApp({
   async function finalizeCheckout(payment: CheckoutPayment) {
     setPayOpen(false);
     setBusy(true);
+    // A tab's tip is asked on the register (TipModal); any other card sale
+    // can get one on the reader. Either way it's one tip on the order.
+    const allTip = tip + (payment.tip ?? 0);
     try {
       const { orderNumber } = await completeOrder({
         ...currentFields(),
@@ -417,7 +420,7 @@ export default function PosApp({
         },
         payment,
         ageVerified: cart.some((l) => l.isAlcohol),
-        tip,
+        tip: allTip,
         draftOrderId: activeTabId,
       });
       const receipt: ReceiptData = {
@@ -434,8 +437,8 @@ export default function PosApp({
           { label: "Points reward", amount: totals.redemptionDiscount },
         ],
         tax: totals.tax,
-        tip,
-        total: totals.total + tip,
+        tip: allTip,
+        total: totals.total + allTip,
         payments: [
           { label: "Cash", amount: payment.cash },
           { label: "Card", amount: payment.card },
@@ -443,8 +446,8 @@ export default function PosApp({
       };
       setLastReceipt(receipt);
       void printAfterSale(receipt, payment.cash > 0);
-      const parts = [`Order #${orderNumber} complete — ${money(totals.total + tip)} charged (${payment.method})`];
-      if (tip > 0) parts.push(`${money(tip)} tip`);
+      const parts = [`Order #${orderNumber} complete — ${money(totals.total + allTip)} charged (${payment.method})`];
+      if (allTip > 0) parts.push(`${money(allTip)} tip`);
       setToast(parts.join(" — "));
       resetOrder();
       setTip(0);
@@ -812,7 +815,7 @@ export default function PosApp({
       )}
 
       {payOpen && (
-        <PaymentModal total={totals.total + tip} readerId={readerId} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
+        <PaymentModal total={totals.total + tip} readerId={readerId} tipEligible={activeTabId ? null : totals.total - totals.tax} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
       )}
 
       {cancelTabId && (

@@ -13,11 +13,13 @@ type ReaderState = "waiting" | "failed";
 export default function PaymentModal({
   total,
   readerId,
+  tipEligible,
   onConfirm,
   onCancel,
 }: {
   total: number;
   readerId: string | null; // this register's card reader, or null if none is set up
+  tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
   onConfirm: (payment: CheckoutPayment) => void;
   onCancel: () => void;
 }) {
@@ -38,7 +40,7 @@ export default function PaymentModal({
     setReader(null);
     try {
       if (!readerId) return;
-      const started = await startReaderPayment(Math.round(total * 100), readerId);
+      const started = await startReaderPayment(Math.round(total * 100), readerId, tipEligible === null ? null : Math.round(tipEligible * 100));
       if (!started.ok) {
         setReader({ state: "failed", paymentIntentId: "", message: started.error });
         return;
@@ -47,10 +49,10 @@ export default function PaymentModal({
       setReader({ state: "waiting", paymentIntentId });
       pollRef.current = setInterval(async () => {
         try {
-          const { status, errorMessage } = await checkReaderPayment(paymentIntentId);
+          const { status, errorMessage, amountCents, tipCents } = await checkReaderPayment(paymentIntentId);
           if (status === "succeeded") {
             if (pollRef.current) clearInterval(pollRef.current);
-            onConfirm({ method: "card", cash: 0, card: total, stripePaymentIntentId: paymentIntentId });
+            onConfirm({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: tipCents / 100 });
           } else if (status === "canceled") {
             if (pollRef.current) clearInterval(pollRef.current);
             setReader({ state: "failed", paymentIntentId, message: errorMessage ?? "Payment was canceled." });
