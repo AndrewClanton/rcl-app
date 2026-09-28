@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { createEmployee, updateEmployeeRole, setEmployeeActive } from "./actions";
+import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
   owner: "Owner",
@@ -22,7 +22,13 @@ const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px] items-center gap-3";
 export default function StaffPanel({ employees }: { employees: EmployeeWithEmail[] }) {
   return (
     <div className="space-y-6">
-      <AddEmployeeForm />
+      <FindAccount />
+      <details className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-5 py-3">
+        <summary className="cursor-pointer text-sm text-[var(--muted)]">Someone with no website login, or a TV screen? Create a new login instead</summary>
+        <div className="mt-3">
+          <AddEmployeeForm />
+        </div>
+      </details>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
         <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
           <span>Name</span>
@@ -36,6 +42,113 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Search the people who already sign in to the website and give one of
+// them a staff role. No new account, no password to make up.
+function FindAccount() {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<AccountMatch[] | null>(null);
+  const [roles, setRoles] = useState<Record<string, EmployeeRole>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ name: string; role: EmployeeRole } | null>(null);
+  const latest = useRef(0);
+
+  useEffect(() => {
+    const q = query.trim();
+    const ticket = ++latest.current;
+    if (q.length < 2) return;
+    const timer = setTimeout(async () => {
+      const found = await findAccounts(q).catch(() => null);
+      if (ticket !== latest.current) return;
+      if (!found) setError("Couldn't search right now. Try again.");
+      else {
+        setError(null);
+        setResults(found);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  async function promote(m: AccountMatch) {
+    const role = roles[m.memberId] ?? "cashier";
+    setBusy(m.memberId);
+    setError(null);
+    setDone(null);
+    const r = await makeStaff(m.memberId, role).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+    setBusy(null);
+    if (!r.ok) return setError(r.error);
+    setDone({ name: m.name, role });
+    setResults((prev) => prev?.map((x) => (x.memberId === m.memberId ? { ...x, staffRole: role, staffActive: true } : x)) ?? null);
+    router.refresh();
+  }
+
+  const shown = query.trim().length >= 2 ? results : null;
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="text-sm font-semibold">Give someone staff access</h2>
+      <p className="mb-3 text-xs text-[var(--muted)]">
+        Find anyone who already signs in to the website (Google or email). They keep their own login, so there&apos;s no new account or password to make.
+      </p>
+      <input
+        className="w-full max-w-md rounded border border-[var(--border)] px-3 py-1.5 text-sm"
+        placeholder="Name or email"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setDone(null);
+        }}
+      />
+      {done && (
+        <div className="notice notice-success mt-3 !p-3 text-sm">
+          {done.name} is now {ROLE_LABEL[done.role] === "Admin" ? "an" : "a"} {ROLE_LABEL[done.role]}. They sign in at <strong>/login</strong> with the same Google or email login they
+          already use. Their register PIN starts as 9999.
+        </div>
+      )}
+      {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
+      {shown && (
+        <div className="mt-3 divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
+          {shown.length === 0 ? (
+            <p className="px-3 py-2.5 text-sm text-[var(--muted)]">
+              No one with a website login matches. If they&apos;ve never signed in, ask them to sign in once at the website (My Account), then search again.
+            </p>
+          ) : (
+            shown.map((m) => (
+              <div key={m.memberId} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{m.name}</div>
+                  <div className="truncate text-xs text-[var(--muted)]">{m.email ?? "no email"}</div>
+                </div>
+                {m.staffRole && m.staffActive ? (
+                  <span className="text-xs text-[var(--muted)]">Already {ROLE_LABEL[m.staffRole]}</span>
+                ) : (
+                  <>
+                    <select
+                      className="rounded border border-[var(--border)] px-2 py-1 text-xs"
+                      value={roles[m.memberId] ?? "cashier"}
+                      onChange={(e) => setRoles((r) => ({ ...r, [m.memberId]: e.target.value as EmployeeRole }))}
+                    >
+                      {(["cashier", "manager", "admin"] as const).map((r) => (
+                        <option key={r} value={r}>
+                          {ROLE_LABEL[r]}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="btn-primary !px-3 !py-1 text-xs" disabled={busy === m.memberId} onClick={() => promote(m)}>
+                      {busy === m.memberId ? "Saving…" : m.staffRole ? "Restore access" : "Make staff"}
+                    </button>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

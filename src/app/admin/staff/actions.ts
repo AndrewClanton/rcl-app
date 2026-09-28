@@ -62,6 +62,64 @@ export async function createEmployee(input: { name: string; email: string; passw
   revalidate();
 }
 
+// ---------- giving an existing account staff access ----------
+// Most staff already have a website login (Google or email) from being a
+// member. Rather than a second account with a made-up password, the owner
+// finds that account here and gives it a role; they sign in to the back
+// office and register with the login they already use.
+
+export interface AccountMatch {
+  memberId: string;
+  name: string;
+  email: string | null;
+  staffRole: EmployeeRole | null;
+  staffActive: boolean;
+}
+
+export async function findAccounts(query: string): Promise<AccountMatch[]> {
+  await requireOwner();
+  // Keep the text safe to drop into the search filter below.
+  const q = query.replace(/[%,()*"\\]/g, " ").trim();
+  if (q.length < 2) return [];
+  const supabase = createAdminClient();
+  const { data: members, error } = await supabase
+    .from("members")
+    .select("id, name, email, auth_user_id")
+    .not("auth_user_id", "is", null)
+    .is("erased_at", null)
+    .or(`name.ilike."%${q}%",email.ilike."%${q}%"`)
+    .order("name")
+    .limit(12);
+  if (error) throw error;
+  const authIds = (members ?? []).map((m) => m.auth_user_id as string);
+  const { data: staff } = authIds.length ? await supabase.from("employees").select("auth_user_id, role, active").in("auth_user_id", authIds) : { data: [] };
+  const staffByAuth = new Map((staff ?? []).map((s) => [s.auth_user_id, s]));
+  return (members ?? []).map((m) => {
+    const s = staffByAuth.get(m.auth_user_id);
+    return { memberId: m.id, name: m.name, email: m.email, staffRole: (s?.role as EmployeeRole) ?? null, staffActive: !!s?.active };
+  });
+}
+
+export async function makeStaff(memberId: string, role: EmployeeRole): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireOwner();
+  // Display accounts are for TVs, not people -- those still get their own login below.
+  if (!ASSIGNABLE_ROLES.includes(role) || role === "display") return { ok: false, error: "Pick cashier, manager or admin." };
+  const supabase = createAdminClient();
+  const { data: member } = await supabase.from("members").select("name, auth_user_id, erased_at").eq("id", memberId).maybeSingle();
+  if (!member || member.erased_at) return { ok: false, error: "That account wasn't found." };
+  if (!member.auth_user_id) return { ok: false, error: "They haven't signed in to the website yet. Ask them to sign in once, then find them here." };
+
+  const { data: existing } = await supabase.from("employees").select("id, role, active").eq("auth_user_id", member.auth_user_id).maybeSingle();
+  if (existing?.role === "owner") return { ok: false, error: "That's the owner's account." };
+  if (existing?.active) return { ok: false, error: "They're already on staff. Change their role in the list below." };
+  const { error } = existing
+    ? await supabase.from("employees").update({ role, active: true }).eq("id", existing.id)
+    : await supabase.from("employees").insert({ name: member.name, auth_user_id: member.auth_user_id, role, pin_hash: DEFAULT_PIN_HASH });
+  if (error) return { ok: false, error: "Couldn't save that. Try again." };
+  revalidate();
+  return { ok: true };
+}
+
 export async function updateEmployeeRole(employeeId: string, role: EmployeeRole) {
   await requireOwner();
   if (!ASSIGNABLE_ROLES.includes(role)) throw new Error("Not an assignable role");
