@@ -8,6 +8,7 @@ import { REGISTER_CHANNEL, EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
+import CustomItemModal from "./CustomItemModal";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
@@ -111,6 +112,7 @@ export default function PosApp({
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [payOpen, setPayOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
@@ -724,7 +726,19 @@ export default function PosApp({
               {c.label}
             </button>
           ))}
+          <button className="chip px-4 py-2 text-sm" style={{ borderStyle: "dashed" }} onClick={() => setCustomOpen(true)}>
+            + Custom item
+          </button>
         </div>
+        {customOpen && (
+          <CustomItemModal
+            onCancel={() => setCustomOpen(false)}
+            onAdd={(l) => {
+              setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: [], isAlcohol: l.isAlcohol }]);
+              setCustomOpen(false);
+            }}
+          />
+        )}
 
         {category?.subcategories.length ? (
           <div className="mb-3 flex flex-wrap gap-2 text-sm">
