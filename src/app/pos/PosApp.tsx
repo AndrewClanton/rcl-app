@@ -30,6 +30,7 @@ import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } 
 import { isStaleBuildError } from "@/lib/deployment";
 import {
   completeOrder,
+  isDraftOpen,
   saveDraftOrder,
   updateDraftOrder,
   loadDraftOrder,
@@ -517,6 +518,19 @@ export default function PosApp({
 
   async function startCheckout() {
     if (!employeeId || cart.length === 0) return;
+    // A tab closed on the other register (paid or cancelled) would be
+    // charged a second time from here: check before anyone pays.
+    if (activeTabId) {
+      setBusy(true);
+      const open = await isDraftOpen(activeTabId).catch(() => null);
+      setBusy(false);
+      if (open === null) return setToast("Couldn't check the tab. Check the connection and try again.");
+      if (!open) {
+        resetOrder();
+        router.refresh();
+        return setToast("That tab was already closed on another register, so it's been cleared from here. Check Recent orders before charging anything.");
+      }
+    }
     // Movie tickets: make sure the seats are still there before anyone pays.
     const tickets = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, quantity: l.qty }));
     if (tickets.length) {

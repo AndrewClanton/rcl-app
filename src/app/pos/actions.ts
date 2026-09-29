@@ -437,6 +437,14 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
 
 // Held orders and open tabs only. A completed sale can never be deleted
 // from here (refunds go through Recent orders with a manager PIN).
+// Whether a tab is still open, checked right before taking payment: a tab
+// closed on the other register mustn't be charged again from this one.
+export async function isDraftOpen(id: string): Promise<boolean> {
+  await assertStaff();
+  const { data } = await createAdminClient().from("orders").select("id").eq("id", id).in("status", OPEN_DRAFT).maybeSingle();
+  return !!data;
+}
+
 export async function discardDraftOrder(id: string): Promise<void> {
   await assertStaff();
   const supabase = createAdminClient();
