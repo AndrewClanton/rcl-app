@@ -10,6 +10,8 @@ import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
 import { eraseMember, type EraseResult } from "@/lib/member-erase";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
+import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
+import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -157,11 +159,12 @@ export async function grantFreeMembership(id: string, fields: { communityProgram
 export async function revokeFreeMembership(id: string) {
   await requireStaff();
   const supabase = createAdminClient();
-  const { data: member } = await supabase.from("members").select("stripe_subscription_id").eq("id", id).maybeSingle();
+  const { data: member } = await supabase.from("members").select("stripe_subscription_id, plus_gift_until").eq("id", id).maybeSingle();
   await supabase
     .from("members")
     .update({
-      tier: member?.stripe_subscription_id ? "Insiders+" : "Insiders",
+      // A gifted year still running keeps it on too.
+      tier: member?.stripe_subscription_id || (member && giftActive(member)) ? "Insiders+" : "Insiders",
       comped: false,
       community_program_id: null,
       comp_notes: null,
@@ -203,14 +206,17 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
   await requireStaff();
   const { data: m } = await createAdminClient()
     .from("members")
-    .select("id, name, email, phone, tier, comped, price_tier, stripe_customer_id, stripe_subscription_id, subscription_status, erased_at")
+    .select("id, name, email, phone, tier, comped, price_tier, stripe_customer_id, stripe_subscription_id, subscription_status, plus_gift_until, erased_at")
     .eq("id", memberId)
     .maybeSingle();
   if (!m || m.erased_at) return { ok: false, error: "Member not found." };
   if (!m.email) return { ok: false, error: "Add the member's email first. Stripe sends their receipts there." };
-  if (plusPaidFor(m)) return { ok: false, error: m.comped ? "This membership is complimentary, so there's nothing to pay." : "This member already has a card and an active membership. Use the card-on-file button to change it." };
+  // On a gifted year with nothing after it: the card goes on now and the
+  // first charge waits until the gift runs out.
+  const giftEnds = giftEndsWithoutRenewal(m);
+  if (plusPaidFor(m) && !giftEnds) return { ok: false, error: m.comped ? "This membership is complimentary, so there's nothing to pay." : "This member already has a card and an active membership. Use the card-on-file button to change it." };
 
-  let firstChargeAt: Date | null = null;
+  let firstChargeAt: Date | null = giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null;
   if (firstChargeDate) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate)) return { ok: false, error: "Pick a valid first-charge date." };
     firstChargeAt = new Date(`${firstChargeDate}T12:00:00-05:00`); // noon Central
@@ -243,4 +249,17 @@ export async function createMemberBillingPortalLink(memberId: string): Promise<{
     return_url: `${origin}/admin/members/${memberId}`,
   });
   return { url: session.url };
+}
+
+// A year of Insiders+ paid for by someone else, one payment, no renewal
+// (lib/gift-membership.ts). Opens Stripe's page for the buyer's card; the
+// year lands on this member once it's paid.
+export async function createGiftLink(memberId: string, fields: { buyerName: string; buyerEmail: string; message: string }): Promise<GiftCheckoutResult> {
+  const session = await requireStaff();
+  const buyerName = fields.buyerName.trim();
+  const buyerEmail = fields.buyerEmail.trim();
+  const message = fields.message.trim().slice(0, 300);
+  if (!buyerName) return { ok: false, error: "Enter the buyer's name." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) return { ok: false, error: "Enter the buyer's email. Their receipt goes there." };
+  return createGiftCheckout({ recipientId: memberId, buyerName, buyerEmail, message: message || null, soldBy: session.employeeId });
 }

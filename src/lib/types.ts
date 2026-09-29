@@ -181,6 +181,9 @@ export interface Member {
   stripe_subscription_id: string | null;
   subscription_status: string | null;
   comped: boolean;
+  // When a gifted year of Insiders+ runs out (lib/gift-membership.ts).
+  // Optional: not every members query selects it.
+  plus_gift_until?: string | null;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;
