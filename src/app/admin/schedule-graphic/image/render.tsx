@@ -10,6 +10,11 @@ import { join } from "node:path";
 // screening (closed, a private booking, a note) are collected into one
 // short "also this week" block underneath.
 //
+// A private booking only ever reads "Private event" here, in both editions.
+// The flyer goes out by email and gets reposted, and a client's name, or
+// their party's name ("Sarah's 40th"), is never ours to publish. The event's
+// name isn't even part of this module's input, so no caller can put it back.
+//
 // Sized so the finished image still reads at email width (~600px) or on a
 // phone: big titles, mono times, posters at real size, on an ink ground
 // that makes the poster art the brightest thing on the page. Height flexes
@@ -44,6 +49,9 @@ const SANS = "Archivo";
 const MONO = "Space Mono";
 
 const CENTRAL_TZ = "America/Chicago";
+
+// How every private booking reads on the flyer (see the note at the top).
+export const PRIVATE_EVENT_LABEL = "Private event";
 
 export const FLYER_W = 1080;
 const PAD = 40;
@@ -107,9 +115,9 @@ export interface ScreeningRow {
   } | null;
   room: { name: string } | null;
 }
+// No event_name or organizer on purpose: see the note at the top.
 export interface EventRow {
   id: string;
-  event_name: string;
   event_date: string; // YYYY-MM-DD
   event_time: string; // HH:MM:SS wall clock
   hours: number;
@@ -266,7 +274,7 @@ export function buildFlyerModel(screenings: ScreeningRow[], events: EventRow[], 
     const start = wallClockMinutes(e.event_time);
     const range = `${wallClockShort(start)}–${wallClockShort(start + Math.round(e.hours * 60))}`;
     const room = e.room?.name ? ` (${e.room.name})` : "";
-    dated.push({ date: e.event_date, minutes: start, line: { kind: "event", text: truncate(`${dayLabel(e.event_date, true)} ${range} · ${e.event_name}${room}`, ALSO_MAX_CHARS) } });
+    dated.push({ date: e.event_date, minutes: start, line: { kind: "event", text: truncate(`${dayLabel(e.event_date, true)} ${range} · ${PRIVATE_EVENT_LABEL}${room}`, ALSO_MAX_CHARS) } });
   }
   for (const n of notes) {
     const time = n.start_time ? " " + wallClockShort(wallClockMinutes(n.start_time)) + (n.end_time ? `–${wallClockShort(wallClockMinutes(n.end_time))}` : "") : "";

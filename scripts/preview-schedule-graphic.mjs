@@ -73,7 +73,7 @@ const all = [
   sc("2026-09-27T01:00:00.000Z", "indy", OUTDOOR),
   sc("2026-09-27T03:00:00.000Z", "incomer"),
 ];
-const events = [{ id: "e1", event_name: "Smith birthday party", event_date: "2026-09-25", event_time: "18:00:00", hours: 3, room: { name: "West Hall" } }];
+const events = [{ id: "e1", event_date: "2026-09-25", event_time: "18:00:00", hours: 3, room: { name: "West Hall" } }];
 const notes = [{ id: "n1", note_date: "2026-09-28", start_time: null, end_time: null, label: "Closed — private event" }];
 const rangeStart = "2026-09-22";
 const rangeDays = 7;
