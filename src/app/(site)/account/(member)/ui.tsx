@@ -1,0 +1,106 @@
+import Link from "next/link";
+import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
+import MoviePoster from "@/components/MoviePoster";
+import { dateShort, money, showtime } from "./format";
+
+// Shared pieces for the member account pages, set in the Royale Proof Sheet
+// style (ink rules, spec heads, ticket stubs) like the rest of the site.
+
+export function SectionHead({ title, href, link }: { title: string; href?: string; link?: string }) {
+  return (
+    <div className="mb-4 flex items-baseline justify-between gap-4">
+      <h2 className="font-display text-2xl">{title}</h2>
+      {href && link && (
+        <Link href={href} className="text-sm font-bold text-[var(--accent)] hover:underline">
+          {link} →
+        </Link>
+      )}
+    </div>
+  );
+}
+
+export function Empty({ children }: { children: React.ReactNode }) {
+  return <div className="rounded-[6px] border-2 border-dashed border-[rgba(20,17,12,0.35)] px-5 py-6 text-[15px] text-[var(--muted)]">{children}</div>;
+}
+
+// A screening as a ticket stub: poster, the show, and a tear-off "admit".
+export function TicketStub({ s, past = false }: { s: MemberScreening; past?: boolean }) {
+  return (
+    <Link href={`/account/purchases/ticket/${s.bookingId}`} className="sheet flex items-stretch overflow-hidden transition-transform hover:-translate-y-px">
+      <div className="w-16 shrink-0 border-r-2 border-[var(--foreground)]">
+        <MoviePoster posterUrl={s.posterUrl} title={s.title} sizes="64px" />
+      </div>
+      <div className="min-w-0 flex-1 px-4 py-3">
+        <div className="spec-k">{s.room}</div>
+        <div className="font-display truncate text-lg leading-tight">{s.title}</div>
+        <div className={`mt-1 text-sm font-bold ${past ? "text-[var(--muted)]" : "text-[var(--accent)]"}`}>{showtime(s.startsAt)}</div>
+      </div>
+      <div className={`flex w-[4.5rem] shrink-0 flex-col items-center justify-center border-l-2 border-dashed border-[var(--foreground)] px-2 text-center ${past ? "bg-[var(--surface-hover)]" : "bg-[var(--gold)]"}`}>
+        <div className="spec-k !mb-0 !text-[var(--foreground)]">Admit</div>
+        <div className="font-display text-2xl leading-none">{s.quantity}</div>
+      </div>
+    </Link>
+  );
+}
+
+// Purchase lines for a sheet: date in mono, what it was, the amount.
+export function PurchaseRows({ rows }: { rows: PurchaseRow[] }) {
+  return (
+    <ul>
+      {rows.map((p) => (
+        <li key={`${p.kind}-${p.id}`} className="border-b border-[var(--border)] last:border-b-0">
+          <Link href={`/account/purchases/${p.kind}/${p.id}`} className="flex items-center gap-4 px-4 py-3 transition-colors hover:bg-[var(--surface-hover)]">
+            <div className="spec-code hidden w-24 shrink-0 sm:block">{dateShort(p.date)}</div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-bold">{p.label}</div>
+              <div className="truncate text-sm text-[var(--muted)]">
+                <span className="sm:hidden">{dateShort(p.date)} · </span>
+                {p.detail}
+              </div>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className={`font-display tabular-nums ${p.status === "refunded" ? "text-[var(--muted)] line-through" : ""}`}>{money(p.amount)}</div>
+              {p.status === "refunded" && <div className="spec-code !text-[var(--accent)]">Refunded</div>}
+            </div>
+            <span className="font-display text-[var(--muted)]" aria-hidden="true">
+              ›
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// A spec panel of figures: ink head, then a grid of label/value cells.
+export function SpecPanel({ title, aside, cells, className = "" }: { title: string; aside?: string; cells: { k: string; v: string; hot?: boolean }[]; className?: string }) {
+  return (
+    <section className={`sheet ${className}`}>
+      <h2 className="spec-head rounded-t-[4px]">
+        <span>{title}</span>
+        {aside && <span>{aside}</span>}
+      </h2>
+      <dl className={`spec-grid ${cells.length === 3 ? "spec-grid-3" : ""} ${cells.length === 4 ? "sm:!grid-cols-4" : ""} rounded-b-[4px]`}>
+        {cells.map((c) => (
+          <div key={c.k} className={`spec-cell ${c.hot ? "!bg-[var(--gold)]" : ""}`}>
+            <dt className={`spec-k ${c.hot ? "!text-[var(--foreground)]" : ""}`}>{c.k}</dt>
+            <dd className="spec-v">{c.v}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
+
+// A titled sheet (spec head + body), for sections of a page.
+export function Panel({ title, aside, children, className = "" }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={`sheet ${className}`}>
+      <h2 className="spec-head rounded-t-[4px]">
+        <span>{title}</span>
+        {aside && <span>{aside}</span>}
+      </h2>
+      {children}
+    </section>
+  );
+}

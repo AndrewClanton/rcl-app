@@ -31,14 +31,14 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
   }
 
   return (
-    <div className="mx-auto max-w-sm">
-      <div className="eyebrow mb-2">My account</div>
-      <h1 className="font-display text-3xl font-semibold">Sign in</h1>
-      <p className="mt-2 text-sm text-[var(--muted)]">
+    <div className="mx-auto max-w-md">
+      <span className="page-eyebrow">My account</span>
+      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Sign in</h1>
+      <p className="mt-3 text-[15px] text-[var(--muted)]">
         Sign in to check your points, purchase history, and membership. New here? Creating an account is free and joins you as a
         Royale Insider.
       </p>
-      <div className="mt-6">
+      <div className="mt-8">
         <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} next={next} />
       </div>
     </div>

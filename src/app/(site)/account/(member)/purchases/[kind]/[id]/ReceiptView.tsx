@@ -16,13 +16,13 @@ export default function ReceiptView({ r }: { r: Receipt }) {
         <Link href="/account/purchases" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--foreground)]">
           ← All purchases
         </Link>
-        <a href={`/account/purchases/${kind}/${id}/pdf`} className="btn-primary !px-4 !py-2 text-sm">
+        <a href={`/account/purchases/${kind}/${id}/pdf`} className="btn-primary px-4 py-2 text-sm">
           Download PDF receipt
         </a>
       </div>
 
-      <article className="mx-auto max-w-xl overflow-hidden rounded-2xl border border-[var(--border)] bg-white shadow-sm">
-        <header className="flex items-end justify-between gap-4 bg-[var(--foreground)] px-6 py-5 text-[var(--background)]">
+      <article className="sheet crop mx-auto max-w-xl !bg-white">
+        <header className="flex items-end justify-between gap-4 rounded-t-[4px] bg-[var(--foreground)] px-6 py-5 text-[var(--background)]">
           <div>
             <div className="font-display text-lg leading-tight">Royale Cinema Lounge</div>
             <div className="text-xs opacity-70">715 E Broadway, Joplin, MO 64801</div>
@@ -54,7 +54,7 @@ export default function ReceiptView({ r }: { r: Receipt }) {
           </dl>
 
           {r.screening && (
-            <div className="flex items-center gap-4 rounded-xl bg-[var(--background)] p-3">
+            <div className="flex items-center gap-4 rounded-[4px] border-2 border-[var(--foreground)] bg-[var(--background)] p-3">
               <div className="w-12 shrink-0">
                 <MoviePoster posterUrl={r.screening.posterUrl} title={r.screening.title} sizes="48px" />
               </div>
@@ -106,18 +106,18 @@ export default function ReceiptView({ r }: { r: Receipt }) {
           {(r.pointsEarned !== 0 || r.pointsRedeemed !== 0) && (
             <div className="flex flex-wrap gap-2 text-xs">
               {r.pointsEarned !== 0 && (
-                <span className="rounded-full bg-[var(--gold)] px-2.5 py-1 font-bold text-[var(--gold-foreground)]">
+                <span className="ctag ctag-yellow">
                   {r.pointsEarned > 0 ? "+" : ""}
                   {points(r.pointsEarned)} points earned
                 </span>
               )}
               {r.pointsRedeemed !== 0 && (
-                <span className="rounded-full border border-[var(--border)] px-2.5 py-1 font-bold">{points(r.pointsRedeemed)} points used</span>
+                <span className="ctag bg-[var(--surface)]">{points(r.pointsRedeemed)} points used</span>
               )}
             </div>
           )}
         </div>
-        <footer className="border-t border-[var(--border)] px-6 py-4 text-xs text-[var(--muted)]">
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-dashed border-[var(--border)] px-6 py-4 text-xs text-[var(--muted)]">
           Questions about this receipt? info@royalecinemajoplin.com · 417-281-4172
         </footer>
       </article>

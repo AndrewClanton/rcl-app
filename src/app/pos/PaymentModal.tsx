@@ -6,6 +6,11 @@ import { startReaderPayment, checkReaderPayment, cancelReaderPayment } from "./t
 import { chargeTabCard } from "./tab-card-actions";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 
+// Split is hidden: it recorded the card part as paid without ever sending it
+// to the reader. It comes back once it takes the cash here and charges the
+// rest on the reader.
+const SPLIT_ENABLED = false;
+
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
@@ -381,9 +386,11 @@ export default function PaymentModal({
                 Card
               </button>
             )}
-            <button className="btn-secondary px-4 py-2" onClick={() => setSplitOpen(true)}>
-              Split
-            </button>
+            {SPLIT_ENABLED && (
+              <button className="btn-secondary px-4 py-2" onClick={() => setSplitOpen(true)}>
+                Split
+              </button>
+            )}
             {voucher === 0 && (
               <button className="btn-secondary px-4 py-2" onClick={() => setVoucherOpen(true)}>
                 Voucher

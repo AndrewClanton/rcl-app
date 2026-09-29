@@ -149,7 +149,7 @@ export default function AccountForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="card">
+    <form onSubmit={handleSubmit} className="sheet crop p-5 sm:p-6">
       {(providers.google || providers.facebook) && (
         <>
           <div className="space-y-2.5">

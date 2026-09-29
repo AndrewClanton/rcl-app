@@ -93,9 +93,9 @@ export default function ResetPasswordPage() {
   }
 
   return (
-    <div className="mx-auto max-w-sm">
-      <div className="eyebrow mb-2">My account</div>
-      <h1 className="font-display text-3xl font-semibold">Reset password</h1>
+    <div className="mx-auto max-w-md">
+      <span className="page-eyebrow">My account</span>
+      <h1 className="font-display mt-3 text-4xl leading-none">Reset password</h1>
 
       {!ready && !error && <p className="mt-4 text-sm text-[var(--muted)]">Checking your link...</p>}
 
@@ -106,7 +106,7 @@ export default function ResetPasswordPage() {
       )}
 
       {ready && (
-        <form onSubmit={handleSubmit} className="card mt-6">
+        <form onSubmit={handleSubmit} className="sheet mt-8 p-5 sm:p-6">
           <label className="mb-3 block">
             <div className="label-xs">New password</div>
             <input
