@@ -2,6 +2,7 @@ import "server-only";
 import type { User } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { exactEmail } from "@/lib/email-match";
+import { pendingClaimFor } from "@/lib/member-claim-token";
 
 // Links a signed-in auth user to a `members` row: the row already linked to
 // them, else an existing row with the same email (someone who joined at the
@@ -57,6 +58,11 @@ export async function linkMemberForUser(user: User, nameHint?: string | null): P
     const { error } = await admin.from("members").update({ auth_user_id: user.id }).eq("id", byEmail.id);
     return error ? { ok: false, reason: "failed", error: "Couldn't link your account. Try again." } : { ok: true, created: false };
   }
+
+  // Signed up from a "claim your account" link (lib/member-claim-token.ts):
+  // the claim page attaches this login to the account the link was made
+  // for, so don't make them a second, empty one here first.
+  if (await pendingClaimFor(user)) return { ok: true, created: false };
 
   const meta = user.user_metadata ?? {};
   const name = (nameHint?.trim() || meta.full_name || meta.name || user.email.split("@")[0]) as string;

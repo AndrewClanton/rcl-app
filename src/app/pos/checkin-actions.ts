@@ -9,6 +9,7 @@ import { allowAttempt } from "@/lib/rate-limit";
 import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
 import { openRewards, recordVisit, redeemReward, todaysVisitors, unredeemReward, type OpenReward } from "@/lib/visits-server";
 import type { VisitResult } from "@/lib/visits";
+import { issueClaimLink } from "@/lib/member-claim";
 
 // The register's half of check-in for points (the customer screen's half is
 // in display/customer/actions.ts). Staff-only: this is where a sealed
@@ -141,15 +142,23 @@ export async function createCheckinMember(ref: string, existingId: string | null
 
 // ---------- visits, streaks and rewards (lib/visits.ts) ----------
 
-export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[] } | { ok: false; error: string };
+export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null } | { ok: false; error: string };
+
+// A member confirmed at the door gets one "finish on your phone" link per
+// this long (the tablet already made one if it just created the account).
+const CLAIM_LINK_EVERY_MS = 10 * 60_000;
 
 // Staff tapped Check in: today's visit, with its streak points and any
 // streak reward. Once a day per member; a repeat says so and pays nothing.
+// A member with no website login also gets a claim link (lib/member-claim.ts)
+// for the tablet to show as a QR code: only here, once staff have said it's
+// them, never from the number typed at the screen alone.
 export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
   const staff = await assertStaff();
   const visit = await recordVisit(memberId, staff.employeeId);
   if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
-  return { ok: true, visit, rewards: await openRewards(memberId) };
+  const [rewards, claimUrl] = await Promise.all([openRewards(memberId), issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS })]);
+  return { ok: true, visit, rewards, claimUrl };
 }
 
 export interface HereToday {

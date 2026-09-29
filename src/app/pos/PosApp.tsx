@@ -30,6 +30,7 @@ import RecentOrders from "./RecentOrders";
 import EasterEggs from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendToPrinter } from "@/lib/print/epos-client";
+import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
@@ -610,7 +611,9 @@ export default function PosApp({
       // The ✨ surprise rides on this receipt, then turns off.
       const surprise = devices.autoPrint ? flourishLines(flourishRef.current) : null;
       if (surprise) setFlourish(null);
-      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer, flourish: surprise }) : drawerXml());
+      // A member with no website login gets a "claim your account" QR code.
+      const claimUrl = devices.autoPrint ? await receiptClaimUrl(member, receipt) : null;
+      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer, flourish: surprise, claimUrl }) : drawerXml());
       if (!r.ok) return setPrintNote(r.error);
     }
     if (devices.printTickets && tickets.length) {

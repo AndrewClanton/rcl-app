@@ -225,6 +225,35 @@
   padding: 12px;
   border-radius: 12px;
   border: 3px solid var(--gold);
+  flex: none;
+}
+/* "finish your account on your phone", on the new-account screen */
+.claim {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  padding: 14px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  background: var(--ink);
+  text-align: left;
+}
+.claimCopy {
+  display: grid;
+  gap: 6px;
+}
+.claimTitle {
+  font-family: var(--display);
+  font-size: clamp(20px, 2.8vh, 26px);
+  line-height: 1.1;
+  color: var(--gold);
+}
+@media (max-width: 520px) {
+  .claim {
+    flex-direction: column;
+    text-align: center;
+  }
 }
 
 /* banners across the top of the check-in panel */
@@ -317,6 +346,27 @@
 }
 .ticketDone {
   background: transparent;
+}
+/* a banner with a claim QR code: words left, code right */
+.toastClaim {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 10px 10px 16px;
+}
+.toastClaim .qr {
+  padding: 6px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.toastScan {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 @keyframes slide {
   from {

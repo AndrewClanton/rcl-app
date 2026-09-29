@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { cleanEmail, cleanFirstName, formatPhone, isFullPhone, phoneDigits, type CheckinRequest } from "@/lib/checkin";
 import { memberIdsWithPhone, sealCheckin } from "@/lib/checkin-server";
 import { allowAttempt, TOO_MANY_TRIES } from "@/lib/rate-limit";
+import { issueClaimLink } from "@/lib/member-claim";
 
 // Check-in for points, from the customer screen. The screen page is gated by
 // requireStaff() (a physical, staff-set-up device), and assertStaff()
@@ -30,6 +31,11 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (found.ids.length === 0) return { ok: true, status: "new" };
+  // No claim link here, even for a member with no login: whoever is at the
+  // screen just typed the whole number, so the claim page's "last four of
+  // your phone" check would prove nothing and anyone who knows a regular's
+  // number could take their account. Theirs comes after staff confirm it's
+  // them (confirmVisit in pos/checkin-actions.ts), or on their receipt.
   return { ok: true, status: "known", request: sealCheckin({ kind: "known", phone: digits }) };
 }
 
@@ -92,5 +98,10 @@ export async function createKioskMember(fields: { phone: string; firstName: stri
     .single();
   if (error || !data) return { ok: false, error: "We couldn't set that up just now. Ask your bartender to add you." };
 
-  return { ok: true, status: "created", request: sealCheckin({ kind: "known", phone: digits, fresh: true }), firstName, claimUrl: null };
+  // The "finish on your phone" QR code: a 30-minute claim link for the
+  // account just made (lib/member-claim.ts). Null if it can't be made (the
+  // member_claims migration not applied yet): the screen then just says
+  // welcome.
+  const claimUrl = await issueClaimLink(data.id, "kiosk");
+  return { ok: true, status: "created", request: sealCheckin({ kind: "known", phone: digits, fresh: true }), firstName, claimUrl };
 }

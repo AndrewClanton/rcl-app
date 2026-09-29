@@ -8,6 +8,8 @@ import PointsCelebration from "./PointsCelebration";
 import { REWARD_LABEL } from "@/lib/visits";
 import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
 import type { TicketsShown } from "./TicketsCard";
+import { isClaimUrl } from "@/lib/claim-link";
+import ClaimQr from "./ClaimQr";
 import k from "./kiosk.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -26,6 +28,9 @@ interface Toast {
   detail: string;
   reward: string | null;
   tone: "ok" | "warn";
+  // A member with no website login, confirmed by staff: a QR code to set
+  // one up (only ever a link that passed isClaimUrl).
+  claimUrl: string | null;
 }
 
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
@@ -48,8 +53,10 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 //   right away (email marketing off), then offers a QR code to finish on
 //   their own phone. Staff still confirm the visit on the register.
 // This screen never shows anyone's details until staff have confirmed:
-// then just a first name and points. When a sale with a member on it
-// completes, the register says so and the points burst plays here.
+// then just a first name and points (and, for a member with no website
+// login yet, a QR code in the banner to set one up). When a sale with a
+// member on it completes, the register says so and the points burst plays
+// here.
 // initialStep is for previews only.
 // onTickets: someone's online tickets for today, after staff confirm their
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
@@ -100,7 +107,8 @@ export default function CheckinKiosk({
   function toast(t: Omit<Toast, "key">) {
     const key = Date.now() + Math.random();
     setToasts((ts) => [...ts.slice(-2), { ...t, key }]);
-    setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.reward ? 12_000 : 8_000);
+    // A QR code stays up long enough to get a phone out.
+    setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.claimUrl ? 25_000 : t.reward ? 12_000 : 8_000);
   }
 
   const onSeen = useEffectEvent((id: unknown) => {
@@ -129,6 +137,7 @@ export default function CheckinKiosk({
       detail,
       reward: reward ? `🎉 You earned a ${REWARD_LABEL[reward].toLowerCase()}! Just ask your bartender.` : null,
       tone: "ok",
+      claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
     });
   });
 
@@ -152,7 +161,7 @@ export default function CheckinKiosk({
 
   const onDeclined = useEffectEvent((id: unknown) => {
     if (typeof id !== "string" || !outbox.current.delete(id)) return;
-    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", reward: null, tone: "warn" });
+    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", reward: null, tone: "warn", claimUrl: null });
   });
 
   const onPoints = useEffectEvent((p: Partial<PointsEarned> | null) => {
@@ -276,10 +285,14 @@ export default function CheckinKiosk({
       {toasts.length > 0 && (
         <div className={k.toasts} aria-live="polite">
           {toasts.map((t) => (
-            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""}`}>
-              <div className={k.toastTitle}>{t.title}</div>
-              <div className={k.toastDetail}>{t.detail}</div>
-              {t.reward && <div className={k.toastDetail} style={{ fontWeight: 800 }}>{t.reward}</div>}
+            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.claimUrl ? k.toastClaim : ""}`}>
+              <div>
+                <div className={k.toastTitle}>{t.title}</div>
+                <div className={k.toastDetail}>{t.detail}</div>
+                {t.reward && <div className={k.toastDetail} style={{ fontWeight: 800 }}>{t.reward}</div>}
+                {t.claimUrl && <div className={k.toastScan}>Scan to see your points online →</div>}
+              </div>
+              {t.claimUrl && <ClaimQr url={t.claimUrl} size={104} label="QR code: see your points online" />}
             </div>
           ))}
         </div>
@@ -411,14 +424,20 @@ export default function CheckinKiosk({
   );
 }
 
-// Where the "finish on your phone" QR code goes once claim links exist
-// (lib/member-claim.ts). Until then createKioskMember returns no link and
-// this isn't shown.
+// The "finish on your phone" QR code for an account just made here: a
+// 30-minute claim link from createKioskMember (lib/member-claim.ts). With no
+// link (say the member_claims migration isn't applied yet), the screen is
+// the plain welcome.
 function ClaimQrSlot({ url }: { url: string }) {
+  if (!isClaimUrl(url)) return null;
   return (
-    <p className={k.sub}>
-      Finish your account on your phone: <span style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>{url}</span>
-    </p>
+    <div className={k.claim}>
+      <ClaimQr url={url} size={188} label="QR code: finish your account on your phone" />
+      <div className={k.claimCopy}>
+        <div className={k.claimTitle}>Scan to finish your account on your phone</div>
+        <p className={k.sub}>Add a login to see your points and visits. No need to hold up the line.</p>
+      </div>
+    </div>
   );
 }
 

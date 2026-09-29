@@ -3,6 +3,7 @@
 // Pure string building, no browser or server APIs, so it can be tested
 // directly with node.
 import { SITE_NAME, THEATER_ADDRESS } from "@/lib/site";
+import { isClaimUrl } from "@/lib/claim-link";
 import type { Raster } from "./raster";
 
 // 80mm paper, Font A: 48 characters per line (24 at double width).
@@ -121,8 +122,10 @@ class Doc {
   image(r: Raster) {
     return this.raw(`<image width="${r.width}" height="${r.height}" align="center" color="color_1" mode="mono">${r.data}</image>`);
   }
-  qr(data: string) {
-    return this.raw(`<symbol type="qrcode_model_2" level="level_m" width="6" align="center">${escapeXml(data)}</symbol>`);
+  // The printer's own QR command. width: dots per module, at 8 dots a mm
+  // (a claim link is a 41-module code, so 5 prints it about an inch wide).
+  qr(data: string, width = 6) {
+    return this.raw(`<symbol type="qrcode_model_2" level="level_m" width="${width}" align="center">${escapeXml(data)}</symbol>`);
   }
   cut() {
     return this.raw(`<feed line="2"/><cut type="feed"/>`);
@@ -152,7 +155,9 @@ function when(iso: string) {
 
 // flourish: an Easter egg from the register's ✨ panel (lib/print/flourishes.ts),
 // printed at the very bottom with no explanation.
-export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flourish?: string[] | null } = {}): string {
+// claimUrl: for a member on the sale with no website login, a small QR code
+// to set one up (lib/member-claim.ts). Only ever a claim link on this site.
+export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flourish?: string[] | null; claimUrl?: string | null } = {}): string {
   const d = new Doc();
   if (opts.openDrawer) d.drawer();
   header(d);
@@ -175,6 +180,10 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   d.line();
   for (const p of r.payments) if (p.amount > 0) d.lines(columns(p.label, money(p.amount)));
   d.line().align("center").line("Thank you for coming to the Royale!").line("royalecinemajoplin.com");
+  if (isClaimUrl(opts.claimUrl)) {
+    d.feed(1).bold(true).line("Scan to see your points online").bold(false);
+    d.qr(opts.claimUrl, 5);
+  }
   if (opts.flourish?.length) {
     d.feed(1);
     for (const l of opts.flourish) d.line(l);

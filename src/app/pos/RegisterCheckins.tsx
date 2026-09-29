@@ -148,6 +148,8 @@ export default function RegisterCheckins({
       points: Math.round(visit ? visit.balance : m.points),
       isNew,
       ...(visit ? { visit: { earned: visit.earned, streak: visit.streak, alreadyToday: visit.alreadyToday, reward: visit.reward } } : {}),
+      // No website login yet: the tablet shows a QR code to set one up.
+      ...(r?.ok && r.claimUrl ? { claimUrl: r.claimUrl } : {}),
     };
     answer(p.id, "checkin-confirmed", confirmed);
     // Their tickets for today, if they bought any online: a Print row here,
