@@ -8,6 +8,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMember } from "@/lib/member-auth";
 import { getStripe } from "@/lib/stripe";
 import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
+import { insidersPlusPriceIdFor } from "@/lib/member-rate";
+import { ANNUAL_PRICE } from "@/lib/membership-rates";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -131,4 +133,68 @@ export async function removeMyPhoto(): Promise<ProfileResult> {
   await createAdminClient().from("members").update({ avatar_url: null }).eq("id", member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
+}
+
+// ---------- switch Insiders+ from monthly to yearly (15% off) ----------
+// The year starts the day they switch: they pay the yearly price now, less
+// a credit for the unused part of the month they already paid for. If the
+// card doesn't go through, nothing changes.
+
+async function monthlySubscriptionFor(member: Awaited<ReturnType<typeof requireMember>>) {
+  if (!member.stripe_subscription_id || !member.stripe_customer_id) return null;
+  const sub = await getStripe().subscriptions.retrieve(member.stripe_subscription_id);
+  const item = sub.items.data[0];
+  if (!item || !["active", "trialing"].includes(sub.status) || item.price.recurring?.interval !== "month") return null;
+  return { sub, item };
+}
+
+export type YearlyPreview = { ok: true; amountDue: number; yearly: number; renewsOn: string } | { ok: false; error: string };
+
+export async function previewSwitchToYearly(): Promise<YearlyPreview> {
+  const member = await requireMember();
+  try {
+    const current = await monthlySubscriptionFor(member);
+    if (!current) return { ok: false, error: "Only a monthly Insiders+ membership can switch to yearly." };
+    const tier = member.price_tier ?? "adult";
+    const yearlyPrice = await insidersPlusPriceIdFor(tier, "year");
+    if (!yearlyPrice) return { ok: false, error: "Yearly isn't available right now." };
+    const preview = await getStripe().invoices.createPreview({
+      customer: member.stripe_customer_id as string,
+      subscription: current.sub.id,
+      subscription_details: {
+        items: [{ id: current.item.id, price: yearlyPrice, tax_rates: current.item.tax_rates?.map((r) => r.id) }],
+        billing_cycle_anchor: "now",
+        proration_behavior: "create_prorations",
+      },
+    });
+    const renews = new Date();
+    renews.setFullYear(renews.getFullYear() + 1);
+    return { ok: true, amountDue: preview.amount_due / 100, yearly: ANNUAL_PRICE[tier], renewsOn: renews.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" }) };
+  } catch {
+    return { ok: false, error: "Couldn't work out the switch right now. Try again in a minute." };
+  }
+}
+
+export async function switchToYearly(): Promise<{ ok: true } | { ok: false; error: string }> {
+  const member = await requireMember();
+  try {
+    const current = await monthlySubscriptionFor(member);
+    if (!current) return { ok: false, error: "Only a monthly Insiders+ membership can switch to yearly." };
+    const yearlyPrice = await insidersPlusPriceIdFor(member.price_tier ?? "adult", "year");
+    if (!yearlyPrice) return { ok: false, error: "Yearly isn't available right now." };
+    await getStripe().subscriptions.update(current.sub.id, {
+      items: [{ id: current.item.id, price: yearlyPrice, tax_rates: current.item.tax_rates?.map((r) => r.id) }],
+      billing_cycle_anchor: "now",
+      proration_behavior: "create_prorations",
+      // Card declined: Stripe undoes the change instead of leaving it half done.
+      payment_behavior: "error_if_incomplete",
+    });
+    await createAdminClient().from("members").update({ billing_interval: "year" }).eq("id", member.id);
+    revalidatePath("/account");
+    revalidatePath("/account/billing");
+    return { ok: true };
+  } catch (e) {
+    const message = e && typeof e === "object" && "message" in e && typeof (e as { message: unknown }).message === "string" && "type" in e ? (e as { message: string }).message : null;
+    return { ok: false, error: message ? `The switch didn't go through: ${message}` : "The switch didn't go through. Nothing was changed." };
+  }
 }

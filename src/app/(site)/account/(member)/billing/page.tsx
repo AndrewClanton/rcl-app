@@ -4,6 +4,7 @@ import { activityYears, getPurchases } from "@/lib/data/member-account";
 import { getMembershipBilling } from "@/lib/data/member-billing";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/membership-rates";
 import BillingPortalButton from "../../BillingPortalButton";
+import SwitchToYearly from "../../SwitchToYearly";
 import { dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-checkout";
@@ -61,9 +62,12 @@ export default async function BillingPage() {
             {billing?.cancelAtPeriodEnd && (
               <p className="notice notice-warn text-sm">Your Insiders+ is set to end on {billing.nextBillDate ? dateShort(billing.nextBillDate) : "the end of this period"}. You can turn it back on below.</p>
             )}
+            {member.stripe_subscription_id && member.billing_interval !== "year" && !billing?.cancelAtPeriodEnd && ["active", "trialing"].includes(billing?.status ?? "") && (
+              <SwitchToYearly yearlyLabel={`${dollars(ANNUAL_PRICE[rate])}/year instead of $${RATE_PRICE[rate] * 12} for twelve months`} />
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
               <p className="max-w-md text-xs text-[var(--muted)]">
-                Billed monthly on the day you joined. Update your card, change billing details or cancel anytime. Senior and student rates are set at the box
+                Billed {member.billing_interval === "year" ? "once a year" : "monthly"} on the day you joined. Update your card, change billing details or cancel anytime. Senior and student rates are set at the box
                 office with an ID.
               </p>
               {member.stripe_customer_id && <BillingPortalButton />}
