@@ -25,6 +25,9 @@ export interface DayReport {
   orders: DayOrder[];
   // Money in, by how it arrived: the register's cash and card, and the
   // website (online tickets, booth fees, web orders). Includes tax and tips.
+  // Vouchers (trivia prizes) paid for goods but brought in no money, so
+  // they're counted apart from what was collected.
+  vouchers: number;
   cash: number;
   card: number;
   online: number;
@@ -74,6 +77,7 @@ type DayOrderRow = {
   payment_method: string | null;
   payment_cash_amount: number | null;
   payment_card_amount: number | null;
+  payment_voucher_amount: number | null;
   tax: number;
   tip: number;
   total: number;
@@ -92,7 +96,7 @@ export async function getDayReport(date: string): Promise<DayReport> {
     supabase
       .from("orders")
       .select(
-        "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, tax, tip, total, tier_discount, monthly_discount, redemption_discount, employee:employees(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)",
+        "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tip, total, tier_discount, monthly_discount, redemption_discount, employee:employees(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)",
       )
       .in("status", ["completed", "refunded", "voided"])
       .gte("completed_at", start)
@@ -114,7 +118,8 @@ export async function getDayReport(date: string): Promise<DayReport> {
   const categoryKeyById = new Map((catRes.data ?? []).map((c) => [c.id, c.key]));
   const bucketByItem = new Map((menuRes.data ?? []).map((m) => [m.id, CATEGORY_BUCKET[categoryKeyById.get(m.category_id) ?? ""]]));
 
-  let cash = 0,
+  let vouchers = 0,
+    cash = 0,
     card = 0,
     online = 0,
     tips = 0,
@@ -126,6 +131,7 @@ export async function getDayReport(date: string): Promise<DayReport> {
     if (o.source === "pos") {
       cash += Number(o.payment_cash_amount ?? 0);
       card += Number(o.payment_card_amount ?? 0);
+      vouchers += Number(o.payment_voucher_amount ?? 0);
     } else online += Number(o.total);
     tips += Number(o.tip);
     tax += Number(o.tax);
@@ -173,10 +179,12 @@ export async function getDayReport(date: string): Promise<DayReport> {
       cashier: o.employee?.name ?? null,
       name: o.tab_name || o.order_name || null,
       items: o.items.map((l) => (l.quantity > 1 ? `${l.quantity} ${l.name}` : l.name)).join(", "),
-      method: o.payment_method,
+      // "cash + voucher" when vouchers paid part of it.
+      method: Number(o.payment_voucher_amount) > 0 && o.payment_method !== "voucher" ? `${o.payment_method} + voucher` : o.payment_method,
       tip: Number(o.tip),
       total: Number(o.total),
     })),
+    vouchers,
     cash,
     card,
     online,

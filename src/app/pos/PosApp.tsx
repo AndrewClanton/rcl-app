@@ -524,6 +524,7 @@ export default function PosApp({
         tip: allTip,
         total: totals.total + allTip,
         payments: [
+          { label: "Voucher", amount: payment.voucher ?? 0 },
           { label: "Cash", amount: payment.cash },
           { label: "Card", amount: payment.card },
           ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
@@ -535,6 +536,7 @@ export default function PosApp({
       void printAfterSale(receipt, payment.cash > 0, tickets);
       const parts = [`Order #${orderNumber} complete — ${money(totals.total + allTip)} charged (${payment.method})`];
       if (allTip > 0) parts.push(`${money(allTip)} tip`);
+      if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
       if (change > 0) parts.push(`give ${money(change)} change`);
       setToast(parts.join(" — "));
       resetOrder();

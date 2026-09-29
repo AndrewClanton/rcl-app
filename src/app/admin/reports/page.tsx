@@ -89,7 +89,7 @@ async function DayView({ date, today, days, keep }: { date: string; today: strin
       <TrendStrip trend={trend} date={date} days={days} keep={keep} />
 
       {/* The day in one line: money in, and how it arrived. */}
-      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] sm:grid-cols-4 lg:grid-cols-8">
+      <div className={`grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] sm:grid-cols-4 ${r.vouchers > 0 ? "lg:grid-cols-9" : "lg:grid-cols-8"}`}>
         {[
           ["Collected", money(r.collected), true],
           ["Cash", money(r.cash)],
@@ -97,6 +97,7 @@ async function DayView({ date, today, days, keep }: { date: string; today: strin
           ["Online", money(r.online)],
           ["Tips", money(r.tips)],
           ["Sales tax", money(r.tax)],
+          ...(r.vouchers > 0 ? [["Vouchers used", money(r.vouchers)]] : []),
           ["Orders", String(completed)],
           ["Tickets", String(r.ticketsSold)],
         ].map(([label, value, strong]) => (

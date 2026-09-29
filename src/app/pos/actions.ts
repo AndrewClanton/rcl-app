@@ -27,12 +27,14 @@ export interface CheckoutTotals {
 }
 
 export interface CheckoutPayment {
-  method: "cash" | "card" | "split";
+  // 'voucher' when paper vouchers covered it all; otherwise how the rest was paid.
+  method: "cash" | "card" | "split" | "voucher";
   cash: number;
   card: number;
   stripePaymentIntentId?: string | null;
   tip?: number; // tip the customer chose on the card reader, already inside `card`
   tendered?: number; // cash handed over, for the change shown and printed (not stored)
+  voucher?: number; // paper vouchers (trivia prizes) applied; not cash, not card
 }
 
 export interface DraftFields {
@@ -155,6 +157,7 @@ export async function completeOrder(params: DraftFields & {
     total: params.totals.total + tip,
     payment_method: params.payment.method,
     payment_cash_amount: params.payment.cash,
+    payment_voucher_amount: params.payment.voucher ?? 0,
     payment_card_amount: params.payment.card,
     stripe_payment_intent_id: params.payment.stripePaymentIntentId ?? null,
     points_redeemed: params.pointsRedeemed,

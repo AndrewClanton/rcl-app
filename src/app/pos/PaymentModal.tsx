@@ -17,6 +17,78 @@ function tenderChoices(total: number) {
   return [...new Set(options.filter((c) => c >= cents))].slice(0, 6).map((c) => c / 100);
 }
 
+// Paper vouchers ($10/$20, the trivia prizes): tap one per voucher handed
+// over, or type an odd amount. Vouchers never give change: if they cover the
+// whole order it's paid; otherwise cash or card pays the rest.
+function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: number; onBack: () => void; onPaidInFull: () => void; onPartial: (amount: number) => void }) {
+  const [vouchers, setVouchers] = useState<number[]>([]);
+  const [typed, setTyped] = useState("");
+  const sum = Math.round(vouchers.reduce((s, v) => s + v, 0) * 100) / 100;
+  const covers = sum + 0.001 >= total;
+  const leftOver = Math.round((sum - total) * 100) / 100;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-sm text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          Voucher · {money(total)} due
+        </h3>
+        <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+          Tap once for each voucher they hand you.
+        </p>
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          {[5, 10, 20].map((v) => (
+            <button key={v} className="chip !py-3 !text-base font-bold" onClick={() => setVouchers((l) => [...l, v])}>
+              + ${v}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-2">
+          <input className="input flex-1 text-center" inputMode="decimal" placeholder="Other amount" value={typed} onChange={(e) => setTyped(e.target.value.replace(/[^0-9.]/g, ""))} />
+          <button
+            className="btn-secondary !px-4"
+            disabled={!(parseFloat(typed) > 0)}
+            onClick={() => {
+              setVouchers((l) => [...l, Math.round(parseFloat(typed) * 100) / 100]);
+              setTyped("");
+            }}
+          >
+            Add
+          </button>
+        </div>
+        <div className="mt-4 rounded-lg py-3" style={{ background: "var(--surface-hover)" }}>
+          <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+            {vouchers.length ? `${vouchers.length} voucher${vouchers.length === 1 ? "" : "s"}: ${vouchers.map((v) => money(v).replace(".00", "")).join(" + ")}` : "No vouchers yet"}
+          </div>
+          <div className="font-display text-4xl" style={{ color: "var(--accent)" }}>
+            {money(sum)}
+          </div>
+          {vouchers.length > 0 && (
+            <button className="mt-1 text-xs underline" style={{ color: "var(--muted)" }} onClick={() => setVouchers([])}>
+              Start over
+            </button>
+          )}
+        </div>
+        {covers && leftOver > 0 && (
+          <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+            {money(leftOver)} left on the voucher isn&apos;t given back as change.
+          </p>
+        )}
+        <button
+          className="btn-primary mt-4 w-full py-3 text-base"
+          disabled={sum === 0}
+          onClick={() => (covers ? onPaidInFull() : onPartial(sum))}
+        >
+          {sum === 0 ? "Add a voucher" : covers ? "Done · paid with vouchers" : `Use ${money(sum)} · pay the other ${money(total - sum)}`}
+        </button>
+        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+          Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Cash: tap what they handed you (or type it) and the change due shows big
 // before the sale is finished.
 function CashTender({ total, onBack, onDone }: { total: number; onBack: () => void; onDone: (tendered: number) => void }) {
@@ -92,6 +164,11 @@ export default function PaymentModal({
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [cashOpen, setCashOpen] = useState(false);
+  const [voucherOpen, setVoucherOpen] = useState(false);
+  // Paper vouchers applied so far; cash or card covers the rest (`due`).
+  const [voucher, setVoucher] = useState(0);
+  const due = Math.round((total - voucher) * 100) / 100;
+  const withVoucher = voucher > 0 ? { voucher } : {};
   const [cash, setCash] = useState("");
   const [card, setCard] = useState("");
   const [error, setError] = useState(false);
@@ -115,7 +192,7 @@ export default function PaymentModal({
     setReader(null);
     try {
       if (!readerId) return;
-      const started = await startReaderPayment(Math.round(total * 100), readerId, tipEligible === null ? null : Math.round(tipEligible * 100));
+      const started = await startReaderPayment(Math.round(due * 100), readerId, tipEligible === null ? null : Math.round(tipEligible * 100));
       if (!started.ok) {
         setReader({ state: "failed", paymentIntentId: "", message: started.error });
         return;
@@ -136,7 +213,7 @@ export default function PaymentModal({
             watchingRef.current = null;
             if (!confirmedRef.current) {
               confirmedRef.current = true;
-              onConfirm({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: tipCents / 100 });
+              onConfirm({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: tipCents / 100, ...withVoucher });
             }
           } else if (status === "canceled") {
             again = false;
@@ -174,7 +251,21 @@ export default function PaymentModal({
   }
 
   if (cashOpen) {
-    return <CashTender total={total} onBack={() => setCashOpen(false)} onDone={(tendered) => onConfirm({ method: "cash", cash: total, card: 0, tendered })} />;
+    return <CashTender total={due} onBack={() => setCashOpen(false)} onDone={(tendered) => onConfirm({ method: "cash", cash: due, card: 0, tendered, ...withVoucher })} />;
+  }
+
+  if (voucherOpen) {
+    return (
+      <VoucherTender
+        total={total}
+        onBack={() => setVoucherOpen(false)}
+        onPaidInFull={() => onConfirm({ method: "voucher", cash: 0, card: 0, voucher: total })}
+        onPartial={(amount) => {
+          setVoucher(amount);
+          setVoucherOpen(false);
+        }}
+      />
+    );
   }
 
   if (reader) {
@@ -189,7 +280,7 @@ export default function PaymentModal({
               <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
                 Total due:{" "}
                 <strong className="text-lg" style={{ color: "var(--accent)" }}>
-                  {money(total)}
+                  {money(due)}
                 </strong>
               </p>
               <p className="mt-3 text-sm" style={{ color: "var(--muted)" }}>
@@ -234,11 +325,19 @@ export default function PaymentModal({
           Take payment
         </h3>
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-          Total due:{" "}
+          {voucher > 0 ? "Left to pay:" : "Total due:"}{" "}
           <strong className="text-lg" style={{ color: "var(--accent)" }}>
-            {money(total)}
+            {money(due)}
           </strong>
         </p>
+        {voucher > 0 && (
+          <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+            {money(total)} total · {money(voucher)} in vouchers ·{" "}
+            <button className="underline" onClick={() => setVoucher(0)}>
+              remove
+            </button>
+          </p>
+        )}
 
         {!splitOpen ? (
           <div className="mt-4 flex flex-wrap justify-center gap-2">
@@ -250,13 +349,18 @@ export default function PaymentModal({
                 Card (reader)
               </button>
             ) : (
-              <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "card", cash: 0, card: total })}>
+              <button className="btn-secondary px-4 py-2" onClick={() => onConfirm({ method: "card", cash: 0, card: due, ...withVoucher })}>
                 Card
               </button>
             )}
             <button className="btn-secondary px-4 py-2" onClick={() => setSplitOpen(true)}>
               Split
             </button>
+            {voucher === 0 && (
+              <button className="btn-secondary px-4 py-2" onClick={() => setVoucherOpen(true)}>
+                Voucher
+              </button>
+            )}
           </div>
         ) : (
           <div className="mt-4 space-y-2 text-left">
@@ -278,11 +382,11 @@ export default function PaymentModal({
               onClick={() => {
                 const c = parseFloat(cash) || 0;
                 const cd = parseFloat(card) || 0;
-                if (Math.abs(c + cd - total) > 0.01) {
+                if (Math.abs(c + cd - due) > 0.01) {
                   setError(true);
                   return;
                 }
-                onConfirm({ method: "split", cash: c, card: cd });
+                onConfirm({ method: "split", cash: c, card: cd, ...withVoucher });
               }}
             >
               Confirm split
