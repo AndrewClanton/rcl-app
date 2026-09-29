@@ -8,10 +8,16 @@
 // switches over; the back office nags them until they do.
 export const DEFAULT_PIN = "9999";
 
+// 4 to 6 digits. Checks the type too: a Server Action's arguments come
+// from the browser and could be anything.
+export function isPinShaped(pin: unknown): pin is string {
+  return typeof pin === "string" && /^\d{4,6}$/.test(pin);
+}
+
 // Why a new PIN can't be used, or null when it's fine. 9999, 0000, 1234 and
 // the like are the first things anyone would try.
 export function pinProblem(pin: string): string | null {
-  if (!/^\d{4,6}$/.test(pin)) return "A PIN is 4 to 6 digits, numbers only.";
+  if (!isPinShaped(pin)) return "A PIN is 4 to 6 digits, numbers only.";
   if (pin === DEFAULT_PIN) return "That's the old shared PIN everyone knows. Pick your own.";
   if (/^(\d)\1+$/.test(pin)) return "Too easy to guess: that's the same digit over and over.";
   const d = [...pin].map(Number);

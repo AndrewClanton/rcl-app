@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasManagerAccess } from "@/lib/auth";
 import { verifyPin } from "@/lib/pin";
-import { DEFAULT_PIN, type Approval } from "@/lib/pin-rules";
+import { DEFAULT_PIN, isPinShaped, type Approval } from "@/lib/pin-rules";
 
 // Manager approval: refunds (reports, member page, register), cancelling a
 // tab, cancelling a booth booking. One place for all of it, so each check
@@ -82,7 +82,7 @@ export type ManagerPinCheck = ({ ok: true; approverId: string | null } & Approva
 // signed in (on the register, its shared login); target is the order,
 // booking or booth reservation it's for, for the log.
 export async function checkManagerPin(pin: string, context: string, requestedBy: string, target?: string): Promise<ManagerPinCheck> {
-  if (!/^\d{4,6}$/.test(pin)) return { ok: false, error: "Enter a manager PIN (4 to 6 digits)." };
+  if (!isPinShaped(pin)) return { ok: false, error: "Enter a manager PIN (4 to 6 digits)." };
 
   const before = await recentTries({ approvals: true });
   if (before.lockedUntil) {
@@ -110,7 +110,7 @@ export async function checkManagerPin(pin: string, context: string, requestedBy:
 export async function checkOwnPin(employeeId: string, pin: string, stored: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const before = await recentTries({ myPin: employeeId });
   if (before.lockedUntil) return { ok: false, error: `Too many wrong tries. Try again after ${clock(before.lockedUntil)}.` };
-  if (/^\d{4,6}$/.test(pin) && verifyPin(pin, stored)) return { ok: true };
+  if (isPinShaped(pin) && verifyPin(pin, stored)) return { ok: true };
   await logTry({ ok: false, context: MY_PIN, requested_by: employeeId });
   return { ok: false, error: wrongMessage("current PIN", before, "you're locked out") };
 }
