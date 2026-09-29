@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
+import { Fragment } from "react";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import type { Screening } from "@/lib/types";
-import { PageMasthead, ProofStamp, SpecFoot } from "@/components/print";
+import { PageMasthead, ProofStamp, RegNote, SpecFoot } from "@/components/print";
+import PlusLink from "@/components/PlusLink";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlusPerks } from "@/lib/plus-status";
+import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 
 export const dynamic = "force-dynamic";
 
@@ -51,8 +56,40 @@ function groupByDay(screenings: Screening[]): Day[] {
   return [...days.values()];
 }
 
+// The Insiders+ offer, set right among the listings: every showing on the
+// page is free with it.
+function PlusBand({ count }: { count: number }) {
+  return (
+    <aside className="sheet halftone halftone-hero relative flex flex-wrap items-center justify-between gap-6 bg-[var(--gold)] p-6 !border-4 !shadow-[7px_7px_0_var(--foreground)] sm:p-7">
+      <RegNote className="top-3 right-3 hidden sm:flex">
+        Plate Y
+        <br />
+        100%
+      </RegNote>
+      <div className="relative z-[1] max-w-xl">
+        <span className="ctag ctag-red">Insiders+</span>
+        <p className="font-display mt-4 text-3xl leading-tight text-balance">
+          {count > 1 ? `All ${count} showtimes on this page, free.` : "Every showtime, free."}
+        </p>
+        <p className="mt-2 text-[15px] font-bold">
+          ${RATE_PRICE.adult} a month covers every screening, or {dollars(ANNUAL_PRICE.adult)} a year. No tickets, no per-show price.
+        </p>
+      </div>
+      <div className="relative z-[1] flex flex-col items-stretch gap-3 sm:items-center">
+        <PlusLink next="/showtimes" className="btn-primary -rotate-[1.5deg] px-6 py-3 text-center text-base">
+          Get Insiders+ · ${RATE_PRICE.adult}/mo
+        </PlusLink>
+        <Link href="/membership" className="text-center text-sm font-bold underline decoration-2 underline-offset-2">
+          What&apos;s included
+        </Link>
+      </div>
+    </aside>
+  );
+}
+
 export default async function ShowtimesPage() {
-  const screenings = await getPubliclyVisibleScreenings();
+  const [screenings, member] = await Promise.all([getPubliclyVisibleScreenings(), getSignedInMember()]);
+  const plus = !!member && hasPlusPerks(member);
   const days = groupByDay(screenings);
   const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
   const todayKey = dayKey(new Date());
@@ -88,8 +125,9 @@ export default async function ShowtimesPage() {
           </nav>
 
           <div className="mt-6 space-y-10">
-            {days.map((day) => (
-              <section key={day.key} id={`d-${day.key}`} className="sheet crop scroll-mt-28">
+            {days.map((day, i) => (
+              <Fragment key={day.key}>
+              <section id={`d-${day.key}`} className="sheet crop scroll-mt-28">
                 <h2 className="spec-head rounded-t-[4px]">
                   <span>{day.label}</span>
                   <span className="flex items-center gap-4">
@@ -114,6 +152,7 @@ export default async function ShowtimesPage() {
                           {[film.room, film.movie.runtime_minutes ? `${film.movie.runtime_minutes} min` : null, film.movie.rating, film.price === 0 ? "Free" : `$${film.price.toFixed(2)} + tax`]
                             .filter(Boolean)
                             .join(" · ")}
+                          {film.price > 0 && <span className="text-[var(--accent)]"> · {plus ? "Free with your Insiders+" : "Free with Insiders+"}</span>}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           {film.showings.map((s) => (
@@ -129,6 +168,9 @@ export default async function ShowtimesPage() {
                 </ul>
                 <SpecFoot code={`RCL-SCHED · ${day.key}`} />
               </section>
+              {/* After the first day: the offer, while the times are in view. */}
+              {i === 0 && !plus && <PlusBand count={screenings.length} />}
+              </Fragment>
             ))}
           </div>
         </>
