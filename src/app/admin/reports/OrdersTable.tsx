@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DayOrder } from "@/lib/data/reports";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
 import { refundOrder } from "./actions";
 
 function money(n: number) {
@@ -19,11 +20,13 @@ function time(iso: string) {
 export default function OrdersTable({ orders }: { orders: DayOrder[] }) {
   const router = useRouter();
   const [refunding, setRefunding] = useState<DayOrder | null>(null);
+  const [done, setDone] = useState<string | null>(null);
 
   if (orders.length === 0) return <p className="text-sm text-[var(--muted)]">No orders this day.</p>;
 
   return (
     <div className="overflow-x-auto">
+      {done && <div className="notice notice-success mb-3 !p-3 text-sm">{done}</div>}
       <table className="w-full min-w-[640px] text-sm tabular-nums">
         <thead>
           <tr className="text-left text-xs text-[var(--muted)]">
@@ -72,7 +75,9 @@ export default function OrdersTable({ orders }: { orders: DayOrder[] }) {
           description={`Manager approval is required to refund order #${refunding.orderNumber} (${money(refunding.total)}).`}
           onCancel={() => setRefunding(null)}
           onSubmit={async (pin) => {
-            await refundOrder(refunding.id, pin);
+            const r = await refundOrder(refunding.id, pin);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            setDone(`Order #${refunding.orderNumber} refunded. ${approvalText(r)}`);
             setRefunding(null);
             router.refresh();
           }}

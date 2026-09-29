@@ -2,11 +2,12 @@ import Link from "next/link";
 import { requireStaff, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { signOut } from "@/app/login/actions";
 import { getOpenDevNoteCount } from "@/lib/data/devNotes";
+import { getPinStatus } from "@/lib/data/employees";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
   const isAdmin = hasAdminAccess(staff.role);
-  const openDevNotes = isAdmin ? await getOpenDevNoteCount() : 0;
+  const [openDevNotes, pinStatus] = await Promise.all([isAdmin ? getOpenDevNoteCount() : 0, getPinStatus(staff.employeeId)]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -66,6 +67,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           <span className="text-[var(--muted)]">|</span>
           <span className="text-[var(--muted)]">{staff.name}</span>
+          <Link href="/admin/my-pin" className="text-[var(--muted)] hover:underline">
+            My PIN
+          </Link>
           <form action={signOut}>
             <button type="submit" className="text-[var(--muted)] hover:underline">
               Sign out
@@ -73,6 +77,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </form>
         </nav>
       </div>
+      {/* Everyone started on 9999, and it keeps working until they pick
+          their own -- this nags until they do (src/app/admin/my-pin). */}
+      {(pinStatus === "default" || pinStatus === "temporary") && (
+        <div className="notice notice-warn mb-6 flex flex-wrap items-center justify-between gap-2">
+          <span>
+            {pinStatus === "default" ? "Your PIN is still 9999, the one everyone knows. Pick your own." : "You're on a temporary PIN the owner set. Pick your own."}
+            {hasManagerAccess(staff.role) && " Until you do, anyone who knows it can approve refunds as you."}
+          </span>
+          <Link href="/admin/my-pin" className="font-bold underline">
+            Set my PIN
+          </Link>
+        </div>
+      )}
       {children}
     </div>
   );

@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { verifyPin } from "@/lib/pin";
+import { checkManagerPin } from "@/lib/manager-pin";
+import type { ApprovalResult } from "@/lib/pin-rules";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
@@ -389,14 +390,16 @@ export async function discardDraftOrder(id: string): Promise<void> {
   revalidate();
 }
 
-export async function cancelTab(id: string, pin: string): Promise<void> {
-  await assertStaff();
+// Manager PIN (src/lib/manager-pin.ts). Returns the reason on failure and,
+// on success, whose PIN approved it.
+export async function cancelTab(id: string, pin: string): Promise<ApprovalResult> {
+  const staff = await assertStaff();
+  const approval = await checkManagerPin(pin, "cancel-tab", staff.employeeId, id);
+  if (!approval.ok) return approval;
   const supabase = createAdminClient();
-  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin", "owner"]).eq("active", true);
-  const ok = (managers ?? []).some((m) => verifyPin(pin, m.pin_hash));
-  if (!ok) throw new Error("Incorrect manager PIN.");
   await supabase.from("orders").delete().eq("id", id);
   revalidate();
+  return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
 
 // ---------- recent orders (reprint, refund, "what did they order?") ----------
@@ -483,10 +486,9 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
 // Refund from the register (manager PIN). Card money goes back to the card
 // through Stripe; for cash, staff hand it back. Returns the reason on failure
 // (a wrong PIN, say), since a thrown message is hidden in production.
-export async function refundRegisterOrder(orderId: string, pin: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function refundRegisterOrder(orderId: string, pin: string): Promise<ApprovalResult> {
   try {
-    await refundOrder(orderId, pin);
-    return { ok: true };
+    return await refundOrder(orderId, pin);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't refund that order." };
   }

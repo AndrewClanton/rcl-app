@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
 import type { Booth, BoothReservation } from "@/lib/types";
 import { updateBooth, cancelBoothReservation, uploadBoothPhoto } from "./actions";
 import BoothCalendar from "./BoothCalendar";
@@ -102,7 +103,7 @@ function BoothRow({ booth }: { booth: Booth }) {
   );
 }
 
-function ReservationRow({ reservation }: { reservation: BoothReservation }) {
+function ReservationRow({ reservation, onCancelled }: { reservation: BoothReservation; onCancelled: (note: string) => void }) {
   const router = useRouter();
   const [pinOpen, setPinOpen] = useState(false);
 
@@ -132,7 +133,10 @@ function ReservationRow({ reservation }: { reservation: BoothReservation }) {
           description="Manager approval is required to cancel and refund this reservation."
           onCancel={() => setPinOpen(false)}
           onSubmit={async (pin) => {
-            await cancelBoothReservation(reservation.id, pin);
+            const r = await cancelBoothReservation(reservation.id, pin);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            // The row drops off the list once it's cancelled, so the note shows above it.
+            onCancelled(`${reservation.customer_name}'s booking cancelled and refunded. ${approvalText(r)}`);
             setPinOpen(false);
             router.refresh();
           }}
@@ -153,6 +157,8 @@ export default function BoothsAdminPanel({
   calendarMonthStart: string;
   calendarReservations: BoothReservation[];
 }) {
+  const [cancelled, setCancelled] = useState<string | null>(null);
+
   return (
     <div className="space-y-8">
       <section>
@@ -171,12 +177,13 @@ export default function BoothsAdminPanel({
 
       <section>
         <h2 className="mb-3 text-sm font-semibold">Upcoming reservations</h2>
+        {cancelled && <div className="notice notice-success mb-3 !p-3 text-sm">{cancelled}</div>}
         {reservations.length === 0 ? (
           <div className="text-sm text-[var(--muted)]">No upcoming reservations.</div>
         ) : (
           <div className="space-y-2">
             {reservations.map((r) => (
-              <ReservationRow key={r.id} reservation={r} />
+              <ReservationRow key={r.id} reservation={r} onCancelled={setCancelled} />
             ))}
           </div>
         )}

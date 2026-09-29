@@ -10,6 +10,7 @@ import type { MemberStaffInfo } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
@@ -453,10 +454,12 @@ function BillingCard({ member }: { member: Member }) {
 function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
   const router = useRouter();
   const [refundTarget, setRefundTarget] = useState<MemberPurchase | null>(null);
+  const [refunded, setRefunded] = useState<string | null>(null);
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Purchase history</h2>
+      {refunded && <div className="notice notice-success mb-3 !p-3 text-sm">{refunded}</div>}
       {purchases.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No purchases on file for this member.</p>
       ) : (
@@ -495,8 +498,9 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
           description={`Manager approval is required to refund "${refundTarget.label}" (${money(refundTarget.total)}). If it was paid by card, this returns the money via Stripe.`}
           onCancel={() => setRefundTarget(null)}
           onSubmit={async (pin) => {
-            if (refundTarget.kind === "order") await refundOrder(refundTarget.id, pin);
-            else await refundBooking(refundTarget.id, pin);
+            const r = refundTarget.kind === "order" ? await refundOrder(refundTarget.id, pin) : await refundBooking(refundTarget.id, pin);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            setRefunded(`Refunded "${refundTarget.label}". ${approvalText(r)}`);
             setRefundTarget(null);
             router.refresh();
           }}

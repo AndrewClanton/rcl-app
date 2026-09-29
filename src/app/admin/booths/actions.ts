@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
-import { verifyManagerPin } from "@/app/admin/reports/actions";
+import { checkManagerPin, recordApprover } from "@/lib/manager-pin";
+import type { ApprovalResult } from "@/lib/pin-rules";
 import { getBoothReservationsForMonth } from "@/lib/data/booths";
 import type { BoothReservation } from "@/lib/types";
 import { assertStaff } from "@/lib/auth";
@@ -54,10 +55,12 @@ export async function uploadBoothPhoto(boothId: string, formData: FormData) {
   revalidate();
 }
 
-export async function cancelBoothReservation(reservationId: string, pin: string) {
-  await assertStaff();
-  const ok = await verifyManagerPin(pin);
-  if (!ok) throw new Error("Incorrect manager PIN.");
+// Returns the reason on failure (a wrong PIN, the lock), since a thrown
+// message is hidden in production, and on success whose PIN approved it.
+export async function cancelBoothReservation(reservationId: string, pin: string): Promise<ApprovalResult> {
+  const staff = await assertStaff();
+  const approval = await checkManagerPin(pin, "booth-cancel", staff.employeeId, reservationId);
+  if (!approval.ok) return approval;
 
   const supabase = createAdminClient();
   const { data: reservation, error: fetchErr } = await supabase
@@ -65,13 +68,20 @@ export async function cancelBoothReservation(reservationId: string, pin: string)
     .select("status, stripe_payment_intent_id")
     .eq("id", reservationId)
     .single();
-  if (fetchErr || !reservation) throw new Error("Reservation not found.");
-  if (reservation.status === "cancelled") throw new Error("This reservation was already cancelled.");
+  if (fetchErr || !reservation) return { ok: false, error: "Reservation not found." };
+  if (reservation.status === "cancelled") return { ok: false, error: "This reservation was already cancelled." };
 
   if (reservation.stripe_payment_intent_id) {
-    await getStripe().refunds.create({ payment_intent: reservation.stripe_payment_intent_id });
+    try {
+      await getStripe().refunds.create({ payment_intent: reservation.stripe_payment_intent_id });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : null;
+      return { ok: false, error: `The card refund didn't go through${message ? ` (Stripe: ${message})` : ""}. Nothing was changed.` };
+    }
   }
   const { error } = await supabase.from("booth_reservations").update({ status: "cancelled" }).eq("id", reservationId);
   if (error) throw error;
+  await recordApprover("booth_reservations", reservationId, approval.approverId);
   revalidate();
+  return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }

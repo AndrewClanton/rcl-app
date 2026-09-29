@@ -42,12 +42,12 @@ export default function ManagerPinModal({
         <input
           type="password"
           inputMode="numeric"
-          maxLength={4}
+          maxLength={6}
           autoFocus
           className="input mt-4 text-center text-lg tracking-[0.5em]"
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-          onKeyDown={(e) => e.key === "Enter" && pin.length === 4 && submit()}
+          onKeyDown={(e) => e.key === "Enter" && pin.length >= 4 && !submitting && submit()}
         />
         {error && (
           <div className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
@@ -58,7 +58,7 @@ export default function ManagerPinModal({
           <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn-primary" disabled={submitting || pin.length !== 4} onClick={submit}>
+          <button className="btn-primary" disabled={submitting || pin.length < 4} onClick={submit}>
             Confirm
           </button>
         </div>

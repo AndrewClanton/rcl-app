@@ -6,6 +6,8 @@ import { requireOwner } from "@/lib/auth";
 import type { EmployeeRole } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 import { emailIsProven } from "@/lib/member-link";
+import { DEFAULT_PIN_HASH, hashPin } from "@/lib/pin";
+import { pinProblem } from "@/lib/pin-rules";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
 // there's exactly one (Andrew), and handing it out via a dropdown risks
@@ -23,11 +25,9 @@ function revalidate() {
   revalidatePath("/admin");
 }
 
-// Same default PIN every account provisioned via scripts/create-admin-user.mjs
-// has always gotten ("9999") -- there's no PIN-management UI yet, staff-side
-// or here, so this keeps new accounts consistent with existing ones rather
-// than introducing a second convention.
-const DEFAULT_PIN_HASH = "scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f";
+// New accounts start on 9999 (DEFAULT_PIN_HASH, src/lib/pin.ts) like every
+// account before them, so they work on the register right away; the back
+// office then asks them to set their own under My PIN.
 
 // Every login with this email, looking past the first page (listUsers
 // returns 50 at a time by default).
@@ -174,4 +174,28 @@ export async function setEmployeeActive(employeeId: string, active: boolean) {
   const { error } = await supabase.from("employees").update({ active }).eq("id", employeeId);
   if (error) throw error;
   revalidate();
+}
+
+// For someone who forgot their PIN: the owner sets a temporary one and
+// tells them. pin_must_change makes the back office ask them to pick
+// their own (it arrives with migration 20260929100000_manager_pins.sql;
+// until then the PIN still saves, there's just no reminder).
+export async function resetEmployeePin(employeeId: string, tempPin: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await requireOwner();
+  const problem = pinProblem(tempPin);
+  if (problem) return { ok: false, error: problem };
+
+  const supabase = createAdminClient();
+  const { data: target } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
+  if (!target) return { ok: false, error: "That person wasn't found." };
+  if (target.role === "display") return { ok: false, error: "Display screens don't use a PIN." };
+
+  const pin_hash = hashPin(tempPin);
+  const { error } = await supabase.from("employees").update({ pin_hash, pin_must_change: true }).eq("id", employeeId);
+  if (error) {
+    const { error: retryErr } = await supabase.from("employees").update({ pin_hash }).eq("id", employeeId);
+    if (retryErr) return { ok: false, error: "Couldn't save that. Try again." };
+  }
+  revalidate();
+  return { ok: true };
 }

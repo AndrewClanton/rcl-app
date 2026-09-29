@@ -18,6 +18,7 @@ import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
@@ -412,9 +413,12 @@ export default function PosApp({
 
   async function handleCancelTab(pin: string) {
     if (!cancelTabId) return;
-    await cancelTab(cancelTabId, pin);
+    const r = await cancelTab(cancelTabId, pin);
+    if (!r.ok) throw new Error(r.error); // shown in the PIN box
     if (activeTabId === cancelTabId) resetOrder();
     setCancelTabId(null);
+    setToast(`Tab cancelled. ${approvalText(r)}`);
+    setTimeout(() => setToast(null), 7000);
     router.refresh();
   }
 
