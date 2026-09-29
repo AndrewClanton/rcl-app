@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 import { getCommunityPrograms, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
+import { getGiftsForMember } from "@/lib/gift-membership";
 import MemberDetail from "./MemberDetail";
 
 export const dynamic = "force-dynamic";
@@ -11,13 +12,14 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(id);
   if (!member) notFound();
 
-  const [purchases, communityPrograms, session] = await Promise.all([getMemberPurchaseHistory(id), getCommunityPrograms(), getStaffSession()]);
+  const [purchases, communityPrograms, session, gifts] = await Promise.all([getMemberPurchaseHistory(id), getCommunityPrograms(), getStaffSession(), getGiftsForMember(id)]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
 
   return (
     <MemberDetail
       member={member}
       purchases={purchases}
+      gifts={gifts}
       communityPrograms={communityPrograms}
       staffInfo={staffInfo[member.id]}
       viewerIsAdmin={!!session && hasAdminAccess(session.role)}

@@ -6,7 +6,7 @@ import BillingPortalButton from "../../BillingPortalButton";
 import SwitchToYearly from "../../SwitchToYearly";
 import { dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
-import { plusNeedsCard } from "@/lib/plus-status";
+import { giftEndsWithoutRenewal, plusNeedsCard } from "@/lib/plus-status";
 import { Panel, SpecPanel } from "../ui";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -18,10 +18,12 @@ const STATUS_LABEL: Record<string, string> = {
   incomplete: "Waiting on payment",
 };
 
-export default function BillingView({ member, billing, years }: { member: Member; billing: MembershipBilling | null; years: number[] }) {
+export default function BillingView({ member, billing, years, giftFrom }: { member: Member; billing: MembershipBilling | null; years: number[]; giftFrom: string | null }) {
   const rate = member.price_tier ?? "adult";
   const plus = member.tier === "Insiders+";
   const status = billing?.status ?? member.subscription_status ?? "";
+  // A gifted year with nothing lined up after it.
+  const giftEnds = giftEndsWithoutRenewal(member);
 
   return (
     <div className="space-y-10">
@@ -39,6 +41,27 @@ export default function BillingView({ member, billing, years }: { member: Member
           <PlusLink next="/account/billing" className="btn-primary relative z-[1] px-5 py-3">
             Add a card
           </PlusLink>
+        </section>
+      ) : plus && giftEnds ? (
+        <section className="sheet halftone halftone-hero bg-[var(--gold)] p-6">
+          <div className="relative z-[1]">
+            <span className="ctag ctag-red">A gift</span>
+            <p className="font-display mt-3 text-2xl">
+              Your Insiders+ is a gift{giftFrom ? ` from ${giftFrom}` : ""}, good through {dateShort(giftEnds)}.
+            </p>
+            <p className="mt-1 max-w-lg text-[15px]">It&apos;s paid in full, so there&apos;s nothing to pay and no card needed.</p>
+            <p className="mt-4 max-w-lg text-[15px]">
+              Want to keep it after that? Join now and your first charge waits until {dateShort(giftEnds)}: ${RATE_PRICE[rate]}/month or {dollars(ANNUAL_PRICE[rate])}/year (15% off), plus tax.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <PlusLink next="/account/billing" className="btn-primary px-5 py-3">
+                Keep it monthly
+              </PlusLink>
+              <PlusLink next="/account/billing" annual className="btn-secondary px-5 py-3">
+                Keep it yearly
+              </PlusLink>
+            </div>
+          </div>
         </section>
       ) : plus && member.comped ? (
         <section className="sheet p-5">

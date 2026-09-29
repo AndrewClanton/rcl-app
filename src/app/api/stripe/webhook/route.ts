@@ -6,6 +6,7 @@ import { tierForPrice } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
+import { activateGiftFromCheckout } from "@/lib/gift-membership";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -88,6 +89,12 @@ export async function POST(request: NextRequest) {
         // Guest confirmation and staff alert, each sent once.
         await notifyBoothConfirmed(boothReservationId);
       }
+
+      // A year of Insiders+ someone bought for a friend at the box office.
+      if (session.metadata?.gift_membership_id) {
+        const gift = await activateGiftFromCheckout(session);
+        if (!gift.ok) failed.push("gift membership");
+      }
     }
   }
 
@@ -103,6 +110,11 @@ export async function POST(request: NextRequest) {
     const boothReservationId = session.metadata?.booth_reservation_id;
     if (boothReservationId) {
       await supabase.from("booth_reservations").update({ status: "cancelled" }).eq("id", boothReservationId).eq("status", "pending");
+    }
+
+    const giftId = session.metadata?.gift_membership_id;
+    if (giftId) {
+      await supabase.from("gift_memberships").update({ status: "cancelled" }).eq("id", giftId).eq("status", "pending");
     }
   }
 
@@ -133,6 +145,16 @@ export async function POST(request: NextRequest) {
       })
       .eq("stripe_customer_id", customerId)
       .then(check("membership"));
+    // A gifted year still running keeps the perks on after their own
+    // subscription stops.
+    if (!stillActive) {
+      await supabase
+        .from("members")
+        .update({ tier: "Insiders+" })
+        .eq("stripe_customer_id", customerId)
+        .gt("plus_gift_until", new Date().toISOString())
+        .then(check("membership gift"));
+    }
   }
 
   if (failed.length) return NextResponse.json({ error: `Couldn't save: ${failed.join(", ")}` }, { status: 500 });

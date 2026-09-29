@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSignedInMember } from "@/lib/member-auth";
-import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
+import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
 
 // Every "Get Insiders+" button on the site points here.
@@ -23,8 +23,11 @@ export async function GET(req: NextRequest) {
   const member = await getSignedInMember();
   if (!member || !member.email) return go(joinForm);
   // Paid for or complimentary: nothing to buy. (Insiders+ set by hand at the
-  // register with no card falls through to checkout, to add one.)
-  if (plusPaidFor(member)) return go("/account/billing");
+  // register with no card falls through to checkout, to add one.) On a
+  // gifted year with nothing after it, they can sign up now and the first
+  // charge waits until the gift runs out.
+  const giftEnds = giftEndsWithoutRenewal(member);
+  if (plusPaidFor(member) && !giftEnds) return go("/account/billing");
 
   const checkoutUrl = await createPlusCheckout({
     memberId: member.id,
@@ -37,7 +40,15 @@ export async function GET(req: NextRequest) {
     priceTier: member.price_tier ?? "adult",
     returnTo: next,
     interval: annual ? "year" : "month",
+    firstChargeAt: giftEnds ? heldUntil(giftEnds) : null,
   }).catch(() => null);
   if (!checkoutUrl) return go("/membership?checkout=unavailable#join");
   return NextResponse.redirect(checkoutUrl, 303);
+}
+
+// Stripe holds a first charge only 48+ hours out; a gift ending sooner than
+// that just starts billing now.
+function heldUntil(giftEnds: string): Date | null {
+  const at = new Date(giftEnds);
+  return at.getTime() > Date.now() + 49 * 3_600_000 ? at : null;
 }

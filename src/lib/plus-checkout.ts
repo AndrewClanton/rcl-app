@@ -6,7 +6,7 @@ import { salesTaxRateId } from "@/lib/stripe-tax";
 import type { MemberPriceTier } from "@/lib/types";
 import type { BillingInterval } from "@/lib/membership-rates";
 
-export { hasPlusPerks, plusPaidFor, plusNeedsCard } from "@/lib/plus-status";
+export { hasPlusPerks, plusPaidFor, plusNeedsCard, giftEndsWithoutRenewal } from "@/lib/plus-status";
 
 // Starts Stripe Checkout for an Insiders+ subscription and returns the page
 // to send the person to. Stripe asks only for the card: the email comes

@@ -7,12 +7,14 @@ import { useRouter } from "next/navigation";
 import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/lib/types";
 import type { MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
+import type { GiftMembership } from "@/lib/gift-membership";
+import GiftCard from "./GiftCard";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
-import { plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
+import { giftEndsWithoutRenewal, plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
 import { adjustMemberPoints, createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
@@ -25,8 +27,10 @@ export default function MemberDetail({
   communityPrograms,
   staffInfo,
   viewerIsAdmin,
+  gifts,
 }: {
   member: Member;
+  gifts: GiftMembership[];
   purchases: MemberPurchase[];
   communityPrograms: CommunityProgram[];
   staffInfo: MemberStaffInfo | undefined;
@@ -67,6 +71,7 @@ export default function MemberDetail({
       <ProfileCard member={member} staffInfo={staffInfo} />
       <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
       <BillingCard member={member} />
+      <GiftCard member={member} gifts={gifts} />
       <PurchaseHistoryCard purchases={purchases} />
       <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
     </div>
@@ -350,6 +355,9 @@ function BillingCard({ member }: { member: Member }) {
   // Stripe won't hold a first charge less than 2 days out.
   const [minFirstCharge] = useState(() => new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
   const needsCard = plusNeedsCard(member);
+  // On a gifted year with nothing after it: the card can go on now, with
+  // the first charge held until the gift ends.
+  const giftEnds = giftEndsWithoutRenewal(member);
 
   function cardLink(open: boolean) {
     setError(null);
@@ -365,12 +373,17 @@ function BillingCard({ member }: { member: Member }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Billing</h2>
-      {!member.comped && !plusPaidFor(member) ? (
+      {!member.comped && (!plusPaidFor(member) || giftEnds) ? (
         // No card billing them: someone set to Insiders+ by hand, or anyone
         // joining in person. Stripe's page takes the card; we never see it.
         <div className="space-y-3">
           <p className="text-sm">
-            {needsCard ? (
+            {giftEnds ? (
+              <>
+                <strong>Covered by a gift until {new Date(giftEnds).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}.</strong>{" "}
+                To keep Insiders+ going after that, put their own card on now. The first charge waits until the gift ends.
+              </>
+            ) : needsCard ? (
               <>
                 <strong>Insiders+ with no card on file.</strong> They have the perks, but nothing is billing them. Put a card on it:
               </>
@@ -387,7 +400,7 @@ function BillingCard({ member }: { member: Member }) {
               Yearly · {dollars(ANNUAL_PRICE[member.price_tier ?? "adult"])} (15% off)
             </button>
           </div>
-          <label className="flex flex-wrap items-center gap-2 text-sm">
+          <label className={`flex flex-wrap items-center gap-2 text-sm ${giftEnds ? "hidden" : ""}`}>
             First charge
             <input type="date" className="rounded border border-[var(--border)] px-2 py-1 text-sm" min={minFirstCharge} value={firstCharge} onChange={(e) => setFirstCharge(e.target.value)} />
             <span className="text-xs text-[var(--muted)]">{firstCharge ? "Card saved now, first charge that day" : "Blank = charge today"}</span>

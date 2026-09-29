@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { businessDay, shiftDate } from "@/lib/ops/time";
 import { sendDailyReport } from "@/lib/daily-report";
+import { runGiftMaintenance } from "@/lib/gift-membership";
 
 // Vercel calls this every morning (vercel.json) to email the admins the
 // business day that just ended. With CRON_SECRET set in Vercel, only
@@ -15,6 +16,9 @@ export async function GET(req: NextRequest) {
   // Runs after the 4 AM rollover, so "today" has just begun: report yesterday.
   const date = shiftDate(businessDay().date, -1);
   const origin = new URL(req.url).origin;
+  // Gifted Insiders+ that ran out overnight goes off, and friends whose
+  // gift ends in two weeks get a reminder. Never holds up the report.
+  const gifts = await runGiftMaintenance().catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
   const result = await sendDailyReport(date, origin);
-  return NextResponse.json({ date, ...result });
+  return NextResponse.json({ date, gifts, ...result });
 }

@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
+import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
@@ -59,10 +59,13 @@ export async function startMembershipCheckout(fields: {
   const supabase = createAdminClient();
   const { data: existing } = await supabase
     .from("members")
-    .select("id, tier, comped, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier")
+    .select("id, tier, comped, stripe_customer_id, stripe_subscription_id, subscription_status, plus_gift_until, price_tier")
     .ilike("email", exactEmail(email))
     .maybeSingle();
-  if (existing && plusPaidFor(existing)) {
+  // On a gifted year with nothing after it: sign up now, first charge when
+  // the gift runs out.
+  const giftEnds = existing ? giftEndsWithoutRenewal(existing) : null;
+  if (existing && plusPaidFor(existing) && !giftEnds) {
     return { ok: false, error: "This email already has Insiders+. Sign in to see your membership." };
   }
 
@@ -79,6 +82,7 @@ export async function startMembershipCheckout(fields: {
     priceTier,
     returnTo: safePath(fields.returnTo),
     interval: fields.annual ? "year" : "month",
+    firstChargeAt: giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null,
   });
   if (!url) return { ok: false, error: "Could not start checkout. Please try again." };
   return { ok: true, url };
