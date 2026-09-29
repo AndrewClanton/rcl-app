@@ -10,7 +10,7 @@ import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type C
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
-import { useDeviceSettings } from "./devices/settings";
+import { usePrintTarget } from "./printing";
 import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -92,7 +92,7 @@ export default function RegisterCheckins({
   // prints them, instead of scanning.
   const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
   const [printing, setPrinting] = useState(false);
-  const devices = useDeviceSettings();
+  const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
   // Requests answered here, so a screen that missed the answer can get it
   // again, and every request already on screen (screens resend until seen).
@@ -187,7 +187,7 @@ export default function RegisterCheckins({
     setPrinting(true);
     const messages: string[] = [];
     for (const t of tonight.tickets.filter((x) => x.printable)) {
-      const r = await printDoorTickets(devices.printerAddress, t.bookingId).catch(() => null);
+      const r = await printDoorTickets(printTarget, t.bookingId).catch(() => null);
       messages.push(!r ? OFFLINE : r.ok ? r.message : r.error);
     }
     const fresh = await getMemberTicketsToday(tonight.member.id).catch(() => null);

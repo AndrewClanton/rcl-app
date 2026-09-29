@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { BoothHold, ShiftStatus } from "@/lib/ops/shared";
-import { useDeviceSettings } from "../devices/settings";
+import { usePrintTarget } from "../printing";
 import { printReservedCard } from "../print-reserved";
 import { useOpsApi } from "./api";
 
@@ -11,7 +11,7 @@ import { useOpsApi } from "./api";
 // marked NEW -- so a booking made online never goes unnoticed.
 export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus["booths"]; onChanged: () => void }) {
   const api = useOpsApi();
-  const devices = useDeviceSettings();
+  const target = usePrintTarget();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const { today, tomorrow } = booths;
@@ -21,8 +21,8 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
   async function print(h: BoothHold) {
     setBusy(h.id);
     setMessage(null);
-    if (devices.printerAddress) {
-      const r = await printReservedCard(devices.printerAddress, h).catch(() => ({ ok: false as const, error: "Couldn't reach the printer." }));
+    if (target) {
+      const r = await printReservedCard(target, h).catch(() => ({ ok: false as const, error: "Couldn't reach the printer." }));
       if (!r.ok) {
         setBusy(null);
         return setMessage({ ok: false, text: `The card didn't print: ${r.error}` });
@@ -30,7 +30,7 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
     }
     await api.markBoothCardPrinted(h.id).catch(() => null);
     setBusy(null);
-    setMessage({ ok: true, text: devices.printerAddress ? `Reserved card printed for ${h.booth}. Set it on the booth.` : `${h.booth} marked as set out.` });
+    setMessage({ ok: true, text: target ? `Reserved card printed for ${h.booth}. Set it on the booth.` : `${h.booth} marked as set out.` });
     onChanged();
   }
 
@@ -45,7 +45,7 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
           Booths today{today.length > 0 ? ` · ${today.length}` : ""}
           {waiting > 0 && <span className="ml-2 font-bold normal-case tracking-normal">Print the Reserved card and set it on the booth.</span>}
         </span>
-        {!devices.printerAddress && today.length > 0 && <span className="text-xs">No printer set up on this register (Devices). You can still mark cards as set out.</span>}
+        {!target && today.length > 0 && <span className="text-xs">No printer set up on this register (Devices). You can still mark cards as set out.</span>}
       </div>
 
       {today.length === 0 ? (
@@ -62,13 +62,13 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
               {h.cardPrintedAt ? (
                 <span className="flex items-center gap-3 text-sm">
                   <span className="font-bold">✓ Card out</span>
-                  <button className="min-h-11 px-2 font-bold underline disabled:opacity-50" disabled={busy === h.id || !devices.printerAddress} onClick={() => print(h)}>
+                  <button className="min-h-11 px-2 font-bold underline disabled:opacity-50" disabled={busy === h.id || !target} onClick={() => print(h)}>
                     Reprint
                   </button>
                 </span>
               ) : (
                 <button className="btn-primary min-h-11 !px-4 !py-2 text-sm" disabled={busy === h.id} onClick={() => print(h)}>
-                  {busy === h.id ? "Printing…" : devices.printerAddress ? "Print Reserved card" : "Mark card set out"}
+                  {busy === h.id ? "Printing…" : target ? "Print Reserved card" : "Mark card set out"}
                 </button>
               )}
             </li>

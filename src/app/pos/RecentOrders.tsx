@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { receiptXml, type ReceiptData } from "@/lib/print/receipt";
-import { printerBaseUrl, sendToPrinter, type PrintResult } from "@/lib/print/epos-client";
+import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "./actions";
 import { printTickets } from "./print-tickets";
+import { sendPrint, targetName, type PrintTarget } from "./printing";
 
 const TZ = "America/Chicago";
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -41,7 +42,7 @@ function paidWith(o: RecentOrder) {
 
 // The last 20 sales on the register: what was in them, reprint the receipt
 // or tickets, refund with a manager PIN.
-export default function RecentOrders({ printerAddress }: { printerAddress: string }) {
+export default function RecentOrders({ target }: { target: PrintTarget | null }) {
   const [open, setOpen] = useState(false);
   const [orders, setOrders] = useState<RecentOrder[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -185,16 +186,19 @@ export default function RecentOrders({ printerAddress }: { printerAddress: strin
                     <div className="mt-5 flex flex-wrap gap-2">
                       <button
                         className="btn-primary !px-4"
-                        disabled={!printerAddress || !!busy}
-                        onClick={() => print("receipt", () => sendToPrinter(printerAddress, receiptXml(asReceipt(selected))), `Receipt for #${selected.orderNumber} sent to the printer.`)}
+                        disabled={!target || !!busy}
+                        onClick={() =>
+                          target &&
+                          print("receipt", () => sendPrint(target, "receipt", receiptXml(asReceipt(selected)), `Receipt #${selected.orderNumber} (reprint)`), `Receipt for #${selected.orderNumber} sent to ${targetName(target)}.`)
+                        }
                       >
                         {busy === "receipt" ? "Printing…" : "Reprint receipt"}
                       </button>
                       {tickets.length > 0 && (
                         <button
                           className="btn-secondary !px-4"
-                          disabled={!printerAddress || !!busy}
-                          onClick={() => print("tickets", () => printTickets(printerAddress, selected.orderNumber, tickets), `Tickets for #${selected.orderNumber} sent to the printer.`)}
+                          disabled={!target || !!busy}
+                          onClick={() => target && print("tickets", () => printTickets(target, selected.orderNumber, tickets), `Tickets for #${selected.orderNumber} sent to ${targetName(target)}.`)}
                         >
                           {busy === "tickets" ? "Printing…" : `Reprint ticket${tickets.reduce((n, t) => n + t.qty, 0) === 1 ? "" : "s"}`}
                         </button>
@@ -205,7 +209,7 @@ export default function RecentOrders({ printerAddress }: { printerAddress: strin
                         </button>
                       )}
                     </div>
-                    {!printerAddress && (
+                    {!target && (
                       <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
                         No printer is set up on this register. Add it under Devices.
                       </p>
@@ -213,11 +217,11 @@ export default function RecentOrders({ printerAddress }: { printerAddress: strin
                     {note && (
                       <div className={`notice ${note.tone === "ok" ? "notice-success" : "notice-warn"} mt-3 !p-3 text-sm`}>
                         {note.text}
-                        {note.certUrl && (
+                        {note.certUrl && target?.via === "direct" && (
                           <p className="mt-2">
                             The iPad may need to trust the printer again: open{" "}
                             <a className="font-bold underline" href={note.certUrl} target="_blank" rel="noreferrer">
-                              {printerBaseUrl(printerAddress)}
+                              {printerBaseUrl(target.address)}
                             </a>
                             , tap <strong>Show Details → visit this website</strong>, then come back and try again.
                           </p>

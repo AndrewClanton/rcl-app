@@ -1,0 +1,10 @@
+# Royale print relay settings. Get the ID and password from the website:
+# Back office -> Printers -> Add printer -> "The old TM-m30 at the bar,
+# through the Raspberry Pi relay". The password is shown only once.
+RCL_POLL_URL=https://rcl-app.vercel.app/api/print/poll
+RCL_PRINTER_ID=PASTE-THE-ID-HERE
+RCL_PRINTER_PASSWORD=PASTE-THE-PASSWORD-HERE
+# The bar's TM-m30 on the local network.
+RCL_PRINTER_IP=10.0.0.175
+# Seconds between checks for new print jobs.
+RCL_INTERVAL=5

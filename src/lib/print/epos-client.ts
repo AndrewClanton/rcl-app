@@ -8,7 +8,16 @@
 // uses a self-signed certificate: the register's browser has to accept it
 // once, by opening https://<printer address> and choosing to continue.
 
-export type PrintResult = { ok: true } | { ok: false; error: string; certUrl?: string };
+// This is the "Print straight to a printer IP (old way)" choice under
+// Devices. The other choice sends jobs through the website's print queue
+// (app/pos/printing.ts), with no certificate to accept.
+
+import { printerErrorMessage } from "./printer-errors";
+
+// Through the website's print queue: pending means the printer hadn't
+// confirmed it yet when the register stopped waiting; an error with queued
+// means it failed once (paper out, say) and is still in line to try again.
+export type PrintResult = { ok: true; pending?: boolean } | { ok: false; error: string; certUrl?: string; queued?: boolean };
 
 // "192.168.1.50" -> "https://192.168.1.50". A full URL (http://localhost:...)
 // is used as-is, which is how local testing reaches a fake printer.
@@ -16,18 +25,6 @@ export function printerBaseUrl(address: string): string {
   const a = address.trim().replace(/\/+$/, "");
   return /^https?:\/\//i.test(a) ? a : `https://${a}`;
 }
-
-// What the printer's error codes mean for whoever is at the register.
-const CODE_MESSAGES: Record<string, string> = {
-  EPTR_COVER_OPEN: "The printer's cover is open. Close it and try again.",
-  EPTR_REC_EMPTY: "The printer is out of paper.",
-  EPTR_AUTOMATICAL: "The printer's cutter is jammed or it has an error. Turn it off and on.",
-  EPTR_MECHANICAL: "The printer has a mechanical error. Turn it off and on.",
-  EPTR_UNRECOVERABLE: "The printer has an error. Turn it off and on.",
-  EX_TIMEOUT: "The printer didn't answer in time. Check that it's on.",
-  DeviceNotFound: "The printer's web service is off. It needs ePOS-Print turned on in its settings.",
-  EX_ENPC_TIMEOUT: "The printer is busy. Try again in a moment.",
-};
 
 export async function sendToPrinter(address: string, eposXml: string): Promise<PrintResult> {
   if (!address.trim()) return { ok: false, error: "No printer address is set. Add it under Printer." };
@@ -64,5 +61,5 @@ export async function sendToPrinter(address: string, eposXml: string): Promise<P
   const success = /<response[^>]*\bsuccess="true"/.test(text);
   if (success) return { ok: true };
   const code = text.match(/<response[^>]*\bcode="([^"]*)"/)?.[1] ?? "";
-  return { ok: false, error: CODE_MESSAGES[code] ?? `The printer couldn't print${code ? ` (${code})` : ""}.` };
+  return { ok: false, error: printerErrorMessage(code) };
 }

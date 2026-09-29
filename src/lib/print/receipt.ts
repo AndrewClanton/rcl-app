@@ -4,6 +4,7 @@
 // directly with node.
 import { SITE_NAME, THEATER_ADDRESS } from "@/lib/site";
 import { isClaimUrl } from "@/lib/claim-link";
+import { STATION_LABEL, type RegisterStation } from "@/lib/print/stations";
 import type { Raster } from "./raster";
 
 // 80mm paper, Font A: 48 characters per line (24 at double width).
@@ -106,6 +107,15 @@ class Doc {
   }
   big(on: boolean) {
     return this.raw(on ? `<text width="2" height="2"/>` : `<text width="1" height="1"/>`);
+  }
+  // The printer's own character scaling, 1-8 each way: width w means
+  // 48 / w characters to a line.
+  size(w: number, h: number) {
+    return this.raw(`<text width="${w}" height="${h}"/>`);
+  }
+  // A little space, in dots (8 to a mm).
+  gap(dots: number) {
+    return this.raw(`<feed unit="${dots}"/>`);
   }
   bold(on: boolean) {
     return this.raw(`<text em="${on}"/>`);
@@ -274,6 +284,78 @@ export function reservedCardXml(c: ReservedCard, pics: { logo?: Raster | null } 
   d.align("left").line(rule("=")).align("center").feed(1);
   d.lines(wrap("This booth is held for this party. Please check with a staff member before sitting here.", COLS));
   d.feed(1).bold(true).line("royalecinemajoplin.com").bold(false);
+  d.cut();
+  return d.toString();
+}
+
+// ---------- kitchen order ticket ----------
+// One per order, printed in the kitchen, and it travels with the food. Made
+// to be read from across the kitchen: a huge order number, the name, which
+// register it came from and when, then every item big and bold with its
+// modifiers indented under it. No prices. A tab's later tickets carry only
+// what was added, under an ADD-ON banner (lib/print/kitchen.ts).
+
+export interface OrderTicket {
+  orderNumber: number;
+  name: string | null; // the tab or order name
+  tab: boolean;
+  station: RegisterStation | null; // which register rang it
+  at: string; // ISO: when it was rung (a reprint keeps the order's time)
+  kind: "order" | "addon" | "reprint";
+  lines: { name: string; qty: number; mods: string[] }[];
+  notes?: string | null;
+  printedAt?: string | null; // a reprint says when it was reprinted
+}
+
+// Words wrapped to `width`: the first line starts `first` spaces in, the
+// rest `rest` spaces in, so they sit under the text rather than under the
+// quantity or bullet.
+function hang(text: string, width: number, first: number, rest: number): string[] {
+  const rows: string[] = [];
+  let cur = "";
+  for (const w of plain(text).split(/\s+/).filter(Boolean)) {
+    const lead = " ".repeat(rows.length ? rest : first);
+    const next = cur ? `${cur} ${w}` : lead + w;
+    if (next.length <= width) cur = next;
+    else {
+      if (cur) rows.push(cur);
+      cur = (" ".repeat(rest) + w).slice(0, width);
+    }
+  }
+  if (cur) rows.push(cur);
+  return rows;
+}
+
+function clock(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+}
+
+export function orderTicketXml(t: OrderTicket): string {
+  const d = new Doc().align("center");
+  if (t.kind === "addon") d.size(2, 2).bold(true).reverse(true).line("  ADD-ON  ").reverse(false).bold(false).gap(12);
+  if (t.kind === "reprint") d.size(2, 1).bold(true).line("** REPRINT **").bold(false);
+  // 4x: 12 characters to the line, about a centimeter tall.
+  d.size(4, 4).bold(true).line(`#${t.orderNumber}`).bold(false);
+  const name = t.name?.trim() ? `${t.tab ? "Tab: " : ""}${t.name.trim()}` : t.tab ? "Tab" : "";
+  if (name) d.size(2, 2).bold(true).lines(wrap(name, 24)).bold(false);
+  const where = t.station ? STATION_LABEL[t.station] : "Register";
+  d.size(1, 2).bold(true).line(`${where.toUpperCase()}  |  ${clock(t.at)}`).bold(false);
+  d.size(1, 1).align("left").line(rule("="));
+  for (const l of t.lines) {
+    const qty = `${l.qty} x `;
+    d.size(2, 2).bold(true).lines(hang(`${qty}${l.name}`, 24, 0, qty.length)).bold(false);
+    if (l.mods.length) {
+      d.size(1, 2);
+      for (const m of l.mods) d.lines(hang(`- ${m}`, COLS, 6, 8));
+    }
+    d.size(1, 1).gap(14);
+  }
+  d.line(rule("-"));
+  if (t.notes?.trim()) {
+    d.size(1, 2).bold(true).lines(wrap(`NOTE: ${t.notes.trim()}`, COLS)).bold(false).size(1, 1).line(rule("-"));
+  }
+  const count = t.lines.reduce((n, l) => n + l.qty, 0);
+  d.lines(columns(`${count} item${count === 1 ? "" : "s"}${t.kind === "addon" ? " added" : ""}`, t.printedAt ? `reprinted ${clock(t.printedAt)}` : `Order #${t.orderNumber}`));
   d.cut();
   return d.toString();
 }
