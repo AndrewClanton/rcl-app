@@ -1,5 +1,6 @@
 "use server";
 
+import { trainingDueFor } from "@/lib/training/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
 import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
@@ -146,7 +147,17 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     lastCount = { id: c.id, at: c.completed_at, byName: c.counted_by ? names.get(c.counted_by) ?? null : null, below };
   }
 
-  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, scheduled, booths: await boothHolds(today.date) };
+  const training = (await trainingDueFor(onShift.map((o) => o.employeeId)).catch(() => [])).map((t) => ({
+    employeeId: t.employeeId,
+    name: names.get(t.employeeId) ?? "Someone",
+    slug: t.slug,
+    title: t.title,
+    dueDate: t.dueDate,
+    overdue: t.overdue,
+    updated: t.state === "update",
+  }));
+
+  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, training, scheduled, booths: await boothHolds(today.date) };
 }
 
 // ---------- booths ----------

@@ -6,6 +6,7 @@ import type { OnShift, ShiftStatus } from "@/lib/ops/shared";
 import OpsPanel, { type OpsTab } from "./OpsPanel";
 import { publishOnShift } from "./on-shift-store";
 import BoothsToday from "./BoothsToday";
+import TrainingWindow from "./TrainingWindow";
 
 // The register's shift tools: who's working, reminders, and the buttons that
 // open the checklist, par count, shopping list and history. Sits above the
@@ -97,6 +98,9 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const onShiftIds = new Set((status?.onShift ?? []).map((o) => o.employeeId));
   const todos = (status?.todos ?? []).filter((t) => !t.assigneeId || onShiftIds.size === 0 || onShiftIds.has(t.assigneeId));
   const [justDone, setJustDone] = useState<{ id: string; title: string } | null>(null);
+  // Assigned training for whoever's on shift, opened in a window over the register.
+  const training = status?.training ?? [];
+  const [trainingOpen, setTrainingOpen] = useState<{ slug: string; employeeId: string; name: string } | null>(null);
   const [todoError, setTodoError] = useState<string | null>(null);
 
   // Tell the register who's working, so the cashier fills itself in.
@@ -306,6 +310,51 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             );
           })}
         </div>
+      )}
+
+      {training.length > 0 && (
+        <div className="mb-3 grid gap-2">
+          {training.map((t) => (
+            <div
+              key={`${t.employeeId}:${t.slug}`}
+              className="flex flex-wrap items-center gap-3 rounded-lg border-2 px-4 py-2.5"
+              style={{ borderColor: "var(--foreground)", background: "var(--surface)" }}
+            >
+              <span className="rounded bg-[var(--foreground)] px-1.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--gold)]">Training</span>
+              <div className="min-w-0 flex-1">
+                <div className="font-bold">
+                  {t.name}: {t.title}
+                </div>
+                <div className="text-sm" style={{ color: t.overdue ? "var(--accent)" : "var(--muted)" }}>
+                  {[
+                    t.updated && "Updated, sign again",
+                    t.overdue ? "Overdue" : t.dueDate && `Due ${new Date(`${t.dueDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`,
+                    "Open it when things are slow",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              </div>
+              <button
+                className="min-h-11 rounded-lg border-2 px-4 py-2 text-sm font-bold"
+                style={{ borderColor: "var(--foreground)" }}
+                onClick={() => setTrainingOpen({ slug: t.slug, employeeId: t.employeeId, name: t.name })}
+              >
+                Open
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {trainingOpen && (
+        <TrainingWindow
+          {...trainingOpen}
+          onClose={(signed) => {
+            setTrainingOpen(null);
+            if (signed) refresh();
+          }}
+        />
       )}
 
       {startOpen && (

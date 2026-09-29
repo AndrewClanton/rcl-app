@@ -1,0 +1,511 @@
+/* The training "picture kit": numbered steps with drawn screens and a
+   pulsing ring on what to tap. The look of the membership tutorial Andrew
+   liked; always light, like the back office it draws. */
+
+.page {
+  --ink: #14110c;
+  --cream: #f8f5ec;
+  --paper: #ffffff;
+  --rule: #e3ddc9;
+  --muted: #6b6455;
+  --red: #ed1c24;
+  --gold: #ffc72c;
+  --ok-bg: #e6f4ea;
+  --ok-bd: #8dc79c;
+  --ok-tx: #1f6b3a;
+  --warn-bg: #fdf1d6;
+  --warn-bd: #e8c266;
+  --warn-tx: #8a5a0a;
+  --display: var(--font-archivo-black), "Arial Black", Arial, sans-serif;
+  --body: var(--font-archivo), Arial, Helvetica, sans-serif;
+  --mono: var(--font-space-mono), "Courier New", monospace;
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.5;
+  display: grid;
+  gap: 40px;
+}
+.page h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  margin: 0;
+  text-wrap: balance;
+}
+.page p {
+  margin: 0;
+  max-width: 62ch;
+}
+
+/* ---- blocks around the pictures ---- */
+.need {
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.needTitle {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: block;
+  margin-bottom: 2px;
+}
+.step {
+  display: grid;
+  gap: 12px;
+  scroll-margin-top: 12px;
+}
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.num {
+  flex: none;
+  font-family: var(--display);
+  font-size: 22px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  border: 3px solid var(--ink);
+}
+.numOpt {
+  background: var(--paper);
+  color: var(--ink);
+}
+.stepTitle {
+  font-size: clamp(20px, 4.6vw, 26px);
+  line-height: 1.1;
+}
+.tip {
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.tip b {
+  color: var(--ink);
+}
+
+/* do / don't lists */
+.rules {
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 620px) {
+  .rules {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.ruleBox {
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: var(--paper);
+  overflow: hidden;
+}
+.ruleHead {
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+}
+.ruleOk {
+  background: var(--ok-bg);
+  color: var(--ok-tx);
+  border-bottom: 2px solid var(--ink);
+}
+.ruleNo {
+  background: var(--red);
+  color: #fff;
+  border-bottom: 2px solid var(--ink);
+}
+.ruleList {
+  margin: 0;
+  list-style: disc;
+  padding: 10px 12px 12px 30px;
+  display: grid;
+  gap: 6px;
+  font-size: 15px;
+}
+
+/* ---- the drawn screens ---- */
+.screen {
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--cream);
+  overflow: hidden;
+  box-shadow: 5px 5px 0 var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--ink);
+  padding: 8px 10px;
+}
+.dots {
+  display: flex;
+  gap: 5px;
+  flex: none;
+}
+.dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4a4337;
+}
+.url {
+  flex: 1;
+  min-width: 0;
+  background: #2a251d;
+  color: #e9e3d2;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane {
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+.caption {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+}
+.two {
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 620px) {
+  .two {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* back-office look */
+.boTitle {
+  font-weight: 600;
+  font-size: 15px;
+}
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12.5px;
+}
+.nav span {
+  white-space: nowrap;
+}
+.card {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 12px;
+}
+.cardFlush {
+  padding: 0;
+}
+.cardTitle {
+  margin: 0 0 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.input {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: var(--muted);
+  background: var(--paper);
+  min-width: 0;
+}
+.filled {
+  color: var(--ink);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.grow {
+  flex: 1 1 150px;
+}
+.item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border-top: 1px solid var(--rule);
+}
+.item:first-child {
+  border-top: 0;
+}
+.name {
+  font-weight: 500;
+  flex: 1 1 110px;
+}
+.mail {
+  color: var(--muted);
+  flex: 1 1 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pill {
+  border: 1px solid var(--rule);
+  border-radius: 99px;
+  padding: 1px 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pillPlus {
+  border-color: var(--warn-bd);
+  background: var(--warn-bg);
+  color: var(--warn-tx);
+}
+.pts {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--rule);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.dashed {
+  border: 1px dashed #cfc7ae;
+  border-radius: 10px;
+  background: var(--paper);
+  padding: 10px 14px;
+  color: var(--muted);
+  justify-self: start;
+}
+.btnRed {
+  background: var(--red);
+  color: #fff;
+  border-radius: 4px;
+  padding: 6px 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.btnLine {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  border-radius: 4px;
+  padding: 6px 11px;
+  white-space: nowrap;
+}
+.chip {
+  border: 1px solid var(--rule);
+  border-radius: 99px;
+  padding: 3px 10px;
+  background: var(--paper);
+  white-space: nowrap;
+}
+.chipOn {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.faded {
+  opacity: 0.45;
+}
+.small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.dim {
+  color: var(--muted);
+}
+.arrow {
+  font-family: var(--display);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+
+/* the "tap here" ring and its number */
+.hit {
+  position: relative;
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 7px rgba(255, 199, 44, 0.35);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.hit[data-n]::after {
+  content: attr(data-n);
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--red);
+  color: #fff;
+  font: 400 12px/22px var(--display);
+  text-align: center;
+  border: 2px solid var(--ink);
+}
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 11px rgba(255, 199, 44, 0.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hit {
+    animation: none;
+  }
+}
+
+/* phone / social mockups */
+.phone {
+  max-width: 300px;
+  justify-self: center;
+  width: 100%;
+  border: 2px solid var(--ink);
+  border-radius: 26px;
+  background: var(--paper);
+  padding: 12px;
+  box-shadow: 5px 5px 0 var(--ink);
+  display: grid;
+  gap: 10px;
+  font-size: 13px;
+}
+.poster {
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-family: var(--display);
+  font-size: 18px;
+  padding: 12px;
+  line-height: 1.1;
+}
+.posterOk {
+  background: var(--gold);
+  color: var(--ink);
+}
+.posterNo {
+  background: var(--ink);
+  color: var(--cream);
+  position: relative;
+}
+.stamp {
+  position: absolute;
+  inset: auto 10px 10px auto;
+  transform: rotate(-8deg);
+  font-family: var(--display);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border: 3px solid currentColor;
+  border-radius: 4px;
+}
+.stampNo {
+  color: var(--red);
+  background: #fff;
+}
+.stampOk {
+  color: var(--ok-tx);
+  background: var(--ok-bg);
+}
+
+/* Stripe-ish screens: drawn loosely */
+.stripe {
+  background: #fff;
+  font-family: -apple-system, "Segoe UI", Arial, sans-serif;
+  color: #1a1f36;
+}
+.stripe .pane {
+  background: #fff;
+}
+.sMuted {
+  color: #6a7383;
+  font-size: 12px;
+}
+.sBig {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.sLine {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #ebeef1;
+  font-size: 12.5px;
+}
+.sTotal {
+  font-weight: 700;
+  border-bottom: 0;
+}
+.sField {
+  border: 1px solid #d5dbe1;
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: #6a7383;
+  font-size: 12.5px;
+}
+.sBtn {
+  background: #635bff;
+  color: #fff;
+  border-radius: 6px;
+  padding: 9px;
+  text-align: center;
+  font-weight: 600;
+}
+.sDanger {
+  background: #df1b41;
+}
+.sRadio {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid #d5dbe1;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.sRadio i {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #6a7383;
+  margin-top: 2px;
+}
+.sSel {
+  border-color: #635bff;
+}
+.sSel i {
+  border: 4px solid #635bff;
+}
