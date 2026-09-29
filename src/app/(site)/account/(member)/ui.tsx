@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
+import type { MemberBooth, MemberScreening, PurchaseRow } from "@/lib/data/member-account";
 import MoviePoster from "@/components/MoviePoster";
 import { dateShort, money, showtime } from "./format";
 import { ProofStamp, SpecFoot } from "@/components/print";
@@ -121,5 +121,28 @@ export function Panel({ title, aside, children, className = "" }: { title: strin
       </h2>
       {children}
     </section>
+  );
+}
+
+// An upcoming booth reservation as a stub: the date block, the booth and
+// window, and a tear-off with the party size.
+export function BoothStub({ b }: { b: MemberBooth }) {
+  const [dow, rest] = b.dateLabel.split(", ");
+  return (
+    <div className="sheet flex items-stretch overflow-hidden">
+      <div className="flex w-16 shrink-0 flex-col items-center justify-center border-r-2 border-[var(--foreground)] bg-[var(--foreground)] px-1 py-3 text-center text-[var(--gold)]">
+        <div className="spec-k !mb-0 !text-[var(--gold)]">{dow}</div>
+        <div className="font-display text-sm leading-tight">{rest}</div>
+      </div>
+      <div className="min-w-0 flex-1 px-4 py-3">
+        <div className="spec-k">{b.free ? "Booth · free with Insiders+" : "Booth · reserved"}</div>
+        <div className="font-display truncate text-lg leading-tight">{b.booth}</div>
+        <div className="mt-1 text-sm font-bold text-[var(--accent)]">{b.window}</div>
+      </div>
+      <div className="flex w-[4.5rem] shrink-0 flex-col items-center justify-center border-l-2 border-dashed border-[var(--foreground)] bg-[var(--gold)] px-2 text-center">
+        <div className="spec-k !mb-0 !text-[var(--foreground)]">Party</div>
+        <div className="font-display text-2xl leading-none">{b.party}</div>
+      </div>
+    </div>
   );
 }

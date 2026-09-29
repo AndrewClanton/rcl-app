@@ -7,7 +7,7 @@ export const metadata = { title: "Receipt" };
 
 export default async function ReceiptPage({ params }: { params: Promise<{ kind: string; id: string }> }) {
   const { kind, id } = await params;
-  if (kind !== "order" && kind !== "ticket") notFound();
+  if (kind !== "order" && kind !== "ticket" && kind !== "booth") notFound();
   const member = await requireMember();
   const r = await getReceipt(member, kind, id);
   if (!r) notFound();

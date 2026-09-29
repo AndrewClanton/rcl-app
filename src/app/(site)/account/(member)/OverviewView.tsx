@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
+import type { MemberBooth, MemberScreening, PurchaseRow } from "@/lib/data/member-account";
 import type { Member } from "@/lib/types";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/membership-rates";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
@@ -9,19 +9,21 @@ import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
-import { Empty, Panel, PurchaseRows, SectionHead, TicketStub } from "./ui";
+import { BoothStub, Empty, Panel, PurchaseRows, SectionHead, TicketStub } from "./ui";
 import { RegNote } from "@/components/print";
 
 export default function OverviewView({
   member,
   purchases,
   screenings,
+  booths = [],
   googlePhoto,
   welcome,
 }: {
   member: Member;
   purchases: PurchaseRow[];
   screenings: { upcoming: MemberScreening[]; past: MemberScreening[] };
+  booths?: MemberBooth[];
   googlePhoto: string | null;
   welcome: boolean;
 }) {
@@ -111,6 +113,17 @@ export default function OverviewView({
           <div className="grid gap-5 sm:grid-cols-2">
             {screenings.upcoming.slice(0, 4).map((s) => (
               <TicketStub key={s.bookingId} s={s} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {booths.length > 0 && (
+        <section>
+          <SectionHead title="Your booths" href="/booths" link="Reserve another" />
+          <div className="grid gap-5 sm:grid-cols-2">
+            {booths.map((b) => (
+              <BoothStub key={b.id} b={b} />
             ))}
           </div>
         </section>

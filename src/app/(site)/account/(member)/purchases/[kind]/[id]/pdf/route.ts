@@ -7,7 +7,7 @@ import { renderReceiptPdf } from "@/lib/pdf/documents";
 // it: getReceipt scopes by the signed-in member's id.
 export async function GET(req: NextRequest, ctx: RouteContext<"/account/purchases/[kind]/[id]/pdf">) {
   const { kind, id } = await ctx.params;
-  if (kind !== "order" && kind !== "ticket") return new Response("Not found", { status: 404 });
+  if (kind !== "order" && kind !== "ticket" && kind !== "booth") return new Response("Not found", { status: 404 });
   const member = await getSignedInMember();
   if (!member) return Response.redirect(new URL("/account/login", req.url));
   const receipt = await getReceipt(member, kind, id);

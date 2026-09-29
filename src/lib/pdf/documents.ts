@@ -198,6 +198,7 @@ export async function renderReceiptPdf(r: Receipt): Promise<Uint8Array> {
   row("Subtotal", money(r.subtotal));
   for (const d of r.discounts) row(d.label, money(-d.amount), ctx.font, 10.5, MUTED);
   if (r.kind === "order") row(r.taxFree ? "Sales tax (exempt)" : "Sales tax", money(r.tax));
+  else if (r.tax > 0) row("Sales tax", money(r.tax));
   if (r.tip > 0) row("Tip", money(r.tip));
   y -= 2;
   page.drawLine({ start: { x: label, y: y + 10 }, end: { x: cAmt, y: y + 10 }, thickness: 1, color: INK });

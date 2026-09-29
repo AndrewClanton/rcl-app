@@ -5,6 +5,7 @@ import type Stripe from "stripe";
 import { tierForPrice } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
+import { notifyBoothConfirmed } from "@/lib/booth-notify";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -84,6 +85,8 @@ export async function POST(request: NextRequest) {
           .eq("id", boothReservationId)
           .eq("status", "pending")
           .then(check("booth reservation"));
+        // Guest confirmation and staff alert, each sent once.
+        await notifyBoothConfirmed(boothReservationId);
       }
     }
   }

@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
 import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
 import { evaluateReminders } from "@/lib/ops/reminders";
+import { boothWindow } from "@/lib/booth-time";
 import type {
   BoothHold,
   DueReminder,
@@ -149,18 +150,6 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
 }
 
 // ---------- booths ----------
-
-// "7:00–9:00 PM" from a start time ("19:00:00") and a length in hours.
-function boothWindow(start: string, hours: number): string {
-  const [h, m] = start.split(":").map(Number);
-  const at = (mins: number) => {
-    const hh = Math.floor(mins / 60) % 24;
-    return { t: `${hh % 12 || 12}:${String(mins % 60).padStart(2, "0")}`, ap: hh >= 12 ? "PM" : "AM" };
-  };
-  const a = at(h * 60 + m);
-  const b = at(h * 60 + m + Math.round(Number(hours) * 60));
-  return a.ap === b.ap ? `${a.t}–${b.t} ${b.ap}` : `${a.t} ${a.ap}–${b.t} ${b.ap}`;
-}
 
 // Confirmed booth bookings for today and tomorrow. (Booths can't be booked
 // same-day, so tomorrow's list is where new bookings show up first.)

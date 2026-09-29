@@ -7,6 +7,7 @@ import { getBoothBusyTimes, type BoothBusy } from "@/lib/data/booths";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { exactEmail, sameEmail } from "@/lib/email-match";
+import { notifyBoothConfirmed } from "@/lib/booth-notify";
 
 export async function getAvailabilityForDate(date: string): Promise<BoothBusy[]> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
@@ -143,6 +144,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
         .select("id")
         .single();
       if (freeErr) throw freeErr;
+      await notifyBoothConfirmed(freeReservation.id);
       return { ok: true, url: `${origin}/booths?checkout=free&reservation_id=${freeReservation.id}` };
     }
   }

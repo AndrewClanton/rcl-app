@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { boothDate, boothWindow } from "@/lib/booth-time";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -14,7 +15,7 @@ export function yearOf(iso: string) {
 
 // ---------- purchases ----------
 
-export type PurchaseKind = "order" | "ticket";
+export type PurchaseKind = "order" | "ticket" | "booth";
 
 export interface PurchaseRow {
   kind: PurchaseKind;
@@ -29,7 +30,7 @@ export interface PurchaseRow {
 
 export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
   const supabase = createAdminClient();
-  const [orders, bookings] = await Promise.all([
+  const [orders, bookings, booths] = await Promise.all([
     supabase
       .from("orders")
       .select("id, order_number, total, tax, status, completed_at, items:order_items(name, quantity)")
@@ -44,9 +45,20 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       .is("order_id", null)
       .in("status", ["confirmed", "refunded"])
       .order("created_at", { ascending: false }),
+    // Paid booth reservations (free Insiders+ ones aren't purchases). A paid
+    // one that was cancelled was refunded.
+    supabase
+      .from("booth_reservations")
+      .select("id, reservation_date, start_time, hours, party_size, fee_amount, tax_amount, status, created_at, booth:booths(label)")
+      .eq("member_id", memberId)
+      .gt("fee_amount", 0)
+      .not("stripe_payment_intent_id", "is", null)
+      .in("status", ["confirmed", "cancelled"])
+      .order("created_at", { ascending: false }),
   ]);
   if (orders.error) throw orders.error;
   if (bookings.error) throw bookings.error;
+  if (booths.error) throw booths.error;
 
   const rows: PurchaseRow[] = [];
   for (const o of orders.data ?? []) {
@@ -74,6 +86,19 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       amount: Number(b.unit_price) * b.quantity + Number(b.tax_amount),
       tax: Number(b.tax_amount),
       status: b.status === "refunded" ? "refunded" : "completed",
+    });
+  }
+  for (const r of booths.data ?? []) {
+    const label = (r.booth as unknown as { label: string } | null)?.label ?? "Booth";
+    rows.push({
+      kind: "booth",
+      id: r.id,
+      date: r.created_at,
+      label: `${label} reservation`,
+      detail: `${boothDate(r.reservation_date, "short")}, ${boothWindow(r.start_time, Number(r.hours))} · party of ${r.party_size}`,
+      amount: Number(r.fee_amount) + Number(r.tax_amount ?? 0),
+      tax: Number(r.tax_amount ?? 0),
+      status: r.status === "cancelled" ? "refunded" : "completed",
     });
   }
   return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -170,6 +195,48 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     };
   }
 
+  if (kind === "booth") {
+    const { data: r } = await supabase
+      .from("booth_reservations")
+      .select("id, reservation_date, start_time, hours, party_size, fee_amount, tax_amount, status, created_at, booth:booths(label)")
+      .eq("id", id)
+      .eq("member_id", member.id)
+      .gt("fee_amount", 0)
+      .in("status", ["confirmed", "cancelled"])
+      .maybeSingle();
+    if (!r) return null;
+    const label = (r.booth as unknown as { label: string } | null)?.label ?? "Booth";
+    const fee = Number(r.fee_amount);
+    const tax = Number(r.tax_amount ?? 0);
+    return {
+      kind,
+      id: r.id,
+      number: `B-${r.id.slice(0, 8).toUpperCase()}`,
+      date: r.created_at,
+      status: r.status === "cancelled" ? "refunded" : "completed",
+      lines: [
+        {
+          name: `Booth reservation: ${label}`,
+          quantity: 1,
+          unitPrice: fee,
+          modifiers: [`${boothDate(r.reservation_date)}, ${boothWindow(r.start_time, Number(r.hours))}`, `Party of ${r.party_size}`],
+        },
+      ],
+      subtotal: fee,
+      discounts: [],
+      tax,
+      taxFree: false,
+      tip: 0,
+      total: fee + tax,
+      payment: "Card (online)",
+      pointsEarned: 0,
+      pointsRedeemed: 0,
+      screening: null,
+      memberName: member.name,
+      memberEmail: member.email,
+    };
+  }
+
   const { data: b } = await supabase
     .from("bookings")
     .select("id, quantity, unit_price, tax_amount, status, created_at, screening:screenings(starts_at, movie:movies(title, poster_url), room:rooms(name))")
@@ -234,6 +301,41 @@ export async function getMemberScreenings(memberId: string): Promise<{ upcoming:
     upcoming: all.filter((x) => t(x) > now).sort((a, b) => t(a) - t(b)),
     past: all.filter((x) => t(x) <= now).sort((a, b) => t(b) - t(a)),
   };
+}
+
+// ---------- booths ----------
+
+export interface MemberBooth {
+  id: string;
+  booth: string;
+  date: string; // YYYY-MM-DD
+  dateLabel: string; // "Wed, Sep 30"
+  window: string; // "7:00–9:00 PM"
+  party: number;
+  free: boolean;
+}
+
+// The member's upcoming booth reservations (today on), soonest first.
+export async function getMemberBooths(memberId: string): Promise<MemberBooth[]> {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: TZ });
+  const { data, error } = await createAdminClient()
+    .from("booth_reservations")
+    .select("id, reservation_date, start_time, hours, party_size, fee_amount, booth:booths(label)")
+    .eq("member_id", memberId)
+    .eq("status", "confirmed")
+    .gte("reservation_date", today)
+    .order("reservation_date")
+    .order("start_time");
+  if (error) throw error;
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    booth: (r.booth as unknown as { label: string } | null)?.label ?? "Booth",
+    date: r.reservation_date,
+    dateLabel: boothDate(r.reservation_date, "short"),
+    window: boothWindow(r.start_time, Number(r.hours)),
+    party: r.party_size,
+    free: Number(r.fee_amount) === 0,
+  }));
 }
 
 // ---------- points ----------
