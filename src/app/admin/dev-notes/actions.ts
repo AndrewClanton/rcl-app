@@ -73,9 +73,12 @@ export async function reopenDevNote(id: string) {
   await setStatus(id, "new");
 }
 
-export async function deleteDevNote(id: string) {
+export async function deleteDevNote(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   await assertAdmin();
   const supabase = createAdminClient();
-  await supabase.from("dev_notes").delete().eq("id", id);
+  const { error } = await supabase.from("dev_notes").delete().eq("id", id);
+  // Failing quietly here used to leave the note in place with no word why.
+  if (error) return { ok: false, error: "Couldn't delete that note. Try again." };
   revalidate();
+  return { ok: true };
 }

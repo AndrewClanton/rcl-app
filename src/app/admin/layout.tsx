@@ -3,6 +3,7 @@ import { requireStaff, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { signOut } from "@/app/login/actions";
 import { getOpenDevNoteCount } from "@/lib/data/devNotes";
 import { getPinStatus } from "@/lib/data/employees";
+import AdminErrorBar from "./AdminErrorBar";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
@@ -95,6 +96,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
       )}
       {children}
+      <AdminErrorBar />
     </div>
   );
 }

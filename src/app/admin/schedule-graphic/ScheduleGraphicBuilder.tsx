@@ -2,7 +2,10 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { announceActionError } from "@/lib/useRefreshingAction";
 import { addCalendarNote, deleteCalendarNote } from "./actions";
+
+const NOT_SAVED = "That didn't save. Check the connection and try again.";
 
 const CENTRAL_TZ = "America/Chicago";
 
@@ -146,20 +149,23 @@ export default function ScheduleGraphicBuilder({
   function submitNewNote() {
     if (!newNoteLabel.trim()) return;
     startTransition(async () => {
-      await addCalendarNote({
+      const r = await addCalendarNote({
         noteDate: newNoteDate,
         startTime: newNoteAllDay ? null : newNoteStart,
         endTime: newNoteAllDay ? null : newNoteEnd,
         label: newNoteLabel.trim(),
-      });
-      setNewNoteLabel("");
+      }).catch(() => ({ ok: false as const, error: NOT_SAVED }));
+      // Keep what they typed when it didn't save, so they can try again.
+      if (r.ok) setNewNoteLabel("");
+      else announceActionError(r.error);
       router.refresh();
     });
   }
 
   function removeNote(id: string) {
     startTransition(async () => {
-      await deleteCalendarNote(id);
+      const r = await deleteCalendarNote(id).catch(() => ({ ok: false as const, error: NOT_SAVED }));
+      if (!r.ok) announceActionError(r.error);
       router.refresh();
     });
   }
