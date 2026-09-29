@@ -1,0 +1,499 @@
+/* The customer tablet: a dark, cinematic two-panel screen. Always the
+   check-in keypad on the left; the right shows the live order tally, or a
+   Royale welcome (tonight's movies, the points path) between orders.
+   Its own palette, independent of the site theme: it lives on a bar. */
+
+.screen {
+  --ink: #14110c;
+  --ink-2: #1f1a13;
+  --ink-3: #2b241b;
+  --line: #3a3126;
+  --cream: #f3ecd9;
+  --cream-dim: #b9ae96;
+  --gold: #ffc72c;
+  --red: #ed1c24;
+  --paper: #f8f5ec;
+  --display: var(--font-archivo-black), "Arial Black", sans-serif;
+  --body: var(--font-archivo), Arial, Helvetica, sans-serif;
+  --mono: var(--font-space-mono), "Courier New", monospace;
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 0.82fr) 1.18fr;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255, 199, 44, 0.06) 1px, transparent 1.5px) 0 0 / 14px 14px,
+    var(--ink);
+  color: var(--cream);
+  font-family: var(--body);
+  overflow: hidden;
+}
+@media (max-aspect-ratio: 1/1) {
+  .screen {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    overflow-y: auto;
+  }
+  .screen > .side {
+    order: -1;
+  }
+}
+
+/* ---------- left: check in ---------- */
+.checkin {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.6vh, 18px);
+  padding: clamp(18px, 3.2vh, 36px) clamp(18px, 2.6vw, 40px);
+  background: var(--ink-2);
+  border-right: 3px solid var(--gold);
+  min-height: 0;
+  overflow-y: auto;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+.title {
+  font-family: var(--display);
+  font-size: clamp(30px, 4.6vh, 46px);
+  line-height: 1;
+  margin: 2px 0 0;
+}
+.sub {
+  color: var(--cream-dim);
+  font-size: 16px;
+  margin: 0;
+}
+.display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: clamp(62px, 9vh, 84px);
+  border: 3px solid var(--gold);
+  border-radius: 14px;
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: clamp(30px, 4.4vh, 42px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.placeholder {
+  color: #5d5243;
+}
+.keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(8px, 1.2vh, 12px);
+  flex: 1;
+  min-height: 0;
+}
+.key {
+  display: grid;
+  place-items: center;
+  min-height: clamp(54px, 8.4vh, 86px);
+  border-radius: 14px;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  color: var(--cream);
+  font-family: var(--display);
+  font-size: clamp(28px, 4vh, 38px);
+  transition: background 80ms, transform 80ms, border-color 80ms;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.key:active {
+  background: var(--gold);
+  color: var(--ink);
+  border-color: var(--gold);
+  transform: scale(0.97);
+}
+.key:disabled {
+  opacity: 0.4;
+}
+.keySmall {
+  font-family: var(--body);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+.cta {
+  min-height: clamp(62px, 8.6vh, 80px);
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: clamp(24px, 3.4vh, 30px);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 0 #b8870e;
+  transition: transform 80ms, box-shadow 80ms, opacity 120ms;
+  touch-action: manipulation;
+}
+.cta:active:not(:disabled) {
+  transform: translateY(4px);
+  box-shadow: 0 2px 0 #b8870e;
+}
+.cta:disabled {
+  opacity: 0.35;
+  box-shadow: none;
+}
+.ghost {
+  min-height: 56px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: transparent;
+  color: var(--cream);
+  font-weight: 700;
+  font-size: 17px;
+}
+.error {
+  color: #ff8a8e;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  margin: 0;
+}
+.foot {
+  color: var(--cream-dim);
+  font-size: 14px;
+  text-align: center;
+  margin: 0;
+}
+.field {
+  display: grid;
+  gap: 6px;
+}
+.fieldLabel {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+.input {
+  min-height: 64px;
+  border-radius: 12px;
+  border: 3px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 700;
+  padding: 0 16px;
+}
+.input:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+.done {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+.check {
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--gold);
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 56px;
+  animation: pop 420ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+@keyframes pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+}
+.qr {
+  background: #fff;
+  padding: 12px;
+  border-radius: 12px;
+  border: 3px solid var(--gold);
+}
+
+/* banners across the top of the check-in panel */
+.toasts {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  border-radius: 12px;
+  border: 3px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  padding: 12px 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: slide 260ms ease-out both;
+}
+.toastWarn {
+  background: var(--paper);
+}
+.toastTitle {
+  font-family: var(--display);
+  font-size: 22px;
+  line-height: 1.1;
+}
+.toastDetail {
+  font-size: 17px;
+  margin-top: 2px;
+}
+@keyframes slide {
+  from {
+    transform: translateY(-12px);
+    opacity: 0;
+  }
+}
+
+/* ---------- right: welcome or the order ---------- */
+.side {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: clamp(18px, 3.2vh, 36px) clamp(18px, 3vw, 48px);
+  gap: clamp(12px, 2vh, 22px);
+  overflow: hidden;
+}
+.logo {
+  width: min(360px, 60%);
+  height: auto;
+}
+.sprockets {
+  height: 16px;
+  background: repeating-linear-gradient(90deg, transparent 0 10px, rgba(243, 236, 217, 0.14) 10px 26px, transparent 26px 36px);
+  border-top: 2px solid rgba(243, 236, 217, 0.12);
+  border-bottom: 2px solid rgba(243, 236, 217, 0.12);
+}
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.h2 {
+  font-family: var(--display);
+  font-size: clamp(22px, 3vh, 30px);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.posters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(10px, 1.4vw, 18px);
+  min-height: 0;
+}
+.poster {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.posterImg {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  max-height: 38vh;
+}
+.posterTitle {
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1.2;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.timeChip {
+  justify-self: start;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--gold);
+  color: var(--ink);
+}
+.pitch {
+  margin-top: auto;
+  border: 3px solid var(--gold);
+  border-radius: 16px;
+  padding: clamp(14px, 2vh, 22px) clamp(16px, 2vw, 26px);
+  background:
+    radial-gradient(circle at 1px 1px, rgba(20, 17, 12, 0.18) 1px, transparent 1.6px) 0 0 / 9px 9px,
+    var(--gold);
+  color: var(--ink);
+}
+.pitchTitle {
+  font-family: var(--display);
+  font-size: clamp(22px, 3.2vh, 32px);
+  line-height: 1.05;
+}
+.ladder {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+}
+.rung {
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.35);
+}
+.rungDay {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.rungWhat {
+  font-family: var(--display);
+  font-size: 18px;
+  line-height: 1.1;
+  margin-top: 2px;
+}
+
+/* the order, on a cream receipt */
+.receipt {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 16px;
+  border: 3px solid var(--ink);
+  box-shadow: 0 0 0 3px var(--gold), 0 18px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.receiptHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px;
+  background: var(--ink);
+  color: var(--gold);
+}
+.receiptName {
+  font-family: var(--display);
+  font-size: clamp(22px, 3.2vh, 30px);
+  text-transform: uppercase;
+}
+.lines {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 6px 22px;
+}
+.line {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px dashed #d7cfb9;
+}
+.lineName {
+  font-size: clamp(18px, 2.4vh, 22px);
+  font-weight: 700;
+  line-height: 1.2;
+}
+.lineQty {
+  font-family: var(--mono);
+  margin-right: 6px;
+}
+.lineMods {
+  color: #6b6455;
+  font-size: 15px;
+}
+.linePrice {
+  font-family: var(--mono);
+  font-size: clamp(18px, 2.4vh, 22px);
+  white-space: nowrap;
+}
+.totals {
+  padding: 12px 22px 16px;
+  border-top: 3px solid var(--ink);
+  display: grid;
+  gap: 4px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.totalRow {
+  display: flex;
+  justify-content: space-between;
+}
+.saving {
+  color: #1f6b3a;
+  font-weight: 700;
+}
+.grand {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 6px;
+}
+.grandLabel {
+  font-family: var(--display);
+  font-size: 24px;
+  text-transform: uppercase;
+}
+.grandAmount {
+  font-family: var(--display);
+  font-size: clamp(40px, 6.4vh, 60px);
+  color: var(--red);
+  line-height: 1;
+}
+.earn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px;
+  background: var(--gold);
+  border-top: 3px solid var(--ink);
+  font-size: 18px;
+}
+.earnBig {
+  font-family: var(--display);
+  font-size: 26px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .check,
+  .toast {
+    animation: none;
+  }
+  .key,
+  .cta {
+    transition: none;
+  }
+}
