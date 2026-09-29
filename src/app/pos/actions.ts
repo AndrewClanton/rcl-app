@@ -295,10 +295,12 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
   return order.id;
 }
 
+const OPEN_DRAFT = ["draft", "held", "tab"];
+
 export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<void> {
   await assertStaff();
   const supabase = createAdminClient();
-  await supabase
+  const { data: updated } = await supabase
     .from("orders")
     .update({
       employee_id: fields.employeeId,
@@ -315,7 +317,12 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
       tax: totals.tax,
       total: totals.total,
     })
-    .eq("id", id);
+    .eq("id", id)
+    // Only an order that's still held or an open tab: a register with an
+    // out-of-date list must never rewrite a sale that's already been paid.
+    .in("status", OPEN_DRAFT)
+    .select("id");
+  if (!updated?.length) return;
   await replaceOrderItems(supabase, id, fields.lines);
   revalidate();
 }
@@ -345,8 +352,9 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
     .from("orders")
     .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id)")
     .eq("id", id)
+    .in("status", OPEN_DRAFT)
     .single();
-  if (error || !order) throw new Error("Order not found");
+  if (error || !order) throw new Error("That order was already closed on another register.");
   const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null }[];
   return {
     id: order.id,
@@ -369,11 +377,15 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   };
 }
 
+// Held orders and open tabs only. A completed sale can never be deleted
+// from here (refunds go through Recent orders with a manager PIN).
 export async function discardDraftOrder(id: string): Promise<void> {
   await assertStaff();
   const supabase = createAdminClient();
+  const { data: open } = await supabase.from("orders").select("id").eq("id", id).in("status", OPEN_DRAFT).maybeSingle();
+  if (!open) return;
   await releaseTabCard(id);
-  await supabase.from("orders").delete().eq("id", id);
+  await supabase.from("orders").delete().eq("id", id).in("status", OPEN_DRAFT);
   revalidate();
 }
 

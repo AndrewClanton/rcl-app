@@ -1,6 +1,7 @@
 import { requireStaff } from "@/lib/auth";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import CustomerDisplay from "./CustomerDisplay";
+import { registerTopic } from "@/lib/register-topic";
 
 export const dynamic = "force-dynamic";
 
@@ -17,5 +18,5 @@ export default async function CustomerDisplayPage() {
     if (movies.length >= 8) break;
   }
 
-  return <CustomerDisplay movies={movies} />;
+  return <CustomerDisplay movies={movies} registerTopic={registerTopic()} />;
 }

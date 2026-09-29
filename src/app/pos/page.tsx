@@ -7,6 +7,7 @@ import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
 import PosApp from "./PosApp";
+import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
@@ -69,6 +70,7 @@ export default async function PosPage() {
         recipesByItem={recipesByItem}
         defaultReaderId={defaultReaderId()}
         initialScreenings={showings.ok ? showings.screenings : []}
+        registerTopic={registerTopic()}
       />
     </div>
   );

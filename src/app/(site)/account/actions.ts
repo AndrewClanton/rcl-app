@@ -47,11 +47,13 @@ export async function uploadAvatar(formData: FormData): Promise<UploadAvatarResu
   const member = await requireMember();
   const file = formData.get("avatar");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a photo to upload." };
-  if (!file.type.startsWith("image/")) return { ok: false, error: "File must be an image." };
+  // Photos only (no SVG, which can carry script), and the stored name comes
+  // from the type we allow, never from the uploaded file's name.
+  const ext = PHOTO_TYPES[file.type];
+  if (!ext) return { ok: false, error: "Use a JPG, PNG, WebP or GIF photo." };
   if (file.size > 8_000_000) return { ok: false, error: "That photo is over 8 MB. Try a smaller one." };
 
   const admin = createAdminClient();
-  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
   const path = `${member.id}-${Date.now()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -61,8 +63,21 @@ export async function uploadAvatar(formData: FormData): Promise<UploadAvatarResu
   const { data: urlData } = admin.storage.from("member-avatars").getPublicUrl(path);
   const { error } = await admin.from("members").update({ avatar_url: urlData.publicUrl }).eq("id", member.id);
   if (error) throw error;
+  await deleteStoredPhoto(member.avatar_url);
   revalidatePath("/account", "layout");
   return { ok: true };
+}
+
+const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+
+// Removing or replacing a photo deletes the stored file too, so the old
+// picture doesn't stay reachable at its address.
+async function deleteStoredPhoto(url: string | null | undefined) {
+  const marker = "/storage/v1/object/public/member-avatars/";
+  const at = url?.indexOf(marker) ?? -1;
+  if (!url || at < 0) return;
+  const path = decodeURIComponent(url.slice(at + marker.length).split("?")[0]);
+  await createAdminClient().storage.from("member-avatars").remove([path]).catch(() => {});
 }
 
 export type BillingPortalResult = { ok: true; url: string } | { ok: false; error: string };
@@ -88,7 +103,7 @@ export async function updateMyProfile(fields: { name: string; phone: string }): 
   if (!name) return { ok: false, error: "Enter your name." };
   if (name.length > 80) return { ok: false, error: "That name is too long." };
   const phone = fields.phone.trim();
-  if (phone && phone.replace(/D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
+  if (phone && phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
   const { error } = await createAdminClient().from("members").update({ name, phone: phone || null }).eq("id", member.id);
   if (error) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");
@@ -127,6 +142,7 @@ export async function importGooglePhoto(): Promise<ProfileResult> {
   if (uploadErr) return { ok: false, error: "Couldn't save your photo. Try again." };
   const { data } = admin.storage.from("member-avatars").getPublicUrl(path);
   await admin.from("members").update({ avatar_url: data.publicUrl }).eq("id", member.id);
+  await deleteStoredPhoto(member.avatar_url);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
@@ -134,6 +150,7 @@ export async function importGooglePhoto(): Promise<ProfileResult> {
 export async function removeMyPhoto(): Promise<ProfileResult> {
   const member = await requireMember();
   await createAdminClient().from("members").update({ avatar_url: null }).eq("id", member.id);
+  await deleteStoredPhoto(member.avatar_url);
   revalidatePath("/account", "layout");
   return { ok: true };
 }

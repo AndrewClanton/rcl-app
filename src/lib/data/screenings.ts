@@ -1,4 +1,6 @@
-import { createClient } from "@/lib/supabase/server";
+// Movies and screenings aren't readable with the public key (older MPLC
+// titles must never be listable), so every read goes through the server.
+import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
 import type { Screening } from "@/lib/types";
 
@@ -18,7 +20,7 @@ export function isWithinPublicWindow(startsAt: string): boolean {
 // joined. Unwindowed -- for staff/admin tools that need to see and manage
 // the full future schedule regardless of what's public yet.
 export async function getUpcomingScreenings(): Promise<Screening[]> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
 
   const { data, error } = await supabase
     .from("screenings")
@@ -36,7 +38,7 @@ export async function getUpcomingScreenings(): Promise<Screening[]> {
 // Also returns the server's clock at fetch time, which the screen uses as
 // its time reference instead of the TV's own clock.
 export async function getScreeningsForCountdown(sinceMinutes: number, limit = 40): Promise<{ screenings: Screening[]; fetchedAt: number }> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const fetchedAt = Date.now();
   const since = new Date(fetchedAt - sinceMinutes * 60 * 1000);
 
@@ -65,7 +67,7 @@ export function excludeRestrictedReleases(screenings: Screening[]): Screening[] 
 // entered into the system as far out as staff like, but times only appear
 // on the public site once they're within the window.
 export async function getPubliclyVisibleScreenings(): Promise<Screening[]> {
-  const supabase = await createClient();
+  const supabase = createAdminClient();
   const now = new Date();
   const windowEnd = new Date(now.getTime() + PUBLIC_SCHEDULE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 

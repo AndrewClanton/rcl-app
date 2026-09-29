@@ -20,12 +20,16 @@ import { memberHasBookingFor } from "@/lib/data/screening-detail";
 // unexpected failures (a DB/Stripe error) are left as throws below.
 export type CheckoutResult = { ok: true; url: string } | { ok: false; error: string };
 
+const MAX_TICKETS_PER_ORDER = 10;
+
 export async function startCheckout(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<CheckoutResult> {
   const name = fields.customerName.trim();
   const email = fields.customerEmail.trim();
   if (!name) return { ok: false, error: "Enter your name." };
   if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
-  if (!(fields.quantity > 0)) return { ok: false, error: "Select at least one ticket." };
+  if (!(fields.quantity > 0) || !Number.isInteger(fields.quantity)) return { ok: false, error: "Select at least one ticket." };
+  // A cap per checkout, so a script can't hold a whole screening in one go.
+  if (fields.quantity > MAX_TICKETS_PER_ORDER) return { ok: false, error: `Up to ${MAX_TICKETS_PER_ORDER} tickets per order online. For a bigger group, call or stop by the box office.` };
 
   const supabase = createAdminClient();
 

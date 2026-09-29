@@ -7,9 +7,13 @@ import { config } from "dotenv";
 
 config({ path: ".env.local", quiet: true });
 
-const EMAIL = process.argv[2] ?? "andrewjclanton@gmail.com";
-const PASSWORD = process.argv[3] ?? "admin";
-const NAME = process.argv[4] ?? "Andrew";
+// No defaults: a login made with a password written in public code would
+// be open to anyone who read it.
+const [EMAIL, PASSWORD, NAME] = process.argv.slice(2);
+if (!EMAIL || !PASSWORD || !NAME || PASSWORD.length < 12) {
+  console.error("Usage: node scripts/create-admin-user.mjs <email> <password, 12+ characters> <name>");
+  process.exit(1);
+}
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },

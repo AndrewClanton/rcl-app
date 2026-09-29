@@ -3,7 +3,7 @@
 // backed by a database table. An in-progress cart isn't persisted anywhere
 // until it's held, tabbed, or completed, so mirroring it live has to be
 // pure pub/sub rather than routing through payment-critical order rows.
-export const REGISTER_CHANNEL = "register:main";
+// The channel's name is a server-side secret -- see lib/register-topic.ts.
 
 export interface RegisterCartSnapshot {
   orderName: string;

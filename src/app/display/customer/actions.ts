@@ -8,8 +8,7 @@ function last10Digits(s: string) {
 }
 
 export interface FoundMember {
-  name: string;
-  avatarUrl: string | null;
+  firstName: string;
   points: number;
   tier: string;
 }
@@ -20,7 +19,8 @@ export interface FoundMember {
 // page is gated by requireStaff() (a physical, staff-set-up device), and
 // assertStaff() re-checks here so the lookup can't be called directly as a
 // phone-number-to-member-name oracle. Returns just enough to greet someone
-// by name -- no email, payment, or contact info.
+// by first name -- no last name, photo, email, payment, or contact info,
+// since anyone standing at the kiosk can type any number.
 export async function findMemberByPhone(phone: string): Promise<FoundMember | null> {
   await assertStaff();
   const target = last10Digits(phone);
@@ -29,10 +29,10 @@ export async function findMemberByPhone(phone: string): Promise<FoundMember | nu
   // phone_digits is the stored phone with formatting stripped (it may carry
   // a leading country code, hence the suffix match).
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from("members").select("name, phone, avatar_url, points, tier").like("phone_digits", `%${target}`).limit(5);
+  const { data, error } = await supabase.from("members").select("name, phone, points, tier").like("phone_digits", `%${target}`).limit(5);
   if (error) throw error;
 
   const match = (data ?? []).find((m) => m.phone && last10Digits(m.phone) === target);
   if (!match) return null;
-  return { name: match.name, avatarUrl: match.avatar_url, points: match.points, tier: match.tier };
+  return { firstName: match.name.trim().split(/s+/)[0] || "there", points: match.points, tier: match.tier };
 }

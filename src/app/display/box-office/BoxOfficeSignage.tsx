@@ -1,55 +1,36 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { isRestrictedRelease } from "@/lib/mplc";
+import { useRouter } from "next/navigation";
 import type { Screening } from "@/lib/types";
 
 function formatShowtime(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+  return new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 }
 
-async function fetchUpcoming(supabase: ReturnType<typeof createClient>): Promise<Screening[]> {
-  const { data } = await supabase
-    .from("screenings")
-    .select("*, movie:movies(*), room:rooms(*, addons:room_addons(*))")
-    .gte("starts_at", new Date().toISOString())
-    .order("starts_at")
-    .limit(40);
-  // This board is an unauthenticated URL, so the same MPLC filter as the
-  // server render applies here -- otherwise the first live update would
-  // put older titles on screen.
-  const screenings = (data ?? []) as unknown as Screening[];
-  return screenings.filter((s) => !isRestrictedRelease(s.movie)).slice(0, 12);
-}
-
-export default function BoxOfficeSignage({ initialScreenings }: { initialScreenings: Screening[] }) {
-  const [screenings, setScreenings] = useState(initialScreenings);
+// A public lobby TV with no login. The schedule comes from the server
+// (which drops older MPLC titles) and is re-fetched every minute; the
+// browser never reads the database itself, since movies and screenings
+// aren't readable with the public key.
+export default function BoxOfficeSignage({ initialScreenings: screenings }: { initialScreenings: Screening[] }) {
+  const router = useRouter();
   const [clock, setClock] = useState(new Date());
 
   useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("box-office-screenings")
-      .on("postgres_changes", { event: "*", schema: "public", table: "screenings" }, async () => {
-        setScreenings(await fetchUpcoming(supabase));
-      })
-      .subscribe();
-
+    const refresh = setInterval(() => router.refresh(), 60_000);
     const clockInterval = setInterval(() => setClock(new Date()), 1000);
-
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(refresh);
       clearInterval(clockInterval);
     };
-  }, []);
+  }, [router]);
 
   return (
     <div className="min-h-screen p-10" style={{ background: "var(--background)", color: "var(--foreground)" }}>
       <div className="mb-8 flex items-baseline justify-between border-b-2 pb-4" style={{ borderColor: "var(--foreground)" }}>
         <h1 className="font-display text-4xl">ROYALE CINEMA LOUNGE</h1>
         <span className="font-mono text-2xl" style={{ color: "var(--muted)" }}>
-          {clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
+          {clock.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
         </span>
       </div>
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { REGISTER_CHANNEL, EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
+import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -105,6 +105,7 @@ export default function PosApp({
   recipesByItem,
   defaultReaderId,
   initialScreenings,
+  registerTopic,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -113,6 +114,7 @@ export default function PosApp({
   recipesByItem: Record<string, Recipe>;
   defaultReaderId: string | null;
   initialScreenings: RegisterScreening[];
+  registerTopic: string;
 }) {
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
@@ -274,7 +276,7 @@ export default function PosApp({
 
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase.channel(REGISTER_CHANNEL);
+    const channel = supabase.channel(registerTopic);
     registerChannelRef.current = channel;
     channel
       .on("broadcast", { event: "request-state" }, () => {
@@ -285,7 +287,7 @@ export default function PosApp({
       supabase.removeChannel(channel);
       registerChannelRef.current = null;
     };
-  }, []);
+  }, [registerTopic]);
 
   useEffect(() => {
     const timer = setTimeout(() => {

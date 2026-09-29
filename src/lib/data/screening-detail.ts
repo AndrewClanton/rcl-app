@@ -1,4 +1,3 @@
-import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Screening } from "@/lib/types";
 
@@ -7,8 +6,7 @@ export interface ScreeningDetail extends Screening {
 }
 
 export async function getScreeningById(id: string): Promise<ScreeningDetail | null> {
-  const supabase = await createClient();
-  const { data: screening, error } = await supabase
+  const { data: screening, error } = await createAdminClient()
     .from("screenings")
     .select("*, movie:movies(*), room:rooms(*, addons:room_addons(*))")
     .eq("id", id)

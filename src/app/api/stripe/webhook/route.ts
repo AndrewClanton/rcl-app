@@ -28,6 +28,13 @@ export async function POST(request: NextRequest) {
   }
 
   const supabase = createAdminClient();
+  // A save that fails answers Stripe with an error, so Stripe re-sends the
+  // event later instead of leaving a paid booking stuck on pending. Every
+  // update below is safe to run twice.
+  const failed: string[] = [];
+  const check = (what: string) => ({ error }: { error: unknown }) => {
+    if (error) failed.push(what);
+  };
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
@@ -48,7 +55,8 @@ export async function POST(request: NextRequest) {
             tax_amount: (session.total_details?.amount_tax ?? 0) / 100,
           })
           .eq("id", bookingId)
-          .eq("status", "pending");
+          .eq("status", "pending")
+          .then(check("booking"));
         // 1 point per $1, like the register. The ledger's unique index keeps
         // a re-delivered webhook from paying out twice.
         const { data: booking } = await supabase.from("bookings").select("member_id, quantity, unit_price, status").eq("id", bookingId).maybeSingle();
@@ -74,7 +82,8 @@ export async function POST(request: NextRequest) {
             tax_amount: (session.total_details?.amount_tax ?? 0) / 100,
           })
           .eq("id", boothReservationId)
-          .eq("status", "pending");
+          .eq("status", "pending")
+          .then(check("booth reservation"));
       }
     }
   }
@@ -119,8 +128,10 @@ export async function POST(request: NextRequest) {
         ...(rate ? { price_tier: rate } : {}),
         ...(interval ? { billing_interval: interval } : {}),
       })
-      .eq("stripe_customer_id", customerId);
+      .eq("stripe_customer_id", customerId)
+      .then(check("membership"));
   }
 
+  if (failed.length) return NextResponse.json({ error: `Couldn't save: ${failed.join(", ")}` }, { status: 500 });
   return NextResponse.json({ received: true });
 }

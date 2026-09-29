@@ -3,9 +3,9 @@ import BoxOfficeSignage from "./BoxOfficeSignage";
 
 export const dynamic = "force-dynamic";
 
-// No staff auth here -- this is a public lobby/box-office TV, and
-// screenings are already public-readable data (see the initial RLS
-// policies), so it should keep working unattended without a login. Same
+// No staff auth here -- this is a public lobby/box-office TV. Screenings
+// are read on the server (the public key can't read them), so it keeps
+// working unattended without a login. Same
 // MPLC advertising restriction as the rest of the public site applies --
 // see excludeRestrictedReleases.
 export default async function BoxOfficePage() {

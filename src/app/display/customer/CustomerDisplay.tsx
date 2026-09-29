@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
-import { REGISTER_CHANNEL, type RegisterCartSnapshot } from "@/lib/registerChannel";
+import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import { findMemberByPhone, type FoundMember } from "./actions";
 
 interface PromoMovie {
@@ -28,13 +28,17 @@ function fmtShowtime(iso: string) {
 // "Sign in" is a phone-number lookup, not a real login -- just enough to
 // greet a member by name and show their points, on a device only staff can
 // reach in the first place.
-export default function CustomerDisplay({ movies }: { movies: PromoMovie[] }) {
+export default function CustomerDisplay({ movies, registerTopic }: { movies: PromoMovie[]; registerTopic: string }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(null);
   const [signIn, setSignIn] = useState<"closed" | "phone" | "found" | "not-found">("closed");
   const [phone, setPhone] = useState("");
   const [looking, setLooking] = useState(false);
   const [found, setFound] = useState<FoundMember | null>(null);
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Anyone at the kiosk can type numbers, so five misses in a row lock the
+  // lookup for a minute.
+  const misses = useRef(0);
+  const [lockedUntil, setLockedUntil] = useState(0);
 
   useEffect(() => {
     const supabase = createClient();
@@ -44,7 +48,7 @@ export default function CustomerDisplay({ movies }: { movies: PromoMovie[] }) {
     supabase.auth.getSession().then(() => {
       if (cancelled) return;
       channel = supabase
-        .channel(REGISTER_CHANNEL)
+        .channel(registerTopic)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
         .subscribe((status) => {
           // A kiosk that just loaded (or refreshed) has missed every prior
@@ -58,12 +62,19 @@ export default function CustomerDisplay({ movies }: { movies: PromoMovie[] }) {
       cancelled = true;
       if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [registerTopic]);
 
   async function submitPhone() {
+    if (Date.now() < lockedUntil) return;
     setLooking(true);
     try {
       const member = await findMemberByPhone(phone);
+      misses.current = member ? 0 : misses.current + 1;
+      if (misses.current >= 5) {
+        misses.current = 0;
+        setLockedUntil(Date.now() + 60_000);
+        setTimeout(() => setLockedUntil(0), 60_000);
+      }
       setFound(member);
       setSignIn(member ? "found" : "not-found");
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
@@ -128,8 +139,8 @@ export default function CustomerDisplay({ movies }: { movies: PromoMovie[] }) {
                   placeholder="(555) 555-5555"
                   className="input mb-4 text-center text-lg"
                 />
-                <button disabled={looking || !phone.trim()} onClick={submitPhone} className="btn-primary w-full">
-                  {looking ? "Looking up…" : "Continue"}
+                <button disabled={looking || !phone.trim() || lockedUntil > 0} onClick={submitPhone} className="btn-primary w-full">
+                  {lockedUntil > 0 ? "Too many tries. Ask a staff member." : looking ? "Looking up…" : "Continue"}
                 </button>
               </>
             )}
@@ -137,13 +148,9 @@ export default function CustomerDisplay({ movies }: { movies: PromoMovie[] }) {
             {signIn === "found" && found && (
               <>
                 <div className="relative mx-auto mb-3 h-24 w-24 overflow-hidden rounded-full border-2" style={{ borderColor: "var(--accent)", background: "var(--surface-hover)" }}>
-                  {found.avatarUrl ? (
-                    <Image src={found.avatarUrl} alt={found.name} fill sizes="96px" className="object-cover" />
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-2xl font-bold text-[var(--muted)]">{found.name[0]?.toUpperCase()}</div>
-                  )}
+                  <div className="flex h-full items-center justify-center text-2xl font-bold text-[var(--muted)]">{found.firstName[0]?.toUpperCase()}</div>
                 </div>
-                <h2 className="font-display mb-1 text-xl">Welcome back, {found.name}!</h2>
+                <h2 className="font-display mb-1 text-xl">Welcome back, {found.firstName}!</h2>
                 <p className="text-sm text-[var(--muted)]">
                   {found.tier} · {Math.round(found.points)} points
                 </p>
