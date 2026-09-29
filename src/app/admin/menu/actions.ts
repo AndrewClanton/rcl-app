@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { slugify } from "@/lib/slugify";
-import type { ModifierType, EventPriceMode } from "@/lib/types";
-import { getStaffSession, hasManagerAccess } from "@/lib/auth";
+import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
+import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
+import { logOpsChange } from "@/lib/ops/changes";
 
 // All writes here use the service-role client and bypass RLS. Menu tables
 // are public-read (see the initial migration); write access is gated by
@@ -25,11 +26,15 @@ export type Result = { ok: true } | { ok: false; error: string };
 // A delete that can't happen because the item has sales, with Hide offered instead.
 export type DeleteItemResult = Result | { ok: false; error: string; canHide: true };
 
-async function denied(): Promise<Result | null> {
+async function signedInManager(): Promise<{ staff: StaffSession; no: null } | { staff: null; no: Result }> {
   const staff = await getStaffSession();
-  if (!staff) return { ok: false, error: "Your staff session has expired. Sign in again." };
-  if (!hasManagerAccess(staff.role)) return { ok: false, error: "Only a manager can change the menu. Ask a manager to make this change." };
-  return null;
+  if (!staff) return { staff: null, no: { ok: false, error: "Your staff session has expired. Sign in again." } };
+  if (!hasManagerAccess(staff.role)) return { staff: null, no: { ok: false, error: "Only a manager can change the menu. Ask a manager to make this change." } };
+  return { staff, no: null };
+}
+
+async function denied(): Promise<Result | null> {
+  return (await signedInManager()).no;
 }
 
 function failed(error: PostgrestError | null, what: string): Result | null {
@@ -299,20 +304,274 @@ export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ ins
   return { ok: true };
 }
 
-export async function addRecipeIngredient(menuItemId: string, ingredientId: string, quantity: number): Promise<Result> {
-  const no = await denied();
-  if (no) return no;
-  if (!(quantity > 0)) return { ok: false, error: "Enter how much goes in (more than 0)." };
-  const supabase = createAdminClient();
+// Puts one ingredient line on a menu item's recipe (or changes its amount,
+// if it's already there).
+async function addLine(supabase: ReturnType<typeof createAdminClient>, menuItemId: string, ingredientId: string, quantity: number): Promise<Result> {
   const recipeId = await ensureRecipeId(supabase, menuItemId);
   if (!recipeId) return { ok: false, error: "Couldn't save the recipe. Try again." };
   const { count } = await supabase.from("recipe_ingredients").select("id", { count: "exact", head: true }).eq("recipe_id", recipeId);
   const { error } = await supabase
     .from("recipe_ingredients")
     .upsert({ recipe_id: recipeId, ingredient_id: ingredientId, quantity, sort_order: count ?? 0 }, { onConflict: "recipe_id,ingredient_id" });
-  const f = failed(error, "add that ingredient");
-  if (f) return f;
+  return failed(error, "add that ingredient") ?? { ok: true };
+}
+
+export async function addRecipeIngredient(menuItemId: string, ingredientId: string, quantity: number): Promise<Result> {
+  const no = await denied();
+  if (no) return no;
+  if (!(quantity > 0)) return { ok: false, error: "Enter how much goes in (more than 0)." };
+  const r = await addLine(createAdminClient(), menuItemId, ingredientId, quantity);
+  if (!r.ok) return r;
   revalidate();
+  return { ok: true };
+}
+
+// ---------- new ingredients from the recipe editor ----------
+// A recipe often needs something the ingredient list doesn't have yet
+// (Torani vanilla syrup, popping oil, the paper bag popcorn goes in). The
+// recipe editor can turn a par sheet line into an ingredient, or add a
+// brand-new ingredient and put it on the par sheet, and add it to the
+// recipe, all in one step. Everything that comes in is checked here: these
+// are called from the browser, so nothing about the input is trusted.
+
+const UNITS: readonly IngredientUnit[] = ["oz", "ml", "count"];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Text with the spaces tidied, or "" for anything that isn't text.
+function clean(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function tooLong(what: string, value: string, max: number): Result | null {
+  return value.length > max ? { ok: false, error: `Keep the ${what} under ${max} characters.` } : null;
+}
+
+function badQuantity(quantity: unknown): Result | null {
+  return typeof quantity === "number" && Number.isFinite(quantity) && quantity > 0 && quantity < 10000
+    ? null
+    : { ok: false, error: "Enter how much goes in (more than 0)." };
+}
+
+function badUnit(unit: unknown): Result | null {
+  return UNITS.includes(unit as IngredientUnit) ? null : { ok: false, error: "Pick how it's measured: oz, ml or count." };
+}
+
+async function menuItemName(supabase: ReturnType<typeof createAdminClient>, menuItemId: unknown): Promise<string | null> {
+  if (typeof menuItemId !== "string" || !UUID.test(menuItemId)) return null;
+  const { data } = await supabase.from("menu_items").select("name").eq("id", menuItemId).maybeSingle();
+  return data ? (data.name as string) : null;
+}
+
+type IngredientRow = { id: string; name: string; active: boolean; par_item_id: string | null };
+
+// The ingredient with this name, ignoring case (names are unique that way).
+async function ingredientNamed(supabase: ReturnType<typeof createAdminClient>, name: string): Promise<IngredientRow | null | "error"> {
+  const { data, error } = await supabase.from("ingredients").select("id, name, active, par_item_id");
+  if (error) {
+    console.error("menu: ingredients not read", error);
+    return "error";
+  }
+  const key = name.toLowerCase();
+  return ((data ?? []) as IngredientRow[]).find((i) => i.name.toLowerCase() === key) ?? null;
+}
+
+// Reusing an ingredient: switch it back on if it was deactivated, and link
+// it to the par sheet line if it isn't linked to one yet.
+async function reuseIngredient(supabase: ReturnType<typeof createAdminClient>, existing: IngredientRow, parItemId: string | null): Promise<Result> {
+  const patch: { active?: boolean; par_item_id?: string } = {};
+  if (!existing.active) patch.active = true;
+  if (parItemId && !existing.par_item_id) patch.par_item_id = parItemId;
+  if (Object.keys(patch).length === 0) return { ok: true };
+  const { error } = await supabase.from("ingredients").update(patch).eq("id", existing.id);
+  return failed(error, "update that ingredient") ?? { ok: true };
+}
+
+export interface NewIngredientFields {
+  name: string;
+  unit: IngredientUnit;
+  category: string | null;
+}
+
+export interface NewParLine {
+  area: string;
+  section: string | null;
+  par_qty: number | null;
+  unit: string | null;
+  source: string | null;
+}
+
+// A par sheet line picked in the recipe editor becomes an ingredient
+// (linked to that line) and goes on the recipe.
+export async function addRecipeIngredientFromPar(
+  menuItemId: string,
+  parItemId: string,
+  fields: { unit: IngredientUnit; category: string | null },
+  quantity: number,
+): Promise<Result> {
+  const { no } = await signedInManager();
+  if (no) return no;
+  const bad = badUnit(fields?.unit) ?? badQuantity(quantity);
+  if (bad) return bad;
+  const category = clean(fields?.category);
+  const long = tooLong("category", category, 40);
+  if (long) return long;
+
+  const supabase = createAdminClient();
+  if (!(await menuItemName(supabase, menuItemId))) return { ok: false, error: "That menu item isn't there anymore. Refresh the page." };
+  if (typeof parItemId !== "string" || !UUID.test(parItemId)) return { ok: false, error: "Pick something from the list." };
+  const { data: par } = await supabase.from("par_items").select("id, name, active").eq("id", parItemId).maybeSingle();
+  if (!par || !par.active) return { ok: false, error: "That isn't on the par sheet anymore. Refresh the page and try again." };
+
+  // Someone may have linked it (or made an ingredient with the same name)
+  // since the page loaded; use that one instead of making a second.
+  const { data: linked } = await supabase.from("ingredients").select("id, name, active, par_item_id").eq("par_item_id", par.id).limit(1);
+  const already = (linked?.[0] as IngredientRow | undefined) ?? (await ingredientNamed(supabase, clean(par.name)));
+  if (already === "error") return { ok: false, error: "Couldn't add that ingredient. Try again." };
+
+  let ingredientId: string;
+  if (already) {
+    const r = await reuseIngredient(supabase, already, par.id);
+    if (!r.ok) return r;
+    ingredientId = already.id;
+  } else {
+    const { data: created, error } = await supabase
+      .from("ingredients")
+      .insert({ name: clean(par.name), unit: fields.unit, category: category || null, par_item_id: par.id })
+      .select("id")
+      .single();
+    if (error?.code === "23505") return { ok: false, error: `Someone just added "${clean(par.name)}". Refresh the page and pick it from the list.` };
+    const f = failed(error, "add that ingredient");
+    if (f) return f;
+    ingredientId = created!.id as string;
+  }
+
+  const r = await addLine(supabase, menuItemId, ingredientId, quantity);
+  if (!r.ok) return r;
+  revalidate();
+  revalidatePath("/admin/ingredients");
+  return { ok: true };
+}
+
+// A brand-new ingredient, typed into the recipe editor: optionally put on
+// the par sheet (so it gets counted and bought), then added to the recipe.
+// If an ingredient with that name already exists, that one is used.
+export async function addNewRecipeIngredient(
+  menuItemId: string,
+  fields: NewIngredientFields,
+  parLine: NewParLine | null,
+  quantity: number,
+): Promise<Result> {
+  const { staff, no } = await signedInManager();
+  if (no) return no;
+  const name = clean(fields?.name);
+  const category = clean(fields?.category);
+  if (!name) return { ok: false, error: "Give the ingredient a name." };
+  const bad = tooLong("name", name, 80) ?? tooLong("category", category, 40) ?? badUnit(fields?.unit) ?? badQuantity(quantity);
+  if (bad) return bad;
+
+  let par: { area: string; section: string | null; par_qty: number | null; unit: string | null; source: string | null } | null = null;
+  if (parLine !== null && parLine !== undefined) {
+    if (typeof parLine !== "object") return { ok: false, error: "Something's off with the par sheet part. Refresh the page and try again." };
+    const area = clean(parLine.area);
+    const section = clean(parLine.section);
+    const unit = clean(parLine.unit);
+    const source = clean(parLine.source);
+    const qty = parLine.par_qty;
+    if (!area) return { ok: false, error: "Pick which par sheet it goes on (Bar, Coffee, Concessions...)." };
+    const parBad =
+      tooLong("section", section, 60) ??
+      tooLong("par unit", unit, 40) ??
+      tooLong("store name", source, 60) ??
+      (qty !== null && !(typeof qty === "number" && Number.isFinite(qty) && qty >= 0 && qty < 100000)
+        ? { ok: false as const, error: "Par should be a number, like 1 or 0.5, or left blank." }
+        : null);
+    if (parBad) return parBad;
+    par = { area, section: section || null, par_qty: qty, unit: unit || null, source: source || null };
+  }
+
+  const supabase = createAdminClient();
+  const itemName = await menuItemName(supabase, menuItemId);
+  if (!itemName) return { ok: false, error: "That menu item isn't there anymore. Refresh the page." };
+  if (par) {
+    // Only sheets that already exist; a new sheet is made from the register.
+    const { data: sheet } = await supabase.from("par_items").select("id").eq("area", par.area).limit(1);
+    if (!sheet || sheet.length === 0) return { ok: false, error: `There's no "${par.area}" par sheet. Pick one from the list.` };
+  }
+
+  const existing = await ingredientNamed(supabase, name);
+  if (existing === "error") return { ok: false, error: "Couldn't add that ingredient. Try again." };
+  const wantParLine = par !== null && !(existing && existing.par_item_id);
+
+  // The par sheet line: an unlinked one with the same name on that sheet,
+  // or a new one at the end of its section.
+  let parItemId: string | null = null;
+  let madeParLine = false;
+  if (wantParLine && par) {
+    const [{ data: sameName }, { data: taken }] = await Promise.all([
+      supabase.from("par_items").select("id, name").eq("area", par.area).eq("active", true),
+      supabase.from("ingredients").select("par_item_id").not("par_item_id", "is", null),
+    ]);
+    const takenIds = new Set((taken ?? []).map((t) => t.par_item_id as string));
+    const match = (sameName ?? []).find((p) => clean(p.name).toLowerCase() === name.toLowerCase() && !takenIds.has(p.id as string));
+    if (match) {
+      parItemId = match.id as string;
+    } else {
+      const q = supabase.from("par_items").select("sort_order").eq("area", par.area).order("sort_order", { ascending: false }).limit(1);
+      const { data: last } = par.section ? await q.eq("section", par.section) : await q;
+      const { data: line, error } = await supabase
+        .from("par_items")
+        .insert({
+          area: par.area,
+          section: par.section,
+          name,
+          par_qty: par.par_qty,
+          unit: par.unit,
+          source: par.source,
+          sort_order: ((last?.[0]?.sort_order as number | undefined) ?? 0) + 1,
+          created_by: staff.employeeId,
+          updated_by: staff.employeeId,
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+      const f = failed(error, "put it on the par sheet");
+      if (f) return f;
+      parItemId = line!.id as string;
+      madeParLine = true;
+    }
+  }
+
+  let ingredientId: string;
+  if (existing) {
+    const r = await reuseIngredient(supabase, existing, parItemId);
+    if (!r.ok) {
+      if (madeParLine) await supabase.from("par_items").delete().eq("id", parItemId!);
+      return r;
+    }
+    ingredientId = existing.id;
+  } else {
+    const { data: created, error } = await supabase
+      .from("ingredients")
+      .insert({ name, unit: fields.unit, category: category || null, par_item_id: parItemId })
+      .select("id")
+      .single();
+    if (error) {
+      // Don't leave a par line behind for an ingredient that didn't get made.
+      if (madeParLine) await supabase.from("par_items").delete().eq("id", parItemId!);
+      if (error.code === "23505") return { ok: false, error: `There's already an ingredient called "${name}". Refresh the page and pick it from the list.` };
+      return failed(error, "add that ingredient")!;
+    }
+    ingredientId = created.id as string;
+  }
+
+  if (madeParLine && par) {
+    await logOpsChange("par_item", parItemId, "added", `Par item "${name}" (${par.area}), added from the recipe for ${itemName}`, staff.employeeId);
+  }
+
+  const r = await addLine(supabase, menuItemId, ingredientId, quantity);
+  if (!r.ok) return r;
+  revalidate();
+  revalidatePath("/admin/ingredients");
   return { ok: true };
 }
 

@@ -6,6 +6,7 @@ import { assertStaff } from "@/lib/auth";
 import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
 import { evaluateReminders } from "@/lib/ops/reminders";
 import { boothWindow } from "@/lib/booth-time";
+import { logOpsChange } from "@/lib/ops/changes";
 import type {
   BoothHold,
   DueReminder,
@@ -40,9 +41,7 @@ async function validEmployee(id: string | null | undefined): Promise<string | nu
   return data ? (data.id as string) : null;
 }
 
-async function logChange(entity: "task" | "par_item" | "reminder", entityId: string | null, action: "added" | "changed" | "removed" | "restored", summary: string, by: string | null) {
-  await db().from("ops_changes").insert({ entity, entity_id: entityId, action, summary, changed_by: by });
-}
+const logChange = logOpsChange;
 
 // ---------- status (polled by the register every minute) ----------
 

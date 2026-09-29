@@ -1,5 +1,5 @@
 import { getMenuTree } from "@/lib/data/menu";
-import { getIngredients } from "@/lib/data/ingredients";
+import { getIngredients, getParItemRefs } from "@/lib/data/ingredients";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { hasManagerAccess, requireStaff } from "@/lib/auth";
 import MenuManager from "./MenuManager";
@@ -11,12 +11,25 @@ export const dynamic = "force-dynamic";
 // that again on their own.
 export default async function AdminMenuPage() {
   const staff = await requireStaff();
-  const [categories, ingredients, recipesByItem] = await Promise.all([getMenuTree(), getIngredients(), getRecipesByItem()]);
   const canEdit = hasManagerAccess(staff.role);
+  // The par sheet is only needed to edit recipes (adding an ingredient can
+  // put it on the par sheet), so only managers' pages get it.
+  const [categories, ingredients, recipesByItem, parItems] = await Promise.all([
+    getMenuTree(),
+    getIngredients(),
+    getRecipesByItem(),
+    canEdit ? getParItemRefs() : Promise.resolve([]),
+  ]);
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       {!canEdit && <p className="notice mb-4 text-sm">You can look through the menu here. Changing it (prices, items, recipes) takes a manager.</p>}
-      <MenuManager categories={categories} ingredients={ingredients} recipesByItem={recipesByItem} canEdit={canEdit} />
+      <MenuManager
+        categories={categories}
+        ingredients={ingredients}
+        parItems={parItems.filter((p) => p.active)}
+        recipesByItem={recipesByItem}
+        canEdit={canEdit}
+      />
     </div>
   );
 }

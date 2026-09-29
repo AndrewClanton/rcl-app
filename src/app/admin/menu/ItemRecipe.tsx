@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { Ingredient, MenuItem, Recipe } from "@/lib/types";
+import type { Ingredient, MenuItem, ParItemRef, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { addRecipeIngredient, removeRecipeIngredient, updateRecipeIngredientQuantity, updateRecipeMeta } from "./actions";
+import { removeRecipeIngredient, updateRecipeIngredientQuantity, updateRecipeMeta } from "./actions";
+import IngredientPicker from "./IngredientPicker";
 
 function unitLabel(unit: string) {
   return unit === "count" ? "ct" : unit;
@@ -44,20 +45,30 @@ function ReadOnlyRecipe({ recipe }: { recipe: Recipe | null }) {
   );
 }
 
-export default function ItemRecipe({ item, recipe, ingredients, canEdit }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[]; canEdit: boolean }) {
+export default function ItemRecipe({
+  item,
+  recipe,
+  ingredients,
+  parItems,
+  canEdit,
+}: {
+  item: MenuItem;
+  recipe: Recipe | null;
+  ingredients: Ingredient[];
+  parItems: ParItemRef[];
+  canEdit: boolean;
+}) {
   if (!canEdit) return <ReadOnlyRecipe recipe={recipe} />;
-  return <RecipeEditor item={item} recipe={recipe} ingredients={ingredients} />;
+  return <RecipeEditor item={item} recipe={recipe} ingredients={ingredients} parItems={parItems} />;
 }
 
-function RecipeEditor({ item, recipe, ingredients }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[] }) {
+function RecipeEditor({ item, recipe, ingredients, parItems }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[]; parItems: ParItemRef[] }) {
   const [, run] = useRefreshingAction();
   const [instructions, setInstructions] = useState(recipe?.instructions ?? "");
   const [glassware, setGlassware] = useState(recipe?.glassware ?? "");
   const [garnish, setGarnish] = useState(recipe?.garnish ?? "");
 
-  const activeIngredients = ingredients.filter((i) => i.active);
-  const usedIds = new Set((recipe?.ingredients ?? []).map((ri) => ri.ingredient_id));
-  const available = activeIngredients.filter((i) => !usedIds.has(i.id));
+  const usedIds = (recipe?.ingredients ?? []).map((ri) => ri.ingredient_id);
 
   return (
     <div className="mt-2 rounded-lg border border-dashed border-[var(--warn-border)] bg-[var(--warn-bg)] p-3 ">
@@ -113,13 +124,7 @@ function RecipeEditor({ item, recipe, ingredients }: { item: MenuItem; recipe: R
         </div>
       )}
 
-      <AddRecipeIngredientRow menuItemId={item.id} available={available} />
-
-      {ingredients.length === 0 && (
-        <p className="mt-2 text-xs text-[var(--muted)]">
-          No ingredients in the catalog yet -- add some from the Ingredients admin page first.
-        </p>
-      )}
+      <IngredientPicker menuItemId={item.id} ingredients={ingredients} parItems={parItems} usedIngredientIds={usedIds} />
     </div>
   );
 }
@@ -146,59 +151,6 @@ function RecipeIngredientRow({ id, name, unit, quantity }: { id: string; name: s
       <span className="w-8 text-xs text-[var(--muted)]">{unitLabel(unit)}</span>
       <button className="text-xs text-[var(--danger-text)] hover:underline" disabled={pending} onClick={() => run(() => removeRecipeIngredient(id))}>
         Remove
-      </button>
-    </div>
-  );
-}
-
-function AddRecipeIngredientRow({ menuItemId, available }: { menuItemId: string; available: Ingredient[] }) {
-  const [pending, run] = useRefreshingAction();
-  const [ingredientId, setIngredientId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const selected = available.find((i) => i.id === ingredientId);
-
-  if (available.length === 0) return null;
-
-  return (
-    <div className="mt-2 flex flex-wrap items-end gap-2">
-      <div className="flex-1 min-w-[140px]">
-        <label className="mb-1 block text-xs text-[var(--muted)]">Ingredient</label>
-        <select
-          className="w-full rounded border border-[var(--border)] px-2 py-1 text-sm "
-          value={ingredientId}
-          onChange={(e) => setIngredientId(e.target.value)}
-        >
-          <option value="">Select...</option>
-          {available.map((i) => (
-            <option key={i.id} value={i.id}>
-              {i.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label className="mb-1 block text-xs text-[var(--muted)]">Quantity{selected ? ` (${unitLabel(selected.unit)})` : ""}</label>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          className="w-24 rounded border border-[var(--border)] px-2 py-1 text-sm "
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-        />
-      </div>
-      <button
-        className="rounded border border-[var(--border)] px-2 py-1.5 text-xs "
-        disabled={pending || !ingredientId || !(parseFloat(quantity) > 0)}
-        onClick={() => {
-          const qty = parseFloat(quantity);
-          const id = ingredientId;
-          setIngredientId("");
-          setQuantity("");
-          run(() => addRecipeIngredient(menuItemId, id, qty));
-        }}
-      >
-        Add ingredient
       </button>
     </div>
   );
