@@ -376,6 +376,8 @@ function ItemForm({
         e.preventDefault();
         const parQty = par.trim() === "" ? null : Number(par.replace("½", ".5").replace("¼", ".25").replace("¾", ".75"));
         if (parQty !== null && !Number.isFinite(parQty)) return setError("Par should be a number, like 1 or 0.5.");
+        // A count means nothing without what it's counted in ("2" of cheese?).
+        if (!unit.trim() || /^\s*(reserve|units?)\s*$/i.test(unit)) return setError("Give it a unit it's counted in, like bags (5 lb), bottles, gallons or boxes.");
         setBusy(true);
         const err = await onSave({ id: initial.id, name, area, section: section || null, par_qty: parQty, unit: unit || null, source: source || null });
         setBusy(false);
@@ -401,8 +403,8 @@ function ItemForm({
         <input id="par-qty" className="input" inputMode="decimal" value={par} onChange={(e) => setPar(e.target.value)} placeholder="e.g. 1 or 0.5" />
       </label>
       <label className="block">
-        <div className="label-xs">Unit</div>
-        <input id="par-unit" className="input" list="par-units" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. reserve box" />
+        <div className="label-xs">Unit it&apos;s counted in (required)</div>
+        <input id="par-unit" className="input" list="par-units" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. bags (5 lb), bottles, gallons" />
         <datalist id="par-units">{uniq(all.map((i) => i.unit)).map((u) => <option key={u} value={u} />)}</datalist>
       </label>
       <label className="block sm:col-span-2">
