@@ -95,16 +95,22 @@ export async function startBillingPortal(): Promise<BillingPortalResult> {
 
 export type ProfileResult = { ok: true } | { ok: false; error: string };
 
-// Members can fix their own name and phone. Email is how they sign in, so
-// it isn't editable here.
-export async function updateMyProfile(fields: { name: string; phone: string }): Promise<ProfileResult> {
+// Members can fix their own name and phone, and write a short line about
+// themselves (staff see it when they check in). Email is how they sign in,
+// so it isn't editable here.
+export async function updateMyProfile(fields: { name: string; phone: string; tagline?: string }): Promise<ProfileResult> {
   const member = await requireMember();
   const name = fields.name.trim();
   if (!name) return { ok: false, error: "Enter your name." };
   if (name.length > 80) return { ok: false, error: "That name is too long." };
   const phone = fields.phone.trim();
   if (phone && phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
-  const { error } = await createAdminClient().from("members").update({ name, phone: phone || null }).eq("id", member.id);
+  const tagline = (fields.tagline ?? "").replace(/\s+/g, " ").trim();
+  if (tagline.length > 120) return { ok: false, error: "Keep your line to 120 characters." };
+  const { error } = await createAdminClient()
+    .from("members")
+    .update({ name, phone: phone || null, ...(fields.tagline !== undefined ? { tagline: tagline || null } : {}) })
+    .eq("id", member.id);
   if (error) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");
   return { ok: true };

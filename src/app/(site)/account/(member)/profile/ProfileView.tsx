@@ -38,7 +38,7 @@ export default function ProfileView({
 
       <Panel title="Your details">
         <div className="p-5">
-          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} />
+          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} tagline={member.tagline ?? ""} />
           <div className="mt-5 border-t-2 border-dashed border-[var(--border)] pt-4">
             <div className="label-xs">Email</div>
             <div className="font-bold">{member.email}</div>

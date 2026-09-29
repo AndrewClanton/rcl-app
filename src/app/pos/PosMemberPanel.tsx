@@ -7,6 +7,8 @@ import MemberFinder from "./MemberFinder";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
+import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
+import type { OpenReward } from "@/lib/visits-server";
 
 const SIGNED_OUT = "The register couldn't reach the server. Check the connection, or sign in again if it has been a while.";
 
@@ -38,10 +40,13 @@ export default function PosMemberPanel({
   member,
   onChange,
   employeeId,
+  onRewardLine,
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
   employeeId: string;
+  // Puts a redeemed streak reward on the order as a $0 line.
+  onRewardLine: (label: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosMember[]>([]);
@@ -132,6 +137,9 @@ export default function PosMemberPanel({
               )}
             </div>
           </div>
+
+          {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
+          <MemberRewards key={member.id} memberId={member.id} onRewardLine={onRewardLine} />
 
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
             <span>
@@ -261,6 +269,80 @@ export default function PosMemberPanel({
           onConfirm={() => applyRate(confirmTier)}
           onCancel={() => setConfirmTier(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// Streak rewards this member has earned and not used yet (free popcorn at a
+// 7-visit streak, free pizza at 30; see lib/visits.ts). Redeem marks it used
+// and puts it on the order at $0; Undo gives it back if it was a mis-tap.
+function MemberRewards({ memberId, onRewardLine }: { memberId: string; onRewardLine: (label: string) => void }) {
+  const [rewards, setRewards] = useState<OpenReward[]>([]);
+  const [used, setUsed] = useState<OpenReward[]>([]);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getMemberRewards(memberId)
+      .then((r) => {
+        if (live) setRewards(r);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [memberId]);
+
+  if (!rewards.length && !used.length) return null;
+
+  async function redeem(r: OpenReward) {
+    setWorking(true);
+    setError(null);
+    const ok = await redeemMemberReward(r.id).catch(() => null);
+    setWorking(false);
+    if (ok === null) return setError("Couldn't reach the server. Try again.");
+    setRewards((rs) => rs.filter((x) => x.id !== r.id));
+    if (!ok) return setError("That reward was already used (maybe on the other register).");
+    setUsed((u) => [...u, r]);
+    onRewardLine(`${r.label} (streak reward)`);
+  }
+
+  async function undo(r: OpenReward) {
+    setWorking(true);
+    await undoMemberReward(r.id).catch(() => {});
+    setWorking(false);
+    setUsed((u) => u.filter((x) => x.id !== r.id));
+    setRewards((rs) => [...rs, r]);
+  }
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      {rewards.map((r) => (
+        <div key={r.id} className="flex items-center gap-2 rounded-md border-2 px-2 py-1.5 text-xs" style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }}>
+          <span className="min-w-0 flex-1">
+            🎁 <strong>{r.label}</strong> · {r.reason}
+          </span>
+          <button className="btn-primary shrink-0 !px-2.5 !py-1 !text-xs" disabled={working} onClick={() => redeem(r)}>
+            Redeem
+          </button>
+        </div>
+      ))}
+      {used.map((r) => (
+        <div key={r.id} className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+          <span className="min-w-0 flex-1">
+            ✓ {r.label} added to the order at $0.
+          </span>
+          <button className="shrink-0 hover:underline" disabled={working} onClick={() => undo(r)}>
+            Undo (then remove the line)
+          </button>
+        </div>
+      ))}
+      {error && (
+        <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+          {error}
+        </div>
       )}
     </div>
   );

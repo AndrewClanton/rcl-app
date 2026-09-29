@@ -176,7 +176,7 @@ export async function getMemberRewards(memberId: string): Promise<OpenReward[]> 
 }
 
 // Redeem puts the reward on the order at $0; Undo gives it back.
-export async function useMemberReward(id: string): Promise<boolean> {
+export async function redeemMemberReward(id: string): Promise<boolean> {
   const staff = await assertStaff();
   return redeemReward(id, staff.employeeId);
 }

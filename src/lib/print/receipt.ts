@@ -150,7 +150,9 @@ function when(iso: string) {
   });
 }
 
-export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean } = {}): string {
+// flourish: an Easter egg from the register's ✨ panel (lib/print/flourishes.ts),
+// printed at the very bottom with no explanation.
+export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flourish?: string[] | null } = {}): string {
   const d = new Doc();
   if (opts.openDrawer) d.drawer();
   header(d);
@@ -173,6 +175,10 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean } = {}):
   d.line();
   for (const p of r.payments) if (p.amount > 0) d.lines(columns(p.label, money(p.amount)));
   d.line().align("center").line("Thank you for coming to the Royale!").line("royalecinemajoplin.com");
+  if (opts.flourish?.length) {
+    d.feed(1);
+    for (const l of opts.flourish) d.line(l);
+  }
   d.cut();
   return d.toString();
 }

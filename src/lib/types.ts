@@ -184,6 +184,9 @@ export interface Member {
   // When a gifted year of Insiders+ runs out (lib/gift-membership.ts).
   // Optional: not every members query selects it.
   plus_gift_until?: string | null;
+  // Their own short line (profile), shown to staff at check-in. Optional:
+  // not every members query selects it.
+  tagline?: string | null;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;

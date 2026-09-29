@@ -25,6 +25,8 @@ import ConfirmModal from "@/components/ConfirmModal";
 import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
 import { printTickets, type TicketSale } from "./print-tickets";
 import RecentOrders from "./RecentOrders";
+import EasterEggs from "./EasterEggs";
+import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendToPrinter } from "@/lib/print/epos-client";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
@@ -149,6 +151,12 @@ export default function PosApp({
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
   const [heldListOpen, setHeldListOpen] = useState(false);
+  // ✨ Easter eggs: a surprise for the bottom of the next printed receipt.
+  const [flourish, setFlourish] = useState<FlourishKey | null>(null);
+  const flourishRef = useRef<FlourishKey | null>(null);
+  useEffect(() => {
+    flourishRef.current = flourish;
+  }, [flourish]);
   const [tabsListOpen, setTabsListOpen] = useState(false);
   const [cancelTabId, setCancelTabId] = useState<string | null>(null);
   const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
@@ -327,10 +335,19 @@ export default function PosApp({
   const [tabCardFor, setTabCardFor] = useState<{ id: string; name: string } | null>(null);
   cartSnapshotRef.current = {
     orderName,
-    items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods })),
+    items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
     subtotal: totals.subtotal,
     tax: totals.tax,
     total: totals.total,
+    // The customer screen's live tally: savings, whose order it is, and the
+    // points it earns (1 per $1 of the subtotal, as completeOrder pays).
+    discounts: [
+      { label: "Member discount", amount: totals.tierDiscount },
+      { label: "Monthly member discount", amount: totals.monthlyDiscount },
+      { label: "Points reward", amount: totals.redemptionDiscount },
+    ].filter((d) => d.amount > 0),
+    member: member ? { firstName: member.name.trim().split(/\s+/)[0] || member.name, points: Math.round(member.points), plus: member.tier === "Insiders+" } : null,
+    pointsToEarn: Math.max(0, Math.round(totals.subtotal)),
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
@@ -354,7 +371,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member]);
 
   function resetOrder() {
     setCart([]);
@@ -569,7 +586,10 @@ export default function PosApp({
     if (!devices.printerAddress) return;
     const openDrawer = tookCash && devices.drawerOnCash;
     if (devices.autoPrint || openDrawer) {
-      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
+      // The ✨ surprise rides on this receipt, then turns off.
+      const surprise = devices.autoPrint ? flourishLines(flourishRef.current) : null;
+      if (surprise) setFlourish(null);
+      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer, flourish: surprise }) : drawerXml());
       if (!r.ok) return setPrintNote(r.error);
     }
     if (devices.printTickets && tickets.length) {
@@ -897,7 +917,12 @@ export default function PosApp({
             ))
           )}
 
-          <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
+          <PosMemberPanel
+            member={member}
+            onChange={setMember}
+            employeeId={employeeId}
+            onRewardLine={(label) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }])}
+          />
           <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
 
           <div className="space-y-1 pt-1">
@@ -980,6 +1005,12 @@ export default function PosApp({
               New tab
             </button>
             <RecentOrders printerAddress={devices.printerAddress} />
+            <EasterEggs
+              next={flourish}
+              onPick={setFlourish}
+              canPrint={!!devices.printerAddress && devices.autoPrint}
+              onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
+            />
           </div>
         </div>
       </div>
