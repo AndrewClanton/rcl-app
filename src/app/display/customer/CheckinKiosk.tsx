@@ -41,7 +41,9 @@ function pts(n: number) {
 // never sees anyone's details: after staff confirm, it gets a first name and
 // a points balance. When a sale with a member on it completes, the register
 // says so and the points burst plays here.
-export default function CheckinKiosk({ registerTopic }: { registerTopic: string }) {
+// home: the keypad IS the screen (check-in first, when no order is being
+// rung up), instead of a button that opens it.
+export default function CheckinKiosk({ registerTopic, home = false }: { registerTopic: string; home?: boolean }) {
   const [step, setStep] = useState<Step>({ name: "closed" });
   const [digits, setDigits] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -171,6 +173,13 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
     return () => clearTimeout(timer);
   }, [step, digits, firstName, email, emailOptIn]);
 
+  // Home keypad: a number typed and walked away from clears itself.
+  useEffect(() => {
+    if (!home || step.name !== "closed" || !digits) return;
+    const timer = setTimeout(() => resetForm(), 45_000);
+    return () => clearTimeout(timer);
+  }, [home, step.name, digits]);
+
   function begin(request: CheckinRequest) {
     setSlow(false);
     setError(null);
@@ -222,10 +231,13 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
   }
 
   const badAreaCode = digits.length === 10 && !isFullPhone(digits);
+  // On the home keypad, "closed" just means waiting for the next person.
+  const view: Step = home && step.name === "closed" ? { name: "phone" } : step;
+  const onHome = home && step.name === "closed";
 
   return (
     <>
-      {step.name === "closed" && (
+      {step.name === "closed" && !home && (
         <button
           onClick={() => {
             resetForm();
@@ -242,16 +254,28 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
         </button>
       )}
 
-      {step.name !== "closed" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(20,17,12,0.65)" }}>
-          <div className="card w-full max-w-md !p-6 text-center" style={{ background: "var(--surface)" }}>
-            <button onClick={() => close(true)} className="mb-2 ml-auto block text-sm text-[var(--muted)]">
-              Close ✕
-            </button>
+      {view.name !== "closed" && (
+        <div
+          className={`fixed inset-0 z-50 flex flex-col items-center justify-center overflow-y-auto p-6 ${home ? "gap-5" : ""}`}
+          style={{ background: home ? "var(--background)" : "rgba(20,17,12,0.65)" }}
+        >
+          {home && view.name === "phone" && (
+            <div className="text-center">
+              <div className="eyebrow">Royale Cinema Lounge</div>
+              <h1 className="font-display mt-1 text-4xl leading-tight md:text-5xl">Welcome! Check in with your number.</h1>
+              <p className="mt-1 text-lg text-[var(--muted)]">Every visit earns points. New here? It takes ten seconds.</p>
+            </div>
+          )}
+          <div className="card w-full max-w-md !p-6 text-center" style={{ background: "var(--surface)", ...(home ? { borderWidth: 3, borderColor: "var(--foreground)", boxShadow: "6px 6px 0 var(--foreground)" } : {}) }}>
+            {!onHome && (
+              <button onClick={() => close(true)} className="mb-2 ml-auto block text-sm text-[var(--muted)]">
+                {home ? "Start over ✕" : "Close ✕"}
+              </button>
+            )}
 
-            {step.name === "phone" && (
+            {view.name === "phone" && (
               <>
-                <h2 className="font-display mb-1 text-2xl">Check in for points</h2>
+                {!home && <h2 className="font-display mb-1 text-2xl">Check in for points</h2>}
                 <p className="mb-4 text-sm text-[var(--muted)]">Type your phone number. Your bartender will make sure it&apos;s you.</p>
                 <div
                   className="mb-4 rounded-lg border-2 py-3 font-mono text-3xl tabular-nums"
@@ -282,7 +306,7 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
                   </p>
                 )}
                 <button className="btn-primary mt-4 w-full !py-3.5 !text-lg" disabled={busy || locked || !isFullPhone(digits)} onClick={lookUp}>
-                  {locked ? "Too many tries. Ask a staff member." : busy ? "Looking you up…" : "Continue"}
+                  {locked ? "Too many tries. Ask a staff member." : busy ? "Looking you up…" : home ? "Check in" : "Continue"}
                 </button>
               </>
             )}
@@ -407,7 +431,8 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
                   className="btn-primary mt-5 w-full !py-3 !text-base"
                   onClick={() => {
                     resetForm();
-                    setStep({ name: "phone" });
+                    // On the home keypad, "closed" is the keypad.
+                    setStep(home ? { name: "closed" } : { name: "phone" });
                   }}
                 >
                   Next person? Check in →

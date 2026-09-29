@@ -5,8 +5,11 @@ import { registerTopic } from "@/lib/register-topic";
 
 export const dynamic = "force-dynamic";
 
-export default async function CustomerDisplayPage() {
+// /display/customer?promo=1 shows the movie posters between orders instead
+// of the check-in keypad.
+export default async function CustomerDisplayPage({ searchParams }: { searchParams: Promise<{ promo?: string }> }) {
   await requireStaff();
+  const { promo } = await searchParams;
   const screenings = await getPubliclyVisibleScreenings();
 
   const seen = new Set<string>();
@@ -18,5 +21,5 @@ export default async function CustomerDisplayPage() {
     if (movies.length >= 8) break;
   }
 
-  return <CustomerDisplay movies={movies} registerTopic={registerTopic()} />;
+  return <CustomerDisplay movies={movies} registerTopic={registerTopic()} checkinFirst={promo !== "1"} />;
 }

@@ -29,7 +29,9 @@ function fmtShowtime(iso: string) {
 // "Check in for points" (CheckinKiosk.tsx) puts today's sale on a
 // customer's account by phone number, confirmed by staff at the register,
 // and plays the points burst when that sale completes.
-export default function CustomerDisplay({ movies, registerTopic }: { movies: PromoMovie[]; registerTopic: string }) {
+// checkinFirst: with no order being rung up, the screen is the check-in
+// keypad (everyone checks in at the door) instead of the movie posters.
+export default function CustomerDisplay({ movies, registerTopic, checkinFirst = true }: { movies: PromoMovie[]; registerTopic: string; checkinFirst?: boolean }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(null);
   // The register's ✨ Celebrate: a burst of streamers, new each time.
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[] } | null>(null);
@@ -65,7 +67,7 @@ export default function CustomerDisplay({ movies, registerTopic }: { movies: Pro
   return (
     <div className="relative min-h-screen" style={{ background: "var(--background)", color: "var(--foreground)" }}>
       {hasOrder ? <OrderMirror cart={cart} /> : <PromoIdle movies={movies} />}
-      <CheckinKiosk registerTopic={registerTopic} />
+      <CheckinKiosk registerTopic={registerTopic} home={checkinFirst && !hasOrder} />
       {burst && <Streamers key={burst.id} pieces={burst.pieces} onDone={clearBurst} />}
     </div>
   );
