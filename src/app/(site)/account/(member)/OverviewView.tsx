@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
 import type { Member } from "@/lib/types";
-import { RATE_LABEL, RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/membership-rates";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
@@ -169,7 +169,7 @@ export default function OverviewView({
           <div>
             <div className="text-xs font-bold uppercase tracking-[0.14em]">Insiders+</div>
             <p className="font-display mt-1 text-2xl">Add a card to keep your Insiders+.</p>
-            <p className="mt-1 text-sm">It was set up at the box office. ${RATE_PRICE[rate]}/month; your perks stay on in the meantime.</p>
+            <p className="mt-1 text-sm">It was set up at the box office. ${RATE_PRICE[rate]}/month or {dollars(ANNUAL_PRICE[rate])}/year; your perks stay on in the meantime.</p>
           </div>
           <PlusLink next="/account" className="btn-primary">
             Add a card
@@ -180,7 +180,7 @@ export default function OverviewView({
           <div>
             <div className="eyebrow mb-1">Insiders+</div>
             <p className="text-sm">
-              {member.comped ? "Your Insiders+ is complimentary." : `${RATE_LABEL[rate]} rate · $${RATE_PRICE[rate]}/month, billed on the day you joined.`}
+              {member.comped ? "Your Insiders+ is complimentary." : `${RATE_LABEL[rate]} rate · ${planPrice(rate, member.billing_interval ?? "month")}, billed on the day you joined.`}
             </p>
           </div>
           <Link href="/account/billing" className="btn-secondary">
@@ -193,7 +193,7 @@ export default function OverviewView({
             <div className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--gold)]">Insiders+</div>
             <p className="font-display mt-1 text-2xl">Walk in free, every time.</p>
             <p className="mt-1 text-sm opacity-80">
-              Unlimited screenings, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month.
+              Unlimited screenings, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
             </p>
           </div>
           <PlusLink next="/account" className="btn-primary">

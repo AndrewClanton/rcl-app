@@ -26,6 +26,7 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
     // "trialing" when staff set a later first-charge date.
     subscription_status: typeof subscription === "object" && subscription ? subscription.status : "active",
     monthly_member: true,
+    billing_interval: session.metadata?.billing_interval === "year" ? "year" : "month",
   };
   const memberId = session.metadata?.member_id || null;
   const { data: existing } = memberId

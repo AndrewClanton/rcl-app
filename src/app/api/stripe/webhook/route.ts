@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type Stripe from "stripe";
-import { tierForPriceId } from "@/lib/member-rate";
+import { tierForPrice } from "@/lib/member-rate";
 import { applyPoints } from "@/lib/points";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
 
@@ -106,7 +106,9 @@ export async function POST(request: NextRequest) {
     const stillActive = status === "active" || status === "trialing";
     // Rate switches made at the register already set price_tier; this only
     // catches a price changed some other way (e.g. in the Stripe dashboard).
-    const rate = tierForPriceId(subscription.items?.data[0]?.price?.id);
+    const price = subscription.items?.data[0]?.price;
+    const rate = tierForPrice(price);
+    const interval = price?.recurring?.interval === "year" ? "year" : price?.recurring?.interval === "month" ? "month" : null;
 
     await supabase
       .from("members")
@@ -115,6 +117,7 @@ export async function POST(request: NextRequest) {
         tier: stillActive ? "Insiders+" : "Insiders",
         monthly_member: stillActive,
         ...(rate ? { price_tier: rate } : {}),
+        ...(interval ? { billing_interval: interval } : {}),
       })
       .eq("stripe_customer_id", customerId);
   }

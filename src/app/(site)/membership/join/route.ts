@@ -15,8 +15,10 @@ import { safePath } from "@/lib/safe-path";
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const next = safePath(url.searchParams.get("next"));
+  // ?plan=annual: pay for the year up front, 15% off.
+  const annual = url.searchParams.get("plan") === "annual";
   const go = (path: string) => NextResponse.redirect(new URL(path, url), 303);
-  const joinForm = `/membership?plan=plus${next ? `&next=${encodeURIComponent(next)}` : ""}#join`;
+  const joinForm = `/membership?plan=${annual ? "annual" : "plus"}${next ? `&next=${encodeURIComponent(next)}` : ""}#join`;
 
   const member = await getSignedInMember();
   if (!member || !member.email) return go(joinForm);
@@ -34,6 +36,7 @@ export async function GET(req: NextRequest) {
     // this member to senior/student after checking an ID.
     priceTier: member.price_tier ?? "adult",
     returnTo: next,
+    interval: annual ? "year" : "month",
   }).catch(() => null);
   if (!checkoutUrl) return go("/membership?checkout=unavailable#join");
   return NextResponse.redirect(checkoutUrl, 303);

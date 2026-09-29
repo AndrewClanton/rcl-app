@@ -11,7 +11,7 @@ import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
-import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
 import { adjustMemberPoints, createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
 
@@ -344,6 +344,7 @@ function BillingCard({ member }: { member: Member }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [firstCharge, setFirstCharge] = useState("");
+  const [annual, setAnnual] = useState(false);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // Stripe won't hold a first charge less than 2 days out.
@@ -354,7 +355,7 @@ function BillingCard({ member }: { member: Member }) {
     setError(null);
     setCopied(false);
     startTransition(async () => {
-      const r = await createMemberCardLink(member.id, firstCharge || null);
+      const r = await createMemberCardLink(member.id, firstCharge || null, annual);
       if (!r.ok) return setError(r.error);
       setLink(r.url);
       if (open) window.open(r.url, "_blank", "noopener,noreferrer");
@@ -377,6 +378,15 @@ function BillingCard({ member }: { member: Member }) {
               "No card on file. To start their Insiders+ billing:"
             )}
           </p>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            Plan
+            <button className={`chip ${!annual ? "chip-selected" : ""}`} onClick={() => setAnnual(false)}>
+              Monthly · ${RATE_PRICE[member.price_tier ?? "adult"]}
+            </button>
+            <button className={`chip ${annual ? "chip-selected" : ""}`} onClick={() => setAnnual(true)}>
+              Yearly · {dollars(ANNUAL_PRICE[member.price_tier ?? "adult"])} (15% off)
+            </button>
+          </div>
           <label className="flex flex-wrap items-center gap-2 text-sm">
             First charge
             <input type="date" className="rounded border border-[var(--border)] px-2 py-1 text-sm" min={minFirstCharge} value={firstCharge} onChange={(e) => setFirstCharge(e.target.value)} />

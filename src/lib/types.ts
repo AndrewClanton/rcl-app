@@ -168,6 +168,7 @@ export interface Member {
   points: number;
   monthly_member: boolean;
   price_tier: MemberPriceTier | null;
+  billing_interval?: "month" | "year" | null; // Insiders+ paid monthly or yearly (15% off)
   price_tier_set_by: string | null;
   price_tier_set_at: string | null;
   email_opt_in?: boolean;

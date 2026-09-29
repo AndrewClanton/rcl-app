@@ -151,7 +151,7 @@ export async function setCommunityProgramActive(id: string, active: boolean) {
 // `firstChargeDate` (YYYY-MM-DD, optional) saves the card now but holds the
 // first charge until that day, for someone who already paid this month
 // another way (cash, or the old site's Fortis billing).
-export async function createMemberCardLink(memberId: string, firstChargeDate: string | null): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+export async function createMemberCardLink(memberId: string, firstChargeDate: string | null, annual = false): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   await requireStaff();
   const { data: m } = await createAdminClient()
     .from("members")
@@ -179,6 +179,7 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
     priceTier: (m.price_tier as MemberPriceTier | null) ?? "adult",
     returnTo: null,
     firstChargeAt,
+    interval: annual ? "year" : "month",
   }).catch(() => null);
   return url ? { ok: true, url } : { ok: false, error: "Couldn't open Stripe's card page. Try again." };
 }

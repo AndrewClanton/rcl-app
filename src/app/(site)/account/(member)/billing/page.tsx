@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireMember } from "@/lib/member-auth";
 import { activityYears, getPurchases } from "@/lib/data/member-account";
 import { getMembershipBilling } from "@/lib/data/member-billing";
-import { RATE_LABEL, RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/membership-rates";
 import BillingPortalButton from "../../BillingPortalButton";
 import { dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
@@ -36,7 +36,7 @@ export default async function BillingPage() {
             <div>
               <p className="font-display text-2xl">Your Insiders+ has no card on file.</p>
               <p className="mt-1 max-w-md text-sm">
-                It was set up at the box office. Add a card to keep it going, ${RATE_PRICE[rate]}/month. Your perks stay on in the meantime.
+                It was set up at the box office. Add a card to keep it going, ${RATE_PRICE[rate]}/month or {dollars(ANNUAL_PRICE[rate])}/year (15% off), plus tax. Your perks stay on in the meantime.
               </p>
             </div>
             <PlusLink next="/account/billing" className="btn-primary">
@@ -51,7 +51,7 @@ export default async function BillingPage() {
           <div className="card space-y-4">
             <dl className="grid gap-4 text-sm sm:grid-cols-4">
               <Item label="Status" value={STATUS_LABEL[billing?.status ?? member.subscription_status ?? ""] ?? billing?.status ?? "—"} />
-              <Item label="Plan" value={`${RATE_LABEL[rate]} · $${RATE_PRICE[rate]}/month`} />
+              <Item label="Plan" value={`${RATE_LABEL[rate]} · ${planPrice(rate, member.billing_interval ?? "month")}`} />
               <Item
                 label={billing?.cancelAtPeriodEnd ? "Ends on" : "Next bill"}
                 value={billing?.nextBillDate ? `${dateShort(billing.nextBillDate)}${billing.nextBillAmount !== null ? ` · ${money(billing.nextBillAmount)}` : ""}` : "—"}
@@ -73,7 +73,7 @@ export default async function BillingPage() {
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-[var(--foreground)] p-6 text-[var(--background)]">
             <div>
               <p className="font-display text-2xl">Walk in free, every time.</p>
-              <p className="mt-1 text-sm opacity-80">Insiders+ is ${RATE_PRICE[rate]}/month, billed on the day you join. Cancel anytime.</p>
+              <p className="mt-1 text-sm opacity-80">Insiders+ is ${RATE_PRICE[rate]}/month, or {dollars(ANNUAL_PRICE[rate])}/year paid up front (15% off), plus tax. Cancel anytime.</p>
             </div>
             <PlusLink next="/account/billing" className="btn-primary">
               Get Insiders+

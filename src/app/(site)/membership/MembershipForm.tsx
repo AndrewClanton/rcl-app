@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { submitMembershipSignup, startMembershipCheckout } from "./actions";
 
-type Plan = "free" | "plus";
+type Plan = "free" | "plus" | "annual";
 
 // For visitors who aren't signed in. Signed-in members never see this: they
 // go straight to payment (see join/route.ts).
@@ -20,7 +20,8 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
   const canSubmit = name.trim() && email.includes("@");
   // Signing in brings them back here with everything filled in -- or, for
   // Insiders+, straight to payment.
-  const afterSignIn = plan === "plus" ? `/membership/join${returnTo ? `?next=${encodeURIComponent(returnTo)}` : ""}` : "/account";
+  const joinQuery = new URLSearchParams({ ...(plan === "annual" ? { plan: "annual" } : {}), ...(returnTo ? { next: returnTo } : {}) }).toString();
+  const afterSignIn = plan === "free" ? "/account" : `/membership/join${joinQuery ? `?${joinQuery}` : ""}`;
   const signInHref = `/account/login?next=${encodeURIComponent(afterSignIn)}`;
 
   async function handleSubmit() {
@@ -37,7 +38,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         }
         setDone(true);
       } else {
-        const result = await startMembershipCheckout({ name, email, phone, returnTo });
+        const result = await startMembershipCheckout({ name, email, phone, returnTo, annual: plan === "annual" });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -69,12 +70,19 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
             Insiders (free)
           </button>
           <button className={`chip ${plan === "plus" ? "chip-selected" : ""}`} onClick={() => setPlan("plus")}>
-            Insiders+ (${RATE_PRICE.adult}/mo)
+            Insiders+ monthly (${RATE_PRICE.adult}/mo)
+          </button>
+          <button className={`chip ${plan === "annual" ? "chip-selected" : ""}`} onClick={() => setPlan("annual")}>
+            Insiders+ yearly ({dollars(ANNUAL_PRICE.adult)}/yr, save 15%)
           </button>
         </div>
-        {plan === "plus" && (
+        {plan !== "free" && (
           <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
-            <p>You&apos;ll be redirected to Stripe to set up your monthly payment. You&apos;re billed on the same day each month.</p>
+            <p>
+              {plan === "annual"
+                ? `You'll be redirected to Stripe to pay ${dollars(ANNUAL_PRICE.adult)} for the year (15% off monthly), plus tax. It renews on the same date next year.`
+                : "You'll be redirected to Stripe to set up your monthly payment, plus tax. You're billed on the same day each month."}
+            </p>
             <p>
               Senior (${RATE_PRICE.senior}/mo) or student (${RATE_PRICE.student}/mo)? Join here, then show your ID at the box office and we&apos;ll switch your rate. The lower price
               starts with your next bill.
@@ -108,7 +116,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         <a href={signInHref} className="font-bold text-[var(--accent)] hover:underline">
           Sign in
         </a>{" "}
-        and {plan === "plus" ? "go straight to payment" : "skip this form"}.
+        and {plan !== "free" ? "go straight to payment" : "skip this form"}.
       </p>
     </div>
   );

@@ -48,6 +48,7 @@ export async function startMembershipCheckout(fields: {
   email: string;
   phone: string;
   returnTo?: string | null;
+  annual?: boolean;
 }): Promise<CheckoutResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
@@ -76,6 +77,7 @@ export async function startMembershipCheckout(fields: {
     phone: fields.phone.trim() || null,
     priceTier,
     returnTo: safePath(fields.returnTo),
+    interval: fields.annual ? "year" : "month",
   });
   if (!url) return { ok: false, error: "Could not start checkout. Please try again." };
   return { ok: true, url };

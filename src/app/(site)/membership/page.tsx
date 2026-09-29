@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
-import { RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import Link from "next/link";
@@ -30,6 +30,7 @@ export default async function MembershipPage({
   // Insiders+ set by staff at the register, with no card behind it yet.
   const needsCard = !!member && plusNeedsCard(member);
   const price = RATE_PRICE[member?.price_tier ?? "adult"];
+  const yearly = dollars(ANNUAL_PRICE[member?.price_tier ?? "adult"]);
 
   let subscriptionConfirmed = false;
   if (checkout === "success" && session_id) {
@@ -69,9 +70,15 @@ export default async function MembershipPage({
               See your membership
             </Link>
           ) : (
-            <PlusLink next={next ?? undefined} className="btn-primary">
-              {needsCard ? `Add a card to your Insiders+ · ${price}/month + tax` : `Get Insiders+ · ${price}/month + tax`}
-            </PlusLink>
+            <div className="flex flex-wrap items-center gap-3">
+              <PlusLink next={next ?? undefined} className="btn-primary">
+                {needsCard ? `Add a card · ${price}/month` : `Get Insiders+ · ${price}/month`}
+              </PlusLink>
+              <PlusLink next={next ?? undefined} annual className="btn-secondary">
+                Pay yearly · {yearly}/year <span className="ml-1 rounded-full bg-[var(--gold)] px-2 py-0.5 text-xs font-bold text-[var(--gold-foreground)]">save 15%</span>
+              </PlusLink>
+              <span className="text-xs text-[var(--muted)]">Plus sales tax.</span>
+            </div>
           )}
         </div>
       )}
@@ -87,7 +94,9 @@ export default async function MembershipPage({
               </th>
               <th className="px-4 py-3 font-medium text-[var(--accent)]">
                 Insiders+
-                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">${RATE_PRICE.adult}/mo</div>
+                <div className="mt-0.5 text-xs font-normal text-[var(--muted)]">
+                  ${RATE_PRICE.adult}/mo or {dollars(ANNUAL_PRICE.adult)}/yr
+                </div>
               </th>
             </tr>
           </thead>
@@ -143,6 +152,9 @@ export default async function MembershipPage({
           <span>
             Students <strong className="text-[var(--accent)]">${RATE_PRICE.student}/mo</strong>
           </span>
+          <span>
+            Yearly, 15% off: <strong className="text-[var(--accent)]">{dollars(ANNUAL_PRICE.adult)}</strong> adults, {dollars(ANNUAL_PRICE.senior)} seniors, {dollars(ANNUAL_PRICE.student)} students
+          </span>
           <span>Senior and student rates are set at the box office with a valid ID.</span>
           <span>Prices are plus {SALES_TAX_PERCENT}% Missouri sales tax.</span>
         </div>
@@ -160,22 +172,27 @@ export default async function MembershipPage({
                 {needsCard ? (
                   <div>
                     <div className="font-semibold">Your Insiders+ was set up at the box office and doesn&apos;t have a card on file yet.</div>
-                    <div className="text-sm text-[var(--muted)]">Add one to keep it going, ${price}/month plus tax, billed to {member.email}. You keep all your perks in the meantime.</div>
+                    <div className="text-sm text-[var(--muted)]">Add one to keep it going, ${price}/month or {yearly}/year plus tax, billed to {member.email}. You keep all your perks in the meantime.</div>
                   </div>
                 ) : (
                   <div>
                     <div className="font-semibold">You&apos;re signed in as {member.name}.</div>
                     <div className="text-sm text-[var(--muted)]">
-                      Insiders+ will be billed monthly to {member.email}. Senior or student? Join here, then show your ID at the box office and we&apos;ll switch your rate.
+                      Insiders+ is ${price}/month, or {yearly}/year paid up front (15% off), billed to {member.email}. Senior or student? Join here, then show your ID at the box office and we&apos;ll switch your rate.
                     </div>
                   </div>
                 )}
-                <PlusLink next={next ?? undefined} className="btn-primary">
-                  {needsCard ? "Add a card" : "Continue to payment"}
-                </PlusLink>
+                <div className="flex flex-wrap gap-2">
+                  <PlusLink next={next ?? undefined} className="btn-primary">
+                    Monthly · ${price}
+                  </PlusLink>
+                  <PlusLink next={next ?? undefined} annual className="btn-secondary">
+                    Yearly · {yearly}
+                  </PlusLink>
+                </div>
               </div>
             ) : (
-              <MembershipForm initialPlan={plan === "plus" ? "plus" : "free"} returnTo={next} />
+              <MembershipForm initialPlan={plan === "annual" ? "annual" : plan === "plus" ? "plus" : "free"} returnTo={next} />
             )}
           </>
         )}

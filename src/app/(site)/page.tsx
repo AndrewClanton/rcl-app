@@ -1,4 +1,4 @@
-import { RATE_PRICE } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { LOYALTY_SUMMARY } from "@/lib/loyalty";
 import Image from "next/image";
 import Link from "next/link";
@@ -162,6 +162,9 @@ export default async function HomePage() {
                 ${RATE_PRICE.adult}
               </span>
               <span className="text-sm opacity-70">/ month + tax</span>
+            </div>
+            <div className="mt-1 text-sm" style={{ color: "var(--gold)" }}>
+              or {dollars(ANNUAL_PRICE.adult)} a year: save 15%
             </div>
             <ul className="mt-5 flex-1 space-y-2.5 text-sm">
               <li className="flex gap-2">

@@ -1,9 +1,10 @@
 import "server-only";
 import { siteOrigin } from "@/lib/site-origin";
 import { getStripe } from "@/lib/stripe";
-import { insidersPlusPriceId } from "@/lib/member-rate";
+import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { salesTaxRateId } from "@/lib/stripe-tax";
 import type { MemberPriceTier } from "@/lib/types";
+import type { BillingInterval } from "@/lib/membership-rates";
 
 export { hasPlusPerks, plusPaidFor, plusNeedsCard } from "@/lib/plus-status";
 
@@ -15,6 +16,7 @@ export { hasPlusPerks, plusPaidFor, plusNeedsCard } from "@/lib/plus-status";
 // `firstChargeAt` (staff only) saves the card now but holds the first
 // charge until then -- for someone who already paid for this month another
 // way (cash, or the old site). Stripe needs it at least 48 hours out.
+// `interval`: monthly, or yearly at 15% off.
 export async function createPlusCheckout(p: {
   memberId: string | null;
   customerId: string | null;
@@ -24,12 +26,14 @@ export async function createPlusCheckout(p: {
   priceTier: MemberPriceTier;
   returnTo: string | null;
   firstChargeAt?: Date | null;
+  interval?: BillingInterval;
 }): Promise<string | null> {
-  const priceId = insidersPlusPriceId(p.priceTier);
+  const interval = p.interval ?? "month";
+  const priceId = await insidersPlusPriceIdFor(p.priceTier, interval);
   if (!priceId) return null;
   const origin = await siteOrigin();
   const back = p.returnTo ? `&next=${encodeURIComponent(p.returnTo)}` : "";
-  // Missouri sales tax on top of the monthly price, on every bill.
+  // Missouri sales tax on top of the price, on every bill.
   const taxRate = await salesTaxRateId();
   const session = await getStripe().checkout.sessions.create({
     mode: "subscription",
@@ -45,6 +49,7 @@ export async function createPlusCheckout(p: {
       pending_email: p.email,
       pending_phone: p.phone ?? "",
       price_tier: p.priceTier,
+      billing_interval: interval,
     },
   });
   return session.url;
