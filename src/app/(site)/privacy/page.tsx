@@ -57,12 +57,38 @@ export default async function PrivacyPage() {
             <strong>Your photo,</strong> if you add one to your account.
           </li>
           <li>
+            <strong>Your profile quote,</strong> if you write one: the short line you can add to your account. Staff see it at the register and on
+            your member record. It isn&apos;t shown on the website or to other customers.
+          </li>
+          <li>
             <strong>If you sign in with Google or Facebook:</strong> your name, email address and profile photo from that account. We don&apos;t get
             your password, contacts, friends or posts.
           </li>
           <li>
             <strong>Purchases:</strong> what you buy at the bar, kitchen and box office when your account is attached, tickets you buy online, and the
             amounts, tips and taxes, and whether you paid by cash or card.
+          </li>
+          <li>
+            <strong>Checkout details, even without an account:</strong> the name and email address you give when you buy tickets online, and the name,
+            email address and phone number (if you give one) when you reserve a booth.
+          </li>
+          <li>
+            <strong>Private event requests:</strong> your name and email address, and what you tell us about the event: its name, the date and time,
+            the space, how many guests, and any movie or food.
+          </li>
+          <li>
+            <strong>Bar tabs:</strong> the name you give staff for your tab, and anything staff type in for a special order. If you keep a card on a
+            tab, Stripe holds the card. We only see its type and last four digits.
+          </li>
+          <li>
+            <strong>Check-in at the register:</strong> if you check in for points on the customer screen, the phone number you type in. If we
+            don&apos;t know that number yet, we also get the first name you type (and your email address, only if you choose to give it), and that
+            becomes your Insiders account once staff confirm it. Staff confirm every check-in at the register. We record the day you checked in, which
+            staff member confirmed it, and any points or rewards it earned.
+          </li>
+          <li>
+            <strong>Gift memberships:</strong> if you buy someone Insiders+ as a gift, your name and email address (for your receipt), and any note you
+            add. The person you give it to sees your name and your note. If someone gives you a gift, we record who it came from.
           </li>
           <li>
             <strong>Points:</strong> every point you earn or use, and any adjustment, with the reason.
@@ -73,7 +99,8 @@ export default async function PrivacyPage() {
             keep your ID.
           </li>
           <li>
-            <strong>Visits:</strong> screenings you have tickets for, and the days you make a purchase with your account attached.
+            <strong>Visits:</strong> screenings you have tickets for, the days you check in, and the days you make a purchase with your account
+            attached.
           </li>
           <li>
             <strong>Email preferences:</strong> whether you want our weekly lineup emails.
@@ -101,12 +128,14 @@ export default async function PrivacyPage() {
           <li>To give you receipts and yearly statements.</li>
           <li>
             To recognize you at the register. Staff can look you up by name, email, phone number, the QR code in your account, or your photo. The
-            register also suggests members who visit often, with their photos, so staff can find them quickly.
+            register also suggests members who visit often, with their photos, so staff can find them quickly. When you check in, the register shows
+            staff your photo, your name and the last four digits of your phone number, so they can confirm it&apos;s you.
           </li>
           <li>
-            To greet you at checkout. If you look yourself up by phone number on the customer-facing screen, your name, photo and points balance
-            appear on that screen.
+            To greet you at checkout. The customer-facing screen by the register shows your order as it&apos;s rung up, with the name on it. Once
+            staff confirm your check-in, it also shows your first name and points balance.
           </li>
+          <li>To hold your tickets and booth, and to answer your private event request.</li>
           <li>
             To send the emails you ask for (the weekly lineup and member news) and account emails such as receipts, sign-in links and billing
             notices.
@@ -151,8 +180,17 @@ export default async function PrivacyPage() {
           We keep your account while it&apos;s active. We keep purchase and payment records for as long as we need them for tax and accounting.
         </p>
         <p>
-          If you ask us to delete your account, we delete your profile, photo, contact details, points and sign-in connections. We remove your name
-          from the purchase records we&apos;re required to keep. See <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">Deleting your data</Link>.
+          Ticket bookings, booth reservations, private event requests and gift memberships are kept with our sales records, for the same reason.
+        </p>
+        <p>
+          If you ask us to delete your account, we delete your profile, photo, profile quote, contact details, points and sign-in connections. We
+          also remove your name and contact details from the records we&apos;re required to keep: your purchases, bar tabs, ticket and booth
+          bookings, private event requests, gift memberships you bought, and your customer details at Stripe (Stripe keeps its own payment records
+          for tax purposes). The days you checked in stay only as anonymous counts. See{" "}
+          <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">
+            Deleting your data
+          </Link>
+          .
         </p>
       </section>
 
@@ -160,7 +198,8 @@ export default async function PrivacyPage() {
         <h2 id="choices">Your choices</h2>
         <ul>
           <li>See and update your details anytime on the Profile tab of your account.</li>
-          <li>Add, change or remove your photo anytime.</li>
+          <li>Add, change or remove your photo and your profile quote anytime.</li>
+          <li>Checking in for points is up to you. You can still buy anything without an account.</li>
           <li>Turn off the weekly emails in your account, or with the unsubscribe link in any of those emails.</li>
           <li>
             Ask for a copy of your information, or to delete your account, by emailing info@royalecinemajoplin.com. See{" "}
@@ -175,15 +214,19 @@ export default async function PrivacyPage() {
       <section>
         <h2 id="children">Children</h2>
         <p>
-          Accounts are for people 13 and older. We don&apos;t knowingly collect information from children under 13. If you think a child under 13 has
-          given us information, contact us and we&apos;ll delete it.
+          Accounts are for people 13 and older. That includes an account made on this website, by staff at the register, or by checking in on the
+          customer screen. We don&apos;t ask for your age, and we don&apos;t knowingly collect information from children under 13. A parent or
+          guardian can buy tickets or book a booth for a younger child under their own name. If you think a child under 13 has given us information,
+          contact us and we&apos;ll delete it.
         </p>
       </section>
 
       <section>
         <h2 id="security">Security</h2>
         <p>
-          Only staff who need it can see member information, and our staff screens are behind sign-in. Our providers encrypt information as it
+          Only staff who need it can see member information, and our staff screens are behind sign-in. When cashiers look you up, they see only part
+          of your email address and phone number; managers see the full details when they need them, for billing or a request like yours. Our providers encrypt
+          information as it
           travels between your device and our systems. No system is perfectly secure, so use a strong password that you don&apos;t use anywhere else,
           or sign in with Google or Facebook.
         </p>
