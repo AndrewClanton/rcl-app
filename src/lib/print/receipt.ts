@@ -28,6 +28,7 @@ export interface ReceiptData {
   tip: number;
   total: number; // includes tip
   payments: { label: string; amount: number }[];
+  reprint?: boolean; // printed again later (Recent orders): marked REPRINT
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -153,6 +154,7 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean } = {}):
   const d = new Doc();
   if (opts.openDrawer) d.drawer();
   header(d);
+  if (r.reprint) d.align("center").bold(true).line("** REPRINT **").bold(false).align("left");
   d.lines(columns(`Order #${r.orderNumber}`, when(r.at)));
   if (r.orderName) d.line(`Name: ${r.orderName}`);
   if (r.cashier) d.line(`Server: ${r.cashier}`);

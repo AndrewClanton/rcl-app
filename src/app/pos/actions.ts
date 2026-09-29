@@ -7,6 +7,7 @@ import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
 import { releaseTabCard } from "@/lib/tab-card";
+import { refundOrder } from "@/app/admin/reports/actions";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -384,4 +385,97 @@ export async function cancelTab(id: string, pin: string): Promise<void> {
   if (!ok) throw new Error("Incorrect manager PIN.");
   await supabase.from("orders").delete().eq("id", id);
   revalidate();
+}
+
+// ---------- recent orders (reprint, refund, "what did they order?") ----------
+
+export interface RecentOrder {
+  id: string;
+  orderNumber: number;
+  status: string; // completed | refunded | voided
+  at: string;
+  name: string | null;
+  cashier: string | null;
+  member: string | null;
+  method: string | null;
+  cash: number;
+  card: number;
+  voucher: number;
+  subtotal: number;
+  discounts: { label: string; amount: number }[];
+  tax: number;
+  tip: number;
+  total: number;
+  lines: { name: string; qty: number; unit: number; mods: string[]; screeningId: string | null }[];
+}
+
+export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]> {
+  await assertStaff();
+  const { data, error } = await createAdminClient()
+    .from("orders")
+    .select(
+      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
+    )
+    .in("status", ["completed", "refunded", "voided"])
+    .not("completed_at", "is", null)
+    .order("completed_at", { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  type Row = {
+    id: string;
+    order_number: number;
+    status: string;
+    completed_at: string;
+    order_name: string | null;
+    tab_name: string | null;
+    payment_method: string | null;
+    payment_cash_amount: number | null;
+    payment_card_amount: number | null;
+    payment_voucher_amount: number | null;
+    subtotal: number;
+    tier_discount: number;
+    monthly_discount: number;
+    redemption_discount: number;
+    tax: number;
+    tip: number;
+    total: number;
+    employee: { name: string } | null;
+    member: { name: string } | null;
+    items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; screening_id: string | null }[];
+  };
+  return ((data ?? []) as unknown as Row[]).map((o) => ({
+    id: o.id,
+    orderNumber: Number(o.order_number),
+    status: o.status,
+    at: o.completed_at,
+    name: o.tab_name || o.order_name || null,
+    cashier: o.employee?.name ?? null,
+    member: o.member?.name ?? null,
+    method: o.payment_method,
+    cash: Number(o.payment_cash_amount ?? 0),
+    card: Number(o.payment_card_amount ?? 0),
+    voucher: Number(o.payment_voucher_amount ?? 0),
+    subtotal: Number(o.subtotal),
+    discounts: [
+      { label: "Member discount", amount: Number(o.tier_discount) },
+      { label: "Monthly member discount", amount: Number(o.monthly_discount) },
+      { label: "Points reward", amount: Number(o.redemption_discount) },
+    ].filter((d) => d.amount > 0),
+    tax: Number(o.tax),
+    tip: Number(o.tip),
+    total: Number(o.total),
+    lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
+  }));
+}
+
+// Refund from the register (manager PIN). Card money goes back to the card
+// through Stripe; for cash, staff hand it back. Returns the reason on failure
+// (a wrong PIN, say), since a thrown message is hidden in production.
+export async function refundRegisterOrder(orderId: string, pin: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await refundOrder(orderId, pin);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't refund that order." };
+  }
 }
