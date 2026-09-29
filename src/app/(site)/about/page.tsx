@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { PageMasthead, Seal, SpecFoot, Sprockets } from "@/components/print";
@@ -104,9 +105,9 @@ export default function AboutPage() {
           </FaqItem>
           <FaqItem q="Do you host special events?">
             Yes: movie marathons, themed nights, filmmaker Q&amp;As, and private rentals for screenings and parties. See our{" "}
-            <a href="/events" className="font-bold text-[var(--accent)] hover:underline">
+            <Link href="/events" className="font-bold text-[var(--accent)] hover:underline">
               private events
-            </a>{" "}
+            </Link>{" "}
             page for pricing.
           </FaqItem>
         </dl>

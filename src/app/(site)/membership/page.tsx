@@ -142,9 +142,9 @@ export default async function MembershipPage({
               <strong>Free entry to every screening</strong>, unlimited
             </Perk>
             <Perk>
-              <a href="/booths" className="underline decoration-2 underline-offset-2">
+              <Link href="/booths" className="underline decoration-2 underline-offset-2">
                 2 free booth reservations
-              </a>{" "}
+              </Link>{" "}
               every month
             </Perk>
             <Perk>Concession and merch discounts</Perk>
