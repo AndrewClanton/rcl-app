@@ -7,6 +7,7 @@ import PlusLink from "@/components/PlusLink";
 import { PageMasthead } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
+import { issueFormToken } from "@/lib/public-form-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -92,7 +93,13 @@ export default async function BoothsPage({
           {checkout === "cancelled" && (
             <div className="notice notice-warn mb-4">Checkout was cancelled — the booth wasn&apos;t held. Feel free to try again.</div>
           )}
-          <BoothReservationForm booths={booths} initialDate={startDate} initialReservations={reservationsForStartDate} me={me} />
+          <BoothReservationForm
+            booths={booths}
+            initialDate={startDate}
+            initialReservations={reservationsForStartDate}
+            me={me}
+            formToken={issueFormToken("booths")}
+          />
         </>
       )}
     </div>

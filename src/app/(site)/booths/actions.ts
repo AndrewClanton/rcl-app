@@ -8,6 +8,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { exactEmail, sameEmail } from "@/lib/email-match";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
+import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 
 export async function getAvailabilityForDate(date: string): Promise<BoothBusy[]> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
@@ -43,6 +44,9 @@ export interface StartBoothCheckoutFields {
   customerName: string;
   customerEmail: string;
   customerPhone: string;
+  // The page's bot check (lib/public-form-guard.ts), used on the free path.
+  formToken?: string | null;
+  honeypot?: string | null;
 }
 
 // Next.js redacts a *thrown* Server Action error's message in production
@@ -67,6 +71,9 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
   if (fields.reservationDate <= todayCentral()) {
     return { ok: false, error: "Booths can be reserved starting tomorrow, not for today." };
   }
+  // A cap per connection: each pending checkout holds the booth for 30
+  // minutes, so a script mustn't be able to hold them all.
+  if (!(await allowFromConnection("booths"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
 
   const supabase = createAdminClient();
 
@@ -126,6 +133,9 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     if (countErr) throw countErr;
 
     if ((count ?? 0) < FREE_RESERVATIONS_PER_MONTH) {
+      // No card in the way on this path, so it gets the bot check.
+      const notHuman = checkHuman("booths", fields);
+      if (notHuman) return { ok: false, error: notHuman };
       const { data: freeReservation, error: freeErr } = await supabase
         .from("booth_reservations")
         .insert({

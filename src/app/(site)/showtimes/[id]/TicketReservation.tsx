@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PlusLink from "@/components/PlusLink";
+import Honeypot from "@/components/Honeypot";
 import { salesTaxOn } from "@/lib/sales-tax";
 import { startCheckout } from "./actions";
 
@@ -10,20 +11,25 @@ function money(n: number) {
 }
 
 // `me` is the signed-in member, if any: their name and email are already
-// on file, so they aren't asked for again.
+// on file, so they aren't asked for again. `formToken` (stamped when the
+// page was built) and the hidden field go back with the order, for the bot
+// check on free seats (lib/public-form-guard.ts).
 export default function TicketReservation({
   screeningId,
   ticketPrice,
   seatsLeft,
   me = null,
   plusPrice,
+  formToken,
 }: {
   screeningId: string;
   ticketPrice: number;
   seatsLeft: number;
   me?: { name: string; email: string; plus: boolean; freeSeat: boolean } | null;
   plusPrice: number;
+  formToken: string;
 }) {
+  const [honeypot, setHoneypot] = useState("");
   const [quantity, setQuantity] = useState(seatsLeft > 0 ? 1 : 0);
   const [editing, setEditing] = useState(!me);
   const [name, setName] = useState(me?.name ?? "");
@@ -44,7 +50,7 @@ export default function TicketReservation({
     setSubmitting(true);
     setError(null);
     try {
-      const result = await startCheckout({ screeningId, quantity, customerName: name, customerEmail: email });
+      const result = await startCheckout({ screeningId, quantity, customerName: name, customerEmail: email, formToken, honeypot });
       if (!result.ok) {
         setError(result.error);
         setSubmitting(false);
@@ -123,6 +129,8 @@ export default function TicketReservation({
           </button>
         </div>
       )}
+
+      <Honeypot value={honeypot} onChange={setHoneypot} />
 
       {error && <div className="text-sm font-bold text-[var(--danger-text)]">{error}</div>}
 

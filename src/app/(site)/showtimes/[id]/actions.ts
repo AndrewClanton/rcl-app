@@ -8,6 +8,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { exactEmail, sameEmail } from "@/lib/email-match";
 import { memberHasBookingFor } from "@/lib/data/screening-detail";
+import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -22,7 +23,15 @@ export type CheckoutResult = { ok: true; url: string } | { ok: false; error: str
 
 const MAX_TICKETS_PER_ORDER = 10;
 
-export async function startCheckout(fields: { screeningId: string; quantity: number; customerName: string; customerEmail: string }): Promise<CheckoutResult> {
+export async function startCheckout(fields: {
+  screeningId: string;
+  quantity: number;
+  customerName: string;
+  customerEmail: string;
+  // The page's bot check (lib/public-form-guard.ts), used on the free paths.
+  formToken?: string | null;
+  honeypot?: string | null;
+}): Promise<CheckoutResult> {
   const name = fields.customerName.trim();
   const email = fields.customerEmail.trim();
   if (!name) return { ok: false, error: "Enter your name." };
@@ -30,6 +39,9 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
   if (!(fields.quantity > 0) || !Number.isInteger(fields.quantity)) return { ok: false, error: "Select at least one ticket." };
   // A cap per checkout, so a script can't hold a whole screening in one go.
   if (fields.quantity > MAX_TICKETS_PER_ORDER) return { ok: false, error: `Up to ${MAX_TICKETS_PER_ORDER} tickets per order online. For a bigger group, call or stop by the box office.` };
+  // ...and a cap per connection, so it can't just check out again and again
+  // (each pending checkout holds its seats for 30 minutes).
+  if (!(await allowFromConnection("tickets"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
 
   const supabase = createAdminClient();
 
@@ -64,8 +76,11 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
 
   // Free screenings (the outdoor cinema, sponsored by the Royale Cinema
   // Project) skip Stripe entirely -- there's no reason to send someone to a
-  // payment processor to pay nothing.
+  // payment processor to pay nothing. With no card in the way, these get
+  // the bot check.
   if (screening.ticket_price === 0) {
+    const notHuman = checkHuman("tickets", fields);
+    if (notHuman) return { ok: false, error: notHuman };
     const { data: booking, error: insertErr } = await supabase
       .from("bookings")
       .insert({
@@ -93,6 +108,8 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
 
   if (paidQuantity === 0) {
     // Fully covered by membership -- no payment needed, confirm immediately.
+    const notHuman = checkHuman("tickets", fields);
+    if (notHuman) return { ok: false, error: notHuman };
     const { data: booking, error: insertErr } = await supabase
       .from("bookings")
       .insert({

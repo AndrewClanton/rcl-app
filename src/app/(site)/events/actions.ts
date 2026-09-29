@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { estimateEventTotal } from "@/lib/eventPricing";
+import { allowFromConnection, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import type { Room } from "@/lib/types";
 
 // Next.js redacts a *thrown* Server Action error's message in production
@@ -31,6 +32,9 @@ export async function submitEventInquiry(fields: {
   if (!fields.eventDate) return { ok: false, error: "Enter an event date." };
   if (!fields.eventTime) return { ok: false, error: "Enter an event time." };
   if (!fields.organizerEmail || !fields.organizerEmail.includes("@")) return { ok: false, error: "Enter a valid email." };
+  // Each request lands in the staff's events list, so a script mustn't be
+  // able to bury it.
+  if (!(await allowFromConnection("eventInquiry"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
 
   const supabase = createAdminClient();
   const { data: room, error: roomErr } = await supabase
