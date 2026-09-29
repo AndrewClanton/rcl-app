@@ -5,6 +5,7 @@ import { useOpsApi } from "./api";
 import type { OnShift, ShiftStatus } from "@/lib/ops/shared";
 import OpsPanel, { type OpsTab } from "./OpsPanel";
 import { publishOnShift } from "./on-shift-store";
+import BoothsToday from "./BoothsToday";
 
 // The register's shift tools: who's working, reminders, and the buttons that
 // open the checklist, par count, shopping list and history. Sits above the
@@ -185,6 +186,8 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
           </div>
         )}
       </div>
+
+      {status && <BoothsToday booths={status.booths} onChanged={refresh} />}
 
       {reminders.length > 0 && (
         <div className="mb-3 grid gap-2">

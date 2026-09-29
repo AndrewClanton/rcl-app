@@ -229,3 +229,34 @@ export function ticketXml(t: TicketPrint, pics: { logo?: Raster | null; poster?:
   d.cut();
   return d.toString();
 }
+
+// ---------- reserved card ----------
+// Set on a booth that's held for a party, printed from the register's shift
+// bar. Big enough to read from across the lounge; the guest's first name
+// and last initial only, since it sits out in the open.
+
+export interface ReservedCard {
+  booth: string;
+  dateLabel: string; // "Tuesday, September 29"
+  window: string; // "7:00–9:00 PM"
+  name: string; // "Andrew C."
+  party: number;
+}
+
+export function reservedCardXml(c: ReservedCard, pics: { logo?: Raster | null } = {}): string {
+  const d = new Doc().align("center");
+  if (pics.logo) d.image(pics.logo).feed(1);
+  else d.big(true).bold(true).line(SITE_NAME.toUpperCase()).big(false).bold(false);
+  d.big(true).bold(true).reverse(true).line("  RESERVED  ").reverse(false).feed(1);
+  d.lines(wrap(c.booth.toUpperCase(), 24)).big(false).bold(false).feed(1);
+  d.bold(true).line(c.dateLabel.toUpperCase()).bold(false);
+  d.big(true).bold(true).line(c.window).big(false).bold(false).feed(1);
+  d.align("left").line(rule("=")).align("center");
+  d.big(true).bold(true).lines(wrap(c.name, 24)).big(false).bold(false);
+  d.line(`Party of ${c.party}`);
+  d.align("left").line(rule("=")).align("center").feed(1);
+  d.lines(wrap("This booth is held for this party. Please check with a staff member before sitting here.", COLS));
+  d.feed(1).bold(true).line("royalecinemajoplin.com").bold(false);
+  d.cut();
+  return d.toString();
+}

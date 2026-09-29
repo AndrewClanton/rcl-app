@@ -5,6 +5,7 @@ import { assertStaff } from "@/lib/auth";
 import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
 import { evaluateReminders } from "@/lib/ops/reminders";
 import type {
+  BoothHold,
   DueReminder,
   OnShift,
   ParItem,
@@ -144,7 +145,55 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     lastCount = { id: c.id, at: c.completed_at, byName: c.counted_by ? names.get(c.counted_by) ?? null : null, below };
   }
 
-  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, scheduled };
+  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, scheduled, booths: await boothHolds(today.date) };
+}
+
+// ---------- booths ----------
+
+// "7:00–9:00 PM" from a start time ("19:00:00") and a length in hours.
+function boothWindow(start: string, hours: number): string {
+  const [h, m] = start.split(":").map(Number);
+  const at = (mins: number) => {
+    const hh = Math.floor(mins / 60) % 24;
+    return { t: `${hh % 12 || 12}:${String(mins % 60).padStart(2, "0")}`, ap: hh >= 12 ? "PM" : "AM" };
+  };
+  const a = at(h * 60 + m);
+  const b = at(h * 60 + m + Math.round(Number(hours) * 60));
+  return a.ap === b.ap ? `${a.t}–${b.t} ${b.ap}` : `${a.t} ${a.ap}–${b.t} ${b.ap}`;
+}
+
+// Confirmed booth bookings for today and tomorrow. (Booths can't be booked
+// same-day, so tomorrow's list is where new bookings show up first.)
+async function boothHolds(today: string): Promise<ShiftStatus["booths"]> {
+  const next = new Date(`${today}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  const tomorrow = next.toISOString().slice(0, 10);
+  const { data, error } = await db()
+    .from("booth_reservations")
+    .select("id, reservation_date, start_time, hours, customer_name, party_size, created_at, card_printed_at, booth:booths(label)")
+    .eq("status", "confirmed")
+    .in("reservation_date", [today, tomorrow])
+    .order("start_time");
+  if (error) return { today: [], tomorrow: [] };
+  const holds: BoothHold[] = (data ?? []).map((r) => ({
+    id: r.id as string,
+    booth: ((r.booth as unknown as { label: string } | null)?.label ?? "Booth") as string,
+    date: r.reservation_date as string,
+    window: boothWindow(r.start_time as string, Number(r.hours)),
+    name: r.customer_name as string,
+    party: r.party_size as number,
+    bookedAt: r.created_at as string,
+    isNew: Date.now() - new Date(r.created_at as string).getTime() < 86_400_000,
+    cardPrintedAt: (r.card_printed_at as string | null) ?? null,
+  }));
+  return { today: holds.filter((h) => h.date === today), tomorrow: holds.filter((h) => h.date === tomorrow) };
+}
+
+// The Reserved card for a booth was printed (or set out by hand).
+export async function markBoothCardPrinted(reservationId: string): Promise<Result> {
+  await assertStaff();
+  const { error } = await db().from("booth_reservations").update({ card_printed_at: new Date().toISOString() }).eq("id", reservationId);
+  return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
 }
 
 // ---------- shifts ----------

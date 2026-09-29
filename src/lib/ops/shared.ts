@@ -49,12 +49,27 @@ export interface ShiftTodo {
   fromName: string | null;
 }
 
+// A booth held for today or tomorrow (confirmed bookings only), for the
+// register's shift bar.
+export interface BoothHold {
+  id: string;
+  booth: string;
+  date: string; // YYYY-MM-DD
+  window: string; // "7:00–9:00 PM"
+  name: string;
+  party: number;
+  bookedAt: string;
+  isNew: boolean; // booked in the last 24 hours
+  cardPrintedAt: string | null;
+}
+
 export interface ShiftStatus {
   workDate: string;
   onShift: OnShift[];
   tasks: TodayTask[];
   reminders: DueReminder[];
   todos: ShiftTodo[];
+  booths: { today: BoothHold[]; tomorrow: BoothHold[] };
   // Today's staff schedule, by person: "4:00 PM–10:00 PM".
   scheduled: Record<string, string>;
   lastCount: { id: string; at: string; byName: string | null; below: number } | null;

@@ -25,6 +25,7 @@ export type OpsApi = Pick<
   | "saveParItem"
   | "setParItemActive"
   | "getOpsHistory"
+  | "markBoothCardPrinted"
 >;
 
 export const OpsApiContext = createContext<OpsApi>(actions);
