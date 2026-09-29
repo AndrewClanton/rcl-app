@@ -1,13 +1,34 @@
 import "server-only";
 import type { User } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { exactEmail } from "@/lib/email-match";
 
 // Links a signed-in auth user to a `members` row: the row already linked to
 // them, else an existing row with the same email (someone who joined at the
 // register, bought a ticket, or came over from the old site), else a fresh
 // free-Insiders row. `nameHint` is only used when creating a row -- a
 // returning member keeps the name on file.
-export type LinkResult = { ok: true; created: boolean } | { ok: false; error: string; reason: "no_email" | "conflict" | "failed" };
+export type LinkResult = { ok: true; created: boolean } | { ok: false; error: string; reason: "no_email" | "conflict" | "unproven" | "failed" };
+
+// Whether this sign-in proves the person owns the email address: Google or
+// Facebook vouched for it, or they clicked a confirmation link we emailed.
+// A plain email + password sign-up proves nothing while Supabase's "Confirm
+// email" setting is off -- anyone can type someone else's address.
+export function emailIsProven(user: User): boolean {
+  const email = user.email?.toLowerCase();
+  if (!email) return false;
+  const vouched =
+    (user.identities ?? []).some(
+      (i) => i.provider !== "email" && String(i.identity_data?.email ?? "").toLowerCase() === email && i.identity_data?.email_verified !== false,
+    ) ||
+    // Some admin lookups leave out identities; app_metadata.providers is
+    // kept by Supabase and can't be edited by the person.
+    ((user.app_metadata?.providers ?? []) as string[]).some((p) => p === "google" || p === "facebook");
+  // confirmation_sent_at is only set when a real confirmation email went
+  // out; with auto-confirm on, email_confirmed_at is stamped at sign-up.
+  // email_vouched: the owner made this login for a staff member in person.
+  return vouched || user.app_metadata?.email_vouched === true || !!(user.email_confirmed_at && user.confirmation_sent_at);
+}
 
 export async function linkMemberForUser(user: User, nameHint?: string | null): Promise<LinkResult> {
   // Facebook accounts made with a phone number (or where the person unticks
@@ -18,10 +39,20 @@ export async function linkMemberForUser(user: User, nameHint?: string | null): P
   if (byAuth) return { ok: true, created: false };
 
   // Case-insensitive, matching the lower(email) unique index.
-  const { data: byEmail } = await admin.from("members").select("id, auth_user_id").ilike("email", user.email).maybeSingle();
+  const { data: byEmail } = await admin.from("members").select("id, auth_user_id").ilike("email", exactEmail(user.email)).maybeSingle();
   if (byEmail) {
     if (byEmail.auth_user_id && byEmail.auth_user_id !== user.id) {
       return { ok: false, reason: "conflict", error: "That email is already linked to a different sign-in. Try the other sign-in method, or ask us at the box office." };
+    }
+    // An existing member (old site, joined at the register, bought a ticket)
+    // is only handed to a login that proved it owns the address -- otherwise
+    // signing up with someone's email would open their account.
+    if (!emailIsProven(user)) {
+      return {
+        ok: false,
+        reason: "unproven",
+        error: "There's already a Royale account under this email. To prove it's yours, use Continue with Google (for Gmail addresses), or ask us at the box office.",
+      };
     }
     const { error } = await admin.from("members").update({ auth_user_id: user.id }).eq("id", byEmail.id);
     return error ? { ok: false, reason: "failed", error: "Couldn't link your account. Try again." } : { ok: true, created: false };

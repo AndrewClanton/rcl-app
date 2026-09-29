@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOwner } from "@/lib/auth";
 import type { EmployeeRole } from "@/lib/types";
+import type { User } from "@supabase/supabase-js";
+import { emailIsProven } from "@/lib/member-link";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
 // there's exactly one (Andrew), and handing it out via a dropdown risks
@@ -27,39 +29,61 @@ function revalidate() {
 // than introducing a second convention.
 const DEFAULT_PIN_HASH = "scrypt$726376705f736565645f73616c74$1e51f61dd18946a3fda261fc467d6c44b2af95f7abec1d2b237d14a27733d09f";
 
+// Every login with this email, looking past the first page (listUsers
+// returns 50 at a time by default).
+async function findAuthUserByEmail(email: string): Promise<User | null> {
+  const supabase = createAdminClient();
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw error;
+    const hit = data.users.find((u) => u.email?.toLowerCase() === email);
+    if (hit) return hit;
+    if (data.users.length < 1000) return null;
+  }
+  return null;
+}
+
 // Adds a new staff login -- the UI equivalent of scripts/create-admin-user.mjs.
-// If the email already belongs to a Supabase Auth user (e.g. someone who's
-// already a customer/member under that address), that account is reused
-// rather than erroring, so the same person doesn't need two logins.
-export async function createEmployee(input: { name: string; email: string; password: string; role: EmployeeRole }) {
+// If the email already belongs to a login whose owner proved the address
+// (Google, or a confirmed email), that login is reused so the same person
+// doesn't need two. An unconfirmed one isn't: anyone could have signed up
+// with a future hire's email ahead of time.
+export async function createEmployee(input: { name: string; email: string; password: string; role: EmployeeRole }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }> {
   await requireOwner();
-  if (!ASSIGNABLE_ROLES.includes(input.role)) throw new Error("Not an assignable role");
+  if (!ASSIGNABLE_ROLES.includes(input.role)) return { ok: false, error: "Pick a role." };
 
   const name = input.name.trim();
   const email = input.email.trim().toLowerCase();
-  if (!name || !email) throw new Error("Name and email are required");
-  if (input.password.length < 6) throw new Error("Password must be at least 6 characters");
+  if (!name || !email) return { ok: false, error: "Name and email are required." };
+  if (input.password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
 
   const supabase = createAdminClient();
+  const found = await findAuthUserByEmail(email);
+  let authUserId = found?.id;
 
-  const { data: usersRes, error: listErr } = await supabase.auth.admin.listUsers();
-  if (listErr) throw listErr;
-  let authUserId = usersRes.users.find((u) => u.email?.toLowerCase() === email)?.id;
-
-  if (authUserId) {
-    const { data: existing } = await supabase.from("employees").select("id").eq("auth_user_id", authUserId).maybeSingle();
-    if (existing) throw new Error("That email already has a staff account");
+  if (found) {
+    const { data: existing } = await supabase.from("employees").select("id").eq("auth_user_id", found.id).maybeSingle();
+    if (existing) return { ok: false, error: "That email already has a staff account." };
+    if (!emailIsProven(found)) {
+      return {
+        ok: false,
+        error: "That email already has a website login, made with a password and never confirmed, so it may not be theirs. Find them under “Give someone staff access” above to check, or use a different email.",
+      };
+    }
   } else {
-    const { data: userRes, error: userErr } = await supabase.auth.admin.createUser({ email, password: input.password, email_confirm: true });
-    if (userErr) throw userErr;
+    // app_metadata can only be set from here, never by the person, so it
+    // records that the owner vouched for this address.
+    const { data: userRes, error: userErr } = await supabase.auth.admin.createUser({ email, password: input.password, email_confirm: true, app_metadata: { email_vouched: true } });
+    if (userErr) return { ok: false, error: "Couldn't create that login. Try again." };
     authUserId = userRes.user.id;
   }
 
   const { error: empErr } = await supabase
     .from("employees")
     .insert({ name, auth_user_id: authUserId, role: input.role, pin_hash: input.role === "display" ? NO_PIN : DEFAULT_PIN_HASH });
-  if (empErr) throw empErr;
+  if (empErr) return { ok: false, error: "Couldn't save that. Try again." };
   revalidate();
+  return { ok: true, reused: !!found };
 }
 
 // ---------- giving an existing account staff access ----------
@@ -74,6 +98,9 @@ export interface AccountMatch {
   email: string | null;
   staffRole: EmployeeRole | null;
   staffActive: boolean;
+  // False for a password login whose email was never confirmed: it could
+  // have been made by someone else using this person's address.
+  verified: boolean;
 }
 
 export async function findAccounts(query: string): Promise<AccountMatch[]> {
@@ -94,9 +121,11 @@ export async function findAccounts(query: string): Promise<AccountMatch[]> {
   const authIds = (members ?? []).map((m) => m.auth_user_id as string);
   const { data: staff } = authIds.length ? await supabase.from("employees").select("auth_user_id, role, active").in("auth_user_id", authIds) : { data: [] };
   const staffByAuth = new Map((staff ?? []).map((s) => [s.auth_user_id, s]));
+  const logins = await Promise.all(authIds.map((id) => supabase.auth.admin.getUserById(id).then((r) => r.data.user)));
+  const verifiedByAuth = new Map(logins.filter((u) => !!u).map((u) => [u!.id, emailIsProven(u!)]));
   return (members ?? []).map((m) => {
     const s = staffByAuth.get(m.auth_user_id);
-    return { memberId: m.id, name: m.name, email: m.email, staffRole: (s?.role as EmployeeRole) ?? null, staffActive: !!s?.active };
+    return { memberId: m.id, name: m.name, email: m.email, staffRole: (s?.role as EmployeeRole) ?? null, staffActive: !!s?.active, verified: verifiedByAuth.get(m.auth_user_id) ?? false };
   });
 }
 

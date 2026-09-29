@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import type { Booth, BoothReservation } from "@/lib/types";
+import type { Booth } from "@/lib/types";
+import type { BoothBusy } from "@/lib/data/booths";
 import { startBoothCheckout, getAvailabilityForDate } from "./actions";
 import BoothPhotoGrid from "./BoothPhotoGrid";
 import PlusLink from "@/components/PlusLink";
@@ -162,7 +163,11 @@ function BoothDetailModal({
         <div className="notice mt-3 !p-2.5 text-xs" style={{ background: "var(--accent-soft)", color: "var(--foreground)" }}>
           <strong className="text-[var(--accent)]">Insiders+ perk:</strong> 2 free booth reservations every month.{" "}
           {me?.plus ? (
-            "We'll apply one automatically if you have one left this month."
+            editing ? (
+              "Free reservations cover booths booked under your own name and email."
+            ) : (
+              "We'll apply one automatically if you have one left this month."
+            )
           ) : (
             <>
               <PlusLink next="/booths" className="font-bold text-[var(--accent)] underline">
@@ -198,7 +203,7 @@ export default function BoothReservationForm({
 }: {
   booths: Booth[];
   initialDate: string;
-  initialReservations: BoothReservation[];
+  initialReservations: BoothBusy[];
   me?: BoothMe | null;
 }) {
   // Same-day booking is disabled (see actions.ts) so no one reserves a seat

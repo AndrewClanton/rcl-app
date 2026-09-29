@@ -20,7 +20,10 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
   const result = await linkMemberForUser(user, name);
-  return result.ok ? { ok: true } : { ok: false, error: result.error };
+  if (result.ok) return { ok: true };
+  // Don't leave them half signed in to a login that owns nothing.
+  if (result.reason === "unproven") await supabase.auth.signOut();
+  return { ok: false, error: result.error };
 }
 
 export async function signOut(): Promise<void> {

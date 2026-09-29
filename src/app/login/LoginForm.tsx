@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { safePath } from "@/lib/safe-path";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -32,9 +33,7 @@ export default function LoginForm() {
   }
 
   function afterSignIn() {
-    const requested = searchParams.get("redirect") ?? "";
-    const safe = requested.startsWith("/") && !requested.startsWith("//") && !requested.includes("\\");
-    return safe ? requested : "/admin";
+    return safePath(searchParams.get("redirect")) ?? "/admin";
   }
 
   // Staff whose login email is a Google account can skip the password. The

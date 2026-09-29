@@ -1,6 +1,7 @@
 import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { exactEmail } from "@/lib/email-match";
 
 // Makes the member Insiders+ once their Stripe checkout for it completes:
 // the member named in the checkout (signed in), else the one with that
@@ -31,7 +32,7 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
   const memberId = session.metadata?.member_id || null;
   const { data: existing } = memberId
     ? await supabase.from("members").select("id").eq("id", memberId).maybeSingle()
-    : await supabase.from("members").select("id").ilike("email", email).maybeSingle();
+    : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
   if (existing) {
     await supabase.from("members").update(memberFields).eq("id", existing.id);
     return;
@@ -39,5 +40,5 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
   const { error } = await supabase.from("members").insert({ name, email, phone: session.metadata?.pending_phone || null, points: 0, ...memberFields });
   // The webhook and the welcome redirect raced and the other one created
   // the row first: update it instead.
-  if (error?.code === "23505") await supabase.from("members").update(memberFields).ilike("email", email);
+  if (error?.code === "23505") await supabase.from("members").update(memberFields).ilike("email", exactEmail(email));
 }

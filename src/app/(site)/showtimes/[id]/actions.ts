@@ -4,6 +4,10 @@ import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
 import { salesTaxRateId } from "@/lib/stripe-tax";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlusPerks } from "@/lib/plus-status";
+import { exactEmail, sameEmail } from "@/lib/email-match";
+import { memberHasBookingFor } from "@/lib/data/screening-detail";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -47,11 +51,17 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
 
   const origin = await siteOrigin();
 
+  // Bookings land in the history of the member with that email. Only the
+  // signed-in member booking under their own email is "them" for perks.
+  const me = await getSignedInMember();
+  const signedInSelf = me && sameEmail(me.email, email) ? me : null;
+  const { data: byEmail } = signedInSelf ? { data: null } : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
+  const member = signedInSelf ?? byEmail;
+
   // Free screenings (the outdoor cinema, sponsored by the Royale Cinema
   // Project) skip Stripe entirely -- there's no reason to send someone to a
   // payment processor to pay nothing.
   if (screening.ticket_price === 0) {
-    const { data: member } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
     const { data: booking, error: insertErr } = await supabase
       .from("bookings")
       .insert({
@@ -69,12 +79,12 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
   }
 
-  // Insiders+ members get unlimited free entry (their own ticket) --
-  // matching the old site's booking flow, which separated "free tickets"
+  // Insiders+ members get free entry to every screening (their own ticket)
+  // -- matching the old site's booking flow, which separated "free tickets"
   // (covered by membership) from "additional passes" (always charged).
-  // Any guest seats beyond the member's own still cost full price.
-  const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
-  const freeQuantity = member?.tier === "Insiders+" ? Math.min(1, fields.quantity) : 0;
+  // Only for the signed-in member, never for whoever types their email, and
+  // one free seat per screening: a second booking for the same show is paid.
+  const freeQuantity = signedInSelf && hasPlusPerks(signedInSelf) && !(await memberHasBookingFor(fields.screeningId, signedInSelf.id)) ? Math.min(1, fields.quantity) : 0;
   const paidQuantity = fields.quantity - freeQuantity;
 
   if (paidQuantity === 0) {

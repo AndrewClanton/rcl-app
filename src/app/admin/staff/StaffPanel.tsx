@@ -123,6 +123,9 @@ function FindAccount() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{m.name}</div>
                   <div className="truncate text-xs text-[var(--muted)]">{m.email ?? "no email"}</div>
+                  {!m.verified && !m.staffActive && (
+                    <div className="text-xs text-[var(--danger-text)]">Password login, email never confirmed. Check with them in person that this is really their account.</div>
+                  )}
                 </div>
                 {m.staffRole && m.staffActive ? (
                   <span className="text-xs text-[var(--muted)]">Already {ROLE_LABEL[m.staffRole]}</span>
@@ -161,15 +164,19 @@ function AddEmployeeForm() {
   const [role, setRole] = useState<EmployeeRole>("cashier");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [justAdded, setJustAdded] = useState<{ name: string; email: string; password: string; role: EmployeeRole } | null>(null);
+  const [justAdded, setJustAdded] = useState<{ name: string; email: string; password: string; role: EmployeeRole; reused: boolean } | null>(null);
 
   async function submit() {
     setError(null);
     setJustAdded(null);
     setPending(true);
     try {
-      await createEmployee({ name, email, password, role });
-      setJustAdded({ name, email, password, role });
+      const r = await createEmployee({ name, email, password, role });
+      if (!r.ok) {
+        setError(r.error);
+        return;
+      }
+      setJustAdded({ name, email, password, role, reused: r.reused });
       setName("");
       setEmail("");
       setPassword("");
@@ -189,10 +196,16 @@ function AddEmployeeForm() {
       <h2 className="mb-3 text-sm font-semibold">Add a staff login</h2>
       {justAdded && (
         <div className="notice notice-success mb-3 !p-3 text-sm">
-          Added {justAdded.name} ({justAdded.email}) as {ROLE_LABEL[justAdded.role]}. Their password is{" "}
-          <span className="font-mono font-semibold select-all">{justAdded.password}</span> -- share it with them
-          directly; there&apos;s no self-service way for them to change it yet, so pick something you&apos;re both fine with
-          long-term.
+          Added {justAdded.name} ({justAdded.email}) as {ROLE_LABEL[justAdded.role]}.{" "}
+          {justAdded.reused ? (
+            <>They already had a login with that email, so they sign in with it as usual. The password you typed wasn&apos;t used.</>
+          ) : (
+            <>
+              Their password is <span className="font-mono font-semibold select-all">{justAdded.password}</span> -- share it with them
+              directly; there&apos;s no self-service way for them to change it yet, so pick something you&apos;re both fine with
+              long-term.
+            </>
+          )}
         </div>
       )}
       <div className="flex flex-wrap items-end gap-3">

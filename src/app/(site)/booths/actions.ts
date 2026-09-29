@@ -3,11 +3,14 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
-import { getBoothReservationsForDate } from "@/lib/data/booths";
-import type { BoothReservation } from "@/lib/types";
+import { getBoothBusyTimes, type BoothBusy } from "@/lib/data/booths";
+import { getSignedInMember } from "@/lib/member-auth";
+import { hasPlusPerks } from "@/lib/plus-status";
+import { exactEmail, sameEmail } from "@/lib/email-match";
 
-export async function getAvailabilityForDate(date: string): Promise<BoothReservation[]> {
-  return getBoothReservationsForDate(date);
+export async function getAvailabilityForDate(date: string): Promise<BoothBusy[]> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+  return getBoothBusyTimes(date);
 }
 
 function timeToMinutes(t: string) {
@@ -97,18 +100,24 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     return { ok: false, error: `${booth.label} is already reserved for part of that window. Pick another time or booth.` };
   }
 
-  const { data: member } = await supabase.from("members").select("id, tier").ilike("email", email).maybeSingle();
+  // The perk goes to the signed-in member booking for themselves -- never to
+  // whoever types a member's email. Anyone else's booking still lands in
+  // that email's history, but is always paid.
+  const me = await getSignedInMember();
+  const perkMember = me && hasPlusPerks(me) && sameEmail(me.email, email) ? me : null;
+  const { data: byEmail } = perkMember ? { data: null } : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
+  const member = perkMember ?? byEmail;
   const origin = await siteOrigin();
 
   // Insiders+ perk: 2 free booth reservations per calendar month (counted
   // by the month the reservation is FOR), same "skip Stripe, confirm
   // immediately" pattern as Insiders+ free screening entry.
-  if (member?.tier === "Insiders+") {
+  if (perkMember) {
     const { start, end } = monthBounds(fields.reservationDate);
     const { count, error: countErr } = await supabase
       .from("booth_reservations")
       .select("id", { count: "exact", head: true })
-      .eq("member_id", member.id)
+      .eq("member_id", perkMember.id)
       .eq("fee_amount", 0)
       .eq("status", "confirmed")
       .gte("reservation_date", start)
@@ -120,7 +129,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
         .from("booth_reservations")
         .insert({
           booth_id: fields.boothId,
-          member_id: member.id,
+          member_id: perkMember.id,
           customer_name: name,
           customer_email: email,
           customer_phone: phone || null,

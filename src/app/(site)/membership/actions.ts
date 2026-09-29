@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
+import { exactEmail } from "@/lib/email-match";
 
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only the generic "Minified React error #441..." reaches the
@@ -22,7 +23,7 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
 
   const supabase = createAdminClient();
 
-  const { data: existing } = await supabase.from("members").select("id").ilike("email", email).maybeSingle();
+  const { data: existing } = await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
   if (existing) return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
 
   const { error } = await supabase.from("members").insert({
@@ -59,7 +60,7 @@ export async function startMembershipCheckout(fields: {
   const { data: existing } = await supabase
     .from("members")
     .select("id, tier, comped, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier")
-    .ilike("email", email)
+    .ilike("email", exactEmail(email))
     .maybeSingle();
   if (existing && plusPaidFor(existing)) {
     return { ok: false, error: "This email already has Insiders+. Sign in to see your membership." };

@@ -21,15 +21,16 @@ export default function TicketReservation({
   screeningId: string;
   ticketPrice: number;
   seatsLeft: number;
-  me?: { name: string; email: string; plus: boolean } | null;
+  me?: { name: string; email: string; plus: boolean; freeSeat: boolean } | null;
   plusPrice: number;
 }) {
   const [quantity, setQuantity] = useState(seatsLeft > 0 ? 1 : 0);
   const [editing, setEditing] = useState(!me);
   const [name, setName] = useState(me?.name ?? "");
   const [email, setEmail] = useState(me?.email ?? "");
-  // Insiders+ covers the member's own seat; guests they bring still pay.
-  const freeSeats = me?.plus && !editing ? Math.min(1, quantity) : 0;
+  // Insiders+ covers the member's own seat (once per screening); guests
+  // they bring still pay.
+  const freeSeats = me?.freeSeat && !editing ? Math.min(1, quantity) : 0;
   const due = ticketPrice * (quantity - freeSeats);
   // Missouri sales tax, added at checkout (shown here so the total matches).
   const tax = salesTaxOn(due);
@@ -95,7 +96,11 @@ export default function TicketReservation({
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <span>
             Booking as <strong>{name}</strong> <span className="text-[var(--muted)]">· {email}</span>
-            {me?.plus && <span className="ml-2 font-bold text-[var(--accent)]">Insiders+ · your ticket is free</span>}
+            {me?.freeSeat ? (
+              <span className="ml-2 font-bold text-[var(--accent)]">Insiders+ · your ticket is free</span>
+            ) : (
+              me?.plus && <span className="ml-2 text-xs text-[var(--muted)]">Insiders+ · your free seat for this show is already booked</span>
+            )}
           </span>
           <button className="text-xs text-[var(--muted)] underline" onClick={() => setEditing(true)}>
             Booking for someone else?

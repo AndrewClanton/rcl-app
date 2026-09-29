@@ -19,19 +19,21 @@ export async function getAllBooths(): Promise<Booth[]> {
   return (data ?? []) as Booth[];
 }
 
-// Existing pending/confirmed reservations for a given date, across all
-// booths -- used to show what's already taken before the customer picks a
-// time, and to run the server-side overlap check on submit.
-export async function getBoothReservationsForDate(date: string): Promise<BoothReservation[]> {
+// Which booths are taken when on a given date, for the public booth page.
+// Only the booth and the window -- never who booked it (this goes to any
+// visitor's browser).
+export type BoothBusy = Pick<BoothReservation, "booth_id" | "start_time" | "hours">;
+
+export async function getBoothBusyTimes(date: string): Promise<BoothBusy[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("booth_reservations")
-    .select("*")
+    .select("booth_id, start_time, hours")
     .eq("reservation_date", date)
     .in("status", ["pending", "confirmed"])
     .order("start_time");
   if (error) throw error;
-  return (data ?? []) as BoothReservation[];
+  return (data ?? []) as BoothBusy[];
 }
 
 // All reservations (including cancelled, so the admin calendar can show a

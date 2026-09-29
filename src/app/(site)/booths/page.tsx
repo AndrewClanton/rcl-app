@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getActiveBooths, getBoothReservationsForDate } from "@/lib/data/booths";
+import { getActiveBooths, getBoothBusyTimes } from "@/lib/data/booths";
 import BoothReservationForm from "./BoothReservationForm";
 import PlusLink from "@/components/PlusLink";
 import { getSignedInMember } from "@/lib/member-auth";
@@ -31,7 +31,7 @@ export default async function BoothsPage({
   // books a seat out from under a customer who's already sitting in it.
   const startDate = tomorrowCentral();
 
-  const [booths, reservationsForStartDate] = await Promise.all([getActiveBooths(), getBoothReservationsForDate(startDate)]);
+  const [booths, reservationsForStartDate] = await Promise.all([getActiveBooths(), getBoothBusyTimes(startDate)]);
 
   let paymentConfirmed = false;
   if (checkout === "success" && session_id) {

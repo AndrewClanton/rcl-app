@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getScreeningById } from "@/lib/data/screening-detail";
+import { getScreeningById, memberHasBookingFor } from "@/lib/data/screening-detail";
 import { isRestrictedRelease, isWithinPublicWindow } from "@/lib/data/screenings";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -69,7 +69,11 @@ export default async function ScreeningDetailPage({
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
   const member = await getSignedInMember();
-  const me = member?.email ? { name: member.name, email: member.email, plus: hasPlusPerks(member) } : null;
+  // The free Insiders+ seat is one per screening, so a member who already
+  // booked this show pays for any more.
+  const plus = !!member && hasPlusPerks(member);
+  const freeSeat = plus && !(await memberHasBookingFor(id, member!.id));
+  const me = member?.email ? { name: member.name, email: member.email, plus, freeSeat } : null;
   const eventJsonLd = screeningEventJsonLd(screening, seatsLeft);
 
   // Never trust the ?checkout=success URL param on its own -- verify the
