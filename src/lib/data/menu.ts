@@ -59,3 +59,16 @@ export async function getMenuTree(): Promise<MenuCategory[]> {
   }
   return roots;
 }
+
+// The menu without items a manager hid ("Hide from register" on the Menu
+// page, which sets menu_items.active to false). getMenuTree() keeps
+// returning everything, since the Menu page needs hidden items to show
+// them; the register (and the public menu, if it should match) passes its
+// tree through this.
+export function withoutHiddenItems(categories: MenuCategory[]): MenuCategory[] {
+  return categories.map((c) => ({
+    ...c,
+    items: c.items.filter((i) => i.active !== false),
+    subcategories: withoutHiddenItems(c.subcategories),
+  }));
+}

@@ -9,6 +9,7 @@ import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 import { centralToIso } from "@/lib/ops/time";
+import { getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
 
 function revalidate() {
   revalidatePath("/admin/screenings");
@@ -37,10 +38,12 @@ export async function addHouseEvent(input: { title: string; note: string; date: 
   return { ok: true };
 }
 
-export async function deleteHouseEvent(id: string) {
+export async function deleteHouseEvent(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
   await assertStaff();
-  await createAdminClient().from("house_events").delete().eq("id", id);
+  const { error } = await createAdminClient().from("house_events").delete().eq("id", id);
+  if (error) return { ok: false, error: "Couldn't remove that event. Try again." };
   revalidatePath("/admin/screenings");
+  return { ok: true };
 }
 
 // Actions the UI needs a readable error from return it instead of throwing:
@@ -201,31 +204,141 @@ export async function setMoviePoster(movieId: string, posterUrl: string): Promis
   });
 }
 
-export async function addMovieManually(fields: { title: string; synopsis?: string; runtime_minutes?: number; rating?: string }) {
-  await assertStaff();
-  const title = fields.title.trim();
-  if (!title) return;
-  const supabase = createAdminClient();
-  await supabase.from("movies").insert({
-    title,
-    synopsis: fields.synopsis?.trim() || null,
-    runtime_minutes: fields.runtime_minutes ?? null,
-    rating: fields.rating?.trim() || null,
+export async function addMovieManually(fields: { title: string; synopsis?: string; runtime_minutes?: number; rating?: string }): Promise<Result<object>> {
+  return attempt(async () => {
+    const title = fields.title.trim();
+    if (!title) throw new UserFacingError("Give the movie a title.");
+    const { error } = await createAdminClient()
+      .from("movies")
+      .insert({
+        title,
+        synopsis: fields.synopsis?.trim() || null,
+        runtime_minutes: fields.runtime_minutes ?? null,
+        rating: fields.rating?.trim() || null,
+      });
+    if (error) throw error;
+    revalidate();
+    return {};
   });
-  revalidate();
 }
 
-export async function addScreening(fields: { movie_id: string; room_id: string; starts_at: string; ticket_price: number; capacity: number }) {
-  await assertStaff();
-  const supabase = createAdminClient();
-  const { error } = await supabase.from("screenings").insert(fields);
-  if (error) throw error;
-  revalidate();
+// ---------- screenings ----------
+// Times are typed as Central wall-clock time ("2026-10-13", "19:00") and
+// turned into an instant here, on the server, whichever of CDT/CST applies
+// that day. (The form used to build the time in the browser, which is only
+// right when the browser happens to be set to Central.)
+
+export interface ScreeningFields {
+  movie_id: string;
+  room_id: string;
+  date: string; // YYYY-MM-DD, Central
+  time: string; // HH:MM, Central
+  ticket_price: number;
+  capacity: number;
 }
 
-export async function deleteScreening(id: string) {
-  await assertStaff();
-  const supabase = createAdminClient();
-  await supabase.from("screenings").delete().eq("id", id);
-  revalidate();
+function checkFields(f: ScreeningFields) {
+  if (!f.movie_id) throw new UserFacingError("Pick a movie.");
+  if (!f.room_id) throw new UserFacingError("Pick a room.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date) || !/^\d{1,2}:\d{2}$/.test(f.time)) throw new UserFacingError("Pick a date and start time.");
+  if (!(Number.isFinite(f.ticket_price) && f.ticket_price >= 0)) throw new UserFacingError("Enter a ticket price of $0.00 or more.");
+  if (!(Number.isInteger(f.capacity) && f.capacity > 0)) throw new UserFacingError("Capacity has to be at least 1 seat.");
+}
+
+export async function addScreening(fields: ScreeningFields): Promise<Result<object>> {
+  return attempt(async () => {
+    checkFields(fields);
+    const { error } = await createAdminClient()
+      .from("screenings")
+      .insert({
+        movie_id: fields.movie_id,
+        room_id: fields.room_id,
+        starts_at: centralToIso(fields.date, fields.time),
+        ticket_price: fields.ticket_price,
+        capacity: fields.capacity,
+      });
+    if (error) throw error;
+    revalidate();
+    return {};
+  });
+}
+
+function tickets(n: number) {
+  return `${n} ticket${n === 1 ? "" : "s"}`;
+}
+
+// Changes a screening in place, so its bookings (and the seats and money
+// they hold) stay with it. Moving the time, or swapping the film, on a
+// showing people have bought tickets for comes back once as `confirm`, a
+// question for the person; they answer by calling again with
+// confirmed = true. Nobody is told automatically, so the question says so.
+export async function updateScreening(
+  id: string,
+  fields: ScreeningFields,
+  confirmed = false,
+): Promise<Result<object> | { ok: false; error: string; confirm: string }> {
+  const result = await attempt(async () => {
+    checkFields(fields);
+    const supabase = createAdminClient();
+    const { data: current, error: readErr } = await supabase.from("screenings").select("starts_at, movie_id").eq("id", id).maybeSingle();
+    if (readErr) throw readErr;
+    if (!current) throw new UserFacingError("That screening isn't there anymore. It may have been removed.");
+
+    const startsAt = centralToIso(fields.date, fields.time);
+    const count = await getTicketCount(id);
+    const held = count.sold + count.paying;
+    if (fields.capacity < held) {
+      throw new UserFacingError(`${tickets(held)} ${held === 1 ? "is" : "are"} already sold or being paid for, so capacity can't go below ${held}.`);
+    }
+
+    const timeChanged = Date.parse(startsAt) !== Date.parse(current.starts_at as string);
+    const movieChanged = fields.movie_id !== current.movie_id;
+    if (held > 0 && (timeChanged || movieChanged) && !confirmed) {
+      const what = timeChanged && movieChanged ? "the movie and the time" : timeChanged ? "the time" : "the movie";
+      return {
+        confirm: `${tickets(held)} ${held === 1 ? "has" : "have"} been sold for this showing. Change ${what} anyway? Ticket holders are NOT told automatically, so let them know (their names are under "Tickets" on this page).`,
+      };
+    }
+
+    const { error } = await supabase
+      .from("screenings")
+      .update({ movie_id: fields.movie_id, room_id: fields.room_id, starts_at: startsAt, ticket_price: fields.ticket_price, capacity: fields.capacity })
+      .eq("id", id);
+    if (error) throw error;
+    revalidate();
+    revalidatePath(`/showtimes/${id}`);
+    return {};
+  });
+  if (result.ok && "confirm" in result && typeof result.confirm === "string") return { ok: false, error: result.confirm, confirm: result.confirm };
+  return result;
+}
+
+// Removing a screening used to delete its bookings with it (they cascade
+// in the database), paid tickets included, with the money still taken.
+// Now it refuses while anyone holds a ticket, and says what to do. The
+// database refuses too (migration 20260929210000_keep_sold_tickets.sql),
+// in case a ticket sells between this check and the delete.
+export async function deleteScreening(id: string): Promise<Result<object>> {
+  return attempt(async () => {
+    const count = await getTicketCount(id);
+    if (count.sold > 0) {
+      throw new UserFacingError(
+        `${tickets(count.sold)} ${count.sold === 1 ? "is" : "are"} sold for this showing, so it can't be removed. Refund ${count.sold === 1 ? "it" : "them"} first (open "Tickets" on this showing), or use Edit to move it instead.`,
+      );
+    }
+    if (count.paying > 0) {
+      throw new UserFacingError(`Someone is paying for ${tickets(count.paying)} to this showing right now. Try again in half an hour, once that checkout has finished or expired.`);
+    }
+    const { error } = await createAdminClient().from("screenings").delete().eq("id", id);
+    // P0001: the database's own check (see above) caught a ticket sold just now.
+    if (error?.code === "P0001") throw new UserFacingError("A ticket was just sold for this showing, so it can't be removed. Refund it first, or use Edit to move the showing.");
+    if (error) throw error;
+    revalidate();
+    return {};
+  });
+}
+
+// The ticket list for one showing (the "Tickets" button).
+export async function listScreeningTickets(id: string): Promise<Result<{ tickets: ScreeningTicket[] }>> {
+  return attempt(async () => ({ tickets: await getScreeningTickets(id) }));
 }

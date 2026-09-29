@@ -33,16 +33,16 @@ function BoothRow({ booth }: { booth: Booth }) {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const dirty = capacity !== booth.capacity || fee !== booth.reservation_fee || active !== booth.active;
 
   async function save() {
     setSaving(true);
-    try {
-      await updateBooth(booth.id, { capacity, reservationFee: fee, active });
-      router.refresh();
-    } finally {
-      setSaving(false);
-    }
+    setSaveError(null);
+    const r = await updateBooth(booth.id, { capacity, reservationFee: fee, active }).catch(() => ({ ok: false as const, error: "That didn't save. Check the connection and try again." }));
+    setSaving(false);
+    if (!r.ok) return setSaveError(r.error);
+    router.refresh();
   }
 
   async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -53,10 +53,11 @@ function BoothRow({ booth }: { booth: Booth }) {
     try {
       const formData = new FormData();
       formData.set("photo", file);
-      await uploadBoothPhoto(booth.id, formData);
-      router.refresh();
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+      const r = await uploadBoothPhoto(booth.id, formData);
+      if (!r.ok) setUploadError(r.error);
+      else router.refresh();
+    } catch {
+      setUploadError("The photo didn't upload. Check the connection and try again.");
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -98,6 +99,7 @@ function BoothRow({ booth }: { booth: Booth }) {
         <button className="justify-self-start rounded border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-40 " disabled={!dirty || saving} onClick={save}>
           {saving ? "Saving…" : "Save"}
         </button>
+        {saveError && <div className="col-span-full text-xs text-[var(--danger-text)]">{saveError}</div>}
       </div>
     </div>
   );

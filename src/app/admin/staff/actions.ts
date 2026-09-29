@@ -8,6 +8,7 @@ import type { User } from "@supabase/supabase-js";
 import { emailIsProven } from "@/lib/member-link";
 import { DEFAULT_PIN_HASH, hashPin } from "@/lib/pin";
 import { pinProblem } from "@/lib/pin-rules";
+import { siteOrigin } from "@/lib/site-origin";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
 // there's exactly one (Andrew), and handing it out via a dropdown risks
@@ -149,31 +150,87 @@ export async function makeStaff(memberId: string, role: EmployeeRole): Promise<{
   return { ok: true };
 }
 
-export async function updateEmployeeRole(employeeId: string, role: EmployeeRole) {
-  await requireOwner();
-  if (!ASSIGNABLE_ROLES.includes(role)) throw new Error("Not an assignable role");
+type Result = { ok: true } | { ok: false; error: string };
+
+// The screen asks before sending this (with a stronger warning for admin).
+// Here: never the owner's row, and never your own. The owner row is already
+// out of reach (owner isn't assignable, and an owner target is refused), but
+// the self check says it outright, so a future second owner or admin-level
+// editor can't demote themselves by accident either.
+export async function updateEmployeeRole(employeeId: string, role: EmployeeRole): Promise<Result> {
+  const me = await requireOwner();
+  if (!ASSIGNABLE_ROLES.includes(role)) return { ok: false, error: "Pick cashier, manager, admin or display screen." };
+  if (employeeId === me.employeeId) return { ok: false, error: "You can't change your own role." };
 
   const supabase = createAdminClient();
-  const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).single();
-  if (fetchErr) throw fetchErr;
-  if (target.role === "owner") throw new Error("Can't change the owner's role here");
+  const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
+  if (fetchErr || !target) return { ok: false, error: "That person wasn't found. Reload the page." };
+  if (target.role === "owner") return { ok: false, error: "The owner's role can't be changed here." };
 
   const { error } = await supabase.from("employees").update({ role }).eq("id", employeeId);
-  if (error) throw error;
+  if (error) return { ok: false, error: "Couldn't change their role. Try again." };
   revalidate();
+  return { ok: true };
 }
 
-export async function setEmployeeActive(employeeId: string, active: boolean) {
-  await requireOwner();
+export async function setEmployeeActive(employeeId: string, active: boolean): Promise<Result> {
+  const me = await requireOwner();
+  if (employeeId === me.employeeId) return { ok: false, error: "You can't deactivate your own account." };
 
   const supabase = createAdminClient();
-  const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).single();
-  if (fetchErr) throw fetchErr;
-  if (target.role === "owner") throw new Error("Can't deactivate the owner");
+  const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
+  if (fetchErr || !target) return { ok: false, error: "That person wasn't found. Reload the page." };
+  if (target.role === "owner") return { ok: false, error: "The owner can't be deactivated." };
 
   const { error } = await supabase.from("employees").update({ active }).eq("id", employeeId);
-  if (error) throw error;
+  if (error) return { ok: false, error: `Couldn't ${active ? "reactivate" : "deactivate"} them. Try again.` };
   revalidate();
+  return { ok: true };
+}
+
+// ---------- password reset for a staff login ----------
+// Email isn't set up yet, so "forgot password" can't reach anyone. Instead
+// the owner makes a one-time recovery link here and hands it over (text it
+// to them, or open it on their phone). It opens the site's Reset password
+// page (/account/reset-password), already signed in as them, to pick a new
+// password. Supabase sends nothing itself: generateLink only returns the
+// link. The link works once and expires on Supabase's schedule (an hour by
+// default); making a new one replaces the old.
+//
+// Anyone holding the link can take over that login, so it's owner-only,
+// shown once, never stored, and each one is logged (who, for whom, when).
+
+export type RecoveryLinkResult =
+  | { ok: true; link: string; email: string; passwordLogin: boolean }
+  | { ok: false; error: string };
+
+export async function createRecoveryLink(employeeId: string): Promise<RecoveryLinkResult> {
+  const me = await requireOwner();
+  const supabase = createAdminClient();
+  const { data: employee } = await supabase.from("employees").select("name, auth_user_id").eq("id", employeeId).maybeSingle();
+  if (!employee) return { ok: false, error: "That person wasn't found. Reload the page." };
+  if (!employee.auth_user_id) return { ok: false, error: "They don't have a login to reset. Add one with “Create a new login” above." };
+
+  const { data: userRes, error: userErr } = await supabase.auth.admin.getUserById(employee.auth_user_id);
+  const email = userRes?.user?.email;
+  if (userErr || !email) return { ok: false, error: "Couldn't find their login's email. Try again." };
+
+  const { data, error } = await supabase.auth.admin.generateLink({
+    type: "recovery",
+    email,
+    options: { redirectTo: `${await siteOrigin()}/account/reset-password` },
+  });
+  const link = data?.properties?.action_link;
+  if (error || !link) {
+    console.error("staff: recovery link not made", error?.message);
+    return { ok: false, error: "Couldn't make a reset link. Try again in a minute." };
+  }
+  console.info(`staff: recovery link made for employee ${employeeId} by ${me.employeeId} at ${new Date().toISOString()}`);
+
+  // A Google-only login has no password yet; setting one adds email and
+  // password sign-in alongside Google, which they may not need.
+  const providers = (userRes.user.app_metadata?.providers as string[] | undefined) ?? [userRes.user.app_metadata?.provider as string];
+  return { ok: true, link, email, passwordLogin: providers.includes("email") };
 }
 
 // For someone who forgot their PIN: the owner sets a temporary one and

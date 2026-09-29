@@ -109,9 +109,13 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
             onClick={async () => {
               const s = confirm;
               setConfirm(null);
-              await deleteScheduledShift(s.id);
-              setUndo({ id: s.id, label: `${nameOf(s.employeeId)} · ${dayOf(s.date)} ${s.time}` });
-              setTimeout(() => setUndo((u) => (u?.id === s.id ? null : u)), 8000);
+              const r = await deleteScheduledShift(s.id).catch(() => ({ ok: false as const, error: "Couldn't remove that shift. Check the connection and try again." }));
+              // Only offer Undo for a shift that actually came off.
+              if (!r.ok) setInfo(r.error);
+              else {
+                setUndo({ id: s.id, label: `${nameOf(s.employeeId)} · ${dayOf(s.date)} ${s.time}` });
+                setTimeout(() => setUndo((u) => (u?.id === s.id ? null : u)), 8000);
+              }
               router.refresh();
             }}
           >

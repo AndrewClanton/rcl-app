@@ -9,7 +9,47 @@ function unitLabel(unit: string) {
   return unit === "count" ? "ct" : unit;
 }
 
-export default function ItemRecipe({ item, recipe, ingredients }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[] }) {
+// Cashiers (bartenders) see the recipe as plain text; managers edit it.
+function ReadOnlyRecipe({ recipe }: { recipe: Recipe | null }) {
+  const ingredients = recipe?.ingredients ?? [];
+  return (
+    <div className="mt-2 rounded-lg border border-dashed border-[var(--warn-border)] bg-[var(--warn-bg)] p-3 text-sm">
+      {!recipe || (!recipe.glassware && !recipe.garnish && !recipe.instructions && ingredients.length === 0) ? (
+        <p className="text-[var(--muted)]">No recipe written down yet.</p>
+      ) : (
+        <>
+          {recipe.glassware && (
+            <p>
+              <span className="text-xs text-[var(--muted)]">Glassware:</span> {recipe.glassware}
+            </p>
+          )}
+          {recipe.garnish && (
+            <p>
+              <span className="text-xs text-[var(--muted)]">Garnish:</span> {recipe.garnish}
+            </p>
+          )}
+          {ingredients.length > 0 && (
+            <ul className="my-1.5 list-disc pl-5">
+              {ingredients.map((ri) => (
+                <li key={ri.id}>
+                  {ri.quantity} {unitLabel(ri.unit)} {ri.ingredient_name}
+                </li>
+              ))}
+            </ul>
+          )}
+          {recipe.instructions && <p className="whitespace-pre-line">{recipe.instructions}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+export default function ItemRecipe({ item, recipe, ingredients, canEdit }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[]; canEdit: boolean }) {
+  if (!canEdit) return <ReadOnlyRecipe recipe={recipe} />;
+  return <RecipeEditor item={item} recipe={recipe} ingredients={ingredients} />;
+}
+
+function RecipeEditor({ item, recipe, ingredients }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[] }) {
   const [, run] = useRefreshingAction();
   const [instructions, setInstructions] = useState(recipe?.instructions ?? "");
   const [glassware, setGlassware] = useState(recipe?.glassware ?? "");

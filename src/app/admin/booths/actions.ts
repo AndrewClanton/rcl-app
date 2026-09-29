@@ -21,22 +21,30 @@ function revalidate() {
   revalidatePath("/admin/booths");
 }
 
-export async function updateBooth(boothId: string, fields: { capacity: number; reservationFee: number; active: boolean }) {
+// Both return { ok: false, error } rather than throwing: production hides a
+// thrown message, so "File must be an image." used to reach the screen as
+// a generic error, and a failed save showed nothing at all.
+type Result = { ok: true } | { ok: false; error: string };
+
+export async function updateBooth(boothId: string, fields: { capacity: number; reservationFee: number; active: boolean }): Promise<Result> {
   await assertStaff();
+  if (!(Number.isInteger(fields.capacity) && fields.capacity > 0)) return { ok: false, error: "Capacity has to be at least 1." };
+  if (!(fields.reservationFee >= 0)) return { ok: false, error: "Enter a fee of $0.00 or more." };
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("booths")
     .update({ capacity: fields.capacity, reservation_fee: fields.reservationFee, active: fields.active })
     .eq("id", boothId);
-  if (error) throw error;
+  if (error) return { ok: false, error: "Couldn't save that booth. Try again." };
   revalidate();
+  return { ok: true };
 }
 
-export async function uploadBoothPhoto(boothId: string, formData: FormData) {
+export async function uploadBoothPhoto(boothId: string, formData: FormData): Promise<Result> {
   await assertStaff();
   const file = formData.get("photo");
-  if (!(file instanceof File) || file.size === 0) throw new Error("Choose a photo to upload.");
-  if (!file.type.startsWith("image/")) throw new Error("File must be an image.");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a photo to upload." };
+  if (!file.type.startsWith("image/")) return { ok: false, error: "That file isn't a picture. Choose a JPG or PNG." };
 
   const supabase = createAdminClient();
   const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -46,13 +54,14 @@ export async function uploadBoothPhoto(boothId: string, formData: FormData) {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadErr } = await supabase.storage.from("booth-photos").upload(path, buffer, { contentType: file.type });
-  if (uploadErr) throw uploadErr;
+  if (uploadErr) return { ok: false, error: "The photo didn't upload. Try again, or try a smaller photo." };
 
   const { data: urlData } = supabase.storage.from("booth-photos").getPublicUrl(path);
 
   const { error } = await supabase.from("booths").update({ photo_url: urlData.publicUrl }).eq("id", boothId);
-  if (error) throw error;
+  if (error) return { ok: false, error: "The photo uploaded but wasn't saved to the booth. Try again." };
   revalidate();
+  return { ok: true };
 }
 
 // Returns the reason on failure (a wrong PIN, the lock), since a thrown

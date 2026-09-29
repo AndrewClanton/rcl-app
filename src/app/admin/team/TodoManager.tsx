@@ -3,7 +3,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { TeamMember, Todo } from "@/lib/data/team";
+import { announceActionError } from "@/lib/useRefreshingAction";
 import { addTodo, deleteTodo, setTodoDoneFromOffice } from "./actions";
+
+// A failed mark-done or remove used to leave the list as it was with no word
+// why; now it says so in the back office's error bar.
+async function saved(p: Promise<{ ok: true } | { ok: false; error: string }>) {
+  const r = await p.catch(() => ({ ok: false as const, error: "That didn't save. Check the connection and try again." }));
+  if (!r.ok) announceActionError(r.error);
+}
 
 const due = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const stamp = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
@@ -96,7 +104,7 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
                 <button
                   className="rounded border border-[var(--border)] px-2 py-1 text-xs"
                   onClick={async () => {
-                    await setTodoDoneFromOffice(t.id, true);
+                    await saved(setTodoDoneFromOffice(t.id, true));
                     router.refresh();
                   }}
                 >
@@ -105,7 +113,7 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
                 <button
                   className="text-xs text-[var(--danger-text)] hover:underline"
                   onClick={async () => {
-                    await deleteTodo(t.id);
+                    await saved(deleteTodo(t.id));
                     router.refresh();
                   }}
                 >
@@ -131,7 +139,7 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
                 <button
                   className="text-xs hover:underline"
                   onClick={async () => {
-                    await setTodoDoneFromOffice(t.id, false);
+                    await saved(setTodoDoneFromOffice(t.id, false));
                     router.refresh();
                   }}
                 >

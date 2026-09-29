@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { getMenuTree } from "@/lib/data/menu";
+import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
@@ -43,7 +43,8 @@ export default async function PosPage() {
 
   // Tickets/events aren't ready for POS ordering yet (event booking flow,
   // per-showtime ticket linkage) -- hide that category here for now.
-  const orderableCategories = categories.filter((c) => c.key !== "tickets");
+  // Items a manager hid ("Hide from register" on the Menu page) stay off.
+  const orderableCategories = withoutHiddenItems(categories).filter((c) => c.key !== "tickets");
 
   return (
     // On a tablet or bigger the register is locked to the screen: this fills

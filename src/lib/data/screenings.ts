@@ -55,6 +55,110 @@ export async function getScreeningsForCountdown(sinceMinutes: number, limit = 40
   return { screenings: (data ?? []) as unknown as Screening[], fetchedAt };
 }
 
+// ---------- tickets sold, for the Showtimes page ----------
+
+// Online checkout holds a seat as a 'pending' booking for 30 minutes (the
+// Stripe Checkout page's expiry, see the showtime booking action). A
+// pending booking younger than this may be someone paying right now.
+const PAYING_WINDOW_MINUTES = 35;
+
+export interface TicketCount {
+  sold: number; // tickets on confirmed (paid, or free) bookings
+  bookings: number; // how many confirmed bookings those are
+  paying: number; // tickets in a checkout that may still go through
+}
+
+// Tickets per screening, for the given screening ids. Confirmed bookings
+// count as sold; a recent pending one counts as "paying"; refunded and
+// cancelled ones don't count.
+export async function getTicketCounts(screeningIds: string[]): Promise<Record<string, TicketCount>> {
+  const out: Record<string, TicketCount> = {};
+  if (screeningIds.length === 0) return out;
+  const supabase = createAdminClient();
+  const payingSince = Date.now() - PAYING_WINDOW_MINUTES * 60_000;
+  // A few dozen ids at a time keeps the request URL short.
+  for (let i = 0; i < screeningIds.length; i += 50) {
+    const ids = screeningIds.slice(i, i + 50);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("screening_id, quantity, status, created_at")
+        .in("screening_id", ids)
+        .in("status", ["confirmed", "pending"])
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw error;
+      for (const b of data ?? []) {
+        const c = (out[b.screening_id as string] ??= { sold: 0, bookings: 0, paying: 0 });
+        if (b.status === "confirmed") {
+          c.sold += b.quantity;
+          c.bookings += 1;
+        } else if (Date.parse(b.created_at as string) >= payingSince) c.paying += b.quantity;
+      }
+      if (!data || data.length < 1000) break;
+    }
+  }
+  return out;
+}
+
+export async function getTicketCount(screeningId: string): Promise<TicketCount> {
+  return (await getTicketCounts([screeningId]))[screeningId] ?? { sold: 0, bookings: 0, paying: 0 };
+}
+
+export interface ScreeningTicket {
+  id: string;
+  name: string | null;
+  email: string | null;
+  quantity: number;
+  unitPrice: number;
+  tax: number;
+  status: string; // confirmed | pending | refunded | cancelled
+  // Online tickets are refunded one booking at a time; a ticket sold at the
+  // register is refunded with its order (Reports).
+  orderNumber: number | null;
+  paidByCard: boolean;
+  createdAt: string;
+}
+
+// Everyone holding (or who held) a ticket to one screening, newest first.
+// Abandoned checkouts are left out.
+export async function getScreeningTickets(screeningId: string): Promise<ScreeningTicket[]> {
+  const { data, error } = await createAdminClient()
+    .from("bookings")
+    .select("id, customer_name, customer_email, quantity, unit_price, tax_amount, status, stripe_payment_intent_id, created_at, member:members(name, email), order:orders(order_number)")
+    .eq("screening_id", screeningId)
+    .neq("status", "cancelled")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  type Row = {
+    id: string;
+    customer_name: string | null;
+    customer_email: string | null;
+    quantity: number;
+    unit_price: number;
+    tax_amount: number | null;
+    status: string;
+    stripe_payment_intent_id: string | null;
+    created_at: string;
+    member: { name: string; email: string | null } | null;
+    order: { order_number: number } | null;
+  };
+  const payingSince = Date.now() - PAYING_WINDOW_MINUTES * 60_000;
+  const rows = ((data ?? []) as unknown as Row[]).filter((b) => b.status !== "pending" || Date.parse(b.created_at) >= payingSince);
+  return rows.map((b) => ({
+    id: b.id,
+    name: b.customer_name ?? b.member?.name ?? null,
+    email: b.customer_email ?? b.member?.email ?? null,
+    quantity: b.quantity,
+    unitPrice: Number(b.unit_price),
+    tax: Number(b.tax_amount ?? 0),
+    status: b.status,
+    orderNumber: b.order ? Number(b.order.order_number) : null,
+    paidByCard: !!b.stripe_payment_intent_id,
+    createdAt: b.created_at,
+  }));
+}
+
 export { isRestrictedRelease };
 
 export function excludeRestrictedReleases(screenings: Screening[]): Screening[] {

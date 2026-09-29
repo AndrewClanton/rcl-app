@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, type AccountMatch } from "./actions";
+import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, createRecoveryLink, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
   owner: "Owner",
@@ -17,7 +17,7 @@ const ROLE_LABEL: Record<EmployeeRole, string> = {
 
 const ASSIGNABLE = ["cashier", "manager", "admin", "display"] as const;
 
-const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px] items-center gap-3";
+const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px_90px] items-center gap-3";
 
 const MANAGER_ROLES: EmployeeRole[] = ["manager", "admin", "owner"];
 
@@ -46,17 +46,22 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
             Every manager has their own PIN, so 9999 no longer approves anything. Still on 9999 (not a manager, so it doesn&apos;t approve anything): {stillDefault.map((e) => e.name).join(", ")}.
           </p>
         ) : null}
-        <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
-          <span>Name</span>
-          <span>Email</span>
-          <span>Role</span>
-          <span>Status</span>
-          <span>PIN</span>
-        </div>
-        <div className="divide-y divide-[var(--border)]">
-          {employees.map((e) => (
-            <EmployeeRow key={e.id} employee={e} />
-          ))}
+        <div className="overflow-x-auto">
+          <div className="min-w-[760px]">
+            <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
+              <span>Name</span>
+              <span>Email</span>
+              <span>Role</span>
+              <span>Status</span>
+              <span>PIN</span>
+              <span>Password</span>
+            </div>
+            <div className="divide-y divide-[var(--border)]">
+              {employees.map((e) => (
+                <EmployeeRow key={e.id} employee={e} />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -93,6 +98,7 @@ function FindAccount() {
 
   async function promote(m: AccountMatch) {
     const role = roles[m.memberId] ?? "cashier";
+    if (role !== "cashier" && !confirm(roleChangePrompt(m.name, role))) return;
     setBusy(m.memberId);
     setError(null);
     setDone(null);
@@ -184,6 +190,7 @@ function AddEmployeeForm() {
   const [justAdded, setJustAdded] = useState<{ name: string; email: string; password: string; role: EmployeeRole; reused: boolean } | null>(null);
 
   async function submit() {
+    if ((role === "admin" || role === "manager") && !confirm(roleChangePrompt(name.trim() || "this person", role))) return;
     setError(null);
     setJustAdded(null);
     setPending(true);
@@ -270,6 +277,21 @@ function AddEmployeeForm() {
   );
 }
 
+// What the owner is asked before giving someone a role. Admin gets the
+// strongest warning: it's the whole back office short of this page.
+function roleChangePrompt(name: string, to: EmployeeRole, from?: EmployeeRole): string {
+  switch (to) {
+    case "admin":
+      return `Make ${name} an ADMIN?\n\nAdmins get everything in the back office except this Staff page: every report and refund, member records, the menu, the team schedule, and the admin-only tools. Their PIN approves refunds.\n\nOnly give this to someone you'd trust with the whole business.`;
+    case "manager":
+      return `Make ${name} a manager?\n\nManagers change the menu, run the team schedule and training, and their PIN approves refunds and cancelled tabs.`;
+    case "display":
+      return `Turn ${name}'s login into a display-screen login?\n\nIt will only open the signage screens. ${from ? "They lose the back office and the register." : ""}`.trim();
+    default:
+      return `Change ${name} to cashier?${from && from !== "cashier" ? `\n\nThey lose the ${ROLE_LABEL[from].toLowerCase()} tools, and their PIN stops approving refunds.` : ""}`;
+  }
+}
+
 function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
   const [pending, run] = useRefreshingAction();
   const isOwner = employee.role === "owner";
@@ -281,13 +303,18 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
         {employee.email ?? "—"}
       </span>
       {isOwner ? (
+        // The owner's own role is never a dropdown: no accidental self-demotion.
         <span className="stamp-tag stamp-tag-gold w-fit">Owner</span>
       ) : (
         <select
           className="rounded border border-[var(--border)] px-2 py-1 text-xs"
           value={employee.role}
           disabled={pending}
-          onChange={(e) => run(() => updateEmployeeRole(employee.id, e.target.value as EmployeeRole))}
+          onChange={(e) => {
+            const to = e.target.value as EmployeeRole;
+            // Cancelling leaves the dropdown on their current role (it shows the saved value).
+            if (confirm(roleChangePrompt(employee.name, to, employee.role))) run(() => updateEmployeeRole(employee.id, to));
+          }}
         >
           {ASSIGNABLE.map((r) => (
             <option key={r} value={r}>
@@ -301,7 +328,10 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
       ) : (
         <button
           disabled={pending}
-          onClick={() => run(() => setEmployeeActive(employee.id, !employee.active))}
+          onClick={() => {
+            if (employee.active && !confirm(`Deactivate ${employee.name}? They can't sign in to the back office or use their PIN until you reactivate them.`)) return;
+            run(() => setEmployeeActive(employee.id, !employee.active));
+          }}
           className={`justify-self-start rounded border px-2 py-1 text-xs disabled:opacity-50 ${
             employee.active ? "border-[var(--border)] text-[var(--muted)]" : "border-[var(--danger-text)] text-[var(--danger-text)]"
           }`}
@@ -310,7 +340,83 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
         </button>
       )}
       <PinCell employee={employee} />
+      <PasswordCell employee={employee} />
     </div>
+  );
+}
+
+// A one-time link to set a new password, for someone locked out of their
+// login while email isn't set up. Shown once, here, for the owner to hand
+// over; anyone with it can get into that login, so the panel says so.
+function PasswordCell({ employee }: { employee: EmployeeWithEmail }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ link: string; email: string; passwordLogin: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const firstName = employee.name.split(" ")[0];
+
+  async function make() {
+    if (!confirm(`Make a password reset link for ${employee.name}?\n\nAnyone who opens it can set a new password and sign in as ${firstName}. Give it only to ${firstName}.`)) return;
+    setBusy(true);
+    setError(null);
+    setCopied(false);
+    const r = await createRecoveryLink(employee.id).catch(() => ({ ok: false as const, error: "Couldn't make a reset link. Try again." }));
+    setBusy(false);
+    if (!r.ok) return setError(r.error);
+    setResult({ link: r.link, email: r.email, passwordLogin: r.passwordLogin });
+  }
+
+  if (!employee.email) return <span className="col-start-6 row-start-1 text-xs text-[var(--muted)]">—</span>;
+
+  return (
+    <>
+      {/* Pinned to the first row's last column, so the PIN panel opening below doesn't push it down. */}
+      <span className="col-start-6 row-start-1">
+        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={busy} onClick={make}>
+          {busy ? "Making…" : "Reset link"}
+        </button>
+      </span>
+      {error && <p className="col-span-full text-xs text-[var(--danger-text)]">{error}</p>}
+      {result && (
+        <div className="notice notice-warn col-span-full !p-3 text-sm">
+          <div className="mb-1.5 font-semibold">Password reset link for {employee.name}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input readOnly className="input min-w-0 flex-1 !py-1 font-mono text-xs" value={result.link} onFocus={(e) => e.currentTarget.select()} />
+            <button
+              className="btn-primary !px-3 !py-1 text-xs"
+              onClick={() => {
+                navigator.clipboard?.writeText(result.link).then(
+                  () => setCopied(true),
+                  () => setCopied(false),
+                );
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+            <button
+              className="text-xs text-[var(--muted)] underline"
+              onClick={() => {
+                setResult(null);
+                setCopied(false);
+              }}
+            >
+              Done
+            </button>
+          </div>
+          <p className="mt-2 text-xs">
+            Give this only to {firstName}: text it to them, or open it on their phone. It opens a page where they pick a new password for {result.email}, then they sign in at
+            /login as usual. Anyone who has this link can get into {firstName}&apos;s login, so don&apos;t post it anywhere others can see. It works once and runs out after about
+            an hour; make another if it does. It isn&apos;t shown again after you close this.
+          </p>
+          {!result.passwordLogin && (
+            <p className="mt-1 text-xs">
+              {firstName} signs in with Google, which doesn&apos;t use a password. If Google sign-in still works for them, they don&apos;t need this; setting a password just adds
+              email-and-password sign-in alongside it.
+            </p>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 
