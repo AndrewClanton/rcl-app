@@ -47,6 +47,54 @@ export async function updateMember(
   revalidate();
 }
 
+export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
+
+// The Save button on a member's page: name, email, phone and points
+// together. A changed email or name is copied to their Stripe customer too,
+// since that's where Stripe sends receipts and renewal notices.
+export async function saveMemberDetails(id: string, fields: { name: string; email: string; phone: string; points: string }): Promise<SaveDetailsResult> {
+  await assertStaff();
+  const name = fields.name.trim();
+  const email = fields.email.trim();
+  const phone = fields.phone.trim();
+  const points = Number(fields.points);
+  if (!name) return { ok: false, error: "Name can't be blank." };
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
+  if (fields.points.trim() === "" || !Number.isFinite(points)) return { ok: false, error: "Points has to be a number." };
+
+  const supabase = createAdminClient();
+  const { data: before } = await supabase.from("members").select("name, email, phone, points, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
+  if (!before) return { ok: false, error: "Member not found." };
+
+  const changes: { name?: string; email?: string | null; phone?: string | null } = {};
+  if (name !== before.name) changes.name = name;
+  if (email !== (before.email ?? "")) changes.email = email || null;
+  if (phone !== (before.phone ?? "")) changes.phone = phone || null;
+  if (Object.keys(changes).length) {
+    const { error } = await supabase.from("members").update(changes).eq("id", id).is("erased_at", null);
+    if (error?.code === "23505") return { ok: false, error: "Another member already has that email. Search for them in Members." };
+    if (error) return { ok: false, error: "Couldn't save. Try again." };
+  }
+  if (points !== Number(before.points)) await adjustMemberPoints(id, points);
+
+  let message = "Saved ✓";
+  // Keep Stripe's copy in step (receipts and renewal notices go there).
+  if (before.stripe_customer_id && (changes.email || changes.name)) {
+    try {
+      await getStripe().customers.update(before.stripe_customer_id, {
+        ...(changes.email ? { email: changes.email } : {}),
+        ...(changes.name ? { name: changes.name } : {}),
+      });
+      message = changes.email ? `Saved ✓ Stripe updated too: receipts now go to ${changes.email}.` : "Saved ✓ Stripe updated too.";
+    } catch {
+      message = "Saved here, but Stripe couldn't be updated. Change the email on their customer page in Stripe too.";
+    }
+  }
+  revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true, message };
+}
+
 // Senior/student rates are set only after checking an ID in person. For a
 // paying Insiders+ member this also changes their Stripe price from their
 // next bill (see applyMemberRate).

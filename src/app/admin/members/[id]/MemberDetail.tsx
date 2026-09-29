@@ -13,7 +13,7 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
-import { adjustMemberPoints, createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, setMemberRate, updateMember } from "../actions";
+import { createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, saveMemberDetails, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -79,6 +79,31 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
   const [email, setEmail] = useState(member.email ?? "");
   const [phone, setPhone] = useState(member.phone ?? "");
   const [points, setPoints] = useState(String(member.points));
+  const router = useRouter();
+  const [saving, startSave] = useTransition();
+  const [saved, setSaved] = useState<{ ok: boolean; text: string } | null>(null);
+  const dirty =
+    name !== member.name || email !== (member.email ?? "") || phone !== (member.phone ?? "") || (points.trim() !== "" && Number(points) !== Number(member.points));
+
+  function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!dirty || saving) return;
+    setSaved(null);
+    startSave(async () => {
+      const r = await saveMemberDetails(member.id, { name, email, phone, points }).catch(() => null);
+      if (!r) return setSaved({ ok: false, text: "Couldn't save. Try again." });
+      setSaved(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
+      if (r.ok) router.refresh();
+    });
+  }
+
+  function undo() {
+    setName(member.name);
+    setEmail(member.email ?? "");
+    setPhone(member.phone ?? "");
+    setPoints(String(member.points));
+    setSaved(null);
+  }
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
@@ -128,48 +153,50 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Name">
-          <input
-            className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={() => {
-              if (name.trim() && name !== member.name) run(() => updateMember(member.id, { name: name.trim() }));
-            }}
-          />
-        </Field>
-        <Field label="Email">
-          <input
-            className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            onBlur={() => {
-              if (email !== (member.email ?? "")) run(() => updateMember(member.id, { email: email.trim() || null }));
-            }}
-          />
-        </Field>
-        <Field label="Phone">
-          <input
-            className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            onBlur={() => {
-              if (phone !== (member.phone ?? "")) run(() => updateMember(member.id, { phone: phone.trim() || null }));
-            }}
-          />
-        </Field>
-        <Field label="Points">
-          <input
-            type="number"
-            className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-            value={points}
-            onChange={(e) => setPoints(e.target.value)}
-            onBlur={() => {
-              const v = parseFloat(points);
-              if (!isNaN(v) && v !== Number(member.points)) run(() => adjustMemberPoints(member.id, v));
-            }}
-          />
-        </Field>
+        {/* Name, email, phone and points save together with the button
+            (or Enter). The ones below save as soon as they're changed. */}
+        <form onSubmit={save} className="contents">
+          <Field label="Name">
+            <input className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Email" hint={member.stripe_customer_id ? "Saving a new email updates Stripe too, so their receipts follow it." : undefined}>
+            <input
+              type="email"
+              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </Field>
+          <Field label="Phone">
+            <input type="tel" className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+          <Field label="Points">
+            <input
+              type="number"
+              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
+              value={points}
+              onChange={(e) => setPoints(e.target.value)}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+            <button type="submit" className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" disabled={!dirty || saving}>
+              {saving ? "Saving..." : "Save changes"}
+            </button>
+            {dirty && !saving && (
+              <>
+                <span className="text-sm font-semibold text-[var(--warn-text)]">Unsaved changes</span>
+                <button type="button" className="text-sm text-[var(--muted)] hover:underline" onClick={undo}>
+                  Undo
+                </button>
+              </>
+            )}
+            {saved && (!dirty || !saved.ok) && (
+              <span className={`text-sm ${saved.ok ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}`} role={saved.ok ? "status" : "alert"}>
+                {saved.text}
+              </span>
+            )}
+          </div>
+        </form>
         <Field label="Tier">
           <select
             className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
