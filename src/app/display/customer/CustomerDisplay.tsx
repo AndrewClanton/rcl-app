@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
-import CheckinKiosk from "./CheckinKiosk";
+import { LADDER, REWARD_LABEL } from "@/lib/visits";
+import TicketsCard, { type TicketsShown } from "./TicketsCard";
+import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
+import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
+import k from "./kiosk.module.css";
 
-interface PromoMovie {
+export interface PromoMovie {
   title: string;
   posterUrl: string | null;
   nextShowtime: string;
@@ -16,20 +20,40 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-function fmtShowtime(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+function showtime(iso: string) {
+  return new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 }
 
-// The tablet at the point of service: a promotional idle screen (this
-// week's lineup) when nothing's being rung up, switching automatically to
-// a live mirror of the order as the cashier builds it (see PosApp.tsx,
-// which broadcasts cart snapshots -- not database-backed, since an
-// in-progress cart isn't saved anywhere until held/tabbed/completed).
-// "Check in for points" (CheckinKiosk.tsx) puts today's sale on a
-// customer's account by phone number, confirmed by staff at the register,
-// and plays the points burst when that sale completes.
-export default function CustomerDisplay({ movies, registerTopic }: { movies: PromoMovie[]; registerTopic: string }) {
-  const [cart, setCart] = useState<RegisterCartSnapshot | null>(null);
+// The tablet facing the customer at the bar. Two halves:
+// - left, always: the check-in keypad (CheckinKiosk.tsx), because everyone
+//   checks in when they come through the door;
+// - right: the live order as the bartender rings it up (PosApp.tsx
+//   broadcasts cart snapshots; nothing is saved until the sale), or,
+//   between orders, a Royale welcome: tonight's movies and the points path.
+// The register's ✨ Celebrate throws streamers across the whole screen.
+// previewCart / previewStep / previewTickets are for previews only.
+export default function CustomerDisplay({
+  movies,
+  registerTopic,
+  previewCart,
+  previewStep,
+  previewTickets,
+}: {
+  movies: PromoMovie[];
+  registerTopic: string;
+  previewCart?: RegisterCartSnapshot;
+  previewStep?: CheckinStep;
+  previewTickets?: TicketsShown;
+}) {
+  const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
+  const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[] } | null>(null);
+  // Online tickets for whoever just checked in, beside the order for a bit.
+  const [tickets, setTickets] = useState<TicketsShown | null>(previewTickets ?? null);
+  useEffect(() => {
+    if (!tickets) return;
+    const timer = setTimeout(() => setTickets(null), 25_000);
+    return () => clearTimeout(timer);
+  }, [tickets]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -41,10 +65,10 @@ export default function CustomerDisplay({ movies, registerTopic }: { movies: Pro
       channel = supabase
         .channel(registerTopic)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
+        .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
         .subscribe((status) => {
-          // A kiosk that just loaded (or refreshed) has missed every prior
-          // broadcast -- ask the POS to resend its current state instead of
-          // sitting blank until the cashier's next edit.
+          // A screen that just loaded (or refreshed) has missed every prior
+          // broadcast: ask the register to resend its current state.
           if (status === "SUBSCRIBED") channel?.send({ type: "broadcast", event: "request-state", payload: {} });
         });
     });
@@ -56,77 +80,128 @@ export default function CustomerDisplay({ movies, registerTopic }: { movies: Pro
   }, [registerTopic]);
 
   const hasOrder = !!cart && cart.items.length > 0;
+  const clearBurst = useCallback(() => setBurst(null), []);
 
   return (
-    <div className="relative min-h-screen" style={{ background: "var(--background)", color: "var(--foreground)" }}>
-      {hasOrder ? <OrderMirror cart={cart} /> : <PromoIdle movies={movies} />}
-      <CheckinKiosk registerTopic={registerTopic} />
+    <div className={k.screen}>
+      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} />
+      <aside className={k.side}>
+        {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
+        {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
+      </aside>
+      {burst && <Streamers key={burst.id} pieces={burst.pieces} onDone={clearBurst} />}
     </div>
   );
 }
 
-function OrderMirror({ cart }: { cart: RegisterCartSnapshot }) {
+// Between orders: the Royale, tonight's movies, and why checking in pays.
+function Welcome({ movies }: { movies: PromoMovie[] }) {
   return (
-    <div className="mx-auto max-w-xl p-8">
-      <div className="eyebrow mb-2 text-center">Your order</div>
-      {cart.orderName && <h1 className="font-display mb-6 text-center text-2xl">{cart.orderName}</h1>}
-      <div className="space-y-3">
-        {cart.items.map((item, i) => (
-          <div key={i} className="card-flat flex items-start justify-between gap-3">
-            <div>
-              <div className="font-medium">
-                {item.quantity > 1 ? `${item.quantity}× ` : ""}
-                {item.name}
-              </div>
-              {item.modifiers.length > 0 && <div className="text-sm text-[var(--muted)]">{item.modifiers.join(", ")}</div>}
-            </div>
+    <>
+      <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1436} height={492} className={k.logo} priority />
+      <div className={k.sprockets} aria-hidden="true" />
+      {movies.length > 0 && (
+        <section>
+          <div className={k.sectionHead}>
+            <h2 className={k.h2}>Now showing</h2>
+            <span className={k.eyebrow}>Tickets at the bar</span>
           </div>
-        ))}
-      </div>
-      <div className="mt-6 space-y-1 border-t-2 pt-4 text-lg" style={{ borderColor: "var(--foreground)" }}>
-        <div className="flex justify-between text-sm text-[var(--muted)]">
-          <span>Subtotal</span>
-          <span>{money(cart.subtotal)}</span>
-        </div>
-        <div className="flex justify-between text-sm text-[var(--muted)]">
-          <span>Tax</span>
-          <span>{money(cart.tax)}</span>
-        </div>
-        <div className="flex justify-between font-display text-2xl">
-          <span>Total</span>
-          <span className="text-[var(--accent)]">{money(cart.total)}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PromoIdle({ movies }: { movies: PromoMovie[] }) {
-  return (
-    <div className="p-8">
-      <div className="mb-8 text-center">
-        <div className="eyebrow mb-2">Royale Cinema Lounge</div>
-        <h1 className="font-display text-3xl">Now Playing</h1>
-      </div>
-      {movies.length === 0 ? (
-        <p className="text-center text-[var(--muted)]">Check with staff for what&apos;s playing.</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {movies.map((m) => (
-            <div key={m.title}>
-              <div className="poster-frame">
-                {m.posterUrl ? (
-                  <Image src={m.posterUrl} alt={`${m.title} poster`} fill sizes="220px" className="object-cover" />
-                ) : (
-                  <div className="poster-placeholder">
-                    <span className="line-clamp-2 text-[11px] font-medium leading-tight">{m.title}</span>
-                  </div>
-                )}
+          <div className={k.posters} style={{ marginTop: 12 }}>
+            {movies.slice(0, 4).map((m) => (
+              <div key={m.title} className={k.poster}>
+                <div className={k.posterImg}>
+                  {m.posterUrl ? (
+                    <Image src={m.posterUrl} alt={`${m.title} poster`} fill sizes="220px" className="object-cover" />
+                  ) : (
+                    <div className="grid h-full place-items-center p-3 text-center text-sm font-bold">{m.title}</div>
+                  )}
+                </div>
+                <div className={k.posterTitle}>{m.title}</div>
+                <span className={k.timeChip}>{showtime(m.nextShowtime)}</span>
               </div>
-              <div className="mt-1.5 text-center text-sm font-medium">{m.title}</div>
-              <div className="text-center text-xs text-[var(--muted)]">{fmtShowtime(m.nextShowtime)}</div>
+            ))}
+          </div>
+        </section>
+      )}
+      <section className={k.pitch}>
+        <div className={k.pitchTitle}>Check in every visit. Your streak pays.</div>
+        <div className={k.ladder}>
+          {LADDER.map((s) => (
+            <div key={s.day} className={k.rung}>
+              <div className={k.rungDay}>Day {s.day}</div>
+              <div className={k.rungWhat}>{s.reward ? `${s.reward === "popcorn" ? "🍿" : "🍕"} ${REWARD_LABEL[s.reward]}` : `${s.points} pts`}</div>
             </div>
           ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+// The live tally on a cream receipt: every line with its price as it's
+// rung up, any savings, the total, and (once they've checked in) whose order
+// it is and the points it earns.
+export function OrderReceipt({ cart }: { cart: RegisterCartSnapshot }) {
+  const who = cart.member;
+  const earn = cart.pointsToEarn ?? 0;
+  const count = cart.items.reduce((n, i) => n + i.quantity, 0);
+  return (
+    <div className={k.receipt}>
+      <div className={k.receiptHead}>
+        <span className={k.receiptName}>{who ? `${who.firstName}'s order` : cart.orderName || "Your order"}</span>
+        <span className={k.eyebrow} style={{ color: "var(--gold)" }}>
+          {count} item{count === 1 ? "" : "s"}
+        </span>
+      </div>
+      <ul className={k.lines}>
+        {cart.items.map((item, i) => (
+          <li key={i} className={k.line}>
+            <div style={{ minWidth: 0 }}>
+              <div className={k.lineName}>
+                {item.quantity > 1 && <span className={k.lineQty}>{item.quantity}×</span>}
+                {item.name}
+              </div>
+              {item.modifiers.length > 0 && <div className={k.lineMods}>{item.modifiers.join(", ")}</div>}
+            </div>
+            {typeof item.lineTotal === "number" && <div className={k.linePrice}>{money(item.lineTotal)}</div>}
+          </li>
+        ))}
+      </ul>
+      <div className={k.totals}>
+        <div className={k.totalRow}>
+          <span>Subtotal</span>
+          <span style={{ fontFamily: "var(--mono)" }}>{money(cart.subtotal)}</span>
+        </div>
+        {(cart.discounts ?? []).map((d) => (
+          <div key={d.label} className={`${k.totalRow} ${k.saving}`}>
+            <span>{d.label}</span>
+            <span style={{ fontFamily: "var(--mono)" }}>−{money(d.amount)}</span>
+          </div>
+        ))}
+        <div className={k.totalRow} style={{ color: "#6b6455" }}>
+          <span>Tax</span>
+          <span style={{ fontFamily: "var(--mono)" }}>{money(cart.tax)}</span>
+        </div>
+        <div className={k.grand}>
+          <span className={k.grandLabel}>Total</span>
+          <span className={k.grandAmount}>{money(cart.total)}</span>
+        </div>
+      </div>
+      {earn > 0 && (
+        <div className={k.earn}>
+          {who ? (
+            <>
+              <span>
+                Hi {who.firstName}! You have <b>{who.points.toLocaleString("en-US")}</b> points.
+              </span>
+              <span className={k.earnBig}>+{earn}</span>
+            </>
+          ) : (
+            <>
+              <span>Check in on the left to earn points on this order.</span>
+              <span className={k.earnBig}>+{earn}</span>
+            </>
+          )}
         </div>
       )}
     </div>

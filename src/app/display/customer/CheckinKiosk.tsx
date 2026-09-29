@@ -3,60 +3,88 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
-import { startCheckin, startNewCheckin } from "./actions";
+import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
-import styles from "./checkin.module.css";
+import { REWARD_LABEL } from "@/lib/visits";
+import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
+import type { TicketsShown } from "./TicketsCard";
+import { isClaimUrl } from "@/lib/claim-link";
+import ClaimQr from "./ClaimQr";
+import k from "./kiosk.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
-type Step =
-  | { name: "closed" }
-  | { name: "phone" }
-  | { name: "new" }
-  | { name: "waiting"; request: CheckinRequest; seen: boolean }
-  | { name: "welcome"; firstName: string; points: number; isNew: boolean }
-  | { name: "help" };
+export type CheckinStep =
+  | { name: "phone" } // the keypad: always there between check-ins
+  | { name: "new" } // a number we don't know: first and last name
+  | { name: "sent" } // a known number, sent to the register; back to the keypad shortly
+  | { name: "created"; firstName: string; claimUrl: string | null }; // a new account, made
+
+// Confirmations land as banners across the top of the panel, so they
+// never block the keypad for the next person.
+interface Toast {
+  key: number;
+  title: string;
+  detail: string;
+  reward: string | null;
+  tone: "ok" | "warn";
+  // A member with no website login, confirmed by staff: a QR code to set
+  // one up (only ever a link that passed isClaimUrl).
+  claimUrl: string | null;
+}
 
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 
-// Unfinished check-ins close themselves when someone walks away; results
-// clear after a few seconds. Waiting gives up quietly after a few minutes --
-// the register keeps the request, and if staff confirm it later the welcome
-// still shows here.
-const TIMEOUT_MS: Record<Step["name"], number> = { closed: 0, phone: 60_000, new: 90_000, waiting: 3 * 60_000, welcome: 9_000, help: 9_000 };
+// Half-finished screens clear themselves when someone walks away.
+const TIMEOUT_MS: Record<CheckinStep["name"], number> = { phone: 0, new: 90_000, sent: 2_800, created: 25_000 };
+
+// A request the register hasn't answered is resent until it has, and given
+// up after this long (the sealed reference expires then anyway).
+const OUTBOX_MS = 15 * 60_000;
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
 
-function pts(n: number) {
-  return `${n.toLocaleString("en-US")} point${n === 1 ? "" : "s"}`;
-}
-
-// "Check in for points" on the customer screen. The customer types their
-// phone number; the register gets an opaque request and shows staff who it
-// is (photo, full name, last four of the phone) to Attach or say Not them.
-// A number we don't know asks for a first name (email optional, email
-// opt-in unticked) and staff Create & attach at the register. This screen
-// never sees anyone's details: after staff confirm, it gets a first name and
-// a points balance. When a sale with a member on it completes, the register
-// says so and the points burst plays here.
-export default function CheckinKiosk({ registerTopic }: { registerTopic: string }) {
-  const [step, setStep] = useState<Step>({ name: "closed" });
+// The check-in half of the customer tablet: always the keypad, built for a
+// line at the door, where nobody waits on the bartender.
+// - A known number goes to the register as an opaque request and the panel
+//   is straight back to the keypad. Staff confirm by photo when they can;
+//   that pays the visit points, and a banner says so here.
+// - An unknown number asks for a first and last name and makes the account
+//   right away (email marketing off), then offers a QR code to finish on
+//   their own phone. Staff still confirm the visit on the register.
+// This screen never shows anyone's details until staff have confirmed:
+// then just a first name and points (and, for a member with no website
+// login yet, a QR code in the banner to set one up). When a sale with a
+// member on it completes, the register says so and the points burst plays
+// here.
+// initialStep is for previews only.
+// onTickets: someone's online tickets for today, after staff confirm their
+// check-in. CustomerDisplay shows them beside the order, clear of the keypad.
+export default function CheckinKiosk({
+  registerTopic,
+  initialStep,
+  onTickets,
+}: {
+  registerTopic: string;
+  initialStep?: CheckinStep;
+  onTickets?: (shown: TicketsShown) => void;
+}) {
+  const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   const [digits, setDigits] = useState("");
   const [firstName, setFirstName] = useState("");
-  const [email, setEmail] = useState("");
-  const [emailOptIn, setEmailOptIn] = useState(false);
+  const [lastName, setLastName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [slow, setSlow] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [celebration, setCelebration] = useState<(PointsEarned & { key: number }) | null>(null);
-  // Anyone at the kiosk can type numbers, so five lookups in a row that
-  // don't end in a check-in staff confirmed lock the keypad for a minute.
-  // (The server caps lookups too.)
-  const misses = useRef(0);
-  const [locked, setLocked] = useState(false);
+  // Our own requests the register confirmed lately: their tickets (a
+  // separate, later message) are ours to show; anyone else's aren't.
+  const confirmedHere = useRef(new Map<string, number>());
   const channelRef = useRef<Channel | null>(null);
-  // Bumped on close, so a lookup still in flight when the customer walks
-  // away doesn't pop the panel back open.
+  // Requests sent to the register and not yet answered.
+  const outbox = useRef(new Map<string, { request: CheckinRequest; seen: boolean; at: number }>());
+  // Bumped on reset, so a lookup still in flight when the customer walks
+  // away doesn't pop a screen back up.
   const session = useRef(0);
 
   function send(event: string, payload: object) {
@@ -66,37 +94,74 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
   function resetForm() {
     setDigits("");
     setFirstName("");
-    setEmail("");
-    setEmailOptIn(false);
+    setLastName("");
     setError(null);
   }
 
-  function close(cancel: boolean) {
-    // The customer backed out: take the card off the register too.
-    if (cancel && step.name === "waiting") send("checkin-cancel", { id: step.request.id });
+  function reset() {
     session.current += 1;
     resetForm();
-    setStep({ name: "closed" });
+    setStep({ name: "phone" });
+  }
+
+  function toast(t: Omit<Toast, "key">) {
+    const key = Date.now() + Math.random();
+    setToasts((ts) => [...ts.slice(-2), { ...t, key }]);
+    // A QR code stays up long enough to get a phone out.
+    setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.claimUrl ? 25_000 : t.reward ? 12_000 : 8_000);
   }
 
   const onSeen = useEffectEvent((id: unknown) => {
-    setStep((s) => (s.name === "waiting" && s.request.id === id && !s.seen ? { ...s, seen: true } : s));
+    const item = typeof id === "string" ? outbox.current.get(id) : undefined;
+    if (item) item.seen = true;
   });
 
   const onConfirmed = useEffectEvent((p: Partial<CheckinConfirmed> | null) => {
     if (!p || typeof p.id !== "string" || typeof p.firstName !== "string") return;
-    // Our own request -- or, after this screen reloaded mid-wait, one it lost
-    // track of. Never on top of someone else's check-in in progress.
-    const mine = step.name === "waiting" && step.request.id === p.id;
-    if (!mine && step.name !== "closed") return;
-    misses.current = 0;
-    setLocked(false);
-    resetForm();
-    setStep({ name: "welcome", firstName: p.firstName.slice(0, 40), points: Math.max(0, Math.round(Number(p.points) || 0)), isNew: p.isNew === true });
+    // Only our own requests (another screen's check-ins aren't ours to announce).
+    if (!outbox.current.delete(p.id)) return;
+    confirmedHere.current.set(p.id, Date.now());
+    for (const [id, at] of confirmedHere.current) if (Date.now() - at > 5 * 60_000) confirmedHere.current.delete(id);
+    const name = p.firstName.slice(0, 40);
+    const points = Math.max(0, Math.round(Number(p.points) || 0));
+    const v = p.visit;
+    const earned = Math.max(0, Math.round(Number(v?.earned) || 0));
+    const streak = Math.max(1, Math.round(Number(v?.streak) || 1));
+    const reward = v?.reward === "popcorn" || v?.reward === "pizza" ? v.reward : null;
+    let detail: string;
+    if (v?.alreadyToday) detail = `Already checked in today · ${points.toLocaleString("en-US")} points`;
+    else if (v) detail = `+${earned} points${streak > 1 ? ` · 🔥 ${streak} visits in a row` : ""} · ${points.toLocaleString("en-US")} total`;
+    else detail = `${points.toLocaleString("en-US")} points`;
+    toast({
+      title: p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
+      detail,
+      reward: reward ? `🎉 You earned a ${REWARD_LABEL[reward].toLowerCase()}! Just ask your bartender.` : null,
+      tone: "ok",
+      claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
+    });
+  });
+
+  const onTicketsMessage = useEffectEvent((p: Partial<CheckinTickets> | null) => {
+    if (!p || typeof p.id !== "string" || typeof p.firstName !== "string" || !Array.isArray(p.tickets)) return;
+    if (!confirmedHere.current.has(p.id)) return;
+    const tickets = p.tickets
+      .filter((t): t is TabletTicket => !!t && typeof t.title === "string" && typeof t.startsAt === "string")
+      .slice(0, 4)
+      .map((t) => ({
+        title: t.title.slice(0, 80),
+        posterUrl: typeof t.posterUrl === "string" && t.posterUrl.startsWith("https://") ? t.posterUrl : null,
+        startsAt: t.startsAt,
+        room: typeof t.room === "string" ? t.room.slice(0, 60) : "",
+        quantity: Math.max(1, Math.round(Number(t.quantity) || 1)),
+        status: t.status === "printed" ? ("printed" as const) : ("to_print" as const),
+      }));
+    if (!tickets.length) return;
+    onTickets?.({ key: Date.now(), firstName: p.firstName.slice(0, 40), tickets });
   });
 
   const onDeclined = useEffectEvent((id: unknown) => {
-    if (step.name === "waiting" && step.request.id === id) setStep({ name: "help" });
+    if (typeof id !== "string" || !outbox.current.delete(id)) return;
+    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", reward: null, tone: "warn", claimUrl: null });
   });
 
   const onPoints = useEffectEvent((p: Partial<PointsEarned> | null) => {
@@ -104,20 +169,19 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
     const balance = Math.round(Number(p?.balance));
     if (!p || typeof p.firstName !== "string" || !(earned > 0) || !Number.isFinite(balance)) return;
     setCelebration({ orderNumber: Number(p.orderNumber) || 0, firstName: p.firstName.slice(0, 40), earned, balance: Math.max(0, balance), key: Date.now() });
-    // The sale's done: whatever the check-in panel was saying is over.
-    if (step.name === "welcome" || step.name === "help" || step.name === "waiting") {
-      resetForm();
-      setStep({ name: "closed" });
-    }
   });
 
   // Joined, back after a dropped connection, or a register (re)joined:
-  // either way the register may have missed the request, so send it again.
-  const resend = useEffectEvent(() => {
-    if (step.name === "waiting") send("checkin-request", step.request);
+  // either way the register may have missed requests, so send them again.
+  const resendAll = useEffectEvent((onlyUnseen: boolean) => {
+    const now = Date.now();
+    for (const [id, item] of outbox.current) {
+      if (now - item.at > OUTBOX_MS) outbox.current.delete(id);
+      else if (!onlyUnseen || !item.seen) send("checkin-request", item.request);
+    }
   });
 
-  const timeUp = useEffectEvent(() => close(false));
+  const timeUp = useEffectEvent(() => reset());
 
   useEffect(() => {
     const supabase = createClient();
@@ -132,10 +196,11 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
       ch.on("broadcast", { event: "checkin-seen" }, (msg) => onSeen(msg.payload?.id))
         .on("broadcast", { event: "checkin-confirmed" }, (msg) => onConfirmed(msg.payload))
         .on("broadcast", { event: "checkin-declined" }, (msg) => onDeclined(msg.payload?.id))
-        .on("broadcast", { event: "checkin-sync" }, () => resend())
+        .on("broadcast", { event: "checkin-tickets" }, (msg) => onTicketsMessage(msg.payload))
+        .on("broadcast", { event: "checkin-sync" }, () => resendAll(false))
         .on("broadcast", { event: "points-earned" }, (msg) => onPoints(msg.payload))
         .subscribe((status) => {
-          if (status === "SUBSCRIBED") resend();
+          if (status === "SUBSCRIBED") resendAll(false);
         });
     });
 
@@ -146,31 +211,30 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
     };
   }, [registerTopic]);
 
-  // Until the register says it has the request, keep sending it: a broadcast
+  // Until the register says it has a request, keep sending it: a broadcast
   // nobody was listening for is simply gone.
   useEffect(() => {
-    if (step.name !== "waiting" || step.seen) return;
-    const request = step.request;
-    const resender = setInterval(() => channelRef.current?.send({ type: "broadcast", event: "checkin-request", payload: request }), 8000);
-    const slowTimer = setTimeout(() => setSlow(true), 20_000);
-    return () => {
-      clearInterval(resender);
-      clearTimeout(slowTimer);
-    };
-  }, [step]);
+    const timer = setInterval(() => resendAll(true), 8000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const ms = TIMEOUT_MS[step.name];
     if (!ms) return;
     const timer = setTimeout(() => timeUp(), ms);
     return () => clearTimeout(timer);
-  }, [step, digits, firstName, email, emailOptIn]);
+  }, [step, firstName, lastName]);
 
-  function begin(request: CheckinRequest) {
-    setSlow(false);
-    setError(null);
+  // A number typed and walked away from clears itself.
+  useEffect(() => {
+    if (step.name !== "phone" || !digits) return;
+    const timer = setTimeout(() => resetForm(), 45_000);
+    return () => clearTimeout(timer);
+  }, [step.name, digits]);
+
+  function queue(request: CheckinRequest) {
+    outbox.current.set(request.id, { request, seen: false, at: Date.now() });
     send("checkin-request", request);
-    setStep({ name: "waiting", request, seen: false });
   }
 
   function press(key: string) {
@@ -181,212 +245,169 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
   }
 
   async function lookUp() {
-    if (busy || locked || !isFullPhone(digits)) return;
+    if (busy || !isFullPhone(digits)) return;
     const ticket = session.current;
     setBusy(true);
     setError(null);
     const r = await startCheckin(digits).catch(() => null);
     setBusy(false);
-    if (r?.ok) {
-      misses.current += 1;
-      if (misses.current >= 5) {
-        misses.current = 0;
-        setLocked(true);
-        setTimeout(() => setLocked(false), 60_000);
-      }
-    }
     if (ticket !== session.current) return;
     if (!r) return setError(OFFLINE);
     if (!r.ok) return setError(r.error);
     if (r.status === "new") return setStep({ name: "new" });
-    begin(r.request);
+    queue(r.request);
+    setDigits("");
+    setStep({ name: "sent" });
   }
 
   async function signUp() {
     if (busy) return;
     if (!firstName.trim()) return setError("Type your first name.");
+    if (!lastName.trim()) return setError("Type your last name.");
     const ticket = session.current;
     setBusy(true);
     setError(null);
-    const r = await startNewCheckin({ phone: digits, firstName, email, emailOptIn: emailOptIn && !!email.trim() }).catch(() => null);
+    const r = await createKioskMember({ phone: digits, firstName, lastName }).catch(() => null);
     setBusy(false);
     if (ticket !== session.current) return;
     if (!r) return setError(OFFLINE);
     if (!r.ok) return setError(r.error);
-    begin(r.request);
+    queue(r.request);
+    resetForm();
+    if (r.status === "known") return setStep({ name: "sent" });
+    setStep({ name: "created", firstName: r.firstName, claimUrl: r.claimUrl });
   }
 
   const badAreaCode = digits.length === 10 && !isFullPhone(digits);
 
   return (
-    <>
-      {step.name === "closed" && (
-        <button
-          onClick={() => {
-            resetForm();
-            setStep({ name: "phone" });
-          }}
-          // bottom-left, not bottom-right -- the sitewide Dev Notes widget
-          // (src/components/DevNotesWidget.tsx) is fixed at bottom-right on
-          // every page, including this one, and would otherwise sit right on
-          // top of this button.
-          className="font-display fixed bottom-6 left-6 z-40 rounded-md border-[3px] px-7 py-4 text-lg uppercase tracking-wide"
-          style={{ background: "var(--gold)", color: "var(--foreground)", borderColor: "var(--foreground)", boxShadow: "4px 4px 0 var(--foreground)" }}
-        >
-          Check in for points
-        </button>
+    <section className={k.checkin} aria-label="Check in">
+      {toasts.length > 0 && (
+        <div className={k.toasts} aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.claimUrl ? k.toastClaim : ""}`}>
+              <div>
+                <div className={k.toastTitle}>{t.title}</div>
+                <div className={k.toastDetail}>{t.detail}</div>
+                {t.reward && <div className={k.toastDetail} style={{ fontWeight: 800 }}>{t.reward}</div>}
+                {t.claimUrl && <div className={k.toastScan}>Scan to see your points online →</div>}
+              </div>
+              {t.claimUrl && <ClaimQr url={t.claimUrl} size={104} label="QR code: see your points online" />}
+            </div>
+          ))}
+        </div>
       )}
 
-      {step.name !== "closed" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(20,17,12,0.65)" }}>
-          <div className="card w-full max-w-md !p-6 text-center" style={{ background: "var(--surface)" }}>
-            <button onClick={() => close(true)} className="mb-2 ml-auto block text-sm text-[var(--muted)]">
-              Close ✕
-            </button>
-
-            {step.name === "phone" && (
-              <>
-                <h2 className="font-display mb-1 text-2xl">Check in for points</h2>
-                <p className="mb-4 text-sm text-[var(--muted)]">Type your phone number. Your bartender will make sure it&apos;s you.</p>
-                <div
-                  className="mb-4 rounded-lg border-2 py-3 font-mono text-3xl tabular-nums"
-                  style={{ borderColor: "var(--foreground)", minHeight: "3.9rem" }}
-                  aria-live="polite"
-                  aria-label="Phone number"
-                >
-                  {digits ? formatPhone(digits) : <span className="text-[var(--muted)]">(___) ___-____</span>}
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {KEYS.map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      disabled={busy || locked}
-                      onClick={() => press(k)}
-                      className="h-16 rounded-lg border-2 text-2xl font-bold active:bg-[var(--gold)] disabled:opacity-40"
-                      style={{ borderColor: "var(--foreground)" }}
-                      aria-label={k === "back" ? "Delete last digit" : k === "clear" ? "Clear" : k}
-                    >
-                      {k === "back" ? "⌫" : k === "clear" ? <span className="text-sm uppercase tracking-wide">Clear</span> : k}
-                    </button>
-                  ))}
-                </div>
-                {(error || badAreaCode) && (
-                  <p className="mt-3 text-sm" style={{ color: "var(--danger-text)" }}>
-                    {error ?? "Start with your area code."}
-                  </p>
-                )}
-                <button className="btn-primary mt-4 w-full !py-3.5 !text-lg" disabled={busy || locked || !isFullPhone(digits)} onClick={lookUp}>
-                  {locked ? "Too many tries. Ask a staff member." : busy ? "Looking you up…" : "Continue"}
-                </button>
-              </>
-            )}
-
-            {step.name === "new" && (
-              <>
-                <h2 className="font-display mb-1 text-2xl">Welcome to the Royale!</h2>
-                <p className="mb-4 text-sm text-[var(--muted)]">
-                  {formatPhone(digits)} is new to us. Tell us your first name and you&apos;re in. It&apos;s free, and every dollar earns a point.
-                </p>
-                <label className="block text-left">
-                  <span className="label-xs block">First name</span>
-                  <input
-                    className="input !text-lg"
-                    autoFocus
-                    autoComplete="given-name"
-                    autoCapitalize="words"
-                    maxLength={40}
-                    value={firstName}
-                    onChange={(e) => {
-                      setError(null);
-                      setFirstName(e.target.value);
-                    }}
-                  />
-                </label>
-                <label className="mt-3 block text-left">
-                  <span className="label-xs block">Email (optional)</span>
-                  <input
-                    className="input !text-lg"
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    maxLength={254}
-                    value={email}
-                    onChange={(e) => {
-                      setError(null);
-                      setEmail(e.target.value);
-                    }}
-                  />
-                </label>
-                <label className={`mt-3 flex items-start gap-2 text-left text-sm ${email.trim() ? "" : "opacity-50"}`}>
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 h-5 w-5 shrink-0"
-                    checked={emailOptIn && !!email.trim()}
-                    disabled={!email.trim()}
-                    onChange={(e) => setEmailOptIn(e.target.checked)}
-                  />
-                  <span>Email me about showings and events at the Royale.</span>
-                </label>
-                {error && (
-                  <p className="mt-3 text-sm" style={{ color: "var(--danger-text)" }}>
-                    {error}
-                  </p>
-                )}
-                <div className="mt-5 flex gap-2">
-                  <button
-                    className="btn-secondary flex-1 !py-3"
-                    disabled={busy}
-                    onClick={() => {
-                      setError(null);
-                      setStep({ name: "phone" });
-                    }}
-                  >
-                    Back
-                  </button>
-                  <button className="btn-primary flex-[2] !py-3 !text-base" disabled={busy || !firstName.trim()} onClick={signUp}>
-                    {busy ? "One moment…" : "Check me in"}
-                  </button>
-                </div>
-              </>
-            )}
-
-            {step.name === "waiting" && (
-              <>
-                <h2 className="font-display mb-2 text-2xl">Almost there…</h2>
-                <p className="text-base">{step.seen ? "Your bartender is checking it's you." : "Sending it to the register…"}</p>
-                {slow && !step.seen && <p className="mt-3 text-sm text-[var(--muted)]">Still waiting on the register. Give your bartender a wave.</p>}
-                <div className={styles.dots} aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <button className="btn-secondary mt-6" onClick={() => close(true)}>
-                  Cancel
-                </button>
-              </>
-            )}
-
-            {step.name === "welcome" && (
-              <>
-                <span className="ctag ctag-yellow mb-4">Checked in</span>
-                <h2 className="font-display mb-2 text-3xl">{step.isNew ? `Welcome to the Royale, ${step.firstName}!` : `Welcome back, ${step.firstName}!`}</h2>
-                <p className="text-base">
-                  {step.isNew ? "You're all set. Every dollar you spend here earns a point." : `You have ${pts(step.points)}. Today's order adds more.`}
-                </p>
-              </>
-            )}
-
-            {step.name === "help" && (
-              <>
-                <h2 className="font-display mb-2 text-2xl">Ask a staff member for help.</h2>
-                <p className="text-sm text-[var(--muted)]">They can find your account at the register.</p>
-              </>
-            )}
+      {step.name === "phone" && (
+        <>
+          <div>
+            <div className={k.eyebrow}>Check in · earn points</div>
+            <h1 className={k.title}>Your phone number</h1>
           </div>
+          <div className={k.display} aria-live="polite" aria-label="Phone number">
+            {digits ? formatPhone(digits) : <span className={k.placeholder}>(___) ___-____</span>}
+          </div>
+          <div className={k.keys}>
+            {KEYS.map((key) => (
+              <button
+                key={key}
+                type="button"
+                className={`${k.key} ${key === "clear" || key === "back" ? k.keySmall : ""}`}
+                disabled={busy}
+                onClick={() => press(key)}
+                aria-label={key === "back" ? "Delete last digit" : key === "clear" ? "Clear" : key}
+              >
+                {key === "back" ? "⌫" : key === "clear" ? "Clear" : key}
+              </button>
+            ))}
+          </div>
+          {(error || badAreaCode) && <p className={k.error}>{error ?? "Start with your area code."}</p>}
+          <button className={k.cta} disabled={busy || !isFullPhone(digits)} onClick={lookUp}>
+            {busy ? "One moment…" : "Check in →"}
+          </button>
+          <p className={k.foot}>New here? Same keypad. It takes ten seconds.</p>
+        </>
+      )}
+
+      {step.name === "new" && (
+        <form
+          style={{ display: "contents" }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void signUp();
+          }}
+        >
+          <div>
+            <div className={k.eyebrow}>Welcome to the Royale</div>
+            <h1 className={k.title}>What&apos;s your name?</h1>
+            <p className={k.sub} style={{ marginTop: 8 }}>
+              {formatPhone(digits)} is new to us. Free to join, and every visit earns points.
+            </p>
+          </div>
+          <label className={k.field}>
+            <span className={k.fieldLabel}>First name</span>
+            <input
+              className={k.input}
+              autoFocus
+              autoComplete="given-name"
+              autoCapitalize="words"
+              enterKeyHint="next"
+              maxLength={40}
+              value={firstName}
+              onChange={(e) => {
+                setError(null);
+                setFirstName(e.target.value);
+              }}
+            />
+          </label>
+          <label className={k.field}>
+            <span className={k.fieldLabel}>Last name</span>
+            <input
+              className={k.input}
+              autoComplete="family-name"
+              autoCapitalize="words"
+              enterKeyHint="done"
+              maxLength={40}
+              value={lastName}
+              onChange={(e) => {
+                setError(null);
+                setLastName(e.target.value);
+              }}
+            />
+          </label>
+          {error && <p className={k.error}>{error}</p>}
+          <button type="submit" className={k.cta} disabled={busy || !firstName.trim() || !lastName.trim()}>
+            {busy ? "One moment…" : "Create my account →"}
+          </button>
+          <button type="button" className={k.ghost} disabled={busy} onClick={reset}>
+            Start over
+          </button>
+        </form>
+      )}
+
+      {step.name === "sent" && (
+        <div className={k.done}>
+          <div className={k.check} aria-hidden="true">
+            ✓
+          </div>
+          <h1 className={k.title}>Thanks!</h1>
+          <p className={k.sub} style={{ fontSize: 20 }}>
+            Your bartender will confirm you in a moment.
+          </p>
+        </div>
+      )}
+
+      {step.name === "created" && (
+        <div className={k.done}>
+          <div className={k.eyebrow}>You&apos;re in</div>
+          <h1 className={k.title}>Welcome, {step.firstName}!</h1>
+          <p className={k.sub} style={{ fontSize: 18 }}>
+            Your bartender will confirm your first visit and your points will land.
+          </p>
+          {step.claimUrl && <ClaimQrSlot url={step.claimUrl} />}
+          <button className={k.cta} style={{ alignSelf: "stretch" }} onClick={reset}>
+            Done · next person
+          </button>
         </div>
       )}
 
@@ -399,6 +420,24 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
           onDone={() => setCelebration(null)}
         />
       )}
-    </>
+    </section>
   );
 }
+
+// The "finish on your phone" QR code for an account just made here: a
+// 30-minute claim link from createKioskMember (lib/member-claim.ts). With no
+// link (say the member_claims migration isn't applied yet), the screen is
+// the plain welcome.
+function ClaimQrSlot({ url }: { url: string }) {
+  if (!isClaimUrl(url)) return null;
+  return (
+    <div className={k.claim}>
+      <ClaimQr url={url} size={188} label="QR code: finish your account on your phone" />
+      <div className={k.claimCopy}>
+        <div className={k.claimTitle}>Scan to finish your account on your phone</div>
+        <p className={k.sub}>Add a login to see your points and visits. No need to hold up the line.</p>
+      </div>
+    </div>
+  );
+}
+

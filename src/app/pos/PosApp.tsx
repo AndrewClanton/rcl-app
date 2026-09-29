@@ -24,8 +24,13 @@ import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
 import { printTickets, type TicketSale } from "./print-tickets";
+import { useScanner } from "./useScanner";
+import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
-import { sendToPrinter } from "@/lib/print/epos-client";
+import EasterEggs from "./EasterEggs";
+import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
+import { sendPrint, usePrintTarget } from "./printing";
+import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
@@ -149,6 +154,12 @@ export default function PosApp({
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
   const [heldListOpen, setHeldListOpen] = useState(false);
+  // ✨ Easter eggs: a surprise for the bottom of the next printed receipt.
+  const [flourish, setFlourish] = useState<FlourishKey | null>(null);
+  const flourishRef = useRef<FlourishKey | null>(null);
+  useEffect(() => {
+    flourishRef.current = flourish;
+  }, [flourish]);
   const [tabsListOpen, setTabsListOpen] = useState(false);
   const [cancelTabId, setCancelTabId] = useState<string | null>(null);
   const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
@@ -157,7 +168,29 @@ export default function PosApp({
   );
   const [toast, setToast] = useState<string | null>(null);
   const devices = useDeviceSettings();
+  // Where this register prints: its station's printer through the website,
+  // or straight to a printer IP (Devices).
+  const printTarget = usePrintTarget();
   const readerId = devices.readerId || defaultReaderId;
+  // A scanner at the counter: an online ticket's QR prints its tickets right
+  // away (one print per ticket, ever); a member card checks them in. An empty
+  // register also picks up the scanned member so the order goes on their
+  // account. Paused while the pay screen is open.
+  const scanStateRef = useRef({ member, empty: true });
+  useEffect(() => {
+    scanStateRef.current = { member, empty: cart.length === 0 && !activeTabId };
+  }, [member, cart.length, activeTabId]);
+  useScanner(
+    (text) => {
+      void handleDoorScan(text, printTarget).then(({ scan, message }) => {
+        const now = scanStateRef.current;
+        if (scan?.ok && scan.member && !now.member && now.empty) setMember(scan.member);
+        setToast(message);
+        setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
+      });
+    },
+    { enabled: !payOpen },
+  );
   // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [printNote, setPrintNote] = useState<string | null>(null);
@@ -200,6 +233,7 @@ export default function PosApp({
       taxFree,
       monthlyMember,
       pointsRedeemed,
+      station: devices.station,
       lines: cart.map((l) => ({
         menu_item_id: l.menuItemId,
         name: l.name,
@@ -273,11 +307,13 @@ export default function PosApp({
   // Saves a tab. A failed save used to go unnoticed, so the tab quietly
   // lost what was added; now it shows "Tab not saved" until a save works,
   // and false tells the caller not to move on from the tab.
-  async function saveTab(id: string, fields: DraftFields, payload: CheckoutTotals): Promise<boolean> {
+  // leaving: the tab is being put away, so anything new for the kitchen
+  // prints now instead of after a pause for more to be rung.
+  async function saveTab(id: string, fields: DraftFields, payload: CheckoutTotals, leaving = false): Promise<boolean> {
     let r: Awaited<ReturnType<typeof updateDraftOrder>>;
     let stale = false;
     try {
-      r = await updateDraftOrder(id, fields, payload);
+      r = await updateDraftOrder(id, fields, payload, { kitchen: leaving ? "now" : "hold" });
     } catch (e) {
       // A dropped connection, or the site was updated mid-shift.
       r = { ok: false, error: "Couldn't reach the server." };
@@ -301,7 +337,7 @@ export default function PosApp({
   // The open tab, saved from the screen before the screen moves on. True
   // when there's no tab or it saved.
   async function saveOpenTab(): Promise<boolean> {
-    return !activeTabId || saveTab(activeTabId, currentFields(), totalsPayload(totals));
+    return !activeTabId || saveTab(activeTabId, currentFields(), totalsPayload(totals), true);
   }
 
   function retryTabSave() {
@@ -327,10 +363,19 @@ export default function PosApp({
   const [tabCardFor, setTabCardFor] = useState<{ id: string; name: string } | null>(null);
   cartSnapshotRef.current = {
     orderName,
-    items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods })),
+    items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
     subtotal: totals.subtotal,
     tax: totals.tax,
     total: totals.total,
+    // The customer screen's live tally: savings, whose order it is, and the
+    // points it earns (1 per $1 of the subtotal, as completeOrder pays).
+    discounts: [
+      { label: "Member discount", amount: totals.tierDiscount },
+      { label: "Monthly member discount", amount: totals.monthlyDiscount },
+      { label: "Points reward", amount: totals.redemptionDiscount },
+    ].filter((d) => d.amount > 0),
+    member: member ? { firstName: member.name.trim().split(/\s+/)[0] || member.name, points: Math.round(member.points), plus: member.tier === "Insiders+" } : null,
+    pointsToEarn: Math.max(0, Math.round(totals.subtotal)),
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
@@ -354,7 +399,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member]);
 
   function resetOrder() {
     setCart([]);
@@ -566,14 +611,21 @@ export default function PosApp({
   // so a printer problem only shows a note with a way to try again.
   async function printAfterSale(receipt: ReceiptData, tookCash: boolean, tickets: TicketSale[]) {
     setPrintNote(null);
-    if (!devices.printerAddress) return;
+    if (!printTarget) return;
     const openDrawer = tookCash && devices.drawerOnCash;
     if (devices.autoPrint || openDrawer) {
-      const r = await sendToPrinter(devices.printerAddress, devices.autoPrint ? receiptXml(receipt, { openDrawer }) : drawerXml());
+      // The ✨ surprise rides on this receipt, then turns off.
+      const surprise = devices.autoPrint ? flourishLines(flourishRef.current) : null;
+      if (surprise) setFlourish(null);
+      // A member with no website login gets a "claim your account" QR code.
+      const claimUrl = devices.autoPrint ? await receiptClaimUrl(member, receipt) : null;
+      const r = devices.autoPrint
+        ? await sendPrint(printTarget, "receipt", receiptXml(receipt, { openDrawer, flourish: surprise, claimUrl }), `Receipt #${receipt.orderNumber}`)
+        : await sendPrint(printTarget, "drawer", drawerXml(), `Drawer (#${receipt.orderNumber})`);
       if (!r.ok) return setPrintNote(r.error);
     }
     if (devices.printTickets && tickets.length) {
-      const t = await printTickets(devices.printerAddress, receipt.orderNumber, tickets);
+      const t = await printTickets(printTarget, receipt.orderNumber, tickets);
       if (!t.ok) setPrintNote(`Tickets didn't print: ${t.error}`);
     }
   }
@@ -736,8 +788,8 @@ export default function PosApp({
             </button>
             <DevicesPanel
               fallbackReaderId={defaultReaderId}
-              onReprintTickets={lastTickets ? () => printTickets(devices.printerAddress, lastTickets.orderNumber, lastTickets.lines) : null}
-              onReprint={lastReceipt ? () => sendToPrinter(devices.printerAddress, receiptXml(lastReceipt)) : null}
+              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
+              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
             />
           </div>
 
@@ -829,13 +881,13 @@ export default function PosApp({
               {toast}
             </div>
           )}
-          {lastReceipt && devices.printerAddress && (printNote || !devices.autoPrint) && (
+          {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
             <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
               <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
               <button
                 className="chip !px-3 !py-1"
                 onClick={async () => {
-                  const r = await sendToPrinter(devices.printerAddress, receiptXml(lastReceipt));
+                  const r = await sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber}`);
                   setPrintNote(r.ok ? null : r.error);
                 }}
               >
@@ -897,7 +949,12 @@ export default function PosApp({
             ))
           )}
 
-          <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
+          <PosMemberPanel
+            member={member}
+            onChange={setMember}
+            employeeId={employeeId}
+            onRewardLine={(label) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }])}
+          />
           <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
 
           <div className="space-y-1 pt-1">
@@ -979,7 +1036,13 @@ export default function PosApp({
             <button className="btn-secondary whitespace-nowrap py-2 text-sm" disabled={!employeeId || busy} onClick={() => setOpenTabPromptOpen(true)}>
               New tab
             </button>
-            <RecentOrders printerAddress={devices.printerAddress} />
+            <RecentOrders target={printTarget} />
+            <EasterEggs
+              next={flourish}
+              onPick={setFlourish}
+              canPrint={!!printTarget && devices.autoPrint}
+              onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
+            />
           </div>
         </div>
       </div>

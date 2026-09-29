@@ -1,8 +1,9 @@
 import { ticketXml } from "@/lib/print/receipt";
 import { imageToRaster, type Raster } from "@/lib/print/raster";
 import { LOGO_RASTER } from "@/lib/print/logo-raster";
-import { sendToPrinter, type PrintResult } from "@/lib/print/epos-client";
+import type { PrintResult } from "@/lib/print/epos-client";
 import { getTicketPrintInfo } from "./ticket-actions";
+import { sendPrint, type PrintTarget } from "./printing";
 
 // Movie tickets on a sale, for printing one keepsake ticket per admission.
 export type TicketSale = { screeningId: string; qty: number };
@@ -14,12 +15,15 @@ function posterRaster(url: string) {
   return posterCache.get(url)!;
 }
 
-// One ticket per admission, sent one at a time so the printer never gets a
-// huge job. Returns the first failure, if any. Used after a sale and by
-// "Reprint tickets" (Devices, Recent orders).
-export async function printTickets(printerAddress: string, orderNumber: number, sales: TicketSale[]): Promise<PrintResult> {
+// One ticket per admission, each its own print job so the printer never
+// gets a huge one. Returns the first failure, if any. Used after a sale, by
+// "Reprint tickets" (Devices, Recent orders), and for an online booking
+// scanned at the door (door-print.ts), whose number is a string like
+// "T-1A2B3C4D".
+export async function printTickets(target: PrintTarget, orderNumber: number | string, sales: TicketSale[]): Promise<PrintResult> {
   const info = await getTicketPrintInfo([...new Set(sales.map((t) => t.screeningId))]).catch(() => null);
   if (!info) return { ok: false, error: "Couldn't look up the showings to print tickets. Try again from Recent orders." };
+  const xmls: string[] = [];
   let index = 0;
   for (const sale of sales) {
     const show = info[sale.screeningId];
@@ -27,13 +31,14 @@ export async function printTickets(printerAddress: string, orderNumber: number, 
     const poster = show.posterUrl ? await posterRaster(show.posterUrl) : null;
     for (let n = 0; n < sale.qty; n++) {
       index++;
-      const xml = ticketXml(
-        { title: show.title, startsAt: show.startsAt, room: show.room, rating: show.rating, runtime: show.runtime, orderNumber, code: `RCL-TKT:${orderNumber}:${sale.screeningId.slice(0, 8)}:${index}` },
-        { logo: LOGO_RASTER, poster },
+      xmls.push(
+        ticketXml(
+          { title: show.title, startsAt: show.startsAt, room: show.room, rating: show.rating, runtime: show.runtime, orderNumber, code: `RCL-TKT:${orderNumber}:${sale.screeningId.slice(0, 8)}:${index}` },
+          { logo: LOGO_RASTER, poster },
+        ),
       );
-      const r = await sendToPrinter(printerAddress, xml);
-      if (!r.ok) return r;
     }
   }
-  return { ok: true };
+  const label = typeof orderNumber === "number" ? `Tickets #${orderNumber}` : `Tickets ${orderNumber}`;
+  return sendPrint(target, "tickets", xmls, `${label} (${xmls.length})`);
 }

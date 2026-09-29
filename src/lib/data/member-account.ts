@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { boothDate, boothWindow } from "@/lib/booth-time";
+import { bookingNumber } from "@/lib/door-tickets";
+import { businessDay } from "@/lib/ops/time";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -252,7 +254,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
   return {
     kind,
     id: b.id,
-    number: `T-${b.id.slice(0, 8).toUpperCase()}`,
+    number: bookingNumber(b.id),
     date: b.created_at,
     status: b.status === "refunded" ? "refunded" : "completed",
     lines: [{ name: s ? `Ticket: ${s.movie.title}` : "Ticket", quantity: b.quantity, unitPrice: Number(b.unit_price), modifiers: [] }],
@@ -280,26 +282,81 @@ export interface MemberScreening {
   posterUrl: string | null;
   room: string;
   quantity: number;
+  // Bought at the register: the tickets printed with the sale, so there's no
+  // code to show at the door.
+  atRegister: boolean;
+  // When its tickets were printed at the door (the code is used up).
+  scannedAt: string | null;
 }
 
-export async function getMemberScreenings(memberId: string): Promise<{ upcoming: MemberScreening[]; past: MemberScreening[] }> {
+// `*` rather than a column list, so these pages keep working before the
+// door-ticket migration adds bookings.scanned_at (it's just missing until then).
+const MEMBER_BOOKING_SELECT = "*, screening:screenings(starts_at, movie:movies(title, poster_url), room:rooms(name))";
+
+type MemberBookingRow = {
+  id: string;
+  quantity: number;
+  order_id: string | null;
+  scanned_at?: string | null;
+  screening: { starts_at: string; movie: { title: string; poster_url: string | null }; room: { name: string } } | null;
+};
+
+function toMemberScreening(b: MemberBookingRow): MemberScreening | null {
+  const s = b.screening;
+  if (!s) return null;
+  return {
+    bookingId: b.id,
+    startsAt: s.starts_at,
+    title: s.movie.title,
+    posterUrl: s.movie.poster_url,
+    room: s.room.name.split(" — ")[0],
+    quantity: b.quantity,
+    atRegister: !!b.order_id,
+    scannedAt: b.scanned_at ?? null,
+  };
+}
+
+// One confirmed booking of theirs, for its ticket page (the QR code for the door).
+export async function getMemberTicket(memberId: string, bookingId: string): Promise<MemberScreening | null> {
   const { data, error } = await createAdminClient()
     .from("bookings")
-    .select("id, quantity, screening:screenings(starts_at, movie:movies(title, poster_url), room:rooms(name))")
+    .select(MEMBER_BOOKING_SELECT)
+    .eq("id", bookingId)
     .eq("member_id", memberId)
-    .eq("status", "confirmed");
+    .eq("status", "confirmed")
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toMemberScreening(data as unknown as MemberBookingRow) : null;
+}
+
+// A showing that started this recently still counts as tonight's, so
+// someone running late still finds their tickets on top.
+const LATE_ARRIVAL_MS = 2 * 3_600_000;
+
+// Whether a showing's tickets (the QR code for the door) are still worth
+// showing: it hasn't started, or started only a little while ago.
+export function showingStillOn(startsAt: string): boolean {
+  return new Date(startsAt).getTime() > Date.now() - LATE_ARRIVAL_MS;
+}
+
+// upcoming: not started yet, soonest first. past: started, newest first.
+// tonight: today's business day (4 a.m. to 4 a.m.), not started or started
+// within the last two hours: the tickets to show at the door now.
+export async function getMemberScreenings(memberId: string): Promise<{ upcoming: MemberScreening[]; past: MemberScreening[]; tonight: MemberScreening[] }> {
+  const { data, error } = await createAdminClient().from("bookings").select(MEMBER_BOOKING_SELECT).eq("member_id", memberId).eq("status", "confirmed");
   if (error) throw error;
   const now = Date.now();
   const all: MemberScreening[] = [];
-  for (const b of data ?? []) {
-    const s = b.screening as unknown as { starts_at: string; movie: { title: string; poster_url: string | null }; room: { name: string } } | null;
-    if (!s) continue;
-    all.push({ bookingId: b.id, startsAt: s.starts_at, title: s.movie.title, posterUrl: s.movie.poster_url, room: s.room.name.split(" — ")[0], quantity: b.quantity });
+  for (const b of (data ?? []) as unknown as MemberBookingRow[]) {
+    const s = toMemberScreening(b);
+    if (s) all.push(s);
   }
   const t = (x: MemberScreening) => new Date(x.startsAt).getTime();
+  const today = businessDay(new Date(now)).date;
   return {
     upcoming: all.filter((x) => t(x) > now).sort((a, b) => t(a) - t(b)),
     past: all.filter((x) => t(x) <= now).sort((a, b) => t(b) - t(a)),
+    tonight: all.filter((x) => t(x) > now - LATE_ARRIVAL_MS && businessDay(new Date(x.startsAt)).date === today).sort((a, b) => t(a) - t(b)),
   };
 }
 
@@ -394,9 +451,9 @@ export async function getYearStatement(memberId: string, year: number): Promise<
     refunded: sum(inYear.filter((p) => p.status === "refunded").map((p) => p.amount)),
     tax: sum(inYear.filter((p) => p.status === "completed").map((p) => p.tax)),
     points: {
-      earned: sum(yearLedger.filter((l) => l.reason === "purchase" || l.reason === "welcome_bonus").map((l) => l.delta)),
+      earned: sum(yearLedger.filter((l) => l.reason === "purchase" || l.reason === "welcome_bonus" || l.reason === "visit").map((l) => l.delta)),
       redeemed: -sum(yearLedger.filter((l) => l.reason === "redeem").map((l) => l.delta)),
-      other: sum(yearLedger.filter((l) => !["purchase", "welcome_bonus", "redeem"].includes(l.reason)).map((l) => l.delta)),
+      other: sum(yearLedger.filter((l) => !["purchase", "welcome_bonus", "visit", "redeem"].includes(l.reason)).map((l) => l.delta)),
       endBalance: yearLedger[0]?.balanceAfter ?? null,
     },
   };

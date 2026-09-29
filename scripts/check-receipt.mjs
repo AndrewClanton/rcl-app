@@ -92,6 +92,10 @@ check("ticket lines fit the paper", tooWideT.length === 0, tooWideT.map((l) => l
 check("ticket has logo and poster, QR code and a cut", (tXml.match(/<image /g) || []).length === 2 && tXml.includes('<symbol type="qrcode_model_2"') && /<cut type="feed"\/><\/epos-print>$/.test(tXml));
 check("ticket says ADMIT ONE, no price or ticket count", tLines.some((l) => l.text.trim() === "ADMIT ONE") && !/Ticket \d+ of|\$\d/.test(tLines.map((l) => l.text).join("\n")));
 check("ticket title escaped and wrapped", tXml.includes("WALLACE &amp; GROMIT") && tLines.filter((l) => l.big && /GROMIT|CURSE|RABBIT/.test(l.text)).length >= 2);
+check("ticket shows the register order number", tLines.some((l) => l.text.trim() === "Order #7"));
+// An online booking printed at the door goes by its booking number.
+const doorLines = render(ticketXml({ title: "Clue", startsAt: "2026-10-03T01:00:00Z", room: "Main Theater", rating: "PG", runtime: 94, orderNumber: "T-1A2B3C4D", code: "RCL-TKT:T-1A2B3C4D:abcd1234:1" }));
+check("door ticket shows the booking number", doorLines.some((l) => l.text.trim() === "Order T-1A2B3C4D"));
 
 console.log("\nSample receipt:\n" + "=".repeat(48));
 for (const l of lines) {

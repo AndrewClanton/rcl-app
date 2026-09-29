@@ -2,13 +2,18 @@
 
 import { useState } from "react";
 import { drawerXml, testPageXml } from "@/lib/print/receipt";
-import { printerBaseUrl, sendToPrinter, type PrintResult } from "@/lib/print/epos-client";
+import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
+import { STATION_LABEL, STATIONS, type RegisterStation } from "@/lib/print/stations";
 import { listReaders, type ReaderOption } from "../terminal-actions";
+import { getStationPrinterStatus, type StationPrinterStatus } from "../print-actions";
+import { printTargetOf, sendPrint } from "../printing";
 import { saveDeviceSettings, useDeviceSettings } from "./settings";
 
-// The "Devices" button on the register: which card reader and receipt
-// printer are next to this device, whether receipts print on their own, and
-// test buttons for the printer and the cash drawer.
+// The "Devices" button on the register: which register this is (Bar or
+// Outdoor stand), its card reader, how it prints (through the website to
+// the station's printer, or straight to a printer's IP the old way),
+// whether receipts print on their own, and test buttons for the printer and
+// the cash drawer.
 export default function DevicesPanel({
   onReprint,
   onReprintTickets,
@@ -23,6 +28,7 @@ export default function DevicesPanel({
   const [address, setAddress] = useState(settings.printerAddress);
   const [readers, setReaders] = useState<ReaderOption[] | null>(null);
   const [readerError, setReaderError] = useState<string | null>(null);
+  const [stationPrinter, setStationPrinter] = useState<StationPrinterStatus | "loading" | "error">("loading");
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ tone: "ok" | "error"; text: string; certUrl?: string } | null>(null);
 
@@ -33,17 +39,25 @@ export default function DevicesPanel({
     else setReaders(r.readers);
   }
 
+  async function loadStationPrinter(station: RegisterStation) {
+    setStationPrinter("loading");
+    const s = await getStationPrinterStatus(station).catch(() => null);
+    setStationPrinter(s ?? "error");
+  }
+
   async function run(label: string, job: () => Promise<PrintResult>, okText: string) {
     setBusy(label);
     setResult(null);
-    const r = await job();
+    const r = await job().catch((): PrintResult => ({ ok: false, error: "Couldn't reach the printer." }));
     setBusy(null);
-    setResult(r.ok ? { tone: "ok", text: okText } : { tone: "error", text: r.error, certUrl: r.certUrl });
+    setResult(r.ok ? { tone: "ok", text: r.pending ? `${okText} It's in line; the printer hasn't confirmed it yet.` : okText } : { tone: "error", text: r.error, certUrl: r.certUrl });
   }
 
   const readerId = settings.readerId || fallbackReaderId || "";
-  const printerSet = !!settings.printerAddress;
-  const missing = [!readerId && "reader", !printerSet && "printer"].filter(Boolean);
+  const target = printTargetOf(settings);
+  const viaStation = settings.printVia === "station";
+  const missing = [!readerId && "reader", !target && "printer"].filter(Boolean);
+  const stationLabel = STATION_LABEL[settings.station];
 
   return (
     <>
@@ -55,6 +69,7 @@ export default function DevicesPanel({
           setResult(null);
           setOpen(true);
           void loadReaders();
+          if (settings.printVia === "station") void loadStationPrinter(settings.station);
         }}
       >
         Devices{missing.length ? <span style={{ color: "var(--danger-text)" }}> · set up</span> : null}
@@ -70,6 +85,28 @@ export default function DevicesPanel({
             </div>
 
             <section className="space-y-2">
+              <div className="label-xs">Which register is this?</div>
+              <div className="flex gap-2">
+                {STATIONS.map((s) => (
+                  <button
+                    key={s}
+                    className={`chip flex-1 !px-3 !py-2 text-sm ${settings.station === s ? "chip-selected font-bold" : ""}`}
+                    onClick={() => {
+                      saveDeviceSettings({ station: s });
+                      setResult(null);
+                      if (settings.printVia === "station") void loadStationPrinter(s);
+                    }}
+                  >
+                    {STATION_LABEL[s]}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Printed on the kitchen&apos;s order tickets, and picks this register&apos;s printer when it prints through the website.
+              </p>
+            </section>
+
+            <section className="space-y-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
               <div className="label-xs">Card reader next to this register</div>
               {readerError ? (
                 <p className="text-sm" style={{ color: "var(--danger-text)" }}>
@@ -99,47 +136,109 @@ export default function DevicesPanel({
             </section>
 
             <section className="space-y-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-              <label className="block">
-                <div className="label-xs">Receipt printer address on the theater&apos;s network</div>
-                <div className="flex gap-2">
-                  <input
-                    id="printer-address"
-                    className="input flex-1"
-                    inputMode="decimal"
-                    placeholder="e.g. 192.168.1.50"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}
-                  />
-                  <button
-                    className="btn-primary !px-4"
-                    disabled={address.trim() === settings.printerAddress}
-                    onClick={() => {
-                      saveDeviceSettings({ printerAddress: address.trim() });
-                      setResult({ tone: "ok", text: "Saved. Try a test print." });
-                    }}
-                  >
-                    Save
-                  </button>
-                </div>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  To find it: open the printer&apos;s paper cover, hold the Feed button for 3 seconds, then close the cover. It prints a status sheet with the IP address.
-                </p>
+              <div className="label-xs">Receipt printer</div>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="print-via"
+                  id="print-via-station"
+                  className="mt-1"
+                  checked={viaStation}
+                  onChange={() => {
+                    saveDeviceSettings({ printVia: "station" });
+                    setResult(null);
+                    void loadStationPrinter(settings.station);
+                  }}
+                />
+                <span>
+                  <span className="font-bold">Print through the website</span> to the {stationLabel} printer
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="print-via"
+                  id="print-via-direct"
+                  className="mt-1"
+                  checked={!viaStation}
+                  onChange={() => {
+                    saveDeviceSettings({ printVia: "direct" });
+                    setResult(null);
+                  }}
+                />
+                <span>
+                  <span className="font-bold">Print straight to a printer IP</span> (the old way)
+                </span>
               </label>
 
+              {viaStation ? (
+                <div className="rounded-lg border p-3 text-sm" style={{ borderColor: "var(--border)" }}>
+                  {stationPrinter === "loading" ? (
+                    <span style={{ color: "var(--muted)" }}>Checking the {stationLabel} printer…</span>
+                  ) : stationPrinter === "error" ? (
+                    <span style={{ color: "var(--danger-text)" }}>Couldn&apos;t check the printer. Check the connection.</span>
+                  ) : !stationPrinter.set ? (
+                    <span style={{ color: "var(--danger-text)" }}>
+                      No {stationLabel} printer is set up yet. A manager adds it under Back office → Printers. Until then, use &quot;Print straight to a printer IP&quot;.
+                    </span>
+                  ) : (
+                    <span>
+                      <span className="font-bold">{stationPrinter.name}</span>
+                      {" · "}
+                      <span style={{ color: stationPrinter.online ? "var(--success-text, green)" : "var(--danger-text)" }}>{stationPrinter.seen}</span>
+                    </span>
+                  )}
+                  <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                    Receipts, tickets and the drawer go to the website, and the printer collects them. Nothing to accept on this iPad.
+                  </p>
+                </div>
+              ) : (
+                <label className="block">
+                  <div className="label-xs">Printer address on the theater&apos;s network</div>
+                  <div className="flex gap-2">
+                    <input
+                      id="printer-address"
+                      className="input flex-1"
+                      inputMode="decimal"
+                      placeholder="e.g. 192.168.1.50"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                    />
+                    <button
+                      className="btn-primary !px-4"
+                      disabled={address.trim() === settings.printerAddress}
+                      onClick={() => {
+                        saveDeviceSettings({ printerAddress: address.trim() });
+                        setResult({ tone: "ok", text: "Saved. Try a test print." });
+                      }}
+                    >
+                      Save
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                    To find it: open the printer&apos;s paper cover, hold the Feed button for 3 seconds, then close the cover. It prints a status sheet with the IP address.
+                  </p>
+                </label>
+              )}
+
               <div className="flex flex-wrap gap-2">
-                <button className="btn-secondary" disabled={!printerSet || !!busy} onClick={() => run("test", () => sendToPrinter(settings.printerAddress, testPageXml(new Date().toISOString())), "Test page sent to the printer.")}>
+                <button
+                  className="btn-secondary"
+                  disabled={!target || !!busy}
+                  onClick={() => target && run("test", () => sendPrint(target, "test", testPageXml(new Date().toISOString()), "Register test page"), "Test page printed.")}
+                >
                   {busy === "test" ? "Printing…" : "Print a test page"}
                 </button>
-                <button className="btn-secondary" disabled={!printerSet || !!busy} onClick={() => run("drawer", () => sendToPrinter(settings.printerAddress, drawerXml()), "Drawer opened.")}>
+                <button className="btn-secondary" disabled={!target || !!busy} onClick={() => target && run("drawer", () => sendPrint(target, "drawer", drawerXml(), "Drawer (Devices)"), "Drawer opened.")}>
                   {busy === "drawer" ? "Opening…" : "Open cash drawer"}
                 </button>
                 {onReprint && (
-                  <button className="btn-secondary" disabled={!printerSet || !!busy} onClick={() => run("reprint", onReprint, "Last receipt sent to the printer.")}>
+                  <button className="btn-secondary" disabled={!target || !!busy} onClick={() => run("reprint", onReprint, "Last receipt printed.")}>
                     {busy === "reprint" ? "Printing…" : "Reprint last receipt"}
                   </button>
                 )}
                 {onReprintTickets && (
-                  <button className="btn-secondary" disabled={!printerSet || !!busy} onClick={() => run("tickets", onReprintTickets, "Last sale's tickets sent to the printer.")}>
+                  <button className="btn-secondary" disabled={!target || !!busy} onClick={() => run("tickets", onReprintTickets, "Last sale's tickets printed.")}>
                     {busy === "tickets" ? "Printing…" : "Reprint last tickets"}
                   </button>
                 )}
@@ -148,11 +247,11 @@ export default function DevicesPanel({
               {result && (
                 <div className={`notice ${result.tone === "ok" ? "notice-success" : "notice-warn"} text-sm`}>
                   {result.text}
-                  {result.certUrl && (
+                  {result.certUrl && target?.via === "direct" && (
                     <p className="mt-2">
                       First time on this device? Open{" "}
                       <a className="font-bold underline" href={result.certUrl} target="_blank" rel="noreferrer">
-                        {printerBaseUrl(settings.printerAddress)}
+                        {printerBaseUrl(target.address)}
                       </a>
                       , choose <strong>Advanced → Continue</strong> (or <strong>Visit this website</strong>) to trust the printer, then come back and try again.
                     </p>

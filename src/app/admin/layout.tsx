@@ -49,6 +49,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               Team
             </Link>
           )}
+          {hasManagerAccess(staff.role) && (
+            <Link href="/admin/printers" className="hover:underline">
+              Printers
+            </Link>
+          )}
           {/* Managers assign and track; everyone else goes to their own. */}
           <Link href={hasManagerAccess(staff.role) ? "/admin/training" : "/training"} className="hover:underline">
             Training

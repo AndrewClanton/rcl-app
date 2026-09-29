@@ -9,6 +9,8 @@ import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
 import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
+import { sendKitchenTicket } from "@/lib/print/kitchen";
+import { asStation, type RegisterStation } from "@/lib/print/stations";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -48,6 +50,8 @@ export interface DraftFields {
   monthlyMember: boolean;
   pointsRedeemed: boolean;
   lines: CheckoutLine[];
+  // Which register (Devices): printed on the kitchen's order ticket.
+  station?: RegisterStation | null;
 }
 
 export interface DraftOrderSummary {
@@ -220,12 +224,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 
   let orderId: string;
   let orderNumber: number;
+  let wasTab = false;
 
   if (params.draftOrderId) {
-    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number").eq("id", params.draftOrderId).single();
+    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).single();
     if (fetchErr || !existing) throw new Error("Tab no longer exists");
     orderId = params.draftOrderId;
     orderNumber = Number(existing.order_number);
+    wasTab = existing.status === "tab";
     // Only an open tab or held order can be closed, so two closes racing
     // can't both award points and write items.
     const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId).in("status", ["draft", "held", "tab"]).select("id");
@@ -285,6 +291,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
       .then(() => {}, () => {});
   }
 
+  // The kitchen's order ticket: the whole order, or for a tab whatever
+  // hadn't gone to the kitchen yet. Never throws; nothing happens without a
+  // kitchen printer.
+  await sendKitchenTicket(
+    { orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: params.lines },
+    "now",
+  );
+
   revalidate();
   return { orderNumber };
 }
@@ -337,6 +351,12 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
     await supabase.from("orders").delete().eq("id", order.id);
     throw new Error("Couldn't save the items.");
   }
+  // A tab opened with items already rung: the kitchen gets its first
+  // ticket after a short pause for more (lib/print/kitchen.ts). A held
+  // order isn't an order yet, so it doesn't print.
+  if (status === "tab" && fields.lines.length) {
+    await sendKitchenTicket({ orderId: order.id, orderNumber: Number(orderNumber), name: fields.orderName || null, tab: true, station: asStation(fields.station), lines: fields.lines }, "hold");
+  }
   revalidate();
   return order.id;
 }
@@ -347,7 +367,10 @@ const OPEN_DRAFT = ["draft", "held", "tab"];
 // another register), so trying the same save again can't work.
 export type DraftSaveResult = { ok: true } | { ok: false; error: string; closed?: boolean };
 
-export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<DraftSaveResult> {
+// opts.kitchen: for a tab, when what's new since the kitchen's last ticket
+// prints: "hold" (the default, while it's still being rung) or "now" (the
+// tab is being put away).
+export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals, opts?: { kitchen?: "hold" | "now" }): Promise<DraftSaveResult> {
   await assertStaff();
   const supabase = createAdminClient();
   const { data: updated, error } = await supabase
@@ -371,7 +394,7 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
     // Only an order that's still held or an open tab: a register with an
     // out-of-date list must never rewrite a sale that's already been paid.
     .in("status", OPEN_DRAFT)
-    .select("id");
+    .select("id, order_number, status");
   if (error) {
     console.error("draft save failed", id, error.message);
     return { ok: false, error: "Couldn't save the tab." };
@@ -381,6 +404,13 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
   if (!items.ok) {
     console.error("draft items not saved", id, items.error);
     return { ok: false, error: "Couldn't save the tab's items." };
+  }
+  // Anything added to a tab goes to the kitchen as an ADD-ON ticket.
+  if (updated[0].status === "tab") {
+    await sendKitchenTicket(
+      { orderId: id, orderNumber: Number(updated[0].order_number), name: fields.orderName || null, tab: true, station: asStation(fields.station), lines: fields.lines },
+      opts?.kitchen === "now" ? "now" : "hold",
+    );
   }
   revalidate();
   return { ok: true };

@@ -175,6 +175,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             Monthly
           </span>
         )}
+        {member.tagline && <span className="basis-full text-sm italic">“{member.tagline}” <span className="not-italic text-xs text-[var(--muted)]">(their line, shown at check-in)</span></span>}
         <span className="ml-auto text-xs text-[var(--muted)]">
           Member since {new Date(member.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
         </span>

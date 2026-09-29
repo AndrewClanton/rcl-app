@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import TicketReservation from "./TicketReservation";
+import TicketCard, { type TicketCardTicket } from "@/components/TicketCard";
 import { SpecFoot } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
@@ -84,10 +85,14 @@ export default async function ScreeningDetailPage({
   // 'confirmed' in the DB; this is purely about what message to show the
   // customer who just got redirected back here.
   let paymentConfirmed = false;
+  let paidBookingId: string | null = null;
   if (checkout === "success" && session_id) {
     try {
       const session = await getStripe().checkout.sessions.retrieve(session_id);
       paymentConfirmed = session.payment_status === "paid";
+      // The booking it paid for, for its ticket code below (only if the
+      // session was for this showing).
+      if (paymentConfirmed && session.metadata?.screening_id === id) paidBookingId = session.metadata?.booking_id ?? null;
     } catch {
       paymentConfirmed = false;
     }
@@ -106,6 +111,28 @@ export default async function ScreeningDetailPage({
       .maybeSingle();
     freeEntryConfirmed = booking?.status === "confirmed";
   }
+
+  // The tickets they just got, with the QR code for the door. A paid
+  // booking can still read "pending" for a moment until Stripe's webhook
+  // lands; its code works at the door once it has.
+  let ticket: TicketCardTicket | null = null;
+  let savedToAccount = false;
+  const newBookingId = paymentConfirmed ? paidBookingId : freeEntryConfirmed ? booking_id : null;
+  if (newBookingId) {
+    const { data: b } = await createAdminClient().from("bookings").select("id, quantity, member_id, status").eq("id", newBookingId).eq("screening_id", id).maybeSingle();
+    if (b && (b.status === "confirmed" || b.status === "pending")) {
+      ticket = {
+        bookingId: b.id,
+        title: screening.movie.title,
+        posterUrl: screening.movie.poster_url,
+        startsAt: screening.starts_at,
+        room: screening.room.name.split(" — ")[0],
+        quantity: b.quantity,
+      };
+      savedToAccount = !!b.member_id;
+    }
+  }
+  const keepIt = savedToAccount ? "Your tickets are saved in your account too, under Movies." : "Take a screenshot so it's handy at the door.";
 
   const when = new Date(screening.starts_at);
   const day = when.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" });
@@ -166,16 +193,24 @@ export default async function ScreeningDetailPage({
           </section>
 
           {paymentConfirmed ? (
-            <div className="sheet p-5">
-              <span className="ctag ctag-yellow">Paid</span>
-              <h2 className="font-display mt-3 text-2xl">You&apos;re all set.</h2>
-              <p className="mt-2 text-[15px]">Your tickets are confirmed. Stripe emailed your receipt. See you at {time}.</p>
+            <div className="space-y-7">
+              <div className="sheet p-5">
+                <span className="ctag ctag-yellow">Paid</span>
+                <h2 className="font-display mt-3 text-2xl">You&apos;re all set.</h2>
+                <p className="mt-2 text-[15px]">Your tickets are confirmed. Stripe emailed your receipt. See you at {time}.</p>
+                {ticket && <p className="mt-2 text-[15px]">{keepIt}</p>}
+              </div>
+              {ticket && <TicketCard t={ticket} />}
             </div>
           ) : freeEntryConfirmed ? (
-            <div className="sheet p-5">
-              <span className="ctag ctag-yellow">Insiders+</span>
-              <h2 className="font-display mt-3 text-2xl">You&apos;re in.</h2>
-              <p className="mt-2 text-[15px]">Your membership covered this ticket, no charge. See you at {time}.</p>
+            <div className="space-y-7">
+              <div className="sheet p-5">
+                <span className="ctag ctag-yellow">Insiders+</span>
+                <h2 className="font-display mt-3 text-2xl">You&apos;re in.</h2>
+                <p className="mt-2 text-[15px]">Your membership covered this ticket, no charge. See you at {time}.</p>
+                {ticket && <p className="mt-2 text-[15px]">{keepIt}</p>}
+              </div>
+              {ticket && <TicketCard t={ticket} />}
             </div>
           ) : (
           <>

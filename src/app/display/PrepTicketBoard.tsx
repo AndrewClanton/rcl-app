@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
-import { setItemReady } from "./actions";
+import { reprintOrderTicket, setItemReady } from "./actions";
 
 function timeAgo(iso: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -21,6 +21,19 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
   const [tickets, setTickets] = useState(initialTickets);
   const [connected, setConnected] = useState(false);
   const [, forceTick] = useState(0);
+  // "Reprint ticket" on a card: which order is printing, and how it went.
+  const [reprinting, setReprinting] = useState<number | null>(null);
+  const [reprinted, setReprinted] = useState<{ orderNumber: number; ok: boolean; text: string } | null>(null);
+
+  async function reprint(orderNumber: number, orderId: string) {
+    setReprinting(orderNumber);
+    setReprinted(null);
+    const r = await reprintOrderTicket(orderId).catch(() => null);
+    setReprinting(null);
+    const note = !r ? { ok: false, text: "Couldn't reach the website. Try again." } : r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error };
+    setReprinted({ orderNumber, ...note });
+    setTimeout(() => setReprinted((cur) => (cur?.orderNumber === orderNumber ? null : cur)), 8000);
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -162,6 +175,20 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                     {items[0].order_name}
                   </div>
                 )}
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <button
+                    className="chip !px-3 !py-1 text-xs font-bold"
+                    disabled={reprinting === orderNumber}
+                    onClick={() => void reprint(orderNumber, items[0].order_id)}
+                  >
+                    {reprinting === orderNumber ? "Sending…" : "Reprint ticket"}
+                  </button>
+                  {reprinted?.orderNumber === orderNumber && (
+                    <span className="text-xs font-semibold" style={{ color: reprinted.ok ? "var(--success-text)" : "var(--danger-text)" }} role="status">
+                      {reprinted.text}
+                    </span>
+                  )}
+                </div>
                 <div className="space-y-2">
                   {items.map((item) => (
                     <button

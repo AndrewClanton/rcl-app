@@ -7,7 +7,8 @@
 // request carries only an opaque, sealed reference (lib/checkin-server.ts)
 // that the register trades for the details through a staff-only server
 // action. After staff confirm, the screen gets a first name and a points
-// balance, never anything else.
+// balance, never anything else -- plus, for a member with no website login
+// yet, a claim link (lib/claim-link.ts) to show as a QR code.
 //
 // Events:
 //   screen -> register  "checkin-request"   CheckinRequest (resent until seen)
@@ -20,6 +21,8 @@
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
+import type { RewardKind } from "@/lib/visits";
+
 export type CheckinKind = "known" | "new";
 
 export interface CheckinRequest {
@@ -31,8 +34,15 @@ export interface CheckinRequest {
 export interface CheckinConfirmed {
   id: string;
   firstName: string;
-  points: number;
+  points: number; // balance, after any visit points
   isNew: boolean;
+  // Today's visit (lib/visits.ts): its points, streak, and any reward.
+  // Missing if the visit couldn't be saved.
+  visit?: { earned: number; streak: number; alreadyToday: boolean; reward: RewardKind | null };
+  // "Scan to see your points online": a member with no login yet, confirmed
+  // by staff (pos/checkin-actions.ts confirmVisit). The screen only shows it
+  // if it passes isClaimUrl.
+  claimUrl?: string;
 }
 
 export interface PointsEarned {

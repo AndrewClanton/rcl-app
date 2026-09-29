@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 
-export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance";
+export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit";
 
 export async function applyPoints(args: {
   memberId: string;

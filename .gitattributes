@@ -1,0 +1,3 @@
+# The Raspberry Pi print relay runs on Linux: keep its files with Linux line
+# endings even in a Windows checkout, so they can be copied straight over.
+scripts/pi-print-relay/* text eol=lf

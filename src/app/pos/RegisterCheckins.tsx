@@ -5,8 +5,13 @@ import { createClient } from "@/lib/supabase/client";
 import MemberAvatar from "@/components/MemberAvatar";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
-import { createCheckinMember, resolveCheckin, type CheckinCard } from "./checkin-actions";
+import { REWARD_LABEL } from "@/lib/visits";
+import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
+import { getMemberTicketsToday } from "./scan-actions";
+import { printDoorTickets } from "./door-print";
+import { usePrintTarget } from "./printing";
+import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -55,6 +60,12 @@ function phoneEnding(m: PosMember) {
 //
 // PosApp passes the order's member and its setter, whether an order is open,
 // and the last sale's receipt (how this hears a sale completed).
+//
+// Confirming is a visit (lib/visits.ts): Check in pays today's streak
+// points without touching the order, so a group can check in as they walk
+// in and buy later; "+ add to order" also puts them on the order. Everyone
+// checked in today is under "Here today", faces first, so staff learn names
+// and can put someone on an order with one tap.
 export default function RegisterCheckins({
   registerTopic,
   member,
@@ -75,6 +86,13 @@ export default function RegisterCheckins({
   // gets cleared first (New tab, Clear), one tap puts them back.
   const [recent, setRecent] = useState<{ member: PosMember; at: number } | null>(null);
   const [now, setNow] = useState(0);
+  const [here, setHere] = useState<HereToday[]>([]);
+  const [hereOpen, setHereOpen] = useState(false);
+  // Tickets bought online for today by whoever just checked in: one tap
+  // prints them, instead of scanning.
+  const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
   // Requests answered here, so a screen that missed the answer can get it
   // again, and every request already on screen (screens resend until seen).
@@ -113,22 +131,74 @@ export default function RegisterCheckins({
     send("checkin-seen", { id });
   }
 
-  function attach(p: Pending, m: PosMember, isNew: boolean, note: string | null) {
+  // Staff said "that's them": today's visit (streak points, maybe a
+  // reward), and with addToOrder, onto the order too.
+  async function confirm(p: Pending, m: PosMember, isNew: boolean, note: string | null, addToOrder: boolean) {
+    patch(p.id, { working: true, error: null });
+    const r = await confirmVisit(m.id).catch(() => null);
+    const visit = r?.ok ? r.visit : null;
     const already = member?.id === m.id;
-    onAttach(m);
-    const confirmed: CheckinConfirmed = { id: p.id, firstName: firstNameOf(m.name), points: Math.round(m.points), isNew };
+    if (addToOrder) {
+      onAttach(m);
+      setRecent({ member: m, at: clock() });
+    }
+    const confirmed: CheckinConfirmed = {
+      id: p.id,
+      firstName: firstNameOf(m.name),
+      points: Math.round(visit ? visit.balance : m.points),
+      isNew,
+      ...(visit ? { visit: { earned: visit.earned, streak: visit.streak, alreadyToday: visit.alreadyToday, reward: visit.reward } } : {}),
+      // No website login yet: the tablet shows a QR code to set one up.
+      ...(r?.ok && r.claimUrl ? { claimUrl: r.claimUrl } : {}),
+    };
     answer(p.id, "checkin-confirmed", confirmed);
-    setRecent({ member: m, at: clock() });
-    const where = already ? " They were already on this order." : hasOrder ? " They're on this order." : " They'll be on the next order you ring up.";
-    setNotice(`${isNew ? `New regular ${m.name} is set up.` : `${m.name} checked in.`}${where}${note ? ` ${note}` : ""}`);
+    // Their tickets for today, if they bought any online: a Print row here,
+    // and the tickets on the customer screen. A separate message, so the
+    // confirmation above never waits on it.
+    void getMemberTicketsToday(m.id)
+      .then((t) => {
+        if (!t.ok || t.tickets.length === 0) return;
+        setTonight({ member: m, tickets: t.tickets });
+        const shown: CheckinTickets = { id: p.id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
+        send("checkin-tickets", shown);
+      })
+      .catch(() => {});
+    const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
+    if (visit?.alreadyToday) bits.push("Already checked in today, so no new points.");
+    else if (visit) bits.push(`Day ${visit.streak} streak, +${visit.earned} pts.`);
+    else bits.push("Their visit points didn't save; check them in again later.");
+    if (visit?.reward) bits.push(`They earned: ${REWARD_LABEL[visit.reward]}! Redeem it from their member panel.`);
+    if (addToOrder) bits.push(already ? "Already on this order." : hasOrder ? "On this order." : "They'll be on the next order.");
+    if (note) bits.push(note);
+    setNotice(bits.join(" "));
+    void refreshHere();
   }
 
-  async function create(p: Pending, existingId: string | null) {
+  async function create(p: Pending, existingId: string | null, addToOrder: boolean) {
     patch(p.id, { working: true, error: null });
     const r = await createCheckinMember(p.ref, existingId).catch(() => null);
     if (!r) return patch(p.id, { working: false, error: OFFLINE });
     if (!r.ok) return patch(p.id, { working: false, error: r.error });
-    attach(p, r.member, r.isNew, r.note);
+    await confirm(p, r.member, r.isNew, r.note, addToOrder);
+  }
+
+  async function printTonight() {
+    if (!tonight || printing) return;
+    setPrinting(true);
+    const messages: string[] = [];
+    for (const t of tonight.tickets.filter((x) => x.printable)) {
+      const r = await printDoorTickets(printTarget, t.bookingId).catch(() => null);
+      messages.push(!r ? OFFLINE : r.ok ? r.message : r.error);
+    }
+    const fresh = await getMemberTicketsToday(tonight.member.id).catch(() => null);
+    setTonight(fresh?.ok && fresh.tickets.length ? { member: tonight.member, tickets: fresh.tickets } : null);
+    setPrinting(false);
+    if (messages.length) setNotice(messages.join(" "));
+  }
+
+  async function refreshHere() {
+    const list = await getHereToday().catch(() => null);
+    if (list) setHere(list);
   }
 
   function decline(p: Pending) {
@@ -162,7 +232,19 @@ export default function RegisterCheckins({
     if (!payload || typeof payload.id !== "string") return;
     remember(payload.id, event, payload);
     setPending((ps) => ps.filter((p) => p.id !== payload.id));
+    if (event === "checkin-confirmed") void refreshHere();
   });
+
+  // Here today: on load, then every couple of minutes.
+  const loadHere = useEffectEvent(() => void refreshHere());
+  useEffect(() => {
+    const first = setTimeout(() => loadHere(), 0);
+    const timer = setInterval(() => loadHere(), 120_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     const supabase = createClient();
@@ -236,7 +318,7 @@ export default function RegisterCheckins({
   }, [lastSale]);
 
   const showRecent = !!recent && !member && pending.length === 0;
-  if (!pending.length && !notice && !showRecent) return null;
+  if (!pending.length && !notice && !showRecent && !here.length && !tonight) return null;
 
   return (
     <div className="fixed right-3 top-3 z-40 m-0 flex max-h-[calc(100dvh-1.5rem)] w-[min(23rem,calc(100vw-1.5rem))] flex-col items-end gap-2 overflow-y-auto p-1">
@@ -245,6 +327,8 @@ export default function RegisterCheckins({
           {notice}
         </div>
       )}
+
+      {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
 
       {showRecent && recent && (
         <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
@@ -280,7 +364,7 @@ export default function RegisterCheckins({
           >
             <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--foreground)" }}>
               <span className="font-display flex-1 text-xs uppercase tracking-wide">
-                {p.kind === "new" ? "New regular" : "Check-in for points"}
+                {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
               </span>
               <span className="text-[11px]">{ago(Math.max(0, now - p.at))}</span>
               <button className="text-[11px] font-bold underline" onClick={() => setCollapsed(true)}>
@@ -297,13 +381,21 @@ export default function RegisterCheckins({
                   current={member}
                   hasOrder={hasOrder}
                   working={p.working}
-                  onAttach={(m) => attach(p, m, false, null)}
+                  onConfirm={(m, addToOrder) => confirm(p, m, p.card?.kind === "known" && p.card.fresh === true, null, addToOrder)}
                   onDecline={() => decline(p)}
                 />
               )}
 
               {p.card?.kind === "new" && (
-                <NewCard card={p.card} current={member} working={p.working} onCreate={() => create(p, null)} onAttachExisting={(id) => create(p, id)} onCancel={() => decline(p)} />
+                <NewCard
+                  card={p.card}
+                  current={member}
+                  hasOrder={hasOrder}
+                  working={p.working}
+                  onCreate={(addToOrder) => create(p, null, addToOrder)}
+                  onAttachExisting={(id) => create(p, id, true)}
+                  onCancel={() => decline(p)}
+                />
               )}
 
               {p.error && (
@@ -326,6 +418,123 @@ export default function RegisterCheckins({
             </div>
           </div>
         ))}
+
+      {here.length > 0 && pending.length === 0 && (
+        <HereTodayPanel here={here} open={hereOpen} onToggle={() => setHereOpen((o) => !o)} current={member} onAttach={(m) => onAttach(m)} />
+      )}
+    </div>
+  );
+}
+
+// "🎟 2 tickets today · Print": online tickets for someone who just checked
+// in. Print claims and prints them (one print per ticket, like a scan);
+// tickets that already have paper show as printed.
+function TonightTickets({
+  tonight,
+  printing,
+  onPrint,
+  onDismiss,
+}: {
+  tonight: { member: PosMember; tickets: DoorTicket[] };
+  printing: boolean;
+  onPrint: () => void;
+  onDismiss: () => void;
+}) {
+  const toPrint = tonight.tickets.filter((t) => t.printable);
+  const count = tonight.tickets.reduce((n, t) => n + t.quantity, 0);
+  const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  return (
+    <div className="w-full rounded-lg border-2 bg-[var(--surface)] p-2.5 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1">
+          <strong>
+            🎟 {firstNameOf(tonight.member.name)}: {count} ticket{count === 1 ? "" : "s"} today
+          </strong>
+        </span>
+        {toPrint.length > 0 ? (
+          <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" disabled={printing} onClick={onPrint}>
+            {printing ? "Printing…" : "Print"}
+          </button>
+        ) : (
+          <span className="shrink-0 text-xs font-bold" style={{ color: "var(--muted)" }}>
+            Printed
+          </span>
+        )}
+        <button className="shrink-0 px-1 text-base" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={onDismiss}>
+          ×
+        </button>
+      </div>
+      <ul className="mt-1 space-y-0.5 text-xs" style={{ color: "var(--muted)" }}>
+        {tonight.tickets.map((t) => (
+          <li key={t.bookingId}>
+            {t.quantity}× {t.title} · {time(t.startsAt)} · {t.room}
+            {t.printable ? "" : " · printed"}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// "Here today": everyone checked in this business day, newest first, with
+// big faces and names, so staff can greet regulars by name and put someone
+// on an order when they buy later.
+function HereTodayPanel({ here, open, onToggle, current, onAttach }: { here: HereToday[]; open: boolean; onToggle: () => void; current: PosMember | null; onAttach: (m: PosMember) => void }) {
+  return (
+    <div className="w-full overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
+      <button className="flex w-full items-center gap-2 px-3 py-2 text-left" style={{ background: "var(--foreground)", color: "var(--gold)" }} onClick={onToggle} aria-expanded={open}>
+        <span className="font-display flex-1 text-xs uppercase tracking-wide">Here today · {here.length}</span>
+        <span className="flex -space-x-2">
+          {here.slice(0, 5).map((h) => (
+            <MemberAvatar key={h.member.id} name={h.member.name} url={h.member.avatar_url} size={24} />
+          ))}
+        </span>
+        <span aria-hidden="true">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <ul className="max-h-[60dvh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
+          {here.map((h) => (
+            <li key={h.member.id} className="flex items-center gap-3 px-3 py-2.5">
+              <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={52} plus={h.member.tier === "Insiders+"} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-base font-bold leading-tight">{h.member.name}</div>
+                <div className="text-xs" style={{ color: "var(--muted)" }}>
+                  {new Date(h.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
+                  {h.streak ? ` · day ${h.streak} streak` : ""}
+                </div>
+                {h.member.tagline && <div className="truncate text-xs italic">“{h.member.tagline}”</div>}
+              </div>
+              {current?.id === h.member.id ? (
+                <span className="shrink-0 text-xs font-bold" style={{ color: "var(--success-text)" }}>
+                  On order
+                </span>
+              ) : (
+                <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => onAttach(h.member)}>
+                  Add to order
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Big face and name, so staff can put the two together and greet them by
+// name next time. Their own line from their account, if they wrote one.
+function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={m.tier === "Insiders+"} />
+      <div className="min-w-0 flex-1">
+        <div className="text-2xl font-black leading-tight">{m.name}</div>
+        <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
+          {phoneLast4 ? `Phone ending ${phoneLast4} · ` : ""}
+          {m.tier} · {pts(m.points)}
+        </div>
+        {m.tagline && <div className="mt-1 text-sm italic leading-snug">“{m.tagline}”</div>}
+      </div>
     </div>
   );
 }
@@ -347,43 +556,46 @@ function OrderNote({ current, target, hasOrder }: { current: PosMember | null; t
   return null;
 }
 
+function ConfirmButtons({ working, hasOrder, onConfirm, onNo, noLabel }: { working: boolean; hasOrder: boolean; onConfirm: (addToOrder: boolean) => void; onNo: () => void; noLabel: string }) {
+  return (
+    <div className="grid gap-2">
+      <button className="btn-primary w-full !py-3 !text-base" disabled={working} onClick={() => onConfirm(false)}>
+        {working ? "Checking in…" : "✓ Check in"}
+      </button>
+      <div className="flex gap-2">
+        <button className="btn-secondary flex-[3] !py-2" disabled={working} onClick={() => onConfirm(true)}>
+          Check in + {hasOrder ? "add to this order" : "next order"}
+        </button>
+        <button className="btn-secondary flex-[2] !py-2" disabled={working} onClick={onNo}>
+          {noLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function KnownCard({
   card,
   current,
   hasOrder,
   working,
-  onAttach,
+  onConfirm,
   onDecline,
 }: {
   card: Extract<CheckinCard, { kind: "known" }>;
   current: PosMember | null;
   hasOrder: boolean;
   working: boolean;
-  onAttach: (m: PosMember) => void;
+  onConfirm: (m: PosMember, addToOrder: boolean) => void;
   onDecline: () => void;
 }) {
   if (card.matches.length === 1) {
     const m = card.matches[0];
     return (
       <>
-        <div className={`flex items-center gap-3 ${m.tier === "Insiders+" ? "pb-2" : ""}`}>
-          <MemberAvatar name={m.name} url={m.avatar_url} size={64} plus={m.tier === "Insiders+"} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-base font-bold">{m.name}</div>
-            <div className="text-xs" style={{ color: "var(--muted)" }}>
-              Phone ending {card.phoneLast4} · {m.tier} · {pts(m.points)}
-            </div>
-          </div>
-        </div>
+        <Face m={m} phoneLast4={card.phoneLast4} />
         <OrderNote current={current} target={m} hasOrder={hasOrder} />
-        <div className="flex gap-2">
-          <button className="btn-primary flex-1 !py-2.5" disabled={working} onClick={() => onAttach(m)}>
-            Attach
-          </button>
-          <button className="btn-secondary flex-1 !py-2.5" disabled={working} onClick={onDecline}>
-            Not them
-          </button>
-        </div>
+        <ConfirmButtons working={working} hasOrder={hasOrder} onConfirm={(add) => onConfirm(m, add)} onNo={onDecline} noLabel="Not them" />
       </>
     );
   }
@@ -404,8 +616,8 @@ function KnownCard({
               {current?.id === m.id ? " · on this order" : ""}
             </div>
           </div>
-          <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" disabled={working} onClick={() => onAttach(m)}>
-            Attach
+          <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" disabled={working} onClick={() => onConfirm(m, false)}>
+            Check in
           </button>
         </div>
       ))}
@@ -429,6 +641,7 @@ function KnownCard({
 function NewCard({
   card,
   current,
+  hasOrder,
   working,
   onCreate,
   onAttachExisting,
@@ -436,16 +649,18 @@ function NewCard({
 }: {
   card: Extract<CheckinCard, { kind: "new" }>;
   current: PosMember | null;
+  hasOrder: boolean;
   working: boolean;
-  onCreate: () => void;
+  onCreate: (addToOrder: boolean) => void;
   onAttachExisting: (id: string) => void;
   onCancel: () => void;
 }) {
   const match = card.emailMatch;
   return (
     <>
-      <div className="text-base">
-        New regular: <strong>{card.firstName}</strong> · {card.phone}
+      <div className="text-2xl font-black leading-tight">{card.firstName}</div>
+      <div className="text-xs" style={{ color: "var(--muted)" }}>
+        New regular · {card.phone}
       </div>
       {card.email && (
         <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
@@ -477,7 +692,7 @@ function NewCard({
             </div>
           </div>
           <div className="flex gap-2">
-            <button className="btn-secondary flex-1 !py-2" disabled={working} onClick={onCreate}>
+            <button className="btn-secondary flex-1 !py-2" disabled={working} onClick={() => onCreate(false)}>
               {working ? "Working…" : "Create new"}
             </button>
             <button className="btn-secondary flex-1 !py-2" disabled={working} onClick={onCancel}>
@@ -486,14 +701,7 @@ function NewCard({
           </div>
         </>
       ) : (
-        <div className="flex gap-2">
-          <button className="btn-primary flex-[3] !py-2.5" disabled={working} onClick={onCreate}>
-            {working ? "Creating…" : "Create & attach"}
-          </button>
-          <button className="btn-secondary flex-[2] !py-2.5" disabled={working} onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
+        <ConfirmButtons working={working} hasOrder={hasOrder} onConfirm={onCreate} onNo={onCancel} noLabel="Cancel" />
       )}
     </>
   );

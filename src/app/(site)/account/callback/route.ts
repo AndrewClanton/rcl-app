@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { safePath } from "@/lib/safe-path";
 import { createClient } from "@/lib/supabase/server";
 import { linkMemberForUser } from "@/lib/member-link";
+import { isClaimPath } from "@/lib/claim-link";
 
 // Where Google and Facebook send people back after "Continue with ...". Finishes the
 // sign-in (PKCE code exchange, using the verifier cookie this browser set
@@ -16,7 +17,15 @@ export async function GET(req: NextRequest) {
   // in a cookie (see AccountForm); otherwise the ?next= param.
   const fromCookie = req.cookies.get("rcl_after_sign_in")?.value;
   const safeNext = safePath(fromCookie ? decodeURIComponent(fromCookie) : null) ?? safePath(url.searchParams.get("next")) ?? "/account";
-  const fail = (reason: string) => NextResponse.redirect(new URL(`/account/login?error=${encodeURIComponent(reason)}`, url.origin));
+  // Signing in from a "claim your account" link: that page attaches the
+  // login to the account the link was made for, so it isn't matched by
+  // email or given a new account here -- and a cancelled sign-in goes back
+  // to the link rather than the plain sign-in page.
+  const claiming = isClaimPath(safeNext);
+  const fail = (reason: string) =>
+    NextResponse.redirect(
+      new URL(claiming ? `${safeNext}${safeNext.includes("?") ? "&" : "?"}error=${encodeURIComponent(reason)}` : `/account/login?error=${encodeURIComponent(reason)}`, url.origin),
+    );
 
   if (url.searchParams.get("error")) return fail("oauth_cancelled");
   if (!code) return fail("oauth_failed");
@@ -24,6 +33,12 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error || !data.user) return fail("oauth_failed");
+
+  if (claiming) {
+    const res = NextResponse.redirect(new URL(safeNext, url.origin));
+    if (fromCookie) res.cookies.delete("rcl_after_sign_in");
+    return res;
+  }
 
   const linked = await linkMemberForUser(data.user);
   if (!linked.ok) {

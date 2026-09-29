@@ -35,17 +35,26 @@ type Provider = "google" | "facebook";
 
 const AFTER_SIGN_IN_COOKIE = "rcl_after_sign_in";
 
+// claimToken: signing in from a "claim your account" link (/account/claim,
+// lib/member-claim.ts). `next` is then that link. The login isn't matched
+// to an account by email here: the claim page attaches it to the account
+// the link was made for. The account already has a name, so none is asked.
 export default function AccountForm({
   providers = { google: false, facebook: false },
   initialError = null,
   next = null,
+  claimToken = null,
 }: {
   providers?: { google: boolean; facebook: boolean };
   initialError?: string | null;
   next?: string | null;
+  claimToken?: string | null;
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>("signin");
+  const claiming = !!claimToken && !!next;
+  // Most people claiming an account have no login yet.
+  const [mode, setMode] = useState<Mode>(claiming ? "signup" : "signin");
+  const [confirmSent, setConfirmSent] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -73,7 +82,7 @@ export default function AccountForm({
   }
   const [resetSent, setResetSent] = useState(false);
 
-  const canSubmit = email.includes("@") && password.length >= 6 && (mode === "signin" || name.trim().length > 0);
+  const canSubmit = email.includes("@") && password.length >= 6 && (mode === "signin" || claiming || name.trim().length > 0);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -90,12 +99,26 @@ export default function AccountForm({
         return;
       }
     } else {
-      const { error } = await supabase.auth.signUp({ email, password });
+      // A new login from a claim link carries the link, so if Supabase
+      // asks them to confirm their email first, that confirmation doesn't
+      // make them a second, empty account (see pendingClaimFor).
+      const { data, error } = await supabase.auth.signUp({ email, password, ...(claiming ? { options: { data: { rcl_claim: claimToken } } } : {}) });
       if (error) {
         setError(error.message);
         setSubmitting(false);
         return;
       }
+      if (claiming && !data.session) {
+        setConfirmSent(true);
+        setSubmitting(false);
+        return;
+      }
+    }
+
+    // The claim page attaches this login to their account.
+    if (claiming && next) {
+      window.location.assign(next);
+      return;
     }
 
     // Not just the signup path -- an auth user can exist without a linked
@@ -137,6 +160,17 @@ export default function AccountForm({
       return;
     }
     setResetSent(true);
+  }
+
+  if (confirmSent) {
+    return (
+      <div className="notice notice-success">
+        <h2 className="text-lg font-semibold">Check your email</h2>
+        <p className="mt-2 text-sm opacity-90">
+          We sent a link to {email}. Open it to confirm your address, then come back to this page to finish.
+        </p>
+      </div>
+    );
   }
 
   if (resetSent) {
@@ -202,11 +236,11 @@ export default function AccountForm({
             setError(null);
           }}
         >
-          Create account
+          {claiming ? "New login" : "Create account"}
         </button>
       </div>
 
-      {mode === "signup" && (
+      {mode === "signup" && !claiming && (
         <label className="mb-3 block">
           <div className="label-xs">Name</div>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
@@ -232,7 +266,7 @@ export default function AccountForm({
       {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
       <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting}>
-        {submitting ? "Please wait..." : mode === "signin" ? "Sign in" : "Create account — it's free"}
+        {submitting ? "Please wait..." : mode === "signin" ? "Sign in" : claiming ? "Create my login" : "Create account — it's free"}
       </button>
 
       {mode === "signin" && (

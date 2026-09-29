@@ -6,7 +6,10 @@ import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
 import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
 import { sameEmail } from "@/lib/email-match";
 import { allowAttempt } from "@/lib/rate-limit";
-import { getPosMember, type PosMember } from "./member-actions";
+import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
+import { openRewards, recordVisit, redeemReward, todaysVisitors, unredeemReward, type OpenReward } from "@/lib/visits-server";
+import type { VisitResult } from "@/lib/visits";
+import { issueClaimLink } from "@/lib/member-claim";
 
 // The register's half of check-in for points (the customer screen's half is
 // in display/customer/actions.ts). Staff-only: this is where a sealed
@@ -15,7 +18,8 @@ import { getPosMember, type PosMember } from "./member-actions";
 // attached or created.
 
 export type CheckinCard =
-  | { kind: "known"; phoneLast4: string; matches: PosMember[] }
+  // fresh: the tablet just made this account for a new customer.
+  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean }
   | {
       kind: "new";
       firstName: string;
@@ -43,7 +47,7 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
     // Usually one; a shared family number can have a few.
     const matches = (await Promise.all(found.ids.slice(0, 4).map((id) => getPosMember(id)))).filter((m): m is PosMember => !!m);
     if (!matches.length) return { ok: false, error: "No account has that number anymore. Look them up by name instead." };
-    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches } };
+    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches, fresh: c.fresh === true } };
   }
 
   const matchId = c.email ? await memberIdWithEmail(c.email) : null;
@@ -134,4 +138,70 @@ export async function createCheckinMember(ref: string, existingId: string | null
   const member = await getPosMember(data.id);
   if (!member) return { ok: false, error: OFFLINE };
   return { ok: true, member, isNew: true, note };
+}
+
+// ---------- visits, streaks and rewards (lib/visits.ts) ----------
+
+export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null } | { ok: false; error: string };
+
+// A member confirmed at the door gets one "finish on your phone" link per
+// this long (the tablet already made one if it just created the account).
+const CLAIM_LINK_EVERY_MS = 10 * 60_000;
+
+// Staff tapped Check in: today's visit, with its streak points and any
+// streak reward. Once a day per member; a repeat says so and pays nothing.
+// A member with no website login also gets a claim link (lib/member-claim.ts)
+// for the tablet to show as a QR code: only here, once staff have said it's
+// them, never from the number typed at the screen alone. Not for anyone with
+// billing on file (Insiders+, a Stripe customer): they just typed their whole
+// number in front of the line, so someone behind them knows the last four
+// the claim page asks for, and the account holds a billing portal. Theirs
+// comes on their receipt, which is handed to them.
+async function tabletClaimLink(memberId: string): Promise<string | null> {
+  const { data: m } = await createAdminClient().from("members").select("tier, stripe_customer_id, stripe_subscription_id").eq("id", memberId).maybeSingle();
+  if (!m || m.tier === "Insiders+" || m.stripe_customer_id || m.stripe_subscription_id) return null;
+  return issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS });
+}
+
+export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
+  const staff = await assertStaff();
+  const visit = await recordVisit(memberId, staff.employeeId);
+  if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
+  const [rewards, claimUrl] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId)]);
+  return { ok: true, visit, rewards, claimUrl };
+}
+
+export interface HereToday {
+  member: PosMember;
+  at: string;
+  streak: number | null;
+}
+
+// Everyone who's checked in today, newest first: faces and names for the
+// staff, and a quick way to put someone on an order when they buy later.
+export async function getHereToday(): Promise<HereToday[]> {
+  await assertStaff();
+  const visits = await todaysVisitors();
+  const members = await getPosMembers(visits.map((v) => v.memberId));
+  const byId = new Map(members.map((m) => [m.id, m]));
+  return visits.flatMap((v) => {
+    const member = byId.get(v.memberId);
+    return member ? [{ member, at: v.at, streak: v.streak }] : [];
+  });
+}
+
+export async function getMemberRewards(memberId: string): Promise<OpenReward[]> {
+  await assertStaff();
+  return openRewards(memberId);
+}
+
+// Redeem puts the reward on the order at $0; Undo gives it back.
+export async function redeemMemberReward(id: string): Promise<boolean> {
+  const staff = await assertStaff();
+  return redeemReward(id, staff.employeeId);
+}
+
+export async function undoMemberReward(id: string): Promise<void> {
+  await assertStaff();
+  await unredeemReward(id);
 }

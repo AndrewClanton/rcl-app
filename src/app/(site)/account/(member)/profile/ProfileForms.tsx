@@ -5,13 +5,14 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { setEmailOptIn, updateMyProfile } from "../../actions";
 
-export function ProfileDetailsForm({ name: initialName, phone: initialPhone }: { name: string; phone: string }) {
+export function ProfileDetailsForm({ name: initialName, phone: initialPhone, tagline: initialTagline }: { name: string; phone: string; tagline: string }) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [phone, setPhone] = useState(initialPhone);
+  const [tagline, setTagline] = useState(initialTagline);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const dirty = name !== initialName || phone !== initialPhone;
+  const dirty = name !== initialName || phone !== initialPhone || tagline !== initialTagline;
 
   return (
     <form
@@ -20,7 +21,7 @@ export function ProfileDetailsForm({ name: initialName, phone: initialPhone }: {
         e.preventDefault();
         setBusy(true);
         setMsg(null);
-        const r = await updateMyProfile({ name, phone }).catch(() => ({ ok: false as const, error: "Something went wrong." }));
+        const r = await updateMyProfile({ name, phone, tagline }).catch(() => ({ ok: false as const, error: "Something went wrong." }));
         setBusy(false);
         setMsg(r.ok ? { ok: true, text: "Saved." } : { ok: false, text: r.error });
         if (r.ok) router.refresh();
@@ -33,6 +34,18 @@ export function ProfileDetailsForm({ name: initialName, phone: initialPhone }: {
       <label className="block">
         <div className="label-xs">Phone</div>
         <input id="profile-phone" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" inputMode="tel" placeholder="(417) 555-0123" />
+      </label>
+      <label className="block sm:col-span-2">
+        <div className="label-xs">Your line (optional)</div>
+        <input
+          id="profile-tagline"
+          className="input"
+          value={tagline}
+          maxLength={120}
+          onChange={(e) => setTagline(e.target.value)}
+          placeholder={'A favorite movie quote, a signature, "Horror or nothing"'}
+        />
+        <div className="mt-1 text-xs text-[var(--muted)]">Our staff see this when you check in. It isn&apos;t shown publicly. {tagline.length}/120</div>
       </label>
       <div className="flex items-center gap-3 sm:col-span-2">
         <button className="btn-primary !px-5 !py-2 text-sm" disabled={busy || !dirty}>

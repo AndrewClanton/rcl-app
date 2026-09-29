@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
 import { getSignInProviders } from "@/lib/auth-providers";
 import { safePath } from "@/lib/safe-path";
+import { pendingClaimFor } from "@/lib/member-claim-token";
+import { isClaimPath } from "@/lib/claim-link";
 import { PageMasthead } from "@/components/print";
 import AccountForm from "./AccountForm";
 
@@ -29,17 +31,26 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
   if (user) {
     const { data: member } = await createAdminClient().from("members").select("id").eq("auth_user_id", user.id).maybeSingle();
     if (member) redirect(next ?? "/account");
+    // A login made from a "claim your account" link that hasn't finished
+    // yet goes back to that link, which attaches it to their account.
+    const claim = await pendingClaimFor(user);
+    if (claim) redirect(claim);
   }
+
+  // On the way back to a "claim your account" link: the login gets attached
+  // to that account there, not matched by email or made a new one here.
+  const claimToken = next && isClaimPath(next) ? new URLSearchParams(next.split("?")[1] ?? "").get("t") : null;
 
   return (
     <div className="mx-auto max-w-md">
       <PageMasthead eyebrow="My account" title="Sign in" className="!mb-6" />
       <p className="text-[15px] text-[var(--muted)]">
-        Sign in to check your points, purchase history, and membership. New here? Creating an account is free and joins you as a
-        Royale Insider.
+        {claimToken
+          ? "Last step: sign in, or make a new login, and we'll attach it to your Royale account."
+          : "Sign in to check your points, purchase history, and membership. New here? Creating an account is free and joins you as a Royale Insider."}
       </p>
       <div className="mt-8">
-        <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} next={next} />
+        <AccountForm providers={providers} initialError={error ? (ERRORS[error] ?? null) : null} next={next} claimToken={claimToken} />
       </div>
     </div>
   );
