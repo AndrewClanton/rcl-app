@@ -155,6 +155,10 @@ function CashTender({ total, onBack, onDone }: { total: number; onBack: () => vo
 
 type ReaderState = "waiting" | "failed";
 
+// A deploy landed mid-payment: this page can't check the charge anymore,
+// and the card may already be charged.
+const STALE_MID_PAYMENT = "The register was updated during this payment. Refresh the page, then check Stripe's Payments list before charging again: the card may already be charged.";
+
 export default function PaymentModal({
   total,
   readerId,
@@ -167,7 +171,7 @@ export default function PaymentModal({
   readerId: string | null; // this register's card reader, or null if none is set up
   tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
   tabCard?: { tabId: string; label: string } | null; // the tab's card on file, charged without a tap
-  onConfirm: (payment: CheckoutPayment) => void;
+  onConfirm: (payment: CheckoutPayment, note?: string) => void; // note: shown to staff with the sale
   onCancel: () => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
@@ -188,6 +192,10 @@ export default function PaymentModal({
   const watchingRef = useRef<string | null>(null);
   // A paid payment completes the sale exactly once, however many checks see it.
   const confirmedRef = useRef(false);
+  // Cancel was tapped on this payment, so a charge that still went through
+  // gets a note saying so (staff would otherwise think it was canceled).
+  const cancelTappedRef = useRef(false);
+  const [cancelling, setCancelling] = useState(false);
 
   function stopWatching() {
     watchingRef.current = null;
@@ -197,8 +205,57 @@ export default function PaymentModal({
 
   useEffect(() => stopWatching, []);
 
+  // The one way a paid reader payment becomes a sale, whether the watch
+  // below saw it or the last look after Cancel did.
+  function confirmReaderPayment(paymentIntentId: string, amountCents: number, tipCents: number) {
+    if (confirmedRef.current) return;
+    confirmedRef.current = true;
+    const note = cancelTappedRef.current ? "The card went through before Cancel. The sale was recorded." : undefined;
+    onConfirm({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: tipCents / 100, ...withVoucher }, note);
+  }
+
+  function watchReaderPayment(paymentIntentId: string) {
+    watchingRef.current = paymentIntentId;
+    // One check at a time: the next starts 1.5s after the last one answers.
+    // (A fixed interval let a slow check overlap the next, both saw
+    // "succeeded", and the sale was saved and printed twice.)
+    const check = async () => {
+      pollRef.current = null;
+      let again = true;
+      try {
+        const { status, errorMessage, amountCents, tipCents } = await checkReaderPayment(paymentIntentId);
+        if (status === "succeeded") {
+          // Recorded even if Cancel was tapped meanwhile: the card is charged.
+          again = false;
+          watchingRef.current = null;
+          confirmReaderPayment(paymentIntentId, amountCents, tipCents);
+        } else if (watchingRef.current !== paymentIntentId) {
+          // Cancel was tapped while this check was out; Cancel decides what shows next.
+          again = false;
+        } else if (status === "canceled") {
+          again = false;
+          setReader({ state: "failed", paymentIntentId, message: errorMessage ?? "Payment was canceled." });
+        } else if (errorMessage) {
+          // requires_payment_method after a decline -- reader auto-prompts retry, but surface the message.
+          setReader({ state: "waiting", paymentIntentId, message: errorMessage });
+        }
+      } catch (e) {
+        // A deploy landed mid-payment: stop and say so, rather than waiting
+        // forever or inviting a second charge.
+        if (isStaleBuildError(e) && watchingRef.current === paymentIntentId) {
+          again = false;
+          setReader({ state: "failed", paymentIntentId, message: STALE_MID_PAYMENT });
+        }
+        // Anything else is a transient poll failure -- keep waiting, next tick retries.
+      }
+      if (again && watchingRef.current === paymentIntentId) pollRef.current = setTimeout(check, 1500);
+    };
+    pollRef.current = setTimeout(check, 1500);
+  }
+
   async function handleReaderCharge() {
     setReader(null);
+    cancelTappedRef.current = false;
     try {
       if (!readerId) return;
       const started = await startReaderPayment(Math.round(due * 100), readerId, tipEligible === null ? null : Math.round(tipEligible * 100));
@@ -208,46 +265,7 @@ export default function PaymentModal({
       }
       const { paymentIntentId } = started;
       setReader({ state: "waiting", paymentIntentId });
-      watchingRef.current = paymentIntentId;
-      // One check at a time: the next starts 1.5s after the last one answers.
-      // (A fixed interval let a slow check overlap the next, both saw
-      // "succeeded", and the sale was saved and printed twice.)
-      const check = async () => {
-        pollRef.current = null;
-        let again = true;
-        try {
-          const { status, errorMessage, amountCents, tipCents } = await checkReaderPayment(paymentIntentId);
-          if (status === "succeeded") {
-            again = false;
-            watchingRef.current = null;
-            if (!confirmedRef.current) {
-              confirmedRef.current = true;
-              onConfirm({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: tipCents / 100, ...withVoucher });
-            }
-          } else if (status === "canceled") {
-            again = false;
-            setReader({ state: "failed", paymentIntentId, message: errorMessage ?? "Payment was canceled." });
-          } else if (errorMessage) {
-            // requires_payment_method after a decline -- reader auto-prompts retry, but surface the message.
-            setReader({ state: "waiting", paymentIntentId, message: errorMessage });
-          }
-        } catch (e) {
-          // A deploy landed mid-payment: this page can't check the charge
-          // anymore, and the card may already be charged. Stop and say so,
-          // rather than waiting forever or inviting a second charge.
-          if (isStaleBuildError(e)) {
-            again = false;
-            setReader({
-              state: "failed",
-              paymentIntentId,
-              message: "The register was updated during this payment. Refresh the page, then check Stripe's Payments list before charging again: the card may already be charged.",
-            });
-          }
-          // Anything else is a transient poll failure -- keep waiting, next tick retries.
-        }
-        if (again && watchingRef.current === paymentIntentId) pollRef.current = setTimeout(check, 1500);
-      };
-      pollRef.current = setTimeout(check, 1500);
+      watchReaderPayment(paymentIntentId);
     } catch (e) {
       setReader({ state: "failed", paymentIntentId: "", message: isStaleBuildError(e) ? STALE_BUILD_MESSAGE : e instanceof Error ? e.message : "Could not reach the card reader." });
     }
@@ -265,9 +283,25 @@ export default function PaymentModal({
   }
 
   async function handleCancelReader() {
+    if (!reader?.paymentIntentId || cancelling) return;
+    const { paymentIntentId } = reader;
     stopWatching();
-    if (reader?.paymentIntentId && readerId) await cancelReaderPayment(reader.paymentIntentId, readerId).catch(() => {});
-    setReader(null);
+    cancelTappedRef.current = true;
+    setCancelling(true);
+    await cancelReaderPayment(paymentIntentId, readerId ?? "").catch(() => {});
+    // Stripe can't cancel a payment that already went through: a card tapped
+    // a moment before Cancel stays charged. Look once more, so that sale is
+    // recorded instead of the screen going back to "Take payment" (and the
+    // card getting charged a second time).
+    const last = await checkReaderPayment(paymentIntentId).catch((e: unknown) => (isStaleBuildError(e) ? ("stale" as const) : null));
+    setCancelling(false);
+    if (last === "stale") return setReader({ state: "failed", paymentIntentId, message: STALE_MID_PAYMENT });
+    if (last?.status === "succeeded") return confirmReaderPayment(paymentIntentId, last.amountCents, last.tipCents);
+    if (last?.status === "canceled") return setReader(null);
+    // Neither paid nor canceled (the cancel didn't take, or Stripe didn't
+    // answer): keep watching rather than offer a second charge.
+    setReader({ state: "waiting", paymentIntentId, message: "Cancel didn't go through. Wait for the reader, or tap Cancel again." });
+    watchReaderPayment(paymentIntentId);
   }
 
   if (cashOpen) {
@@ -311,8 +345,8 @@ export default function PaymentModal({
                   {reader.message}
                 </p>
               )}
-              <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={handleCancelReader}>
-                Cancel
+              <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} disabled={cancelling} onClick={handleCancelReader}>
+                {cancelling ? "Cancelling..." : "Cancel"}
               </button>
             </>
           ) : (

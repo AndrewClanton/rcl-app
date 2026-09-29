@@ -72,23 +72,51 @@ function revalidate() {
   revalidatePath("/pos");
 }
 
-async function replaceOrderItems(supabase: ReturnType<typeof createAdminClient>, orderId: string, lines: CheckoutLine[]) {
-  await supabase.from("order_items").delete().eq("order_id", orderId);
-  if (lines.length === 0) return;
-  await supabase.from("order_items").insert(
-    lines.map((l) => ({
-      order_id: orderId,
-      menu_item_id: l.menu_item_id,
-      name: l.name,
-      unit_price: l.unit_price,
-      quantity: l.quantity,
-      modifiers: l.modifiers,
-      is_alcohol: l.is_alcohol,
-      screening_id: l.screening_id ?? null,
-      // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
-      is_event: !!l.screening_id,
-    }))
-  );
+// Swaps an order's items for `lines`. The new rows go in first and the old
+// ones come out after, by id, so a save that fails part-way leaves the order
+// with its old items instead of none (deleting first, then failing to
+// insert, used to empty a tab). Two saves from one register never overlap:
+// Next.js sends a page's Server Actions one at a time.
+async function replaceOrderItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  orderId: string,
+  lines: CheckoutLine[],
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { data: old, error: readErr } = await supabase.from("order_items").select("id").eq("order_id", orderId);
+  if (readErr) return { ok: false, error: readErr.message };
+  let addedIds: string[] = [];
+  if (lines.length) {
+    const { data: added, error: insertErr } = await supabase
+      .from("order_items")
+      .insert(
+        lines.map((l) => ({
+          order_id: orderId,
+          menu_item_id: l.menu_item_id,
+          name: l.name,
+          unit_price: l.unit_price,
+          quantity: l.quantity,
+          modifiers: l.modifiers,
+          is_alcohol: l.is_alcohol,
+          screening_id: l.screening_id ?? null,
+          // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
+          is_event: !!l.screening_id,
+        }))
+      )
+      .select("id");
+    if (insertErr) return { ok: false, error: insertErr.message };
+    addedIds = (added ?? []).map((r) => r.id);
+  }
+  const oldIds = (old ?? []).map((r) => r.id);
+  if (oldIds.length) {
+    const { error: deleteErr } = await supabase.from("order_items").delete().in("id", oldIds);
+    if (deleteErr) {
+      // Take the new rows back out so the order isn't left with every item
+      // twice. Best effort: the caller reports the failure either way.
+      if (addedIds.length) await supabase.from("order_items").delete().in("id", addedIds);
+      return { ok: false, error: deleteErr.message };
+    }
+  }
+  return { ok: true };
 }
 
 // A register ticket sale also books the seats (bookings.order_id = the
@@ -130,13 +158,23 @@ async function syncTicketBookings(
   }
 }
 
-export async function completeOrder(params: DraftFields & {
+// A paid sale's items. By now the order row is saved as paid, so a failure
+// here is logged, not thrown: throwing would show a paid sale as failed, and
+// a retry finds the order by its payment and stops before reaching this.
+async function saveSaleItems(supabase: ReturnType<typeof createAdminClient>, orderId: string, lines: CheckoutLine[]) {
+  const r = await replaceOrderItems(supabase, orderId, lines);
+  if (!r.ok) console.error("sale items not saved", orderId, r.error);
+}
+
+export type CompleteOrderInput = DraftFields & {
   totals: CheckoutTotals;
   payment: CheckoutPayment;
   ageVerified: boolean;
   tip?: number;
   draftOrderId?: string | null;
-}): Promise<{ orderNumber: number }> {
+};
+
+export async function completeOrder(params: CompleteOrderInput): Promise<{ orderNumber: number }> {
   await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
 
@@ -195,7 +233,7 @@ export async function completeOrder(params: DraftFields & {
       if ((await orderForPayment()) !== null) return { orderNumber };
       throw new Error("This tab was already closed. Check Reports before taking payment again.");
     }
-    await replaceOrderItems(supabase, orderId, params.lines);
+    await saveSaleItems(supabase, orderId, params.lines);
   } else {
     const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
     if (numberErr) throw numberErr;
@@ -213,7 +251,7 @@ export async function completeOrder(params: DraftFields & {
       throw orderErr;
     }
     orderId = order.id;
-    await replaceOrderItems(supabase, orderId, params.lines);
+    await saveSaleItems(supabase, orderId, params.lines);
   }
 
   // 1 point per $1 of the order, and 100 back out when a reward was used.
@@ -290,17 +328,28 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
     .single();
   if (error) throw error;
 
-  await replaceOrderItems(supabase, order.id, fields.lines);
+  const items = await replaceOrderItems(supabase, order.id, fields.lines);
+  if (!items.ok) {
+    // Don't leave an empty held order or tab behind: the register keeps the
+    // items on screen, and trying again makes a whole new one.
+    console.error("draft items not saved", order.id, items.error);
+    await supabase.from("orders").delete().eq("id", order.id);
+    throw new Error("Couldn't save the items.");
+  }
   revalidate();
   return order.id;
 }
 
 const OPEN_DRAFT = ["draft", "held", "tab"];
 
-export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<void> {
+// closed: the order isn't open anymore (paid or cancelled, usually on
+// another register), so trying the same save again can't work.
+export type DraftSaveResult = { ok: true } | { ok: false; error: string; closed?: boolean };
+
+export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals): Promise<DraftSaveResult> {
   await assertStaff();
   const supabase = createAdminClient();
-  const { data: updated } = await supabase
+  const { data: updated, error } = await supabase
     .from("orders")
     .update({
       employee_id: fields.employeeId,
@@ -322,9 +371,18 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
     // out-of-date list must never rewrite a sale that's already been paid.
     .in("status", OPEN_DRAFT)
     .select("id");
-  if (!updated?.length) return;
-  await replaceOrderItems(supabase, id, fields.lines);
+  if (error) {
+    console.error("draft save failed", id, error.message);
+    return { ok: false, error: "Couldn't save the tab." };
+  }
+  if (!updated?.length) return { ok: false, closed: true, error: "That tab is already closed." };
+  const items = await replaceOrderItems(supabase, id, fields.lines);
+  if (!items.ok) {
+    console.error("draft items not saved", id, items.error);
+    return { ok: false, error: "Couldn't save the tab's items." };
+  }
   revalidate();
+  return { ok: true };
 }
 
 export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrderSummary[]> {

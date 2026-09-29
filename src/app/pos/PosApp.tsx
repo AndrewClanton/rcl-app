@@ -26,6 +26,8 @@ import RecentOrders from "./RecentOrders";
 import { sendToPrinter } from "@/lib/print/epos-client";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
+import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
+import { isStaleBuildError } from "@/lib/deployment";
 import {
   completeOrder,
   saveDraftOrder,
@@ -136,6 +138,8 @@ export default function PosApp({
   const [monthlyMember, setMonthlyMember] = useState(false);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // The tab whose last save failed; its warning shows while it's on screen.
+  const [tabSaveIssue, setTabSaveIssue] = useState<{ tabId: string; stale: boolean } | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
@@ -248,11 +252,62 @@ export default function PosApp({
     const fields = currentFields();
     const payload = totalsPayload(totals);
     const timer = setTimeout(() => {
-      updateDraftOrder(id, fields, payload).then(() => router.refresh());
+      saveTab(id, fields, payload).then((ok) => {
+        if (ok) router.refresh();
+      });
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+
+  // Which tab is on screen right now, for a save that answers after the
+  // screen has moved on.
+  const activeTabRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeTabRef.current = activeTabId;
+  }, [activeTabId]);
+
+  // Saves a tab. A failed save used to go unnoticed, so the tab quietly
+  // lost what was added; now it shows "Tab not saved" until a save works,
+  // and false tells the caller not to move on from the tab.
+  async function saveTab(id: string, fields: DraftFields, payload: CheckoutTotals): Promise<boolean> {
+    let r: Awaited<ReturnType<typeof updateDraftOrder>>;
+    let stale = false;
+    try {
+      r = await updateDraftOrder(id, fields, payload);
+    } catch (e) {
+      // A dropped connection, or the site was updated mid-shift.
+      r = { ok: false, error: "Couldn't reach the server." };
+      stale = isStaleBuildError(e);
+    }
+    if (r.ok || r.closed) setTabSaveIssue((cur) => (cur?.tabId === id ? null : cur));
+    if (r.ok) return true;
+    if (r.closed) {
+      // Paid or cancelled on another register: no save will ever work, so
+      // don't strand staff on it (or leave its items up to be charged twice).
+      if (activeTabRef.current === id) {
+        resetOrder();
+        setToast("That tab was already closed on another register, so it's been cleared from here. Ring anything new as a new order.");
+      }
+      return false;
+    }
+    setTabSaveIssue({ tabId: id, stale });
+    return false;
+  }
+
+  // The open tab, saved from the screen before the screen moves on. True
+  // when there's no tab or it saved.
+  async function saveOpenTab(): Promise<boolean> {
+    return !activeTabId || saveTab(activeTabId, currentFields(), totalsPayload(totals));
+  }
+
+  function retryTabSave() {
+    // An out-of-date page can't save anything; only a reload helps.
+    if (tabSaveIssue?.stale) return window.location.reload();
+    saveOpenTab().then((ok) => {
+      if (ok) router.refresh();
+    });
+  }
 
   // Mirrors the cart onto the customer-facing kiosk display in real time,
   // via Realtime broadcast rather than a database row -- entirely separate
@@ -263,6 +318,8 @@ export default function PosApp({
   // which avoids a stale closure in the long-lived channel subscription.
   const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
   const finalizingRef = useRef(false);
+  // A card sale that was charged but didn't save (kept across reloads).
+  const unsavedSale = useUnsavedSale();
   // "Put a card on file?" for a tab (right after opening it, or from its chip).
   const [tabCardFor, setTabCardFor] = useState<{ id: string; name: string } | null>(null);
   cartSnapshotRef.current = {
@@ -306,21 +363,41 @@ export default function PosApp({
     setActiveTabId(null);
   }
 
-  async function stashCurrentWork() {
-    if (activeTabId) {
-      await updateDraftOrder(activeTabId, currentFields(), totalsPayload(totals));
-      return;
-    }
+  // False (with nothing moved) if what's on screen couldn't be saved.
+  async function stashCurrentWork(): Promise<boolean> {
+    if (activeTabId) return saveOpenTab();
     if (cart.length > 0) {
       // Auto-hold rather than asking -- never silently lose an in-progress
       // order; it'll sit in the held list for the cashier to clean up.
       const fields = currentFields();
       fields.orderName = fields.orderName || `Held ${new Date().toLocaleTimeString()}`;
-      await saveDraftOrder("held", fields, totalsPayload(totals));
+      try {
+        await saveDraftOrder("held", fields, totalsPayload(totals));
+      } catch {
+        setToast("Couldn't hold the order on screen, so nothing moved. Try again.");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Leaving a tab: save it, then clear the screen. If the save fails the tab
+  // stays up (with its warning) instead of dropping what didn't save.
+  async function putAwayTab() {
+    setBusy(true);
+    try {
+      if (!(await saveOpenTab())) return;
+      resetOrder();
+      router.refresh();
+    } finally {
+      setBusy(false);
     }
   }
 
   async function handleHold() {
+    // A tab is already saved as a tab, so Hold just puts it away. A held
+    // copy put the same drinks on two checks, to be charged twice.
+    if (activeTabId) return putAwayTab();
     if (cart.length === 0) return;
     setBusy(true);
     try {
@@ -329,6 +406,8 @@ export default function PosApp({
       await saveDraftOrder("held", fields, totalsPayload(totals));
       resetOrder();
       router.refresh();
+    } catch {
+      setToast("Couldn't hold the order. Check the connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -337,7 +416,12 @@ export default function PosApp({
   async function doResumeHeld(id: string) {
     setBusy(true);
     try {
-      const full = await loadDraftOrder(id);
+      const full = await loadDraftOrder(id).catch(() => null);
+      if (!full) return setToast("That held order isn't there anymore. It may have been opened on another register.");
+      // An open tab is saved and put away first. Left open, its autosave
+      // wrote the held order's items over the tab.
+      if (!(await saveOpenTab())) return;
+      setActiveTabId(null);
       loadFields(id, full);
       await discardDraftOrder(id);
       setHeldListOpen(false);
@@ -348,7 +432,9 @@ export default function PosApp({
   }
 
   function handleResumeHeld(id: string) {
-    if (cart.length > 0) {
+    // An open tab isn't replaced (it's saved and put away), so only a
+    // walk-up order needs the warning.
+    if (cart.length > 0 && !activeTabId) {
       setConfirmState({
         title: "Replace current order?",
         description: "This will replace the current unsaved order.",
@@ -384,13 +470,21 @@ export default function PosApp({
     setOpenTabPromptOpen(false);
     setBusy(true);
     try {
-      await stashCurrentWork();
-      const id = await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
-      resetOrder();
+      // A walk-up order on screen becomes the new tab, so the drinks just
+      // rung start the tab (they used to be sent to Held). Another tab on
+      // screen keeps its own items: it's saved and the new tab starts empty.
+      const fromScreen = !activeTabId;
+      if (!fromScreen && !(await saveOpenTab())) return;
+      const id = fromScreen
+        ? await saveDraftOrder("tab", { ...currentFields(), orderName: name }, totalsPayload(totals))
+        : await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
+      if (!fromScreen) resetOrder();
       setActiveTabId(id);
       setOrderName(name);
       setTabCardFor({ id, name });
       router.refresh();
+    } catch {
+      setToast("Couldn't open the tab. Check the connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -399,8 +493,11 @@ export default function PosApp({
   async function handleSwitchTab(id: string) {
     setBusy(true);
     try {
-      await stashCurrentWork();
-      const full = await loadDraftOrder(id);
+      // Load it first: if it was closed on another register, nothing on
+      // screen has been moved yet.
+      const full = await loadDraftOrder(id).catch(() => null);
+      if (!full) return setToast("That tab isn't open anymore. It may have been closed on another register.");
+      if (!(await stashCurrentWork())) return;
       loadFields(id, full);
       setActiveTabId(id);
       setTabsListOpen(false);
@@ -462,7 +559,7 @@ export default function PosApp({
     }
   }
 
-  async function finalizeCheckout(payment: CheckoutPayment) {
+  async function finalizeCheckout(payment: CheckoutPayment, note?: string) {
     // A double tap (or a second "paid" answer from the reader) must not save
     // or print the sale twice.
     if (finalizingRef.current) return;
@@ -472,65 +569,128 @@ export default function PosApp({
     // A tab's tip is asked on the register (TipModal); any other card sale
     // can get one on the reader. Either way it's one tip on the order.
     const allTip = tip + (payment.tip ?? 0);
-    const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
     try {
-      const { orderNumber } = await completeOrder({
-        ...currentFields(),
-        totals: {
-          subtotal: totals.subtotal,
-          tier_discount: totals.tierDiscount,
-          monthly_discount: totals.monthlyDiscount,
-          redemption_discount: totals.redemptionDiscount,
-          tax: totals.tax,
-          total: totals.total,
+      const saved = await saveSale(
+        {
+          order: {
+            ...currentFields(),
+            totals: totalsPayload(totals),
+            payment,
+            ageVerified: cart.some((l) => l.isAlcohol),
+            tip: allTip,
+            draftOrderId: activeTabId,
+          },
+          memberName: member?.name ?? null,
+          tries: 0,
         },
-        payment,
-        ageVerified: cart.some((l) => l.isAlcohol),
-        tip: allTip,
-        draftOrderId: activeTabId,
-      });
-      const receipt: ReceiptData = {
-        orderNumber,
-        at: new Date().toISOString(),
-        cashier: employees.find((e) => e.id === employeeId)?.name ?? null,
-        member: member?.name ?? null,
-        orderName: orderName.trim() || null,
-        lines: cart.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit, mods: l.mods })),
-        subtotal: totals.subtotal,
-        discounts: [
-          { label: "Member discount", amount: totals.tierDiscount },
-          { label: "Monthly member discount", amount: totals.monthlyDiscount },
-          { label: "Points reward", amount: totals.redemptionDiscount },
-        ],
-        tax: totals.tax,
-        tip: allTip,
-        total: totals.total + allTip,
-        payments: [
-          { label: "Voucher", amount: payment.voucher ?? 0 },
-          { label: "Cash", amount: payment.cash },
-          { label: "Card", amount: payment.card },
-          ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
-        ],
-      };
-      setLastReceipt(receipt);
-      const tickets: TicketSale[] = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, qty: l.qty }));
-      setLastTickets(tickets.length ? { orderNumber, lines: tickets } : null);
-      void printAfterSale(receipt, payment.cash > 0, tickets);
-      const parts = [`Order #${orderNumber} complete — ${money(totals.total + allTip)} charged (${payment.method})`];
-      if (allTip > 0) parts.push(`${money(allTip)} tip`);
-      if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
-      if (change > 0) parts.push(`give ${money(change)} change`);
-      setToast(parts.join(" — "));
-      resetOrder();
-      setTip(0);
-      router.refresh();
-      setTimeout(() => setToast(null), 7000);
-    } catch (e) {
-      setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
+        note,
+      );
+      // A charged card that didn't save is cleared too: the sale now lives in
+      // the "card WAS charged" banner, so its items can't be charged again,
+      // held, or moved onto a tab.
+      if (saved || payment.stripePaymentIntentId) {
+        resetOrder();
+        setTip(0);
+      }
     } finally {
       finalizingRef.current = false;
       setBusy(false);
     }
+  }
+
+  // Saves a paid sale, then prints and shows the receipt note. Also what
+  // Retry saving runs, with the very same sale, after a card was charged but
+  // the save failed. True if it saved.
+  async function saveSale(sale: UnsavedSale, note?: string): Promise<boolean> {
+    const { order } = sale;
+    const { payment } = order;
+    const allTip = order.tip ?? 0;
+    const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
+    let orderNumber: number;
+    try {
+      ({ orderNumber } = await completeOrder(order));
+    } catch (e) {
+      const stale = isStaleBuildError(e);
+      if (payment.stripePaymentIntentId) {
+        // The card is already charged. Keep this exact payment for Retry
+        // saving (one order per payment, so a retry can't make a second
+        // sale) and hold off new charges until it's saved. A small toast here
+        // used to let the register go back to charging the card again.
+        keepUnsavedSale({ ...sale, tries: sale.tries + 1, stale });
+      } else if (stale) {
+        setToast("The register was just updated and this sale didn't save. Reload the page, then ring it up again.");
+      } else {
+        setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
+      }
+      return false;
+    }
+    keepUnsavedSale(null);
+    const receipt: ReceiptData = {
+      orderNumber,
+      at: new Date().toISOString(),
+      cashier: employees.find((e) => e.id === order.employeeId)?.name ?? null,
+      member: sale.memberName,
+      orderName: order.orderName.trim() || null,
+      lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
+      subtotal: order.totals.subtotal,
+      discounts: [
+        { label: "Member discount", amount: order.totals.tier_discount },
+        { label: "Monthly member discount", amount: order.totals.monthly_discount },
+        { label: "Points reward", amount: order.totals.redemption_discount },
+      ],
+      tax: order.totals.tax,
+      tip: allTip,
+      total: order.totals.total + allTip,
+      payments: [
+        { label: "Voucher", amount: payment.voucher ?? 0 },
+        { label: "Cash", amount: payment.cash },
+        { label: "Card", amount: payment.card },
+        ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
+      ],
+    };
+    setLastReceipt(receipt);
+    const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
+    setLastTickets(tickets.length ? { orderNumber, lines: tickets } : null);
+    void printAfterSale(receipt, payment.cash > 0, tickets);
+    const parts = [`Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
+    if (allTip > 0) parts.push(`${money(allTip)} tip`);
+    if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
+    if (change > 0) parts.push(`give ${money(change)} change`);
+    setToast(note ? `${note} ${parts.join(" — ")}` : parts.join(" — "));
+    router.refresh();
+    setTimeout(() => setToast(null), note ? 15000 : 7000);
+    return true;
+  }
+
+  async function retryUnsavedSale() {
+    if (!unsavedSale || finalizingRef.current) return;
+    finalizingRef.current = true;
+    setBusy(true);
+    try {
+      const { draftOrderId } = unsavedSale.order;
+      // If that tab was opened again meanwhile, it's closed now: take it off
+      // the screen so it can't be charged a second time.
+      if ((await saveSale(unsavedSale)) && draftOrderId && draftOrderId === activeTabId) resetOrder();
+    } finally {
+      finalizingRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  // The way out if a save can never work (say, the tab was cancelled
+  // elsewhere), so one stuck sale can't keep the register from charging.
+  function stopTryingUnsavedSale() {
+    const onTab = !!unsavedSale?.order.draftOrderId;
+    setConfirmState({
+      title: "Stop trying to save this sale?",
+      description: `The card stays charged, but the sale won't be in Reports.${onTab ? " Its tab may still be open: have a manager cancel it, don't charge it again." : ""} Only do this if a manager says so.`,
+      danger: true,
+      confirmLabel: "Stop trying",
+      onConfirm: () => {
+        setConfirmState(null);
+        keepUnsavedSale(null);
+      },
+    });
   }
 
   return (
@@ -580,6 +740,11 @@ export default function PosApp({
               ))}
             <input className="input min-w-0 flex-1 !py-2" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
           </div>
+          {tabSaveIssue && tabSaveIssue.tabId === activeTabId && (
+            <button className="notice notice-warn mb-2 w-full p-2 text-left text-xs font-semibold" onClick={retryTabSave}>
+              {tabSaveIssue.stale ? "Tab not saved: the register was just updated. Tap to reload, then check this tab." : "Tab not saved. Tap to retry."}
+            </button>
+          )}
         </div>
 
         <div className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
@@ -734,6 +899,7 @@ export default function PosApp({
         </div>
 
         <div className="shrink-0">
+          {unsavedSale && <UnsavedSaleBanner sale={unsavedSale} busy={busy} onRetry={retryUnsavedSale} onStop={stopTryingUnsavedSale} />}
           <div className="mt-2 flex items-end justify-between gap-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
             <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
               <div>Subtotal {money(totals.subtotal)}</div>
@@ -749,7 +915,9 @@ export default function PosApp({
               </div>
             </div>
           </div>
-          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
+          {/* No new charges while a charged sale is unsaved: if sales aren't
+              saving, the register shouldn't keep charging cards. */}
+          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
             Complete order
           </button>
           {!employeeId && cart.length > 0 && (
@@ -768,13 +936,7 @@ export default function PosApp({
                 // a walk-up order with items actually discards them, so that
                 // one still asks first.
                 if (activeTabId) {
-                  setBusy(true);
-                  stashCurrentWork()
-                    .then(() => {
-                      resetOrder();
-                      router.refresh();
-                    })
-                    .finally(() => setBusy(false));
+                  void putAwayTab();
                   return;
                 }
                 setConfirmState({
