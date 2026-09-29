@@ -53,8 +53,10 @@ function Perk({ children, off = false }: { children: React.ReactNode; off?: bool
 
 export default async function HomePage() {
   const [allScreenings, member] = await Promise.all([getPubliclyVisibleScreenings(), getSignedInMember()]);
-  const films = nextFilms(allScreenings, 6);
   const plus = !!member && hasPlusPerks(member);
+  // Visitors get the Insiders+ tile as the last spot in the grid, so the
+  // offer sits right among the showings it pays for.
+  const films = nextFilms(allScreenings, plus ? 6 : 5);
 
   return (
     <div className="space-y-20">
@@ -145,9 +147,93 @@ export default async function HomePage() {
                 <SpecFoot code={`RCL-FILM · ${first.movie.rating || "NR"}`} />
               </article>
             ))}
+            {!plus && (
+              <article className="sheet halftone halftone-hero relative flex flex-col justify-between bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+                <RegNote className="top-3 right-3">
+                  Plate Y
+                  <br />
+                  100%
+                </RegNote>
+                <div className="relative z-[1] p-6">
+                  <span className="ctag ctag-red">Insiders+</span>
+                  <p className="font-display mt-5 text-3xl leading-tight text-balance">Every film here, free.</p>
+                  <div className="font-display mt-4 text-6xl leading-none tabular-nums">${RATE_PRICE.adult}</div>
+                  <div className="mt-1 text-[15px] font-bold">a month, for every screening. Or {dollars(ANNUAL_PRICE.adult)} a year.</div>
+                </div>
+                <div className="relative z-[1] px-6 pb-6">
+                  <PlusLink className="btn-primary block -rotate-[1.5deg] px-5 py-3 text-center">Get Insiders+</PlusLink>
+                  <a href="#insiders" className="mt-3 block text-center text-sm font-bold underline decoration-2 underline-offset-2">
+                    What&apos;s included
+                  </a>
+                </div>
+              </article>
+            )}
           </div>
         )}
       </section>
+
+      {/* Right under the showings: every one of them is free with Insiders+.
+          Insiders+ members don't need the pitch. Same cards as /membership. */}
+      {!plus && (
+        <section id="insiders" className="scroll-mt-28">
+          <div className="eyebrow mb-2">Insiders+</div>
+          <h2 className="font-display max-w-2xl text-3xl leading-tight text-balance">See every one of these for ${RATE_PRICE.adult} a month.</h2>
+          <p className="mt-3 max-w-xl text-[15px] text-[var(--muted)]">
+            Insiders+ gets you into every screening free: all the showings above, and every one after them. No tickets, no per-show price.
+          </p>
+          <div className="mt-8 grid gap-7 md:grid-cols-[1.15fr_1fr]">
+            <div className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+              <RegNote className="-top-7 left-0">Plate K · Y</RegNote>
+              <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
+                <div className="relative z-[1]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="spec-k !text-[var(--foreground)]">Unlimited screenings</div>
+                      <div className="font-display text-3xl">Insiders+</div>
+                    </div>
+                    <span className="ctag ctag-red">Free entry</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-baseline gap-x-3">
+                    <span className="font-display text-4xl leading-none">${RATE_PRICE.adult}/mo</span>
+                    <span className="text-[15px] font-bold">or {dollars(ANNUAL_PRICE.adult)}/yr, save 15%</span>
+                  </div>
+                </div>
+              </div>
+              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
+                <Perk>
+                  <strong>Free entry to every screening</strong>, unlimited
+                </Perk>
+                <Perk>2 free booth reservations every month</Perk>
+                <Perk>Concession and merch discounts</Perk>
+                <Perk>First access to weekly titles and member events</Perk>
+              </ul>
+              <div className="px-5 pb-5">
+                <PlusLink className="btn-primary block px-5 py-3 text-center">Get Insiders+ · ${RATE_PRICE.adult}/mo</PlusLink>
+                <div className="spec-code mt-3">
+                  Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo · with ID at the box office
+                </div>
+              </div>
+            </div>
+            <div className="sheet crop flex flex-col">
+              <div className="border-b-2 border-[var(--foreground)] px-5 py-5">
+                <div className="spec-k">Free forever</div>
+                <div className="font-display text-3xl">Insiders</div>
+                <div className="font-display mt-2 text-4xl leading-none">$0</div>
+              </div>
+              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
+                <Perk>{LOYALTY_SUMMARY}</Perk>
+                <Perk>Mailing list and the weekly lineup</Perk>
+                <Perk off>Buy a ticket for each screening</Perk>
+              </ul>
+              <div className="px-5 pb-5">
+                <Link href="/membership" className="btn-secondary block px-5 py-3 text-center">
+                  Join free
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       <Sprockets />
 
@@ -184,66 +270,6 @@ export default async function HomePage() {
           ))}
         </div>
       </section>
-
-      {/* Insiders+ members don't need the pitch. Same two cards as /membership. */}
-      {!plus && (
-        <section>
-          <div className="eyebrow mb-2">Become a member</div>
-          <h2 className="font-display max-w-xl text-3xl leading-tight text-balance">Stop buying tickets. Walk in free, every time.</h2>
-          <p className="mt-3 max-w-xl text-[15px] text-[var(--muted)]">Insiders is free to join. Insiders+ members never pay at the door again: one flat rate covers every screening.</p>
-          <div className="mt-8 grid gap-7 md:grid-cols-2">
-            <div className="sheet crop flex flex-col">
-              <div className="border-b-2 border-[var(--foreground)] px-5 py-5">
-                <div className="spec-k">Free forever</div>
-                <div className="font-display text-3xl">Insiders</div>
-                <div className="font-display mt-2 text-4xl leading-none">$0</div>
-              </div>
-              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
-                <Perk>{LOYALTY_SUMMARY}</Perk>
-                <Perk>Mailing list and the weekly lineup</Perk>
-                <Perk off>Buy a ticket for each screening</Perk>
-              </ul>
-              <div className="px-5 pb-5">
-                <Link href="/membership" className="btn-secondary block px-5 py-3 text-center">
-                  Join free
-                </Link>
-              </div>
-            </div>
-            <div className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-              <RegNote className="-top-7 left-0">Plate K · Y</RegNote>
-              <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
-                <div className="relative z-[1]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="spec-k !text-[var(--foreground)]">Unlimited screenings</div>
-                      <div className="font-display text-3xl">Insiders+</div>
-                    </div>
-                    <span className="ctag ctag-red">Free entry</span>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-baseline gap-x-3">
-                    <span className="font-display text-4xl leading-none">${RATE_PRICE.adult}/mo</span>
-                    <span className="text-[15px] font-bold">or {dollars(ANNUAL_PRICE.adult)}/yr, save 15%</span>
-                  </div>
-                </div>
-              </div>
-              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
-                <Perk>
-                  <strong>Free entry to every screening</strong>, unlimited
-                </Perk>
-                <Perk>2 free booth reservations every month</Perk>
-                <Perk>Concession and merch discounts</Perk>
-                <Perk>First access to weekly titles and member events</Perk>
-              </ul>
-              <div className="px-5 pb-5">
-                <PlusLink className="btn-primary block px-5 py-3 text-center">Get Insiders+</PlusLink>
-                <div className="spec-code mt-3">
-                  Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo · with ID at the box office
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
 
       <section className="sheet overflow-hidden">
         <div className="grid sm:grid-cols-[1.2fr_1fr]">
