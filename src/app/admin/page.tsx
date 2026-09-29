@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getDashboardSummary } from "@/lib/data/reports";
+import { getStaffSession, hasManagerAccess } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,8 @@ function money(n: number) {
 }
 
 export default async function AdminDashboardPage() {
-  const summary = await getDashboardSummary();
+  const [summary, staff] = await Promise.all([getDashboardSummary(), getStaffSession()]);
+  const manager = !!staff && hasManagerAccess(staff.role);
 
   return (
     <div className="space-y-6">
@@ -42,13 +44,15 @@ export default async function AdminDashboardPage() {
         <div className="text-base font-medium">Showtime scheduler</div>
         <div className="mt-1 text-sm text-[var(--muted)]">Movies, screening times, rooms.</div>
       </Link>
-      <Link
-        href="/admin/ingredients"
-        className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
-      >
-        <div className="text-base font-medium">Ingredients & inventory</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Recipe ingredients and physical stock counts.</div>
-      </Link>
+      {manager && (
+        <Link
+          href="/admin/ingredients"
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "
+        >
+          <div className="text-base font-medium">Ingredients & inventory</div>
+          <div className="mt-1 text-sm text-[var(--muted)]">Recipe ingredients and physical stock counts.</div>
+        </Link>
+        )}
       <Link
         href="/admin/members"
         className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 hover:border-[var(--border)] "

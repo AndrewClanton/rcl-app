@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff, assertStaff, getStaffSession, hasManagerAccess } from "@/lib/auth";
+import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import type { IngredientUnit } from "@/lib/types";
 
 // Each returns { ok: false, error } when the database didn't take the
@@ -10,6 +10,14 @@ import type { IngredientUnit } from "@/lib/types";
 type Result = { ok: true } | { ok: false; error: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Everything on the Ingredients page is managers and up (like the menu).
+async function manager(): Promise<{ staff: StaffSession; no: null } | { staff: null; no: Result }> {
+  const staff = await getStaffSession();
+  if (!staff) return { staff: null, no: { ok: false, error: "Your staff session has expired. Sign in again." } };
+  if (!hasManagerAccess(staff.role)) return { staff: null, no: { ok: false, error: "Only a manager can change ingredients. Ask a manager to make this change." } };
+  return { staff, no: null };
+}
 
 function revalidate() {
   revalidatePath("/admin/ingredients");
@@ -23,7 +31,8 @@ export async function addIngredient(fields: {
   unitCost?: number | null;
   category?: string;
 }): Promise<Result> {
-  await assertStaff();
+  const { no } = await manager();
+  if (no) return no;
   const name = fields.name.trim();
   if (!name) return { ok: false, error: "Give the ingredient a name." };
   const supabase = createAdminClient();
@@ -43,7 +52,8 @@ export async function updateIngredient(
   id: string,
   fields: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }>
 ): Promise<Result> {
-  await assertStaff();
+  const { no } = await manager();
+  if (no) return no;
   // Only these fields, checked here: the browser could send anything else
   // (par_item_id and active have their own manager-gated actions).
   const patch: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }> = {};
@@ -79,7 +89,8 @@ export async function updateIngredient(
 }
 
 export async function setIngredientActive(id: string, active: boolean): Promise<Result> {
-  await assertStaff();
+  const { no } = await manager();
+  if (no) return no;
   const { error } = await createAdminClient().from("ingredients").update({ active }).eq("id", id);
   if (error) return { ok: false, error: `Couldn't ${active ? "reactivate" : "deactivate"} that ingredient. Try again.` };
   revalidate();
@@ -90,9 +101,8 @@ export async function setIngredientActive(id: string, active: boolean): Promise<
 // like the rest of the par sheet and the recipes. One ingredient per line,
 // so the recipe editor knows which lines are already covered.
 export async function linkIngredientToPar(ingredientId: string, parItemId: string | null): Promise<Result> {
-  const staff = await getStaffSession();
-  if (!staff) return { ok: false, error: "Your staff session has expired. Sign in again." };
-  if (!hasManagerAccess(staff.role)) return { ok: false, error: "Only a manager can change where an ingredient is on the par sheet." };
+  const { no } = await manager();
+  if (no) return no;
   if (typeof ingredientId !== "string" || !UUID.test(ingredientId)) return { ok: false, error: "That ingredient isn't there anymore. Refresh the page." };
   if (parItemId !== null && (typeof parItemId !== "string" || !UUID.test(parItemId))) return { ok: false, error: "Pick a line from the par sheet list." };
 
@@ -113,12 +123,13 @@ export async function linkIngredientToPar(ingredientId: string, parItemId: strin
   return { ok: true };
 }
 
-// Staff log what's physically on the shelf periodically -- these snapshots
+// Managers log what's physically on the shelf periodically -- these snapshots
 // are what the Reports "alcohol usage & variance" section compares against
 // recipe-based theoretical usage to surface overpour/waste.
 export async function addInventoryCount(ingredientId: string, quantityOnHand: number, note?: string): Promise<Result> {
   if (!(quantityOnHand >= 0)) return { ok: false, error: "Enter how much is on the shelf (0 or more)." };
-  const staff = await requireStaff();
+  const { staff, no } = await manager();
+  if (no) return no;
   const { error } = await createAdminClient().from("inventory_counts").insert({
     ingredient_id: ingredientId,
     quantity_on_hand: quantityOnHand,

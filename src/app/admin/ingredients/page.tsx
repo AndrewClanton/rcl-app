@@ -1,11 +1,13 @@
 import { getIngredientsWithLastCount, getParItemRefs } from "@/lib/data/ingredients";
-import { hasManagerAccess, requireStaff } from "@/lib/auth";
+import { requireManager } from "@/lib/auth";
 import IngredientManager from "./IngredientManager";
 
 export const dynamic = "force-dynamic";
 
+// Managers and up: ingredient names, units and costs feed recipes, the par
+// sheet and the pour-cost reports, so cashiers don't edit them.
 export default async function AdminIngredientsPage() {
-  const staff = await requireStaff();
+  await requireManager();
   const [ingredients, parItems] = await Promise.all([getIngredientsWithLastCount(), getParItemRefs()]);
   return (
     <div>
@@ -14,7 +16,7 @@ export default async function AdminIngredientsPage() {
         The shared ingredient catalog used by recipes (see Menu → any item → Recipe). Log a physical count here whenever someone
         counts the shelf -- the Reports page compares counts over time against recipe-based expected usage to flag overpour/waste.
       </p>
-      <IngredientManager ingredients={ingredients} parItems={parItems} canLink={hasManagerAccess(staff.role)} />
+      <IngredientManager ingredients={ingredients} parItems={parItems} canLink />
     </div>
   );
 }
