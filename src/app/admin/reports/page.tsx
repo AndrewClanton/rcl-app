@@ -50,6 +50,9 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
             {label}
           </Link>
         ))}
+        <Link href={`/admin/reports/daily${keep.date ? `?date=${keep.date}` : ""}`} className="ml-auto text-sm text-[var(--accent)] hover:underline">
+          Daily email →
+        </Link>
       </div>
       {view === "day" && <DayView date={date} today={today} days={days} keep={keep} />}
       {view === "bar" && <BarView days={days} keep={keep} />}
