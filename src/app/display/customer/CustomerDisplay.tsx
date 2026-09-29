@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
-import { findMemberByPhone, type FoundMember } from "./actions";
+import CheckinKiosk from "./CheckinKiosk";
 
 interface PromoMovie {
   title: string;
@@ -25,20 +25,11 @@ function fmtShowtime(iso: string) {
 // a live mirror of the order as the cashier builds it (see PosApp.tsx,
 // which broadcasts cart snapshots -- not database-backed, since an
 // in-progress cart isn't saved anywhere until held/tabbed/completed).
-// "Sign in" is a phone-number lookup, not a real login -- just enough to
-// greet a member by name and show their points, on a device only staff can
-// reach in the first place.
+// "Check in for points" (CheckinKiosk.tsx) puts today's sale on a
+// customer's account by phone number, confirmed by staff at the register,
+// and plays the points burst when that sale completes.
 export default function CustomerDisplay({ movies, registerTopic }: { movies: PromoMovie[]; registerTopic: string }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(null);
-  const [signIn, setSignIn] = useState<"closed" | "phone" | "found" | "not-found">("closed");
-  const [phone, setPhone] = useState("");
-  const [looking, setLooking] = useState(false);
-  const [found, setFound] = useState<FoundMember | null>(null);
-  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Anyone at the kiosk can type numbers, so five misses in a row lock the
-  // lookup for a minute.
-  const misses = useRef(0);
-  const [lockedUntil, setLockedUntil] = useState(0);
 
   useEffect(() => {
     const supabase = createClient();
@@ -64,108 +55,12 @@ export default function CustomerDisplay({ movies, registerTopic }: { movies: Pro
     };
   }, [registerTopic]);
 
-  async function submitPhone() {
-    if (Date.now() < lockedUntil) return;
-    setLooking(true);
-    try {
-      const member = await findMemberByPhone(phone);
-      misses.current = member ? 0 : misses.current + 1;
-      if (misses.current >= 5) {
-        misses.current = 0;
-        setLockedUntil(Date.now() + 60_000);
-        setTimeout(() => setLockedUntil(0), 60_000);
-      }
-      setFound(member);
-      setSignIn(member ? "found" : "not-found");
-      if (dismissTimer.current) clearTimeout(dismissTimer.current);
-      dismissTimer.current = setTimeout(() => {
-        setSignIn("closed");
-        setPhone("");
-        setFound(null);
-      }, 12000);
-    } finally {
-      setLooking(false);
-    }
-  }
-
   const hasOrder = !!cart && cart.items.length > 0;
 
   return (
     <div className="relative min-h-screen" style={{ background: "var(--background)", color: "var(--foreground)" }}>
       {hasOrder ? <OrderMirror cart={cart} /> : <PromoIdle movies={movies} />}
-
-      {signIn === "closed" && (
-        <button
-          onClick={() => {
-            if (dismissTimer.current) clearTimeout(dismissTimer.current);
-            setSignIn("phone");
-          }}
-          // bottom-left, not bottom-right -- the sitewide Dev Notes widget
-          // (src/components/DevNotesWidget.tsx) is fixed at bottom-right on
-          // every page, including this one, and would otherwise sit right on
-          // top of this button.
-          className="btn-primary fixed bottom-6 left-6 !px-6 !py-3 text-base shadow-lg"
-        >
-          Sign in
-        </button>
-      )}
-
-      {signIn !== "closed" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(20,17,12,0.65)" }}>
-          <div className="card w-full max-w-sm !p-6 text-center" style={{ background: "var(--surface)" }}>
-            <button
-              onClick={() => {
-                if (dismissTimer.current) clearTimeout(dismissTimer.current);
-                setSignIn("closed");
-                setPhone("");
-                setFound(null);
-              }}
-              className="mb-2 ml-auto block text-sm text-[var(--muted)]"
-            >
-              Close ✕
-            </button>
-
-            {signIn === "phone" && (
-              <>
-                <h2 className="font-display mb-1 text-xl">Sign in</h2>
-                <p className="mb-4 text-sm text-[var(--muted)]">Enter your phone number.</p>
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  autoFocus
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && phone.trim() && submitPhone()}
-                  placeholder="(555) 555-5555"
-                  className="input mb-4 text-center text-lg"
-                />
-                <button disabled={looking || !phone.trim() || lockedUntil > 0} onClick={submitPhone} className="btn-primary w-full">
-                  {lockedUntil > 0 ? "Too many tries. Ask a staff member." : looking ? "Looking up…" : "Continue"}
-                </button>
-              </>
-            )}
-
-            {signIn === "found" && found && (
-              <>
-                <div className="relative mx-auto mb-3 h-24 w-24 overflow-hidden rounded-full border-2" style={{ borderColor: "var(--accent)", background: "var(--surface-hover)" }}>
-                  <div className="flex h-full items-center justify-center text-2xl font-bold text-[var(--muted)]">{found.firstName[0]?.toUpperCase()}</div>
-                </div>
-                <h2 className="font-display mb-1 text-xl">Welcome back, {found.firstName}!</h2>
-                <p className="text-sm text-[var(--muted)]">
-                  {found.tier} · {Math.round(found.points)} points
-                </p>
-              </>
-            )}
-
-            {signIn === "not-found" && (
-              <>
-                <h2 className="font-display mb-1 text-xl">No account found</h2>
-                <p className="text-sm text-[var(--muted)]">Ask a staff member to help you sign up.</p>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <CheckinKiosk registerTopic={registerTopic} />
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
+import RegisterCheckins from "./RegisterCheckins";
 import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import PromptModal from "@/components/PromptModal";
@@ -714,6 +715,7 @@ export default function PosApp({
           )}
 
           <PosMemberPanel member={member} onChange={setMember} employeeId={employeeId} />
+          <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
 
           <div className="space-y-1 pt-1">
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
