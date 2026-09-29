@@ -1,0 +1,268 @@
+/*
+ * The customer screen's check-in and points moments, in the print palette:
+ * yellow #ffc72c, red #ed1c24, ink #14110c, Archivo Black. CSS only --
+ * and everything that moves holds still for anyone whose device asks for
+ * less motion (bottom of this file).
+ */
+
+/* ---------- points earned: a Ben-Day burst over the whole screen ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 2rem 1.5rem;
+  overflow: hidden;
+  text-align: center;
+  color: #14110c;
+  background-color: #ffc72c;
+  background-image: radial-gradient(circle, rgba(237, 28, 36, 0.3) 30%, transparent 32%);
+  background-size: 18px 18px;
+  animation:
+    overlay-in 0.25s ease-out both,
+    overlay-out 0.5s ease-in 6s forwards;
+}
+
+.burst {
+  position: relative;
+  width: min(60vw, 340px);
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  animation: burst-in 0.7s cubic-bezier(0.2, 1.7, 0.4, 1) 0.1s both;
+}
+
+/* The star itself turns slowly behind the number, which stays upright. */
+.star {
+  position: absolute;
+  inset: 0;
+  animation: spin 14s linear 0.8s infinite;
+}
+.star i {
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(
+    50% 0%, 60.09% 12.33%, 75% 6.7%, 77.58% 22.42%, 93.3% 25%, 87.67% 39.91%,
+    100% 50%, 87.67% 60.09%, 93.3% 75%, 77.58% 77.58%, 75% 93.3%, 60.09% 87.67%,
+    50% 100%, 39.91% 87.67%, 25% 93.3%, 22.42% 77.58%, 6.7% 75%, 12.33% 60.09%,
+    0% 50%, 12.33% 39.91%, 6.7% 25%, 22.42% 22.42%, 25% 6.7%, 39.91% 12.33%
+  );
+}
+/* Hard offset shadow, ink outline, red face. */
+.star i:nth-child(1) {
+  background: #14110c;
+  transform: translate(10px, 10px);
+}
+.star i:nth-child(2) {
+  background: #14110c;
+}
+.star i:nth-child(3) {
+  background: #ed1c24;
+  inset: 7px;
+}
+
+.plus {
+  position: relative;
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(3.5rem, 13vw, 6.5rem);
+  line-height: 0.95;
+  color: #fff;
+  -webkit-text-stroke: 2px #14110c;
+  text-shadow: 4px 4px 0 #14110c;
+}
+
+.unit {
+  position: relative;
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(1.1rem, 3.4vw, 1.6rem);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #ffc72c;
+  text-shadow: 2px 2px 0 #14110c;
+}
+
+.headline {
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(2rem, 6vw, 3.4rem);
+  line-height: 1.05;
+  transform: rotate(-2deg);
+  animation: rise 0.5s ease-out 0.45s both;
+}
+
+.balance {
+  min-width: min(80vw, 22rem);
+  padding: 0.9rem 1.4rem 1.1rem;
+  background: #14110c;
+  color: #ffc72c;
+  border: 3px solid #14110c;
+  border-radius: 4px;
+  box-shadow: 6px 6px 0 #ed1c24;
+  animation: rise-straight 0.5s ease-out 0.7s both;
+}
+.balanceLabel {
+  font-family: var(--font-space-mono), "Courier New", monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.75);
+}
+.balanceNumber {
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(2.2rem, 7vw, 3.2rem);
+  line-height: 1.1;
+}
+
+/* Progress to the next reward: fills from the old balance to the new. */
+.track {
+  position: relative;
+  height: 16px;
+  margin-top: 0.6rem;
+  background: #fff;
+  border: 2px solid #ffc72c;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--to);
+  background: #ed1c24;
+  animation: fill 1.2s ease-out 1s both;
+}
+.reward {
+  margin-top: 0.55rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.confetti i {
+  position: absolute;
+  top: -8vh;
+  left: var(--x);
+  width: 14px;
+  height: 22px;
+  background: var(--c);
+  border: 2px solid #14110c;
+  animation: fall var(--s) linear var(--d) both;
+}
+
+/* ---------- waiting for the register ---------- */
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 1.25rem;
+}
+.dots i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #14110c;
+  background: #ed1c24;
+  animation: bob 1s ease-in-out infinite;
+}
+.dots i:nth-child(2) {
+  background: #ffc72c;
+  animation-delay: 0.15s;
+}
+.dots i:nth-child(3) {
+  background: #14110c;
+  animation-delay: 0.3s;
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes burst-in {
+  from {
+    transform: scale(0) rotate(-120deg);
+  }
+  to {
+    transform: scale(1) rotate(0deg);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px) rotate(-2deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(-2deg);
+  }
+}
+@keyframes rise-straight {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes fill {
+  from {
+    width: var(--from);
+  }
+  to {
+    width: var(--to);
+  }
+}
+@keyframes fall {
+  from {
+    transform: translateY(0) rotate(0deg);
+  }
+  to {
+    transform: translateY(118vh) rotate(var(--r));
+  }
+}
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overlay,
+  .overlay *,
+  .dots i {
+    animation: none !important;
+  }
+  .confetti {
+    display: none;
+  }
+}

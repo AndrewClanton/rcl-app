@@ -1,0 +1,137 @@
+"use server";
+
+import { assertStaff } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
+import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
+import { sameEmail } from "@/lib/email-match";
+import { allowAttempt } from "@/lib/rate-limit";
+import { getPosMember, type PosMember } from "./member-actions";
+
+// The register's half of check-in for points (the customer screen's half is
+// in display/customer/actions.ts). Staff-only: this is where a sealed
+// request from the screen turns into a photo, a full name and the last four
+// of the phone, for staff to say "yes, that's them" before anything is
+// attached or created.
+
+export type CheckinCard =
+  | { kind: "known"; phoneLast4: string; matches: PosMember[] }
+  | {
+      kind: "new";
+      firstName: string;
+      phone: string;
+      email: string | null;
+      emailOptIn: boolean;
+      // The email they typed is already on this account (someone who joined
+      // online without a phone, say): staff can attach them instead.
+      emailMatch: PosMember | null;
+    };
+
+const EXPIRED = "This check-in timed out. Ask them to check in again on the screen.";
+const OFFLINE = "Couldn't reach the database. Check the connection and try again.";
+const BUSY = "Too many check-ins at once. Wait a minute, then try again.";
+
+export async function resolveCheckin(ref: string): Promise<{ ok: true; card: CheckinCard } | { ok: false; error: string; expired?: boolean }> {
+  const staff = await assertStaff();
+  if (!(await allowAttempt(`checkin-resolve:${staff.employeeId}`, 30, 60))) return { ok: false, error: BUSY };
+  const c = openCheckin(ref);
+  if (!c) return { ok: false, error: EXPIRED, expired: true };
+
+  if (c.kind === "known") {
+    const found = await memberIdsWithPhone(c.phone);
+    if (!found.ok) return { ok: false, error: OFFLINE };
+    // Usually one; a shared family number can have a few.
+    const matches = (await Promise.all(found.ids.slice(0, 4).map((id) => getPosMember(id)))).filter((m): m is PosMember => !!m);
+    if (!matches.length) return { ok: false, error: "No account has that number anymore. Look them up by name instead." };
+    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches } };
+  }
+
+  const matchId = c.email ? await memberIdWithEmail(c.email) : null;
+  return {
+    ok: true,
+    card: {
+      kind: "new",
+      firstName: c.firstName,
+      phone: formatPhone(c.phone),
+      email: c.email,
+      emailOptIn: c.emailOptIn,
+      emailMatch: matchId ? await getPosMember(matchId) : null,
+    },
+  };
+}
+
+export type CheckinCreated = { ok: true; member: PosMember; isNew: boolean; note: string | null } | { ok: false; error: string };
+
+// "Create & attach" for a new regular: a free Insiders account with just a
+// first name and the phone (plus the email, if they gave one -- opted in to
+// emails only if they ticked the box). With `existingId` it's "Attach them"
+// instead, for when the email they typed is on an account already: that
+// account gets this phone if it has none on file.
+export async function createCheckinMember(ref: string, existingId: string | null = null): Promise<CheckinCreated> {
+  const staff = await assertStaff();
+  if (!(await allowAttempt(`checkin-create:${staff.employeeId}`, 10, 300))) return { ok: false, error: BUSY };
+  const c = openCheckin(ref);
+  if (!c) return { ok: false, error: EXPIRED };
+  if (c.kind !== "new") return { ok: false, error: "That check-in is for an existing account." };
+  const supabase = createAdminClient();
+  const phone = formatPhone(c.phone);
+
+  if (existingId) {
+    let m = await getPosMember(existingId);
+    if (!m || !c.email || !sameEmail(m.email, c.email)) return { ok: false, error: "That account doesn't match the email they typed." };
+    let note: string | null = null;
+    if (!m.phone) {
+      const { error } = await supabase.from("members").update({ phone }).eq("id", m.id).is("phone", null);
+      if (error) note = "Couldn't save the phone on their account, but they're attached.";
+      else {
+        m = { ...m, phone };
+        note = `Added ${phone} to ${firstNameOf(m.name)}'s account.`;
+      }
+    } else if (last10(m.phone) !== c.phone) {
+      note = `Their account has a different phone on file (ending ${last10(m.phone).slice(-4)}), so it wasn't changed.`;
+    }
+    // They ticked "email me" just now, so honour it. (Never switches emails
+    // off: leaving the box empty isn't a request to unsubscribe.)
+    if (c.emailOptIn) {
+      await supabase.from("members").update({ email_opt_in: true, email_opt_in_changed_at: new Date().toISOString() }).eq("id", m.id).eq("email_opt_in", false);
+    }
+    return { ok: true, member: m, isNew: false, note };
+  }
+
+  // Made on another register a moment ago, or the same request twice:
+  // attach that account rather than making a second one.
+  const byPhone = await memberIdsWithPhone(c.phone);
+  if (!byPhone.ok) return { ok: false, error: OFFLINE };
+  if (byPhone.ids.length) {
+    const m = await getPosMember(byPhone.ids[0]);
+    if (m) return { ok: true, member: m, isNew: false, note: "That number already had an account, so that one is attached." };
+  }
+
+  // Emails are one account each. If theirs is taken (and staff chose "Create
+  // new" over attaching that account), the new one is made without it.
+  const EMAIL_TAKEN = "Their email is already on another account, so it wasn't saved on this one.";
+  let email = c.email;
+  let note: string | null = null;
+  if (email && (await memberIdWithEmail(email))) {
+    email = null;
+    note = EMAIL_TAKEN;
+  }
+  const row = (withEmail: string | null) => ({
+    name: c.firstName,
+    phone,
+    email: withEmail,
+    email_opt_in: !!withEmail && c.emailOptIn,
+    email_opt_in_changed_at: withEmail ? new Date().toISOString() : null,
+  });
+  let { data, error } = await supabase.from("members").insert(row(email)).select("id").single();
+  if (error?.code === "23505" && email) {
+    // Lost a race for the email (the unique index): same as above.
+    ({ data, error } = await supabase.from("members").insert(row(null)).select("id").single());
+    note = EMAIL_TAKEN;
+  }
+  if (error || !data) return { ok: false, error: "Couldn't create the account. Try again, or add them from Members in the back office." };
+
+  const member = await getPosMember(data.id);
+  if (!member) return { ok: false, error: OFFLINE };
+  return { ok: true, member, isNew: true, note };
+}

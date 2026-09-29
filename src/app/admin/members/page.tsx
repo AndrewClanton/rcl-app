@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getStaffSession, hasAdminAccess } from "@/lib/auth";
+import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getCommunityPrograms, getMembersPage } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getLegacySummary } from "@/lib/data/legacy";
@@ -44,6 +44,17 @@ export default async function AdminMembersPage({
             {legacy.awaitingReview > 0 && <> · <span className="text-[var(--accent)]">{legacy.awaitingReview} need review</span></>}
           </span>
           <span className="text-[var(--muted)]">Review →</span>
+        </Link>
+      )}
+      {session && hasManagerAccess(session.role) && (
+        <Link
+          href="/admin/members/regulars"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Top regulars</span> · who came in most and spent most this month, for prizes
+          </span>
+          <span className="text-[var(--muted)]">See the list →</span>
         </Link>
       )}
       <MemberManager
