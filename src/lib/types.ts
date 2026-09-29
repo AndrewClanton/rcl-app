@@ -80,6 +80,20 @@ export interface Ingredient {
   unit_cost: number | null;
   category: string | null;
   active: boolean;
+  // The par sheet line it's bought from (Register → shift tools), if any.
+  par_item_id: string | null;
+}
+
+// A par sheet line as the recipe editor and the Ingredients page see it
+// (the register's own ParItem, in src/lib/ops/shared.ts, has the counts).
+export interface ParItemRef {
+  id: string;
+  area: string;
+  section: string | null;
+  name: string;
+  unit: string | null;
+  source: string | null;
+  active: boolean;
 }
 
 export interface RecipeIngredientLine {

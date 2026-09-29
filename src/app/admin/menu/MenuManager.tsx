@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Ingredient, MenuCategory, MenuItem, Recipe } from "@/lib/types";
+import type { Ingredient, MenuCategory, MenuItem, ParItemRef, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCategory, addItem, updateItem, deleteItem, setItemHidden } from "./actions";
 import ItemModifiers from "./ItemModifiers";
@@ -12,11 +12,13 @@ import ItemRecipe from "./ItemRecipe";
 export default function MenuManager({
   categories,
   ingredients,
+  parItems,
   recipesByItem,
   canEdit,
 }: {
   categories: MenuCategory[];
   ingredients: Ingredient[];
+  parItems: ParItemRef[];
   recipesByItem: Record<string, Recipe>;
   canEdit: boolean;
 }) {
@@ -48,6 +50,7 @@ export default function MenuManager({
     <ItemManager
       target={target}
       ingredients={ingredients}
+      parItems={parItems}
       recipesByItem={recipesByItem}
       canEdit={canEdit}
       onBack={() =>
@@ -243,6 +246,7 @@ function money(n: number) {
 function ItemManager({
   target,
   ingredients,
+  parItems,
   recipesByItem,
   canEdit,
   onBack,
@@ -250,6 +254,7 @@ function ItemManager({
 }: {
   target: MenuCategory;
   ingredients: Ingredient[];
+  parItems: ParItemRef[];
   recipesByItem: Record<string, Recipe>;
   canEdit: boolean;
   onBack: () => void;
@@ -272,7 +277,7 @@ function ItemManager({
       <div className="space-y-3">
         {target.items.length === 0 && <p className="text-sm text-[var(--muted)]">No items here yet.</p>}
         {target.items.map((item) => (
-          <ItemRow key={item.id} item={item} ingredients={ingredients} recipe={recipesByItem[item.id] ?? null} canEdit={canEdit} />
+          <ItemRow key={item.id} item={item} ingredients={ingredients} parItems={parItems} recipe={recipesByItem[item.id] ?? null} canEdit={canEdit} />
         ))}
       </div>
 
@@ -321,7 +326,19 @@ function ItemManager({
 // One menu item. "Hide from register" takes it off the register without
 // losing it: an item that has sold can't be deleted (its sales point at
 // it), so when a delete is refused this offers Hide right there.
-function ItemRow({ item, ingredients, recipe, canEdit }: { item: MenuItem; ingredients: Ingredient[]; recipe: Recipe | null; canEdit: boolean }) {
+function ItemRow({
+  item,
+  ingredients,
+  parItems,
+  recipe,
+  canEdit,
+}: {
+  item: MenuItem;
+  ingredients: Ingredient[];
+  parItems: ParItemRef[];
+  recipe: Recipe | null;
+  canEdit: boolean;
+}) {
   const [pending, run] = useRefreshingAction();
   const [modsOpen, setModsOpen] = useState(false);
   const [recipeOpen, setRecipeOpen] = useState(false);
@@ -357,7 +374,9 @@ function ItemRow({ item, ingredients, recipe, canEdit }: { item: MenuItem; ingre
         ) : (
           item.is_alcohol && <span className="text-xs text-[var(--warn-text)]">alcohol</span>
         )}
-        {item.is_alcohol && (
+        {/* Any item can have a recipe (popcorn: kernels, oil, the bag).
+            Cashiers see the button where there's one to read. */}
+        {(canEdit || item.is_alcohol || recipe) && (
           <button className="rounded border border-[var(--warn-border)] px-2 py-1 text-xs text-[var(--warn-text)] " onClick={() => setRecipeOpen((v) => !v)}>
             Recipe ({recipe?.ingredients.length ?? 0})
           </button>
@@ -416,7 +435,7 @@ function ItemRow({ item, ingredients, recipe, canEdit }: { item: MenuItem; ingre
         </div>
       )}
       {modsOpen && <ItemModifiers item={item} canEdit={canEdit} />}
-      {recipeOpen && <ItemRecipe item={item} recipe={recipe} ingredients={ingredients} canEdit={canEdit} />}
+      {recipeOpen && <ItemRecipe item={item} recipe={recipe} ingredients={ingredients} parItems={parItems} canEdit={canEdit} />}
     </div>
   );
 }
