@@ -34,7 +34,9 @@ export async function getUpcomingScreenings(): Promise<Screening[]> {
 
 // For in-venue countdown screens: every screening from `sinceMinutes` ago
 // onward, so the film that just started stays up while latecomers arrive.
-// Unfiltered by MPLC restriction -- only call this from a staff-gated page.
+// Unfiltered by MPLC restriction -- only call this from a staff-gated page,
+// or run the result through excludeRestrictedReleases first (as the public
+// box-office TV does).
 // Also returns the server's clock at fetch time, which the screen uses as
 // its time reference instead of the TV's own clock.
 export async function getScreeningsForCountdown(sinceMinutes: number, limit = 40): Promise<{ screenings: Screening[]; fetchedAt: number }> {
