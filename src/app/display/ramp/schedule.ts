@@ -9,7 +9,10 @@ export const CENTRAL_TZ = "America/Chicago";
 
 export interface RampScreening {
   id: string;
+  kind: "film" | "event"; // event: trivia, comedy, the book swap...
   startsAt: number; // epoch ms
+  endsAt: number | null; // events only, when known
+  note: string | null; // events only, e.g. "Halloween & horror theme"
   title: string;
   posterUrl: string | null;
   rating: string | null;

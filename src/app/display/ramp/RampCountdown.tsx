@@ -130,8 +130,9 @@ function Featured({ state, now }: { state: Extract<RampState, { featured: RampSc
   const shown = state.featured.slice(0, 2);
   const extra = state.featured.length - shown.length;
 
+  const allEvents = shown.every((f) => f.kind === "event");
   const band = nowPlaying
-    ? { label: "NOW PLAYING", background: RED, color: "#ffffff" }
+    ? { label: allEvents ? "HAPPENING NOW" : "NOW PLAYING", background: RED, color: "#ffffff" }
     : countdown
       ? { label: "NEXT UP", background: GOLD, color: INK }
       : { label: "NEXT SCREENING", background: GOLD, color: INK };
@@ -188,6 +189,10 @@ function Label({ children }: { children: React.ReactNode }) {
 }
 
 function meta(film: RampScreening) {
+  if (film.kind === "event") {
+    const time = film.endsAt ? `${formatClock(film.startsAt)}–${formatClock(film.endsAt)}` : formatClock(film.startsAt);
+    return [time, film.note?.toUpperCase()].filter(Boolean).join(" · ");
+  }
   return [film.rating, film.runtimeMinutes ? `${film.runtimeMinutes} MIN` : null, film.room.toUpperCase()].filter(Boolean).join(" · ");
 }
 
@@ -197,6 +202,20 @@ function titleSize(title: string, base: number) {
 
 function Poster({ film, width, height }: { film: RampScreening; width: number; height: number }) {
   const frame = { width, height, flexShrink: 0, borderRadius: 10, boxShadow: `14px 14px 0 ${GOLD}`, overflow: "hidden", position: "relative" as const, background: INK_CARD };
+  // A house event has no poster: a marquee card instead.
+  if (film.kind === "event") {
+    return (
+      <div style={{ ...frame, background: RED, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: width / 28, textAlign: "center" }}>
+        <div style={{ fontSize: width / 3.2, lineHeight: 1, color: GOLD }}>★</div>
+        <div className="font-display" style={{ fontSize: width / 3.6, lineHeight: 0.95, color: CREAM, letterSpacing: 2 }}>
+          LIVE
+        </div>
+        <div className="font-mono" style={{ fontSize: width / 16, fontWeight: 700, letterSpacing: width / 90, color: GOLD }}>
+          AT THE ROYALE
+        </div>
+      </div>
+    );
+  }
   if (!film.posterUrl) {
     return (
       <div className="font-display" style={{ ...frame, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center", fontSize: 44, color: MUTED }}>
@@ -252,6 +271,7 @@ function Later({ state }: { state: Extract<RampState, { later: RampScreening[] }
           {state.later.map((s) => (
             <div key={s.id} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 32 }}>
               <span className="font-display truncate" style={{ fontSize: 42, minWidth: 0 }}>
+                {s.kind === "event" && <span style={{ color: GOLD }}>★ </span>}
                 {s.title}
               </span>
               <span className="font-mono" style={{ fontSize: 40, fontWeight: 700, color: GOLD, flexShrink: 0 }}>

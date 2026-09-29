@@ -37,6 +37,16 @@ export function businessDayWindow(date: string) {
   return { start: fourAm(date), end: fourAm(next.toISOString().slice(0, 10)) };
 }
 
+// A Central wall-clock date and time ("2026-10-13", "19:00") as an ISO
+// instant, whichever of CDT/CST applies that day.
+export function centralToIso(date: string, time: string): string {
+  const [h, m] = time.split(":").map(Number);
+  let t = new Date(`${date}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00Z`).getTime() + 5 * 3_600_000; // as if CDT
+  const p = parts(new Date(t));
+  if (p.hour !== h) t += (h - p.hour) * 3_600_000; // CST is an hour further from UTC
+  return new Date(t).toISOString();
+}
+
 // The business date `days` before/after a "YYYY-MM-DD" date.
 export function shiftDate(date: string, days: number) {
   const d = new Date(`${date}T12:00:00Z`);

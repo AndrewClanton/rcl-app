@@ -1,5 +1,6 @@
 import { requireDisplayScreen } from "@/lib/auth";
 import { getScreeningsForCountdown } from "@/lib/data/screenings";
+import { getRecentHouseEvents } from "@/lib/data/house-events";
 import RampCountdown from "./RampCountdown";
 import { NOW_PLAYING_MINUTES, type RampScreening } from "./schedule";
 
@@ -17,10 +18,30 @@ export const dynamic = "force-dynamic";
 export default async function RampDisplayPage({ searchParams }: { searchParams: Promise<{ rotate?: string }> }) {
   const { rotate } = await searchParams;
   await requireDisplayScreen(rotate ? `/display/ramp?rotate=${encodeURIComponent(rotate)}` : "/display/ramp");
-  const { screenings, fetchedAt } = await getScreeningsForCountdown(NOW_PLAYING_MINUTES);
+  const [{ screenings, fetchedAt }, events] = await Promise.all([
+    getScreeningsForCountdown(NOW_PLAYING_MINUTES),
+    getRecentHouseEvents(NOW_PLAYING_MINUTES),
+  ]);
 
-  const items: RampScreening[] = screenings.map((s) => ({
+  // Trivia, comedy, the book swap: counted down just like the films.
+  const houseEvents: RampScreening[] = events.map((e) => ({
+    id: e.id,
+    kind: "event",
+    startsAt: new Date(e.starts_at).getTime(),
+    endsAt: e.ends_at ? new Date(e.ends_at).getTime() : null,
+    note: e.note,
+    title: e.title,
+    posterUrl: null,
+    rating: null,
+    runtimeMinutes: null,
+    room: "The lounge",
+  }));
+
+  const films: RampScreening[] = screenings.map((s) => ({
     id: s.id,
+    kind: "film",
+    endsAt: null,
+    note: null,
     startsAt: new Date(s.starts_at).getTime(),
     title: s.movie.title,
     posterUrl: s.movie.poster_url,
@@ -28,6 +49,8 @@ export default async function RampDisplayPage({ searchParams }: { searchParams: 
     runtimeMinutes: s.movie.runtime_minutes,
     room: s.room.name.split(" — ")[0],
   }));
+
+  const items = [...films, ...houseEvents].sort((a, b) => a.startsAt - b.startsAt);
 
   return <RampCountdown screenings={items} serverNow={fetchedAt} rotate={rotate === "ccw" || rotate === "off" ? rotate : "cw"} />;
 }

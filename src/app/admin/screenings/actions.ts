@@ -8,11 +8,39 @@ import { searchMovies, getMovieDetails } from "@/lib/omdb";
 import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
+import { centralToIso } from "@/lib/ops/time";
 
 function revalidate() {
   revalidatePath("/admin/screenings");
   revalidatePath("/showtimes");
   revalidatePath("/");
+}
+
+// ---------- house events (trivia, comedy, book swap...) for the ramp TV ----------
+
+export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string }): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertStaff();
+  const title = input.title.trim();
+  if (!title) return { ok: false, error: "Give the event a name." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{1,2}:\d{2}$/.test(input.start)) return { ok: false, error: "Pick a date and start time." };
+  const startsAt = centralToIso(input.date, input.start);
+  let endsAt: string | null = null;
+  if (input.end) {
+    if (!/^\d{1,2}:\d{2}$/.test(input.end)) return { ok: false, error: "That end time doesn't look right." };
+    endsAt = centralToIso(input.date, input.end);
+    // Ends after midnight (a late comedy show): the next day.
+    if (endsAt <= startsAt) endsAt = new Date(new Date(endsAt).getTime() + 86_400_000).toISOString();
+  }
+  const { error } = await createAdminClient().from("house_events").insert({ title, note: input.note.trim() || null, starts_at: startsAt, ends_at: endsAt });
+  if (error) return { ok: false, error: "Couldn't save that event. Try again." };
+  revalidatePath("/admin/screenings");
+  return { ok: true };
+}
+
+export async function deleteHouseEvent(id: string) {
+  await assertStaff();
+  await createAdminClient().from("house_events").delete().eq("id", id);
+  revalidatePath("/admin/screenings");
 }
 
 // Actions the UI needs a readable error from return it instead of throwing:
