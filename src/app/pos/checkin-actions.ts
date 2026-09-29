@@ -17,7 +17,8 @@ import type { VisitResult } from "@/lib/visits";
 // attached or created.
 
 export type CheckinCard =
-  | { kind: "known"; phoneLast4: string; matches: PosMember[] }
+  // fresh: the tablet just made this account for a new customer.
+  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean }
   | {
       kind: "new";
       firstName: string;
@@ -45,7 +46,7 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
     // Usually one; a shared family number can have a few.
     const matches = (await Promise.all(found.ids.slice(0, 4).map((id) => getPosMember(id)))).filter((m): m is PosMember => !!m);
     if (!matches.length) return { ok: false, error: "No account has that number anymore. Look them up by name instead." };
-    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches } };
+    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches, fresh: c.fresh === true } };
   }
 
   const matchId = c.email ? await memberIdWithEmail(c.email) : null;

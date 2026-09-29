@@ -326,7 +326,7 @@ export default function RegisterCheckins({
           >
             <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--foreground)" }}>
               <span className="font-display flex-1 text-xs uppercase tracking-wide">
-                {p.kind === "new" ? "New regular" : "Check-in for points"}
+                {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
               </span>
               <span className="text-[11px]">{ago(Math.max(0, now - p.at))}</span>
               <button className="text-[11px] font-bold underline" onClick={() => setCollapsed(true)}>
@@ -343,7 +343,7 @@ export default function RegisterCheckins({
                   current={member}
                   hasOrder={hasOrder}
                   working={p.working}
-                  onConfirm={(m, addToOrder) => confirm(p, m, false, null, addToOrder)}
+                  onConfirm={(m, addToOrder) => confirm(p, m, p.card?.kind === "known" && p.card.fresh === true, null, addToOrder)}
                   onDecline={() => decline(p)}
                 />
               )}

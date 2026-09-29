@@ -14,7 +14,8 @@ import { last10, type CheckinKind } from "@/lib/checkin";
 export const CHECKIN_LIFETIME_MS = 15 * 60_000;
 
 export type CheckinDetails =
-  | { kind: "known"; phone: string }
+  // fresh: an account the tablet just made for a new customer.
+  | { kind: "known"; phone: string; fresh?: boolean }
   | { kind: "new"; phone: string; firstName: string; email: string | null; emailOptIn: boolean };
 
 type Sealed = CheckinDetails & { id: string; exp: number };
