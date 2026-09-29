@@ -5,7 +5,11 @@ import type { MenuItem } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addModifierGroup, deleteModifierGroup, addModifierOption, updateModifierOption, deleteModifierOption } from "./actions";
 
-export default function ItemModifiers({ item }: { item: MenuItem }) {
+function signedMoney(n: number) {
+  return n ? `${n > 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}` : "";
+}
+
+export default function ItemModifiers({ item, canEdit }: { item: MenuItem; canEdit: boolean }) {
   const [pending, run] = useRefreshingAction();
   const [newGroupLabel, setNewGroupLabel] = useState("");
   const [newGroupType, setNewGroupType] = useState<"single" | "multi">("single");
@@ -18,48 +22,65 @@ export default function ItemModifiers({ item }: { item: MenuItem }) {
             <span className="text-sm font-medium">
               {group.label} <span className="text-[var(--muted)]">({group.type === "single" ? "choose one" : "choose any"})</span>
             </span>
-            <button className="text-xs text-[var(--danger-text)] hover:underline" disabled={pending} onClick={() => run(() => deleteModifierGroup(group.id))}>
-              Delete group
-            </button>
+            {canEdit && (
+              <button className="text-xs text-[var(--danger-text)] hover:underline" disabled={pending} onClick={() => run(() => deleteModifierGroup(group.id))}>
+                Delete group
+              </button>
+            )}
           </div>
-          {group.options.map((opt) => (
-            <OptionRow key={opt.id} id={opt.id} name={opt.name} priceDelta={opt.price_delta} />
-          ))}
-          <NewOptionRow groupId={group.id} />
+          {canEdit ? (
+            <>
+              {group.options.map((opt) => (
+                <OptionRow key={opt.id} id={opt.id} name={opt.name} priceDelta={opt.price_delta} />
+              ))}
+              <NewOptionRow groupId={group.id} />
+            </>
+          ) : (
+            <ul className="text-sm">
+              {group.options.map((opt) => (
+                <li key={opt.id} className="flex gap-2">
+                  <span>{opt.name}</span>
+                  <span className="text-[var(--muted)]">{signedMoney(Number(opt.price_delta))}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ))}
 
-      <div className="flex flex-wrap items-end gap-2">
-        <div>
-          <label className="mb-1 block text-xs text-[var(--muted)]">New group label</label>
-          <input
+      {canEdit && (
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-[var(--muted)]">New group label</label>
+            <input
+              className="rounded border border-[var(--border)] px-2 py-1 text-sm "
+              placeholder="e.g. Size"
+              value={newGroupLabel}
+              onChange={(e) => setNewGroupLabel(e.target.value)}
+            />
+          </div>
+          <select
             className="rounded border border-[var(--border)] px-2 py-1 text-sm "
-            placeholder="e.g. Size"
-            value={newGroupLabel}
-            onChange={(e) => setNewGroupLabel(e.target.value)}
-          />
+            value={newGroupType}
+            onChange={(e) => setNewGroupType(e.target.value as "single" | "multi")}
+          >
+            <option value="single">Choose one</option>
+            <option value="multi">Choose any</option>
+          </select>
+          <button
+            className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
+            disabled={pending || !newGroupLabel.trim()}
+            onClick={() => {
+              const label = newGroupLabel;
+              const type = newGroupType;
+              setNewGroupLabel("");
+              run(() => addModifierGroup(item.id, label, type));
+            }}
+          >
+            Add modifier group
+          </button>
         </div>
-        <select
-          className="rounded border border-[var(--border)] px-2 py-1 text-sm "
-          value={newGroupType}
-          onChange={(e) => setNewGroupType(e.target.value as "single" | "multi")}
-        >
-          <option value="single">Choose one</option>
-          <option value="multi">Choose any</option>
-        </select>
-        <button
-          className="rounded bg-[var(--accent)] px-3 py-1 text-sm text-white disabled:opacity-50 "
-          disabled={pending || !newGroupLabel.trim()}
-          onClick={() => {
-            const label = newGroupLabel;
-            const type = newGroupType;
-            setNewGroupLabel("");
-            run(() => addModifierGroup(item.id, label, type));
-          }}
-        >
-          Add modifier group
-        </button>
-      </div>
+      )}
     </div>
   );
 }
