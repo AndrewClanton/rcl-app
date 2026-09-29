@@ -29,16 +29,16 @@ async function connectionKey(): Promise<string> {
 
 // A short burst window (so "wait a minute" is true) plus an hourly cap, so
 // a patient script can't keep going at the burst rate all day. Generous
-// enough for a family on one phone line, or a mobile carrier that puts
-// many customers behind one address.
+// enough for a family on one phone line, a mobile carrier that puts many
+// customers behind one address, or a group booking on the Royale's Wi-Fi.
 export interface FormLimit {
   perMinute: number;
   perHour: number;
 }
 
 export const FORM_LIMITS = {
-  tickets: { perMinute: 8, perHour: 40 },
-  booths: { perMinute: 6, perHour: 20 },
+  tickets: { perMinute: 15, perHour: 80 },
+  booths: { perMinute: 10, perHour: 40 },
   eventInquiry: { perMinute: 4, perHour: 12 },
   membership: { perMinute: 6, perHour: 30 },
 } satisfies Record<string, FormLimit>;
