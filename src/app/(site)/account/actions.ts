@@ -10,6 +10,8 @@ import { getStripe } from "@/lib/stripe";
 import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
+import { syncMemberSoon } from "@/lib/mailing-list";
+import { safePath } from "@/lib/safe-path";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -24,6 +26,32 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   // Don't leave them half signed in to a login that owns nothing.
   if (result.reason === "unproven") await supabase.auth.signOut();
   return { ok: false, error: result.error };
+}
+
+// The link in a Supabase sign-up confirmation (or password reset) email,
+// once "Confirm email" is on and the email templates point at
+// /account/confirm. The page only verifies when the person presses its
+// button, so a mail scanner that opens every link can't use up the
+// one-time token first. Works in any browser: nothing from the sign-up
+// browser is needed.
+const OTP_TYPES = { email: "email", signup: "email", recovery: "recovery", email_change: "email_change", invite: "invite" } as const;
+
+export async function confirmEmailLink(tokenHash: string, type: string, next: string | null): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const otpType = OTP_TYPES[type as keyof typeof OTP_TYPES];
+  if (!otpType || !tokenHash || tokenHash.length > 500) return { ok: false, error: "That link isn't complete. Copy the whole link from the email, or ask for a new one." };
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+  if (error || !data.user) return { ok: false, error: "This link has expired or was already used. Sign in, or ask for a new one from the sign-in page." };
+  if (otpType === "recovery") return { ok: true, to: "/account/reset-password" };
+  const linked = await linkMemberForUser(data.user);
+  if (!linked.ok) {
+    await supabase.auth.signOut();
+    return { ok: false, error: linked.error };
+  }
+  // Where they were headed when they signed up (e.g. Insiders+ payment);
+  // the bare site address means nowhere in particular.
+  const dest = safePath(next);
+  return { ok: true, to: dest && dest !== "/account" && dest !== "/" ? dest : linked.created ? "/account?welcome=1" : "/account" };
 }
 
 export async function signOut(): Promise<void> {
@@ -110,13 +138,16 @@ export async function updateMyProfile(fields: { name: string; phone: string }): 
   return { ok: true };
 }
 
+// The weekly lineup email. Resend's copy of the list follows once the page
+// has answered (lib/mailing-list.ts).
 export async function setEmailOptIn(optIn: boolean): Promise<ProfileResult> {
   const member = await requireMember();
   const { error } = await createAdminClient()
     .from("members")
-    .update({ email_opt_in: optIn, email_opt_in_changed_at: new Date().toISOString() })
+    .update({ email_opt_in: optIn === true, email_opt_in_changed_at: new Date().toISOString() })
     .eq("id", member.id);
   if (error) return { ok: false, error: "Couldn't save. Try again." };
+  syncMemberSoon(member.id, { freshOptIn: optIn === true });
   revalidatePath("/account", "layout");
   return { ok: true };
 }

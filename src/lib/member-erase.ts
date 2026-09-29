@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
+import { syncMember } from "@/lib/mailing-list";
 
 // Removing a member's personal info on request, as promised on /data-deletion.
 //
@@ -12,6 +13,7 @@ import { getStripe } from "@/lib/stripe";
 //   3. Database: erase_member_personal_info() clears everything that
 //      identifies them, everywhere it was copied, in one transaction.
 //   4. Photos: delete their uploaded photo files.
+//   5. Mailing list: delete their contact in Resend.
 // Steps 1 and 2 come first because once step 3 clears the member row, it
 // no longer records which Stripe customer or login was theirs.
 
@@ -34,7 +36,7 @@ export async function eraseMember(memberId: string, byEmployeeId: string): Promi
   const admin = createAdminClient();
   const { data: m, error } = await admin
     .from("members")
-    .select("id, auth_user_id, stripe_customer_id, erased_at")
+    .select("id, email, auth_user_id, stripe_customer_id, erased_at")
     .eq("id", memberId)
     .maybeSingle();
   if (error || !m) return { ok: false, error: "Couldn't find that member." };
@@ -90,6 +92,13 @@ export async function eraseMember(memberId: string, byEmployeeId: string): Promi
     const { error: rmErr } = await bucket.remove(names);
     if (rmErr) warning = "Their photo files couldn't be deleted from storage. Ask Claude to clean them up.";
     else photos = names.length;
+  }
+
+  // 5. Mailing list: their contact comes off Resend (not fatal either: the
+  //    nightly list sync removes anyone who isn't a current subscriber).
+  if (m.email) {
+    const unlisted = await syncMember(null, { removeEmail: m.email });
+    if (!unlisted.ok) warning = [warning, "Their email couldn't be taken off the mailing list in Resend yet; tonight's list sync will do it."].filter(Boolean).join(" ");
   }
 
   const c = (counts ?? {}) as Record<string, number>;

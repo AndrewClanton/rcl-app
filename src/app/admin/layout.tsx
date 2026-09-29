@@ -53,6 +53,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/schedule-graphic" className="hover:underline">
             Schedule graphic
           </Link>
+          {hasManagerAccess(staff.role) && (
+            <Link href="/admin/mailing-list" className="hover:underline">
+              Mailing list
+            </Link>
+          )}
           <Link href="/display" className="hover:underline">
             Displays
           </Link>

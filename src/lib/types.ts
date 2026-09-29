@@ -172,6 +172,8 @@ export interface Member {
   price_tier_set_by: string | null;
   price_tier_set_at: string | null;
   email_opt_in?: boolean;
+  // When they last chose yes or no to the weekly email (null: never chose).
+  email_opt_in_changed_at?: string | null;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;

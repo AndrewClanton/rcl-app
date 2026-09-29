@@ -77,7 +77,8 @@ export default function ProfileView({
 
       <Panel title="Emails">
         <div className="p-5">
-          <EmailPreference optIn={member.email_opt_in !== false} />
+          {/* On only when they chose it (the old "on by default" never recorded a choice). */}
+          <EmailPreference optIn={member.email_opt_in === true && !!member.email_opt_in_changed_at} />
         </div>
       </Panel>
 

@@ -16,7 +16,17 @@ import { approvalText } from "@/lib/pin-rules";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { giftEndsWithoutRenewal, plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
-import { createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, saveMemberDetails, setMemberRate, updateMember } from "../actions";
+import {
+  createMemberBillingPortalLink,
+  createMemberCardLink,
+  eraseMemberPersonalInfo,
+  grantFreeMembership,
+  revokeFreeMembership,
+  saveMemberDetails,
+  setMemberEmailOptIn,
+  setMemberRate,
+  updateMember,
+} from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -231,8 +241,44 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
             <span className="text-sm text-[var(--muted)]">{member.subscription_status} (syncs automatically)</span>
           </Field>
         )}
+        <WeeklyEmailField member={member} />
       </div>
     </div>
+  );
+}
+
+// The members' mailing list. On only when they chose it; staff switch it
+// for someone who asks in person or on the phone.
+function WeeklyEmailField({ member }: { member: Member }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const on = member.email_opt_in === true && !!member.email_opt_in_changed_at;
+  const since = member.email_opt_in_changed_at
+    ? new Date(member.email_opt_in_changed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })
+    : null;
+  return (
+    <Field label="Weekly lineup email" hint={on ? `On since ${since}.` : since ? `Off since ${since}.` : "They haven't asked for it."}>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={on}
+          disabled={pending || (!on && !member.email)}
+          onChange={(e) => {
+            const next = e.target.checked;
+            if (next && !confirm(`Put ${member.name} on the weekly email list? Only if they asked for it.`)) return;
+            setError(null);
+            startTransition(async () => {
+              const r = await setMemberEmailOptIn(member.id, next).catch(() => ({ ok: false as const, error: "Couldn't save. Try again." }));
+              if (!r.ok) setError(r.error);
+              router.refresh();
+            });
+          }}
+        />
+        {on ? "Gets the weekly email" : "Doesn't get it"}
+      </label>
+      {error && <p className="mt-1 text-xs text-[var(--danger-text)]">{error}</p>}
+    </Field>
   );
 }
 

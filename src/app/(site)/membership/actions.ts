@@ -5,6 +5,7 @@ import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/p
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
+import { syncMemberSoon } from "@/lib/mailing-list";
 
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only the generic "Minified React error #441..." reaches the
@@ -15,7 +16,7 @@ import { exactEmail } from "@/lib/email-match";
 // reaches the client in every environment.
 export type SignupResult = { ok: true } | { ok: false; error: string };
 
-export async function submitMembershipSignup(fields: { name: string; email: string; phone: string }): Promise<SignupResult> {
+export async function submitMembershipSignup(fields: { name: string; email: string; phone: string; emailOptIn?: boolean }): Promise<SignupResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
   if (!name) return { ok: false, error: "Enter your name." };
@@ -26,17 +27,26 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
   const { data: existing } = await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
   if (existing) return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
 
-  const { error } = await supabase.from("members").insert({
-    name,
-    email,
-    phone: fields.phone.trim() || null,
-    tier: "Insiders",
-    points: 0,
-  });
+  // The weekly email only if they ticked the box, with when they said so.
+  const optIn = fields.emailOptIn === true;
+  const { data: made, error } = await supabase
+    .from("members")
+    .insert({
+      name,
+      email,
+      phone: fields.phone.trim() || null,
+      tier: "Insiders",
+      points: 0,
+      email_opt_in: optIn,
+      email_opt_in_changed_at: optIn ? new Date().toISOString() : null,
+    })
+    .select("id")
+    .single();
   if (error) {
     if (error.code === "23505") return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
     throw error;
   }
+  if (optIn && made) syncMemberSoon(made.id, { freshOptIn: true });
   return { ok: true };
 }
 
@@ -50,6 +60,7 @@ export async function startMembershipCheckout(fields: {
   phone: string;
   returnTo?: string | null;
   annual?: boolean;
+  emailOptIn?: boolean;
 }): Promise<CheckoutResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
@@ -83,6 +94,8 @@ export async function startMembershipCheckout(fields: {
     returnTo: safePath(fields.returnTo),
     interval: fields.annual ? "year" : "month",
     firstChargeAt: giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null,
+    // Applied once they've paid (lib/plus-activate.ts).
+    emailOptIn: fields.emailOptIn === true,
   });
   if (!url) return { ok: false, error: "Could not start checkout. Please try again." };
   return { ok: true, url };

@@ -12,6 +12,7 @@ import { eraseMember, type EraseResult } from "@/lib/member-erase";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
+import { syncMemberSoon } from "@/lib/mailing-list";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -45,8 +46,26 @@ export async function updateMember(
 ) {
   await assertStaff();
   const supabase = createAdminClient();
+  const before = "email" in fields ? (await supabase.from("members").select("email").eq("id", id).maybeSingle()).data : null;
   await supabase.from("members").update(fields).eq("id", id).is("erased_at", null);
+  // A new email moves them on the mailing list too.
+  if (before && (before.email ?? "") !== (fields.email ?? "")) syncMemberSoon(id, { previousEmail: before.email });
   revalidate();
+}
+
+// Staff switching the weekly email on or off for a member who asked in
+// person or on the phone. Resend's copy follows (lib/mailing-list.ts).
+export async function setMemberEmailOptIn(id: string, on: boolean): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertStaff();
+  const supabase = createAdminClient();
+  const { data: m } = await supabase.from("members").select("email").eq("id", id).is("erased_at", null).maybeSingle();
+  if (!m) return { ok: false, error: "Member not found." };
+  if (on && !m.email) return { ok: false, error: "Add their email first." };
+  const { error } = await supabase.from("members").update({ email_opt_in: on, email_opt_in_changed_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  syncMemberSoon(id, { freshOptIn: on });
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
 }
 
 export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
@@ -78,6 +97,8 @@ export async function saveMemberDetails(id: string, fields: { name: string; emai
     if (error) return { ok: false, error: "Couldn't save. Try again." };
   }
   if (points !== Number(before.points)) await adjustMemberPoints(id, points);
+  // A new email (or name, for the "Hi Sam" greeting) moves them on the mailing list too.
+  if ("email" in changes || "name" in changes) syncMemberSoon(id, { previousEmail: "email" in changes ? before.email : null });
 
   let message = "Saved ✓";
   // Keep Stripe's copy in step (receipts and renewal notices go there).

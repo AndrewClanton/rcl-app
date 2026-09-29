@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { exactEmail } from "@/lib/email-match";
+import { syncMemberSoon } from "@/lib/mailing-list";
 
 // Makes the member Insiders+ once their Stripe checkout for it completes:
 // the member named in the checkout (signed in), else the one with that
@@ -29,16 +30,40 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
     monthly_member: true,
     billing_interval: session.metadata?.billing_interval === "year" ? "year" : "month",
   };
+  // They ticked "email me the weekly lineup" on the join form. Only ever
+  // switches it on (leaving the box empty isn't a request to unsubscribe).
+  const optIn = session.metadata?.email_opt_in === "1";
+  const turnOnEmail = async (id: string) => {
+    if (!optIn) return;
+    const { data } = await supabase
+      .from("members")
+      .update({ email_opt_in: true, email_opt_in_changed_at: new Date().toISOString() })
+      .eq("id", id)
+      // Not already a recorded yes.
+      .or("email_opt_in.eq.false,email_opt_in_changed_at.is.null")
+      .select("id");
+    if (data?.length) syncMemberSoon(id, { freshOptIn: true });
+  };
+
   const memberId = session.metadata?.member_id || null;
   const { data: existing } = memberId
     ? await supabase.from("members").select("id").eq("id", memberId).maybeSingle()
     : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
   if (existing) {
     await supabase.from("members").update(memberFields).eq("id", existing.id);
+    await turnOnEmail(existing.id);
     return;
   }
-  const { error } = await supabase.from("members").insert({ name, email, phone: session.metadata?.pending_phone || null, points: 0, ...memberFields });
+  const { data: made, error } = await supabase
+    .from("members")
+    .insert({ name, email, phone: session.metadata?.pending_phone || null, points: 0, ...memberFields })
+    .select("id")
+    .single();
+  if (made) await turnOnEmail(made.id);
   // The webhook and the welcome redirect raced and the other one created
   // the row first: update it instead.
-  if (error?.code === "23505") await supabase.from("members").update(memberFields).ilike("email", exactEmail(email));
+  if (error?.code === "23505") {
+    const { data: rows } = await supabase.from("members").update(memberFields).ilike("email", exactEmail(email)).select("id");
+    for (const r of rows ?? []) await turnOnEmail(r.id);
+  }
 }
