@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireStaff, hasAdminAccess } from "@/lib/auth";
+import { requireStaff, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { signOut } from "@/app/login/actions";
 import { getOpenDevNoteCount } from "@/lib/data/devNotes";
 
@@ -40,6 +40,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin/reports" className="hover:underline">
             Reports
           </Link>
+          {hasManagerAccess(staff.role) && (
+            <Link href="/admin/team" className="hover:underline">
+              Team
+            </Link>
+          )}
           <Link href="/admin/schedule-graphic" className="hover:underline">
             Schedule graphic
           </Link>

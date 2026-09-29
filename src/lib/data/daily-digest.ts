@@ -107,7 +107,7 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
   await safely(undefined, async () => {
     const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
     const [{ data: tasks }, { data: done }] = await Promise.all([
-      supabase.from("shift_tasks").select("id, title, days").eq("active", true).eq("timing", "closing"),
+      supabase.from("shift_tasks").select("id, title, days").eq("active", true).eq("timing", "closing").eq("frequency", "daily"),
       supabase.from("task_completions").select("task_id").eq("work_date", date),
     ]);
     const doneIds = new Set((done ?? []).map((d) => d.task_id));

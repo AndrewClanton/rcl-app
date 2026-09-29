@@ -111,6 +111,24 @@ export function hasAdminAccess(role: EmployeeRole): boolean {
   return role === "admin" || role === "owner";
 }
 
+// Managers and up: the team tools (staff schedule, assigned to-dos,
+// timesheets) are for whoever runs the floor and the office.
+export function hasManagerAccess(role: EmployeeRole): boolean {
+  return role === "manager" || role === "admin" || role === "owner";
+}
+
+export async function requireManager(): Promise<StaffSession> {
+  const session = await requireStaff();
+  if (!hasManagerAccess(session.role)) redirect("/admin");
+  return session;
+}
+
+export async function assertManager(): Promise<StaffSession> {
+  const session = await assertStaff();
+  if (!hasManagerAccess(session.role)) throw new Error("Not authorized");
+  return session;
+}
+
 // Stricter than requireStaff() -- 'admin' or 'owner' only, not manager/
 // cashier. Used for the Dev Notes feedback tool (a small, deliberately-
 // restricted group per Andrew's own request) and its review queue.

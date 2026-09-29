@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useOpsApi } from "./api";
-import { DAY_LETTERS, TIMING_LABEL, daysLabel, type OnShift, type ShiftStatus, type TaskRow, type Timing } from "@/lib/ops/shared";
+import { DAY_LETTERS, FREQUENCY_LABEL, TIMING_LABEL, daysLabel, type Frequency, type OnShift, type ShiftStatus, type TaskRow, type Timing } from "@/lib/ops/shared";
 
 const ORDER: Timing[] = ["opening", "anytime", "closing"];
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
@@ -77,7 +77,14 @@ export default function ChecklistTab({
                     {t.done ? "✓" : ""}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className={`block text-base font-bold ${t.done ? "line-through opacity-70" : ""}`}>{t.title}</span>
+                    <span className={`block text-base font-bold ${t.done ? "line-through opacity-70" : ""}`}>
+                      {t.title}
+                      {t.frequency !== "daily" && (
+                        <span className="ml-2 rounded bg-[var(--gold)] px-1.5 py-0.5 align-middle text-[11px] font-black uppercase tracking-wide text-[var(--gold-foreground)]">
+                          {t.frequency === "weekly" ? "This week" : "This month"}
+                        </span>
+                      )}
+                    </span>
                     {t.details && <span className="block text-sm" style={{ color: "var(--muted)" }}>{t.details}</span>}
                   </span>
                   {t.assigneeName && !t.done && <span className="chip shrink-0">{t.assigneeName}</span>}
@@ -161,7 +168,8 @@ function EditTasks({ me, staff, onDone }: { me: OnShift | null; staff: { id: str
               <div className="min-w-0 flex-1">
                 <div className="font-bold">{t.title}</div>
                 <div className="text-xs" style={{ color: "var(--muted)" }}>
-                  {TIMING_LABEL[t.timing]} · {daysLabel(t.days)} · {nameOf(t.assignee_id) ?? "Whoever's on shift"}
+                  {FREQUENCY_LABEL[t.frequency ?? "daily"]}
+                  {(t.frequency ?? "daily") === "daily" ? ` (${daysLabel(t.days)})` : ""} · {TIMING_LABEL[t.timing]} · {nameOf(t.assignee_id) ?? "Whoever's on shift"}
                   {!t.active && " · removed"}
                 </div>
               </div>
@@ -195,12 +203,13 @@ function TaskForm({
 }: {
   initial: Partial<TaskRow>;
   staff: { id: string; name: string }[];
-  onSave: (v: { id?: string; title: string; details: string | null; timing: Timing; days: number[] | null; assignee_id: string | null }) => Promise<string | null>;
+  onSave: (v: { id?: string; title: string; details: string | null; timing: Timing; frequency: Frequency; days: number[] | null; assignee_id: string | null }) => Promise<string | null>;
   onCancel: () => void;
 }) {
   const [title, setTitle] = useState(initial.title ?? "");
   const [details, setDetails] = useState(initial.details ?? "");
   const [timing, setTiming] = useState<Timing>(initial.timing ?? "closing");
+  const [frequency, setFrequency] = useState<Frequency>(initial.frequency ?? "daily");
   const [days, setDays] = useState<number[]>(initial.days ?? []);
   const [assignee, setAssignee] = useState(initial.assignee_id ?? "");
   const [busy, setBusy] = useState(false);
@@ -212,7 +221,7 @@ function TaskForm({
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
-        const err = await onSave({ id: initial.id, title, details: details || null, timing, days: days.length ? days : null, assignee_id: assignee || null });
+        const err = await onSave({ id: initial.id, title, details: details || null, timing, frequency, days: frequency === "daily" && days.length ? days : null, assignee_id: assignee || null });
         setBusy(false);
         setError(err);
       }}
@@ -236,6 +245,21 @@ function TaskForm({
         </div>
       </div>
       <div>
+        <div className="label-xs">How often</div>
+        <div className="flex flex-wrap gap-2">
+          {(["daily", "weekly", "monthly"] as Frequency[]).map((f) => (
+            <button type="button" key={f} className={`chip !px-4 !py-2 !text-sm ${frequency === f ? "chip-selected" : ""}`} onClick={() => setFrequency(f)}>
+              {FREQUENCY_LABEL[f]}
+            </button>
+          ))}
+        </div>
+        {frequency !== "daily" && (
+          <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
+            Shows on the checklist every day until someone ticks it off, then comes back {frequency === "weekly" ? "next Monday" : "on the 1st of next month"}.
+          </p>
+        )}
+      </div>
+      <div hidden={frequency !== "daily"}>
         <div className="label-xs">Days (none picked = every day)</div>
         <div className="flex flex-wrap gap-1.5">
           {DAY_LETTERS.map((d, i) => (

@@ -11,6 +11,7 @@ export type OpsApi = Pick<
   | "startShift"
   | "endShift"
   | "setTaskDone"
+  | "setTodoDone"
   | "getTaskRows"
   | "saveTask"
   | "setTaskActive"

@@ -4,6 +4,11 @@ export type Timing = "opening" | "closing" | "anytime";
 export type ReminderKind = "before_screening" | "daily" | "schedule_low";
 
 export const TIMING_LABEL: Record<Timing, string> = { opening: "Opening", closing: "Closing", anytime: "Any time" };
+
+// Daily tasks come up on their days. Weekly and monthly ones show every day
+// until someone ticks them off, then return next week (Monday) or month.
+export type Frequency = "daily" | "weekly" | "monthly";
+export const FREQUENCY_LABEL: Record<Frequency, string> = { daily: "Every day", weekly: "Once a week", monthly: "Once a month" };
 export const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -19,6 +24,7 @@ export interface TodayTask {
   title: string;
   details: string | null;
   timing: Timing;
+  frequency: Frequency;
   assigneeName: string | null;
   done: { byName: string | null; at: string } | null;
 }
@@ -32,11 +38,25 @@ export interface DueReminder {
   urgent: boolean;
 }
 
+// A one-off to-do from Back office → Team, for a person or for whoever's on.
+export interface ShiftTodo {
+  id: string;
+  title: string;
+  details: string | null;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueDate: string | null;
+  fromName: string | null;
+}
+
 export interface ShiftStatus {
   workDate: string;
   onShift: OnShift[];
   tasks: TodayTask[];
   reminders: DueReminder[];
+  todos: ShiftTodo[];
+  // Today's staff schedule, by person: "4:00 PM–10:00 PM".
+  scheduled: Record<string, string>;
   lastCount: { id: string; at: string; byName: string | null; below: number } | null;
 }
 
@@ -57,6 +77,7 @@ export interface TaskRow {
   title: string;
   details: string | null;
   timing: Timing;
+  frequency: Frequency;
   days: number[] | null;
   assignee_id: string | null;
   sort_order: number;

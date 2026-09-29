@@ -2,7 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
-import { businessDay, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
+import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
 import { evaluateReminders } from "@/lib/ops/reminders";
 import type {
   DueReminder,
@@ -12,7 +12,9 @@ import type {
   ReminderRow,
   Result,
   ShiftStatus,
+  ShiftTodo,
   ShoppingList,
+  Frequency,
   TaskRow,
   Timing,
   TodayTask,
@@ -85,12 +87,30 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
   const today = businessDay();
   const names = await employeeNames();
 
-  const [shiftsRes, tasksRes, doneRes, countRes] = await Promise.all([
+  const window = businessDayWindow(today.date);
+  const [shiftsRes, tasksRes, doneRes, countRes, todosRes, schedRes] = await Promise.all([
     supabase.from("shifts").select("id, employee_id, started_at").is("ended_at", null).order("started_at"),
-    supabase.from("shift_tasks").select("id, title, details, timing, days, assignee_id, sort_order").eq("active", true).order("sort_order"),
-    supabase.from("task_completions").select("task_id, completed_by, completed_at").eq("work_date", today.date),
+    supabase.from("shift_tasks").select("id, title, details, timing, frequency, days, assignee_id, sort_order").eq("active", true).order("sort_order"),
+    supabase.from("task_completions").select("task_id, work_date, completed_by, completed_at").gte("work_date", periodStart(today.date, "weekly") < periodStart(today.date, "monthly") ? periodStart(today.date, "weekly") : periodStart(today.date, "monthly")).order("completed_at", { ascending: false }),
     supabase.from("par_counts").select("id, completed_at, counted_by").order("completed_at", { ascending: false }).limit(1),
+    supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by").is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
+    supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
   ]);
+
+  const todos: ShiftTodo[] = (todosRes.data ?? []).map((t) => ({
+    id: t.id,
+    title: t.title,
+    details: t.details,
+    assigneeId: t.assignee_id,
+    assigneeName: t.assignee_id ? (names.get(t.assignee_id) ?? null) : null,
+    dueDate: t.due_date,
+    fromName: t.created_by ? (names.get(t.created_by) ?? null) : null,
+  }));
+  const scheduled: Record<string, string> = {};
+  for (const s of schedRes.data ?? []) {
+    const t = `${clock(s.starts_at)}–${clock(s.ends_at)}`;
+    scheduled[s.employee_id] = scheduled[s.employee_id] ? `${scheduled[s.employee_id]}, ${t}` : t;
+  }
 
   const onShift: OnShift[] = (shiftsRes.data ?? []).map((s) => ({
     shiftId: s.id,
@@ -99,16 +119,18 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     startedAt: s.started_at,
   }));
 
-  const done = new Map((doneRes.data ?? []).map((d) => [d.task_id as string, d]));
   const tasks: TodayTask[] = ((tasksRes.data ?? []) as TaskRow[])
-    .filter((t) => !t.days || t.days.length === 0 || t.days.includes(today.dow))
+    .filter((t) => t.frequency !== "daily" || !t.days || t.days.length === 0 || t.days.includes(today.dow))
     .map((t) => {
-      const d = done.get(t.id);
+      // Done for today (daily), this week or this month: the latest tick in its period.
+      const since = periodStart(today.date, t.frequency);
+      const d = (doneRes.data ?? []).find((c) => c.task_id === t.id && (c.work_date as string) >= since);
       return {
         id: t.id,
         title: t.title,
         details: t.details,
         timing: t.timing,
+        frequency: t.frequency,
         assigneeName: t.assignee_id ? names.get(t.assignee_id) ?? null : null,
         done: d ? { byName: d.completed_by ? names.get(d.completed_by) ?? null : null, at: d.completed_at } : null,
       };
@@ -122,7 +144,7 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     lastCount = { id: c.id, at: c.completed_at, byName: c.counted_by ? names.get(c.counted_by) ?? null : null, below };
   }
 
-  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount };
+  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, scheduled };
 }
 
 // ---------- shifts ----------
@@ -146,12 +168,27 @@ export async function endShift(shiftId: string, closedForNight: boolean): Promis
 
 // ---------- tasks ----------
 
+// First business date of a task's current period: today (daily), this
+// Monday (weekly) or the 1st (monthly).
+function periodStart(date: string, frequency: Frequency): string {
+  if (frequency === "monthly") return `${date.slice(0, 8)}01`;
+  if (frequency === "weekly") {
+    const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+    const d = new Date(`${date}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - ((dow + 6) % 7));
+    return d.toISOString().slice(0, 10);
+  }
+  return date;
+}
+
 export async function setTaskDone(taskId: string, done: boolean, employeeId: string | null, shiftId: string | null): Promise<Result> {
   await assertStaff();
   const supabase = db();
   const date = businessDay().date;
   if (!done) {
-    const { error } = await supabase.from("task_completions").delete().eq("task_id", taskId).eq("work_date", date);
+    // Undo the tick for its whole period (a weekly task ticked Tuesday, undone Thursday).
+    const { data: task } = await supabase.from("shift_tasks").select("frequency").eq("id", taskId).maybeSingle();
+    const { error } = await supabase.from("task_completions").delete().eq("task_id", taskId).gte("work_date", periodStart(date, (task?.frequency as Frequency) ?? "daily"));
     return error ? { ok: false, error: "Couldn't undo that. Try again." } : { ok: true };
   }
   const by = await validEmployee(employeeId);
@@ -164,7 +201,7 @@ export async function getTaskRows(): Promise<{ tasks: TaskRow[]; reminders: Remi
   await assertStaff();
   const supabase = db();
   const [t, r, e] = await Promise.all([
-    supabase.from("shift_tasks").select("id, title, details, timing, days, assignee_id, sort_order, active").order("sort_order"),
+    supabase.from("shift_tasks").select("id, title, details, timing, frequency, days, assignee_id, sort_order, active").order("sort_order"),
     supabase.from("reminders").select("id, kind, message, minutes, time_of_day, days, assignee_id, active").order("created_at"),
     supabase.from("employees").select("id, name").eq("active", true).neq("role", "display").order("name"),
   ]);
@@ -172,7 +209,7 @@ export async function getTaskRows(): Promise<{ tasks: TaskRow[]; reminders: Remi
 }
 
 export async function saveTask(
-  input: { id?: string; title: string; details?: string | null; timing: Timing; days: number[] | null; assignee_id: string | null },
+  input: { id?: string; title: string; details?: string | null; timing: Timing; frequency?: Frequency; days: number[] | null; assignee_id: string | null },
   employeeId: string | null
 ): Promise<Result<{ id: string }>> {
   await assertStaff();
@@ -180,8 +217,10 @@ export async function saveTask(
   if (!title) return { ok: false, error: "Give the task a name." };
   if (!["opening", "closing", "anytime"].includes(input.timing)) return { ok: false, error: "Pick when it happens." };
   const by = await validEmployee(employeeId);
-  const days = input.days && input.days.length > 0 && input.days.length < 7 ? [...new Set(input.days)].filter((d) => d >= 0 && d <= 6).sort() : null;
-  const fields = { title, details: input.details?.trim() || null, timing: input.timing, days, assignee_id: input.assignee_id || null, updated_by: by, updated_at: new Date().toISOString() };
+  const frequency: Frequency = input.frequency === "weekly" || input.frequency === "monthly" ? input.frequency : "daily";
+  // Days only apply to daily tasks; weekly/monthly ones float until done.
+  const days = frequency === "daily" && input.days && input.days.length > 0 && input.days.length < 7 ? [...new Set(input.days)].filter((d) => d >= 0 && d <= 6).sort() : null;
+  const fields = { title, details: input.details?.trim() || null, timing: input.timing, frequency, days, assignee_id: input.assignee_id || null, updated_by: by, updated_at: new Date().toISOString() };
   const supabase = db();
   if (input.id) {
     const { error } = await supabase.from("shift_tasks").update(fields).eq("id", input.id);
@@ -443,4 +482,13 @@ export async function getOpsHistory(days = 7): Promise<OpsHistory> {
     }),
     changes: (changes.data ?? []).map((c) => ({ at: c.changed_at, byName: c.changed_by ? names.get(c.changed_by) ?? null : null, action: c.action, summary: c.summary })),
   };
+}
+
+// ---------- to-dos from Back office → Team ----------
+
+export async function setTodoDone(todoId: string, employeeId: string | null): Promise<Result> {
+  await assertStaff();
+  const by = await validEmployee(employeeId);
+  const { error } = await db().from("staff_todos").update({ done_at: new Date().toISOString(), done_by: by }).eq("id", todoId).is("done_at", null);
+  return error ? { ok: false, error: "Couldn't mark that done. Try again." } : { ok: true };
 }

@@ -90,6 +90,10 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const me: OnShift | null = status?.onShift.find((o) => o.shiftId === meShift) ?? null;
   const reminders = (status?.reminders ?? []).filter((r) => !snoozed[`${r.reminderId}:${r.occurrence}`]);
   const tasksLeft = status?.tasks.filter((t) => !t.done).length ?? 0;
+  // To-dos from Back office → Team: the ones for whoever's on shift, plus
+  // (once someone has said which shift is theirs) the ones for them by name.
+  // With nobody picked, everyone's show, labelled.
+  const todos = (status?.todos ?? []).filter((t) => !t.assigneeId || !me || t.assigneeId === me.employeeId);
 
   async function begin(employeeId: string) {
     const r = await api.startShift(employeeId).catch(() => null);
@@ -210,14 +214,61 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
         </div>
       )}
 
+      {todos.length > 0 && (
+        <div className="mb-3 grid gap-2">
+          {todos.map((t) => {
+            const overdue = t.dueDate !== null && status !== null && t.dueDate < status.workDate;
+            const dueToday = t.dueDate !== null && status !== null && t.dueDate === status.workDate;
+            return (
+              <div
+                key={t.id}
+                className="flex flex-wrap items-center gap-3 rounded-lg border-2 px-4 py-2.5"
+                style={{ background: "var(--foreground)", borderColor: "var(--foreground)", color: "var(--background)" }}
+                role="status"
+              >
+                <span className="rounded bg-[var(--gold)] px-1.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--gold-foreground)]">To-do</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold">
+                    {t.assigneeName ? `${t.assigneeName}: ` : ""}
+                    {t.title}
+                  </div>
+                  <div className="text-sm opacity-80">
+                    {[
+                      t.fromName && `From ${t.fromName}`,
+                      overdue ? "Overdue" : dueToday ? "Due today" : t.dueDate && `Due ${new Date(`${t.dueDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`,
+                      t.details,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
+                </div>
+                <button
+                  className="rounded-lg border-2 px-4 py-2 text-sm font-bold"
+                  style={{ borderColor: "currentColor" }}
+                  onClick={async () => {
+                    await api.setTodoDone(t.id, me?.employeeId ?? null).catch(() => null);
+                    refresh();
+                  }}
+                >
+                  Done
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {startOpen && (
         <Dialog title="Who's starting a shift?" onClose={() => setStartOpen(false)} closeLabel="Not now">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {staff
               .filter((s) => !status?.onShift.some((o) => o.employeeId === s.id))
+              // Who's on the schedule today comes first, with their hours.
+              .sort((a, b) => Number(!!status?.scheduled[b.id]) - Number(!!status?.scheduled[a.id]))
               .map((s) => (
                 <button key={s.id} className="btn-secondary !py-4 text-base" onClick={() => begin(s.id)}>
                   {s.name}
+                  {status?.scheduled[s.id] && <span className="mt-0.5 block text-xs font-normal opacity-70">Scheduled {status.scheduled[s.id]}</span>}
                 </button>
               ))}
           </div>
