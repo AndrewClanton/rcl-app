@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import { PageMasthead, ProofStamp, RegNote, Seal, SpecFoot, Sprockets } from "@/components/print";
+import { PageMasthead, Seal, SpecFoot, Sprockets } from "@/components/print";
 
 export const metadata: Metadata = {
   title: "About",
@@ -52,17 +52,16 @@ export default function AboutPage() {
 
       <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
         {/* Panel Pop photo plate, with its registration note at the corner. */}
-        <div className="relative mx-auto w-full max-w-sm pt-8 lg:mx-0">
-          <RegNote className="top-0 left-0">Plate K · R · Y</RegNote>
+        <div className="relative mx-auto w-full max-w-sm lg:mx-0">
           <div className="sheet crop relative aspect-[2/3] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
             <div className="print-photo absolute inset-0 overflow-hidden rounded-[2px]">
               <Image src="/photos/hero-couple.jpg" alt="Guests at Royale Cinema Lounge" fill sizes="(min-width: 1024px) 380px, 80vw" className="object-cover" priority />
             </div>
           </div>
           <Seal className="absolute -right-4 -bottom-6 z-[2]">
-            Est.
+            Joplin
             <br />
-            Aug 1920
+            Route 66
           </Seal>
         </div>
         <div className="grid gap-6 sm:grid-cols-2">
@@ -87,11 +86,6 @@ export default function AboutPage() {
       <section id="faq" className="sheet crop scroll-mt-28">
         <h2 className="spec-head rounded-t-[4px]">
           <span>Frequently asked questions</span>
-          <ProofStamp>
-            Approved
-            <br />
-            for press
-          </ProofStamp>
         </h2>
         <dl>
           <FaqItem q="Why don't you publish a full public schedule?">
@@ -116,7 +110,7 @@ export default function AboutPage() {
             page for pricing.
           </FaqItem>
         </dl>
-        <SpecFoot code="RCL-FAQ · REV A" />
+        <SpecFoot />
       </section>
 
       <section className="sheet ht-ink-red relative flex flex-wrap items-center gap-6 !bg-[var(--foreground)] p-6 text-[var(--background)]">

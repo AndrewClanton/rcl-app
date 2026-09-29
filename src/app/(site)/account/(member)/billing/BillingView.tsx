@@ -70,7 +70,6 @@ export default function BillingView({ member, billing, years }: { member: Member
                 </>
               ) : undefined
             }
-            code="RCL-BILL · REV A"
           />
           {status === "past_due" && <p className="notice notice-warn">Your last payment didn&apos;t go through. Update your card below to keep Insiders+.</p>}
           {billing?.cancelAtPeriodEnd && (

@@ -10,7 +10,7 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { safePath } from "@/lib/safe-path";
 import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
-import { PageMasthead, ProofStamp, RegNote, SpecFoot, Starburst } from "@/components/print";
+import { PageMasthead, SpecFoot, Starburst } from "@/components/print";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +114,6 @@ export default async function MembershipPage({
 
         {/* Insiders+ -- the Panel Pop treatment from the proof sheet. */}
         <section className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-          <RegNote className="-top-7 left-0">Align to centerline</RegNote>
           {!isPlus && (
             <Starburst className="starburst-red absolute -top-9 -right-6 z-[2] hidden sm:block">
               Save
@@ -179,11 +178,6 @@ export default async function MembershipPage({
           <span>Insiders+ rates</span>
           <span className="flex items-center gap-4">
             <span>Plus {SALES_TAX_PERCENT}% sales tax</span>
-            <ProofStamp>
-              Rate
-              <br />
-              card
-            </ProofStamp>
           </span>
         </h2>
         <div className="spec-grid spec-grid-3">
@@ -196,7 +190,7 @@ export default async function MembershipPage({
           ))}
         </div>
         <p className="border-t border-[var(--border)] px-4 py-3 text-sm">Senior or student? Join at the adult rate, then show your ID at the box office and we&apos;ll switch you. The lower price starts with your next bill.</p>
-        <SpecFoot code="RCL-RATES · 2026 · REV A" />
+        <SpecFoot />
       </section>
 
       <div id="join" className="mt-10 scroll-mt-40">

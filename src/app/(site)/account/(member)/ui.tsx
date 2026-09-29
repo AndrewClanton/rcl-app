@@ -79,14 +79,12 @@ export function SpecPanel({
   aside,
   cells,
   stamp,
-  code,
   className = "",
 }: {
   title: string;
   aside?: string;
   cells: { k: string; v: string; hot?: boolean }[];
   stamp?: React.ReactNode;
-  code?: string;
   className?: string;
 }) {
   return (
@@ -106,7 +104,7 @@ export function SpecPanel({
           </div>
         ))}
       </dl>
-      {code && <SpecFoot code={code} />}
+      <SpecFoot />
     </section>
   );
 }

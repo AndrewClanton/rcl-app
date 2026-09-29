@@ -136,7 +136,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         and {plan !== "free" ? "go straight to payment" : "skip this form"}.
       </p>
       </div>
-      <SpecFoot code="RCL-JOIN · REV A" />
+      <SpecFoot />
     </section>
   );
 }

@@ -65,12 +65,12 @@ export function RegNote({ children, className = "" }: { children: React.ReactNod
   );
 }
 
-// The bottom strip of a spec panel: color bar, then a sheet code.
-export function SpecFoot({ code, className = "" }: { code: string; className?: string }) {
+// The bottom strip of a spec panel: just the color chips. (No sheet codes:
+// visitors read every word on the page, so markup that says nothing goes.)
+export function SpecFoot({ className = "" }: { className?: string }) {
   return (
-    <div className={`flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-2 ${className}`}>
+    <div className={`flex items-center gap-3 border-t border-[var(--border)] px-4 py-2 ${className}`}>
       <ColorBar />
-      <span className="spec-code">{code}</span>
     </div>
   );
 }
@@ -91,32 +91,16 @@ export function Sprockets({ className = "" }: { className?: string }) {
   return <div aria-hidden="true" className={`sprockets ${className}`} />;
 }
 
-// Page masthead: yellow eyebrow chip, the title with a spec callout beside
-// it (wide screens), an optional intro, and a 3px ink rule ending in a
-// color bar -- the top of every Four-Color Press page.
-export function PageMasthead({
-  eyebrow,
-  title,
-  intro,
-  callout = "Archivo Black · K100",
-  className = "",
-}: {
-  eyebrow: string;
-  title: React.ReactNode;
-  intro?: React.ReactNode;
-  callout?: string;
-  className?: string;
-}) {
+// Page masthead: yellow eyebrow chip, the title, an optional intro, and a
+// 3px ink rule ending in the color chips -- the top of every everyday page.
+export function PageMasthead({ eyebrow, title, intro, className = "" }: { eyebrow: string; title: React.ReactNode; intro?: React.ReactNode; className?: string }) {
   return (
     <header className={`masthead-rule mb-10 pb-6 ${className}`}>
       <span className="page-eyebrow">{eyebrow}</span>
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <h1 className="font-display text-4xl leading-none text-balance sm:text-5xl">{title}</h1>
-        <Callout className="hidden md:inline-flex">{callout}</Callout>
-      </div>
+      <h1 className="font-display mt-3 text-4xl leading-none text-balance sm:text-5xl">{title}</h1>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
         {intro ? <div className="max-w-2xl text-[15px] text-[var(--muted)]">{intro}</div> : <span />}
-        <ColorBar codes />
+        <ColorBar size={12} />
       </div>
     </header>
   );

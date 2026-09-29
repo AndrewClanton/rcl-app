@@ -26,7 +26,7 @@ export default function LegalPage({
           skip it. It goes public once it&apos;s approved.
         </div>
       )}
-      <PageMasthead eyebrow="Royale Cinema Lounge" title={title} callout={`Effective ${effectiveDate ?? "[date of approval]"}`} className="!mb-8" />
+      <PageMasthead eyebrow="Royale Cinema Lounge" title={title} intro={`Effective ${effectiveDate ?? "[date of approval]"}`} className="!mb-8" />
       <div className="text-lg leading-relaxed">{intro}</div>
 
       {sections && sections.length > 0 && (
@@ -41,7 +41,7 @@ export default function LegalPage({
               </li>
             ))}
           </ol>
-          <SpecFoot code={`RCL-LEGAL · ${effectiveDate ?? "DRAFT"}`} />
+          <SpecFoot />
         </nav>
       )}
 

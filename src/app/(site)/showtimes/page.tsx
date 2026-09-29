@@ -5,7 +5,7 @@ import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import type { Screening } from "@/lib/types";
-import { PageMasthead, ProofStamp, RegNote, SpecFoot } from "@/components/print";
+import { PageMasthead, ProofStamp, SpecFoot } from "@/components/print";
 import PlusLink from "@/components/PlusLink";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
@@ -61,11 +61,6 @@ function groupByDay(screenings: Screening[]): Day[] {
 function PlusBand({ count }: { count: number }) {
   return (
     <aside className="sheet halftone halftone-hero relative flex flex-wrap items-center justify-between gap-6 bg-[var(--gold)] p-6 !border-4 !shadow-[7px_7px_0_var(--foreground)] sm:p-7">
-      <RegNote className="top-3 right-3 hidden sm:flex">
-        Plate Y
-        <br />
-        100%
-      </RegNote>
       <div className="relative z-[1] max-w-xl">
         <span className="ctag ctag-red">Insiders+</span>
         <p className="font-display mt-4 text-3xl leading-tight text-balance">
@@ -166,7 +161,7 @@ export default async function ShowtimesPage() {
                     </li>
                   ))}
                 </ul>
-                <SpecFoot code={`RCL-SCHED · ${day.key}`} />
+                <SpecFoot />
               </section>
               {/* After the first day: the offer, while the times are in view. */}
               {i === 0 && !plus && <PlusBand count={screenings.length} />}

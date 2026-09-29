@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import PlusLink from "@/components/PlusLink";
-import { Callout, RegNote, Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
+import { Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import type { Screening } from "@/lib/types";
@@ -63,21 +63,11 @@ export default async function HomePage() {
       {/* Panel Pop: the loud one, with its registration mark at the corner. */}
       <section className="sheet overflow-hidden !border-[3px] !shadow-[7px_7px_0_var(--foreground)]">
         <div className="halftone halftone-hero relative bg-[var(--gold)] px-6 pt-16 pb-14 text-center sm:px-12 sm:pt-20 sm:pb-16">
-          <RegNote className="top-3 left-3 hidden sm:flex">
-            Align to
-            <br />
-            centerline —
-            <br />
-            remove before
-            <br />
-            print
-          </RegNote>
           <Starburst className="starburst-red absolute top-5 right-6 hidden sm:block">
             Route
             <br />
             66
           </Starburst>
-          <div className="spec-code absolute right-4 bottom-3 hidden sm:block">RCL-HERO · REV A</div>
           <div className="relative z-[1]">
             <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="mx-auto mb-6 h-auto w-40 sm:w-48" style={{ filter: "invert(1) brightness(0.08)" }} />
             <span className="ctag ctag-red">Joplin, MO</span>
@@ -96,7 +86,7 @@ export default async function HomePage() {
           </div>
         </div>
         <div className="ht-ink-red border-t-[3px] border-[var(--foreground)] bg-[var(--foreground)] px-6 py-3 text-center font-mono text-xs tracking-[0.12em] text-[var(--background)]">
-          <span className="relative z-[1]">715 E BROADWAY, JOPLIN MO · ROUTE 66 · EST. 1920</span>
+          <span className="relative z-[1]">715 E BROADWAY · JOPLIN, MO · ON ROUTE 66</span>
         </div>
       </section>
 
@@ -106,7 +96,6 @@ export default async function HomePage() {
             <span className="ctag ctag-yellow">Now showing</span>
             <div className="mt-3 flex flex-wrap items-center gap-x-4">
               <h2 className="font-display text-3xl">Coming up</h2>
-              <Callout className="hidden md:inline-flex">Archivo Black · K100</Callout>
             </div>
           </div>
           <Link href="/showtimes" className="text-sm font-bold text-[var(--accent)] hover:underline">
@@ -144,16 +133,11 @@ export default async function HomePage() {
                     })}
                   </div>
                 </div>
-                <SpecFoot code={`RCL-FILM · ${first.movie.rating || "NR"}`} />
+                <SpecFoot />
               </article>
             ))}
             {!plus && (
               <article className="sheet halftone halftone-hero relative flex flex-col justify-between bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-                <RegNote className="top-3 right-3">
-                  Plate Y
-                  <br />
-                  100%
-                </RegNote>
                 <div className="relative z-[1] p-6">
                   <span className="ctag ctag-red">Insiders+</span>
                   <p className="font-display mt-5 text-3xl leading-tight text-balance">Every film here, free.</p>
@@ -183,7 +167,6 @@ export default async function HomePage() {
           </p>
           <div className="mt-8 grid gap-7 md:grid-cols-[1.15fr_1fr]">
             <div className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-              <RegNote className="-top-7 left-0">Plate K · Y</RegNote>
               <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
                 <div className="relative z-[1]">
                   <div className="flex items-start justify-between gap-3">
@@ -333,14 +316,14 @@ export default async function HomePage() {
         </div>
         <div className="relative z-[1] flex items-center gap-5">
           <Seal className="hidden sm:flex">
-            Est.
+            Route
             <br />
-            1920
+            66
           </Seal>
           <div>
           <span className="ctag ctag-yellow">Visit us</span>
           <h2 className="font-display mt-3 text-2xl text-[var(--background)]">715 E Broadway, Joplin, MO 64801</h2>
-          <p className="mt-1 text-[15px] text-[rgba(248,245,236,0.8)]">One of the oldest buildings in the city, on Historic Route 66 since 1920.</p>
+          <p className="mt-1 text-[15px] text-[rgba(248,245,236,0.8)]">In one of the oldest buildings in the city, built in 1920 on what&apos;s now Historic Route 66.</p>
           </div>
         </div>
         <div className="relative z-[1] flex shrink-0 flex-wrap gap-3">

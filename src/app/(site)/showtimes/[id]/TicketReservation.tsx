@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import PlusLink from "@/components/PlusLink";
-import { ProofStamp } from "@/components/print";
 import { salesTaxOn } from "@/lib/sales-tax";
 import { startCheckout } from "./actions";
 
@@ -76,11 +75,6 @@ export default function TicketReservation({
         <span>Get tickets</span>
         <span className="flex items-center gap-4">
           <span>{seatsLeft} seats left</span>
-          <ProofStamp>
-            Box
-            <br />
-            office
-          </ProofStamp>
         </span>
       </div>
 

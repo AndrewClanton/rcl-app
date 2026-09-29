@@ -36,14 +36,6 @@ export default function PointsView({ balance, ledger }: { balance: number; ledge
           { k: "Earned", v: points(Math.round(earned)) },
           { k: "Used", v: points(Math.round(used)) },
         ]}
-        stamp={
-          <>
-            Proof of
-            <br />
-            purchase
-          </>
-        }
-        code="RCL-PTS · REV A"
       />
 
       <Panel title="How points work">

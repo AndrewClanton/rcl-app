@@ -124,7 +124,7 @@ export default function ReceiptView({ r }: { r: Receipt }) {
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-dashed border-[var(--border)] px-6 py-4 text-xs text-[var(--muted)]">
           Questions about this receipt? info@royalecinemajoplin.com · 417-281-4172
         </footer>
-        <SpecFoot code={`RCL-RCPT ${r.number}`} />
+        <SpecFoot />
       </article>
     </div>
   );

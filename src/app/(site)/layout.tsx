@@ -4,7 +4,7 @@ import { LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
 import PlusLink from "@/components/PlusLink";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
-import { ColorBar, RegMark, Seal, Sprockets } from "@/components/print";
+import { ColorBar, Seal, Sprockets } from "@/components/print";
 
 const JSON_LD = {
   "@context": "https://schema.org",
@@ -71,10 +71,9 @@ export default async function SiteLayout({ children }: { children: React.ReactNo
         <Sprockets className="mx-4 mt-3" />
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-6 px-4 py-8">
           <div className="flex items-center gap-5">
+            {/* No founding date: 1920 is the building, not the theater. */}
             <Seal>
-              Est.
-              <br />
-              1920
+              Joplin
               <br />
               Route 66
             </Seal>
@@ -103,15 +102,7 @@ export default async function SiteLayout({ children }: { children: React.ReactNo
               )}
             </div>
           </div>
-          <div className="flex items-center gap-4 text-[rgba(20,17,12,0.62)]" aria-hidden="true">
-            <RegMark size={22} />
-            <ColorBar codes />
-            <span className="spec-code leading-relaxed">
-              RCL · Joplin, MO
-              <br />
-              Printed on Route 66
-            </span>
-          </div>
+          <ColorBar size={14} />
         </div>
       </footer>
     </div>
