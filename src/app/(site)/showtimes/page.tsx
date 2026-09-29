@@ -15,74 +15,113 @@ export const metadata: Metadata = {
   alternates: { canonical: "/showtimes" },
 };
 
-function dateKey(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" });
-}
+const TZ = "America/Chicago";
+const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: TZ });
+const timeLabel = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
 
-function timeLabel(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
-}
+type Film = { key: string; movie: Screening["movie"]; room: string; price: number; showings: Screening[] };
+type Day = { key: string; label: string; short: string; films: Film[]; count: number };
 
-function groupByDate(screenings: Screening[]) {
-  const groups = new Map<string, Screening[]>();
+// A day at a time, then one row per film (and room) with its times as
+// chips -- how a cinema listing reads, instead of one row per showing.
+function groupByDay(screenings: Screening[]): Day[] {
+  const today = dayKey(new Date());
+  const tomorrow = dayKey(new Date(Date.now() + 86_400_000));
+  const days = new Map<string, Day>();
   for (const s of screenings) {
-    const key = dateKey(s.starts_at);
-    const list = groups.get(key) ?? [];
-    list.push(s);
-    groups.set(key, list);
+    const when = new Date(s.starts_at);
+    const key = dayKey(when);
+    let day = days.get(key);
+    if (!day) {
+      const long = when.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: TZ });
+      const short = key === today ? "Today" : key === tomorrow ? "Tomorrow" : when.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: TZ });
+      day = { key, label: key === today ? `Today · ${long}` : key === tomorrow ? `Tomorrow · ${long}` : long, short, films: [], count: 0 };
+      days.set(key, day);
+    }
+    const filmKey = `${s.movie.id ?? s.movie.title}|${s.room.name}`;
+    let film = day.films.find((f) => f.key === filmKey);
+    if (!film) {
+      film = { key: filmKey, movie: s.movie, room: s.room.name, price: s.ticket_price, showings: [] };
+      day.films.push(film);
+    }
+    film.showings.push(s);
+    day.count++;
   }
-  return groups;
+  return [...days.values()];
 }
 
 export default async function ShowtimesPage() {
   const screenings = await getPubliclyVisibleScreenings();
-  const groups = groupByDate(screenings);
+  const days = groupByDay(screenings);
   const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
+  const todayKey = dayKey(new Date());
 
   return (
     <div>
       {events.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(events) }} />}
-      <h1 className="font-display mb-2 text-3xl font-semibold">Showtimes</h1>
-      <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
-        Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Check back regularly, or{" "}
+      <span className="page-eyebrow">Joplin · Route 66</span>
+      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Showtimes</h1>
+      <p className="mt-3 max-w-2xl text-[15px] text-[var(--muted)]">
+        Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Tap a time to get tickets, or{" "}
         <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="font-bold text-[var(--accent)] hover:underline">
           ask us
         </a>{" "}
         what&apos;s coming up.
       </p>
+
       {screenings.length === 0 ? (
-        <div className="card text-sm text-[var(--muted)]">No screenings scheduled yet — check back soon.</div>
+        <div className="sheet mt-8 p-5 text-[15px]">No screenings scheduled yet. Check back soon.</div>
       ) : (
-        <div className="space-y-10">
-          {[...groups.entries()].map(([date, list]) => (
-            <div key={date}>
-              <h2 className="eyebrow mb-3">{date}</h2>
-              <div className="space-y-3">
-                {list.map((s) => (
-                  <Link key={s.id} href={`/showtimes/${s.id}`} className="card-flat flex items-center gap-4">
-                    <div className="w-14 shrink-0 sm:w-16">
-                      <MoviePoster posterUrl={s.movie.poster_url} title={s.movie.title} sizes="64px" />
-                    </div>
-                    <div className="flex flex-1 flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{s.movie.title}</span>
-                          {s.room.name.toLowerCase().includes("outdoor") && <span className="stamp-tag stamp-tag-gold">Outdoor</span>}
+        <>
+          <nav aria-label="Jump to a day" className="-mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-2">
+            {days.map((d) => (
+              <a key={d.key} href={`#d-${d.key}`} className={`day-chip ${d.key === todayKey ? "day-chip-today" : ""}`}>
+                {d.short}
+              </a>
+            ))}
+          </nav>
+
+          <div className="mt-6 space-y-10">
+            {days.map((day) => (
+              <section key={day.key} id={`d-${day.key}`} className="sheet scroll-mt-28">
+                <h2 className="spec-head rounded-t-[4px]">
+                  <span>{day.label}</span>
+                  <span className="hidden sm:inline">
+                    {day.films.length} film{day.films.length === 1 ? "" : "s"} · {day.count} show{day.count === 1 ? "" : "s"}
+                  </span>
+                </h2>
+                <ul>
+                  {day.films.map((film) => (
+                    <li key={film.key} className="grid grid-cols-[56px_1fr] gap-4 border-b border-[var(--border)] p-4 last:border-b-0 sm:grid-cols-[72px_1fr] sm:p-5">
+                      <Link href={`/showtimes/${film.showings[0].id}`} className="block overflow-hidden rounded-[3px] border-2 border-[var(--foreground)]">
+                        <MoviePoster posterUrl={film.movie.poster_url} title={film.movie.title} sizes="72px" />
+                      </Link>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-display text-lg leading-tight sm:text-xl">{film.movie.title}</h3>
+                          {film.room.toLowerCase().includes("outdoor") && <span className="ctag ctag-yellow">Outdoor</span>}
                         </div>
-                        <div className="text-sm text-[var(--muted)]">
-                          {timeLabel(s.starts_at)} · {s.room.name}
-                          {s.movie.runtime_minutes ? ` · ${s.movie.runtime_minutes} min` : ""}
-                          {s.movie.rating ? ` · ${s.movie.rating}` : ""}
+                        <div className="spec-k mt-1 !mb-0">
+                          {[film.room, film.movie.runtime_minutes ? `${film.movie.runtime_minutes} min` : null, film.movie.rating, film.price === 0 ? "Free" : `$${film.price.toFixed(2)} + tax`]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {film.showings.map((s) => (
+                            <Link key={s.id} href={`/showtimes/${s.id}`} className="time-chip" aria-label={`${film.movie.title} at ${timeLabel(s.starts_at)}`}>
+                              {timeLabel(s.starts_at).replace(/ (AM|PM)$/, "")}
+                              <small>{timeLabel(s.starts_at).slice(-2)}</small>
+                            </Link>
+                          ))}
                         </div>
                       </div>
-                      <div className="text-sm font-semibold text-[var(--accent)]">{s.ticket_price === 0 ? "Free" : `$${s.ticket_price.toFixed(2)}`}</div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

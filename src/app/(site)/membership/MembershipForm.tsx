@@ -54,30 +54,46 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
 
   if (done) {
     return (
-      <div className="notice notice-success">
-        <h2 className="text-lg font-semibold">Welcome to Insiders!</h2>
-        <p className="mt-2 text-sm opacity-90">You&apos;re signed up. Give staff your name or email next time you order to start earning points.</p>
+      <div className="sheet p-5">
+        <span className="ctag ctag-yellow">Insiders</span>
+        <h2 className="font-display mt-3 text-2xl">You&apos;re in.</h2>
+        <p className="mt-2 text-[15px]">Give staff your name or email next time you order to start earning points.</p>
       </div>
     );
   }
 
+  const plans: { id: Plan; name: string; price: string; note: string }[] = [
+    { id: "free", name: "Insiders", price: "Free", note: "Points on everything" },
+    { id: "plus", name: "Insiders+ monthly", price: `$${RATE_PRICE.adult}/mo`, note: "Every screening free" },
+    { id: "annual", name: "Insiders+ yearly", price: `${dollars(ANNUAL_PRICE.adult)}/yr`, note: "Save 15%" },
+  ];
+
   return (
-    <div className="card">
-      <div className="mb-4">
-        <div className="label-xs">Plan</div>
-        <div className="flex flex-wrap gap-2">
-          <button className={`chip ${plan === "free" ? "chip-selected" : ""}`} onClick={() => setPlan("free")}>
-            Insiders (free)
-          </button>
-          <button className={`chip ${plan === "plus" ? "chip-selected" : ""}`} onClick={() => setPlan("plus")}>
-            Insiders+ monthly (${RATE_PRICE.adult}/mo)
-          </button>
-          <button className={`chip ${plan === "annual" ? "chip-selected" : ""}`} onClick={() => setPlan("annual")}>
-            Insiders+ yearly ({dollars(ANNUAL_PRICE.adult)}/yr, save 15%)
-          </button>
+    <section className="sheet">
+      <h2 className="spec-head rounded-t-[4px]">
+        <span>Join</span>
+        <span>Takes a minute</span>
+      </h2>
+      <div className="p-4 sm:p-5">
+      <div className="mb-5">
+        <div className="label-xs">Pick a plan</div>
+        <div role="radiogroup" aria-label="Plan" className="grid gap-3 sm:grid-cols-3">
+          {plans.map((p) => (
+            <button
+              key={p.id}
+              role="radio"
+              aria-checked={plan === p.id}
+              onClick={() => setPlan(p.id)}
+              className={`rounded-[4px] border-2 border-[var(--foreground)] px-4 py-3 text-left transition-transform ${plan === p.id ? "bg-[var(--gold)] shadow-[3px_3px_0_var(--foreground)]" : "bg-[var(--surface)] hover:-translate-y-px"}`}
+            >
+              <div className="spec-k !text-[var(--foreground)]">{p.name}</div>
+              <div className="font-display text-xl leading-tight">{p.price}</div>
+              <div className="text-sm">{p.note}</div>
+            </button>
+          ))}
         </div>
         {plan !== "free" && (
-          <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+          <div className="mt-3 space-y-1 text-sm text-[var(--muted)]">
             <p>
               {plan === "annual"
                 ? `You'll be redirected to Stripe to pay ${dollars(ANNUAL_PRICE.adult)} for the year (15% off monthly), plus tax. It renews on the same date next year.`
@@ -91,7 +107,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         )}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
           <div className="label-xs">Name</div>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
@@ -106,10 +122,10 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         </label>
       </div>
 
-      {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
+      {error && <div className="mt-3 text-sm font-bold text-[var(--danger-text)]">{error}</div>}
 
-      <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
-        {submitting ? "Please wait..." : plan === "free" ? "Join Insiders — it's free" : "Continue to payment"}
+      <button className="btn-primary mt-5 w-full px-5 py-3 text-base" disabled={!canSubmit || submitting} onClick={handleSubmit}>
+        {submitting ? "One moment…" : !canSubmit ? "Add your name and email" : plan === "free" ? "Join Insiders, free" : "Continue to payment"}
       </button>
       <p className="mt-3 text-center text-sm text-[var(--muted)]">
         Already have an account?{" "}
@@ -118,6 +134,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         </a>{" "}
         and {plan !== "free" ? "go straight to payment" : "skip this form"}.
       </p>
-    </div>
+      </div>
+    </section>
   );
 }

@@ -57,8 +57,9 @@ export default async function BoothsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="font-display mb-1 text-3xl font-semibold">Reserve a Booth</h1>
-      <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
+      <span className="page-eyebrow">Lounge booths</span>
+      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Reserve a booth</h1>
+      <p className="mt-3 mb-8 max-w-2xl text-[15px] text-[var(--muted)]">
         Pick a booth below to hold it for a two-hour window with a flat reservation fee — food, drinks, and any movie
         tickets are ordered separately once you&apos;re seated.{" "}
         {me?.plus ? (

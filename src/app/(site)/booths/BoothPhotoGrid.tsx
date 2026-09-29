@@ -32,13 +32,15 @@ export default function BoothPhotoGrid({
             style={selected ? { boxShadow: "4px 4px 0 var(--accent)", borderColor: "var(--accent)" } : undefined}
             aria-pressed={selected}
           >
-            <div className="relative aspect-[4/3] w-full bg-[var(--surface-hover)]">
+            <div className="relative aspect-[4/3] w-full border-b-2 border-[var(--foreground)] bg-[var(--surface-hover)]">
               {b.photo_url ? (
                 <Image src={b.photo_url} alt={b.label} fill sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" className="object-cover" />
               ) : (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-[var(--muted)]">
-                  <span className="text-2xl">🛋️</span>
-                  <span className="text-xs">Photo coming soon</span>
+                // No photo yet: a printed plate with the booth's name, not
+                // an empty box.
+                <div className="halftone halftone-hero flex h-full w-full flex-col items-center justify-center gap-2 bg-[var(--gold)] p-4 text-center">
+                  <span className="font-display relative z-[1] text-2xl leading-none text-balance">{b.label}</span>
+                  <span className="spec-code relative z-[1] !text-[var(--foreground)]">Seats {b.capacity}</span>
                 </div>
               )}
               {booked && <span className="stamp-tag stamp-tag-accent absolute top-2 left-2">Booked today</span>}

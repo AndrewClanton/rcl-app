@@ -105,46 +105,80 @@ export default async function ScreeningDetailPage({
     freeEntryConfirmed = booking?.status === "confirmed";
   }
 
-  return (
-    <div className="mx-auto max-w-3xl">
-      {eventJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(eventJsonLd) }} />}
-      <div className="grid gap-8 sm:grid-cols-[200px_1fr]">
-        <div className="mx-auto w-40 sm:mx-0 sm:w-full">
-          <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="200px" priority />
-        </div>
+  const when = new Date(screening.starts_at);
+  const day = when.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" });
+  const shortDay = when.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: "America/Chicago" });
+  const time = when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  const outdoor = screening.room.name.toLowerCase().includes("outdoor");
+  const spec: [string, string][] = [
+    ["Date", shortDay],
+    ["Time", time],
+    ["Runtime", screening.movie.runtime_minutes ? `${screening.movie.runtime_minutes} min` : "—"],
+    ["Rating", screening.movie.rating || "NR"],
+    ["Ticket", screening.ticket_price === 0 ? "Free" : `${money(screening.ticket_price)} + tax`],
+    ["Seats left", seatsLeft > 0 ? String(seatsLeft) : "Sold out"],
+  ];
 
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-3xl font-semibold">{screening.movie.title}</h1>
-            {screening.room.name.toLowerCase().includes("outdoor") && <span className="stamp-tag stamp-tag-gold">Outdoor</span>}
-          </div>
-          <div className="mt-2 text-[var(--muted)]">
-            {new Date(screening.starts_at).toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
-          </div>
-          <div className="text-[var(--muted)]">
-            {screening.room.name}
-            {screening.movie.runtime_minutes ? ` · ${screening.movie.runtime_minutes} min` : ""}
-            {screening.movie.rating ? ` · ${screening.movie.rating}` : ""}
-          </div>
-          {screening.movie.synopsis && <p className="mt-3 text-sm text-[var(--muted)]">{screening.movie.synopsis}</p>}
-          <div className="mt-3 text-lg font-semibold text-[var(--accent)]">
-            {screening.ticket_price === 0 ? "Free" : `${money(screening.ticket_price)} / ticket + tax`}
-          </div>
-        </div>
+  return (
+    <div className="mx-auto max-w-4xl">
+      {eventJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(eventJsonLd) }} />}
+      <div className="mb-7">
+        <span className="page-eyebrow">{day}</span>
+        <h1 className="font-display mt-3 text-4xl leading-[0.95] text-balance sm:text-5xl">{screening.movie.title}</h1>
       </div>
 
-      <div className="mt-8">
-        {paymentConfirmed ? (
-          <div className="notice notice-success">
-            <h2 className="text-lg font-semibold">Payment received!</h2>
-            <p className="mt-2 text-sm opacity-90">Your tickets are confirmed. A receipt was sent to your email by Stripe.</p>
+      <div className="grid gap-8 md:grid-cols-[230px_1fr]">
+        <div className="mx-auto w-44 md:w-full">
+          <div className="sheet overflow-hidden">
+            <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="230px" priority />
           </div>
-        ) : freeEntryConfirmed ? (
-          <div className="notice notice-success">
-            <h2 className="text-lg font-semibold">You&apos;re in!</h2>
-            <p className="mt-2 text-sm opacity-90">Your Insiders+ membership covered this ticket — no charge. See you at the show.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {outdoor && <span className="ctag ctag-yellow">Outdoor</span>}
+            {seatsLeft > 0 && seatsLeft <= 10 && <span className="ctag ctag-red">{seatsLeft} left</span>}
+            {seatsLeft <= 0 && <span className="ctag ctag-red">Sold out</span>}
           </div>
-        ) : (
+        </div>
+
+        <div className="min-w-0 space-y-7">
+          {/* The showtime as a spec panel -- hard data in a grid, like the
+              Royale Proof Sheet sets it. */}
+          <section className="sheet crop">
+            <div className="spec-head rounded-t-[4px]">
+              <span>{screening.room.name}</span>
+              <span>{time}</span>
+            </div>
+            <div className="spec-grid">
+              {spec.map(([k, v]) => (
+                <div key={k} className="spec-cell">
+                  <div className="spec-k">{k}</div>
+                  <div className={`spec-v ${k === "Ticket" ? "text-[var(--accent)]" : ""}`}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {screening.movie.synopsis && <p className="border-t border-[var(--border)] px-4 py-4 text-[15px] leading-relaxed">{screening.movie.synopsis}</p>}
+            <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-2">
+              <span className="colorbar" aria-hidden="true">
+                <i style={{ background: "var(--gold)" }} />
+                <i style={{ background: "var(--accent)" }} />
+                <i style={{ background: "var(--foreground)" }} />
+              </span>
+              <span className="spec-code">RCL · 715 E Broadway · Route 66</span>
+            </div>
+          </section>
+
+          {paymentConfirmed ? (
+            <div className="sheet p-5">
+              <span className="ctag ctag-yellow">Paid</span>
+              <h2 className="font-display mt-3 text-2xl">You&apos;re all set.</h2>
+              <p className="mt-2 text-[15px]">Your tickets are confirmed. Stripe emailed your receipt. See you at {time}.</p>
+            </div>
+          ) : freeEntryConfirmed ? (
+            <div className="sheet p-5">
+              <span className="ctag ctag-yellow">Insiders+</span>
+              <h2 className="font-display mt-3 text-2xl">You&apos;re in.</h2>
+              <p className="mt-2 text-[15px]">Your membership covered this ticket, no charge. See you at {time}.</p>
+            </div>
+          ) : (
           <>
             {checkout === "cancelled" && (
               <div className="notice notice-warn mb-4">Checkout was cancelled — your seats weren&apos;t held. Feel free to try again.</div>
@@ -152,6 +186,7 @@ export default async function ScreeningDetailPage({
             <TicketReservation screeningId={screening.id} ticketPrice={screening.ticket_price} seatsLeft={seatsLeft} me={me} plusPrice={RATE_PRICE[member?.price_tier ?? "adult"]} />
           </>
         )}
+        </div>
       </div>
     </div>
   );

@@ -14,14 +14,16 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+// A printed-menu line: the name, a dotted leader, the price.
 function ItemRow({ item }: { item: MenuItem }) {
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-[var(--border)] py-2.5 last:border-b-0">
-      <span className="min-w-0 font-medium">
+    <div className="flex items-baseline gap-2 py-2">
+      <span className="min-w-0 font-bold">
         {item.name}
-        {item.is_alcohol && <span className="ml-2 chip !px-1.5 !py-0.5 align-middle text-[10px]">21+</span>}
+        {item.is_alcohol && <span className="spec-code ml-2 rounded-[2px] border border-current px-1 align-middle">21+</span>}
       </span>
-      <span className="whitespace-nowrap text-sm font-semibold text-[var(--accent)]">{money(item.price)}</span>
+      <span aria-hidden="true" className="min-w-4 flex-1 -translate-y-1 border-b-2 border-dotted border-[rgba(20,17,12,0.3)]" />
+      <span className="font-display whitespace-nowrap tabular-nums">{money(item.price)}</span>
     </div>
   );
 }
@@ -32,30 +34,32 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
       {photos && photos.length > 0 && (
         <div className="mb-4 grid gap-2 sm:gap-3" style={{ gridTemplateColumns: `repeat(${photos.length}, minmax(0, 1fr))` }}>
           {photos.map((p) => (
-            <div key={p.src} className="relative aspect-[4/3] overflow-hidden rounded-xl">
+            <div key={p.src} className="relative aspect-[4/3] overflow-hidden rounded-[4px] border-2 border-[var(--foreground)]">
               <Image src={p.src} alt={p.alt} fill sizes={`(min-width: 1024px) ${Math.round(900 / photos.length)}px, ${Math.round(100 / photos.length)}vw`} className="object-cover" priority />
             </div>
           ))}
         </div>
       )}
-      <h2 className="font-display mb-4 border-b border-[var(--border)] pb-2 text-2xl font-semibold">{category.label}</h2>
+      <h2 className="font-display mb-4 text-3xl">{category.label}</h2>
       {category.subcategories.length > 0 ? (
         <div className="space-y-6">
           {category.subcategories.map((sub) => (
             <div key={sub.id}>
-              <h3 className="eyebrow mb-1">{sub.label}</h3>
-              <div className="card !p-4 sm:columns-2 sm:gap-x-8">
+              <div className="sheet">
+              <h3 className="spec-head rounded-t-[4px]">{sub.label}</h3>
+              <div className="px-4 py-2 sm:columns-2 sm:gap-x-10">
                 {sub.items.map((item) => (
                   <div key={item.id} className="break-inside-avoid">
                     <ItemRow item={item} />
                   </div>
                 ))}
               </div>
+              </div>
             </div>
           ))}
         </div>
       ) : (
-        <div className="card !p-4 sm:columns-2 sm:gap-x-8">
+        <div className="sheet px-4 py-2 sm:columns-2 sm:gap-x-10">
           {category.items.map((item) => (
             <div key={item.id} className="break-inside-avoid">
               <ItemRow item={item} />
@@ -71,10 +75,9 @@ export default async function MenuPage() {
   const categories = await getMenuTree();
   return (
     <div>
-      <h1 className="font-display mb-2 text-3xl font-semibold">Menu</h1>
-      <p className="mb-8 max-w-2xl text-sm text-[var(--muted)]">
-        Everything below is available at the counter -- this page is for browsing and pricing, not ordering online.
-      </p>
+      <span className="page-eyebrow">Food &amp; drink</span>
+      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Menu</h1>
+      <p className="mt-3 mb-10 max-w-2xl text-[15px] text-[var(--muted)]">Order at the counter. This page is for browsing and prices.</p>
 
       {categories
         .filter((c) => c.key !== "tickets")

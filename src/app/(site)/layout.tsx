@@ -24,7 +24,7 @@ export default async function SiteLayout({ children }: { children: React.ReactNo
   const member = await getSignedInMember();
   const plus = !!member && hasPlusPerks(member);
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="site flex min-h-full flex-col">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }} />
       <header className="sticky top-0 z-10 border-b-2 border-[var(--foreground)] bg-[var(--background)]/95 backdrop-blur">
         <div className="mx-auto max-w-5xl px-4 py-5 text-center">

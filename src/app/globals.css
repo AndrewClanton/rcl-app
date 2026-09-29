@@ -215,3 +215,276 @@ body {
     opacity: 0.35;
   }
 }
+
+/*
+ * Public-site skin: the Royale Proof Sheet applied to the everyday parts
+ * (forms, buttons, labels, panels). Scoped to .site so the register and
+ * back office keep their tuned, denser controls.
+ *
+ * Proof Sheet vocabulary: ink borders with hard offset shadows, Archivo
+ * Black for anything you press, Space Mono for technical labels, spec
+ * panels (an ink header bar over a grid of hard data), crop marks on the
+ * everyday "Four-Color Press" panels.
+ */
+@layer components {
+  .site .btn-primary,
+  .site .btn-secondary {
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-weight: 400;
+    letter-spacing: 0.03em;
+    border: 2px solid var(--foreground);
+    border-radius: 4px;
+    box-shadow: 3px 3px 0 var(--foreground);
+    transition: transform 0.08s, box-shadow 0.08s, background-color 0.15s;
+  }
+  .site .btn-secondary {
+    background: var(--surface);
+  }
+  .site .btn-primary:hover:not(:disabled),
+  .site .btn-secondary:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 var(--foreground);
+  }
+  .site .btn-secondary:hover:not(:disabled) {
+    background: var(--gold);
+    color: var(--foreground);
+  }
+  .site .btn-primary:active:not(:disabled),
+  .site .btn-secondary:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 var(--foreground);
+  }
+  /* Not yet pressable: printed-grey, not a washed-out red. */
+  .site .btn-primary:disabled,
+  .site .btn-secondary:disabled {
+    opacity: 1;
+    background: var(--surface-hover);
+    color: var(--muted);
+    border-color: #c9c0a8;
+    box-shadow: none;
+  }
+
+  /* Order-form fields: 2px ink rules, 16px type (no iPhone zoom), a red
+     press-shadow on focus. */
+  .site .input {
+    border: 2px solid var(--foreground);
+    border-radius: 4px;
+    padding: 0.7rem 0.85rem;
+    font-size: 1rem;
+    background: var(--surface);
+    transition: box-shadow 0.12s;
+  }
+  .site .input:focus {
+    border-color: var(--foreground);
+    box-shadow: 3px 3px 0 var(--accent);
+  }
+  .site .input::placeholder {
+    color: #a39a86;
+  }
+  .site .label-xs {
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--foreground);
+    margin-bottom: 0.4rem;
+  }
+
+  .site .chip {
+    border: 2px solid var(--foreground);
+    border-radius: 4px;
+    padding: 0.45rem 0.8rem;
+    font-weight: 700;
+    background: var(--surface);
+  }
+  .site .chip-selected {
+    background: var(--gold);
+    color: var(--foreground);
+    box-shadow: 2px 2px 0 var(--foreground);
+  }
+
+  /* Four-Color Press panel: thin ink border, hard shadow, crop marks. */
+  .sheet {
+    position: relative;
+    background: var(--surface);
+    border: 2px solid var(--foreground);
+    border-radius: 6px;
+    box-shadow: 4px 4px 0 var(--foreground);
+  }
+  .crop {
+    position: relative;
+  }
+  .crop::before,
+  .crop::after {
+    content: "";
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    pointer-events: none;
+    border-color: rgba(20, 17, 12, 0.55);
+    border-style: solid;
+  }
+  .crop::before {
+    top: -9px;
+    left: -9px;
+    border-width: 1.5px 0 0 1.5px;
+  }
+  .crop::after {
+    bottom: -9px;
+    right: -9px;
+    border-width: 0 1.5px 1.5px 0;
+  }
+
+  /* Spec panel: an ink header bar in yellow type over a grid of hard data,
+     the way the proof sheet sets a showtime. */
+  .spec-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    background: var(--foreground);
+    color: var(--gold);
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.6rem 1rem;
+  }
+  /* Hairlines come from the 1px gap over a border-colored ground, so the
+     grid can drop to two columns on a phone without per-cell borders. */
+  .spec-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+  }
+  @media (max-width: 480px) {
+    .spec-grid:not(.spec-grid-3) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .spec-cell {
+    padding: 0.8rem 1rem;
+    background: var(--surface);
+    min-width: 0;
+  }
+  .spec-k {
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 0.2rem;
+  }
+  .spec-v {
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 1.05rem;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+  .spec-code {
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(20, 17, 12, 0.6);
+  }
+  .colorbar {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .colorbar i {
+    width: 11px;
+    height: 11px;
+    border: 1px solid rgba(20, 17, 12, 0.6);
+  }
+
+  /* Rotated print tags from the proof sheet (NOW SHOWING, SOLD OUT, 21+). */
+  .ctag {
+    display: inline-block;
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 0.3rem 0.6rem;
+    border: 2px solid var(--foreground);
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .ctag-yellow {
+    background: var(--gold);
+    color: var(--foreground);
+    transform: rotate(-3deg);
+  }
+  .ctag-red {
+    background: var(--accent);
+    color: #fff;
+    transform: rotate(2deg);
+  }
+  .ctag-ink {
+    background: var(--foreground);
+    color: var(--gold);
+    transform: rotate(-2deg);
+  }
+
+  /* Page title block: a yellow eyebrow chip over an Archivo Black head. */
+  .page-eyebrow {
+    display: inline-block;
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: var(--gold);
+    color: var(--foreground);
+    padding: 0.25rem 0.6rem;
+    border-radius: 2px;
+    transform: rotate(-1deg);
+  }
+}
+
+@layer components {
+  /* A showtime you can tap: an ink-ruled ticket stub with a press shadow. */
+  .time-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3rem;
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 0.95rem;
+    line-height: 1;
+    padding: 0.6rem 0.8rem;
+    border: 2px solid var(--foreground);
+    border-radius: 4px;
+    background: var(--surface);
+    box-shadow: 2px 2px 0 var(--foreground);
+    transition: transform 0.08s, box-shadow 0.08s, background-color 0.15s;
+  }
+  .time-chip:hover {
+    background: var(--gold);
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--foreground);
+  }
+  .time-chip small {
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .day-chip {
+    flex: none;
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 0.8rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding: 0.5rem 0.75rem;
+    border: 2px solid var(--foreground);
+    border-radius: 4px;
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  .day-chip:hover,
+  .day-chip-today {
+    background: var(--foreground);
+    color: var(--gold);
+  }
+}
