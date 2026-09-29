@@ -30,7 +30,9 @@ import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
 import { isStaleBuildError } from "@/lib/deployment";
+import { ENFORCE_REGISTER_TOTALS } from "@/lib/register-totals";
 import {
+  checkBeforePayment,
   completeOrder,
   isDraftOpen,
   saveDraftOrder,
@@ -72,6 +74,8 @@ function memberDiscountRate(member: TotalsMember) {
   return member.tier === "Insiders+" ? 0.1 : 0.05;
 }
 
+// The server redoes this math to check each sale (lib/register-totals.ts):
+// change one, change the other.
 function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
   // Every money figure is rounded to the cent, so the tax shown, the total
   // charged on the card and the order saved all agree to the penny.
@@ -80,7 +84,8 @@ function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: bo
   const tierDiscount = cents(subtotal * memberDiscountRate(member));
   const monthlyDiscount = monthlyMember ? cents(subtotal * 0.1) : 0;
   const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
-  const redemptionDiscount = canRedeem && pointsRedeemed ? REWARD_VALUE : 0;
+  // A $5 reward on a $3 order takes $3 off, never more than what's left.
+  const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, subtotal - tierDiscount - monthlyDiscount))) : 0;
   const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
@@ -547,6 +552,20 @@ export default function PosApp({
         return;
       }
     }
+    // A points reward the member no longer has the points for comes off
+    // before anyone pays. If the check can't run, the sale goes ahead.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || ENFORCE_REGISTER_TOTALS) {
+      setBusy(true);
+      const r = await checkBeforePayment(currentFields(), totalsPayload(totals)).catch(() => null);
+      setBusy(false);
+      if (r && !r.ok) {
+        if (r.points !== undefined) {
+          setPointsRedeemed(false);
+          if (member) setMember({ ...member, points: r.points });
+        }
+        return setToast(r.error);
+      }
+    }
     if (activeTabId) {
       setTipOpen(true);
     } else {
@@ -627,7 +646,16 @@ export default function PosApp({
     const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
     let orderNumber: number;
     try {
-      ({ orderNumber } = await completeOrder(order));
+      const r = await completeOrder(order);
+      if (!r.ok) {
+        // The server turned the sale down (it checks the card payment with
+        // Stripe). Its message says what to do; a card that was charged
+        // keeps the warning up so it isn't charged again.
+        keepUnsavedSale(r.cardCharged ? { ...sale, tries: sale.tries + 1 } : null);
+        setToast(r.error);
+        return false;
+      }
+      orderNumber = r.orderNumber;
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
