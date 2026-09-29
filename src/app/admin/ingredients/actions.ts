@@ -9,6 +9,8 @@ import type { IngredientUnit } from "@/lib/types";
 // change, so the screen can say so (it used to look saved either way).
 type Result = { ok: true } | { ok: false; error: string };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function revalidate() {
   revalidatePath("/admin/ingredients");
   revalidatePath("/admin/reports");
@@ -42,7 +44,35 @@ export async function updateIngredient(
   fields: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }>
 ): Promise<Result> {
   await assertStaff();
-  const { error } = await createAdminClient().from("ingredients").update(fields).eq("id", id);
+  // Only these fields, checked here: the browser could send anything else
+  // (par_item_id and active have their own manager-gated actions).
+  const patch: Partial<{ name: string; unit: IngredientUnit; bottle_size: number | null; unit_cost: number | null; category: string | null }> = {};
+  const money = (v: unknown) => v === null || (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 100000);
+  if (fields.name !== undefined) {
+    const name = typeof fields.name === "string" ? fields.name.replace(/\s+/g, " ").trim() : "";
+    if (!name || name.length > 80) return { ok: false, error: "Give the ingredient a name (under 80 characters)." };
+    patch.name = name;
+  }
+  if (fields.unit !== undefined) {
+    if (!["oz", "ml", "count"].includes(fields.unit as string)) return { ok: false, error: "Pick how it's measured: oz, ml or count." };
+    patch.unit = fields.unit;
+  }
+  if (fields.bottle_size !== undefined) {
+    if (!money(fields.bottle_size)) return { ok: false, error: "Bottle size should be a number, or left blank." };
+    patch.bottle_size = fields.bottle_size;
+  }
+  if (fields.unit_cost !== undefined) {
+    if (!money(fields.unit_cost)) return { ok: false, error: "Cost should be a number, or left blank." };
+    patch.unit_cost = fields.unit_cost;
+  }
+  if (fields.category !== undefined) {
+    const category = typeof fields.category === "string" ? fields.category.trim() : "";
+    if (category.length > 40) return { ok: false, error: "Keep the category under 40 characters." };
+    patch.category = category || null;
+  }
+  if (typeof id !== "string" || !UUID.test(id)) return { ok: false, error: "That ingredient isn't there anymore. Refresh the page." };
+  if (Object.keys(patch).length === 0) return { ok: true };
+  const { error } = await createAdminClient().from("ingredients").update(patch).eq("id", id);
   if (error) return { ok: false, error: "Couldn't save that change. Try again." };
   revalidate();
   return { ok: true };
@@ -55,8 +85,6 @@ export async function setIngredientActive(id: string, active: boolean): Promise<
   revalidate();
   return { ok: true };
 }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Which par sheet line an ingredient is bought as (or none). Managers and up,
 // like the rest of the par sheet and the recipes. One ingredient per line,
