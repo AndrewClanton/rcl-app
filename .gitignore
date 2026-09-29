@@ -43,3 +43,6 @@ next-env.d.ts
 
 # supabase CLI local cache
 supabase/.temp/
+
+# Local agent worktrees (never commit)
+.claude/worktrees/
