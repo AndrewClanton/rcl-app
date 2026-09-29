@@ -78,7 +78,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
       .order("created_at", { ascending: false }),
     supabase
       .from("bookings")
-      .select("id, quantity, unit_price, status, stripe_payment_intent_id, created_at, screening:screenings(starts_at, movie:movies(title))")
+      .select("id, quantity, unit_price, tax_amount, status, stripe_payment_intent_id, created_at, screening:screenings(starts_at, movie:movies(title))")
       .eq("member_id", memberId)
       // Register tickets are part of their order (refunded with it).
       .is("order_id", null)
@@ -107,7 +107,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
       kind: "booking",
       id: b.id,
       label: screening ? `${b.quantity}x ticket — ${screening.movie.title}` : `${b.quantity}x ticket`,
-      total: Number(b.unit_price) * b.quantity,
+      total: Number(b.unit_price) * b.quantity + Number(b.tax_amount),
       status: b.status,
       paymentMethod: null,
       stripePaymentIntentId: b.stripe_payment_intent_id,

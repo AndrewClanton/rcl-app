@@ -12,6 +12,7 @@ import CustomItemModal from "./CustomItemModal";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, getTicketPrintInfo, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
 import type { PosMember } from "./member-actions";
 import ManagerPinModal from "@/components/ManagerPinModal";
@@ -36,9 +37,8 @@ import {
   type DraftFields,
 } from "./actions";
 
-// Joplin, MO combined sales tax (state + county + city): 8.725%. This is the
-// rate the business's quarterly Missouri filings are figured at.
-const TAX_RATE = 0.08725;
+// Joplin, MO combined sales tax, shared with online tickets and Insiders+.
+const TAX_RATE = SALES_TAX_RATE;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;

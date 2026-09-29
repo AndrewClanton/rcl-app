@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PlusLink from "@/components/PlusLink";
+import { salesTaxOn } from "@/lib/sales-tax";
 import { startCheckout } from "./actions";
 
 function money(n: number) {
@@ -30,6 +31,8 @@ export default function TicketReservation({
   // Insiders+ covers the member's own seat; guests they bring still pay.
   const freeSeats = me?.plus && !editing ? Math.min(1, quantity) : 0;
   const due = ticketPrice * (quantity - freeSeats);
+  // Missouri sales tax, added at checkout (shown here so the total matches).
+  const tax = salesTaxOn(due);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -103,7 +106,10 @@ export default function TicketReservation({
       {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
 
       <div className="mt-4 flex items-center justify-between">
-        <span className="text-lg font-semibold">{money(due)}</span>
+        <span>
+          <span className="text-lg font-semibold">{money(due + tax)}</span>
+          {tax > 0 && <span className="ml-1.5 text-xs text-[var(--muted)]">includes {money(tax)} tax</span>}
+        </span>
         <button className="btn-primary" disabled={!canSubmit || submitting} onClick={handleSubmit}>
           {submitting ? "One moment..." : due === 0 ? "Reserve my seat" : "Buy tickets — pay now"}
         </button>

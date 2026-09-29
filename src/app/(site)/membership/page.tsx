@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getStripe } from "@/lib/stripe";
 import { RATE_PRICE } from "@/lib/membership-rates";
+import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import Link from "next/link";
 import { getSignedInMember } from "@/lib/member-auth";
@@ -69,7 +70,7 @@ export default async function MembershipPage({
             </Link>
           ) : (
             <PlusLink next={next ?? undefined} className="btn-primary">
-              {needsCard ? `Add a card to your Insiders+ · ${price}/month` : `Get Insiders+ · ${price}/month`}
+              {needsCard ? `Add a card to your Insiders+ · ${price}/month + tax` : `Get Insiders+ · ${price}/month + tax`}
             </PlusLink>
           )}
         </div>
@@ -143,6 +144,7 @@ export default async function MembershipPage({
             Students <strong className="text-[var(--accent)]">${RATE_PRICE.student}/mo</strong>
           </span>
           <span>Senior and student rates are set at the box office with a valid ID.</span>
+          <span>Prices are plus {SALES_TAX_PERCENT}% Missouri sales tax.</span>
         </div>
       </div>
 
@@ -158,7 +160,7 @@ export default async function MembershipPage({
                 {needsCard ? (
                   <div>
                     <div className="font-semibold">Your Insiders+ was set up at the box office and doesn&apos;t have a card on file yet.</div>
-                    <div className="text-sm text-[var(--muted)]">Add one to keep it going, ${price}/month billed to {member.email}. You keep all your perks in the meantime.</div>
+                    <div className="text-sm text-[var(--muted)]">Add one to keep it going, ${price}/month plus tax, billed to {member.email}. You keep all your perks in the meantime.</div>
                   </div>
                 ) : (
                   <div>

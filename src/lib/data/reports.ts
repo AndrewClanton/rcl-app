@@ -99,7 +99,7 @@ export async function getDayReport(date: string): Promise<DayReport> {
       .lt("completed_at", end)
       .order("completed_at", { ascending: false }),
     // Every ticket, online or at the register, has a booking.
-    supabase.from("bookings").select("quantity, unit_price, order_id").eq("status", "confirmed").gte("created_at", start).lt("created_at", end),
+    supabase.from("bookings").select("quantity, unit_price, tax_amount, order_id").eq("status", "confirmed").gte("created_at", start).lt("created_at", end),
     supabase.from("booth_reservations").select("fee_amount").eq("status", "confirmed").gte("created_at", start).lt("created_at", end),
     supabase.from("menu_items").select("id, category_id"),
     supabase.from("menu_categories").select("id, key"),
@@ -145,7 +145,11 @@ export async function getDayReport(date: string): Promise<DayReport> {
   const ticketsSold = bookings.reduce((s, b) => s + b.quantity, 0);
   const paidTickets = bookings.filter((b) => Number(b.unit_price) > 0).reduce((s, b) => s + b.quantity, 0);
   const ticketRevenue = bookings.reduce((s, b) => s + b.quantity * Number(b.unit_price), 0);
-  online += bookings.filter((b) => !b.order_id).reduce((s, b) => s + b.quantity * Number(b.unit_price), 0) + boothRevenue;
+  // Online tickets: price plus the sales tax Stripe added (register tickets'
+  // tax is already in their order).
+  const onlineTicketTax = bookings.filter((b) => !b.order_id).reduce((s, b) => s + Number(b.tax_amount), 0);
+  online += bookings.filter((b) => !b.order_id).reduce((s, b) => s + b.quantity * Number(b.unit_price), 0) + onlineTicketTax + boothRevenue;
+  tax += onlineTicketTax;
 
   const sold = [
     { label: "Movie tickets", amount: ticketRevenue, detail: ticketsSold ? `${ticketsSold} sold${ticketsSold > paidTickets ? `, ${ticketsSold - paidTickets} free` : ""}` : undefined },
@@ -231,7 +235,7 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
   const [ordersRes, bookingsRes, boothsRes] = await Promise.all([
     supabase.from("orders").select("total, source, completed_at").eq("status", "completed").gte("completed_at", start),
     // Register tickets are already inside their order's total.
-    supabase.from("bookings").select("quantity, unit_price, created_at").eq("status", "confirmed").is("order_id", null).gte("created_at", start),
+    supabase.from("bookings").select("quantity, unit_price, tax_amount, created_at").eq("status", "confirmed").is("order_id", null).gte("created_at", start),
     supabase.from("booth_reservations").select("fee_amount, created_at").eq("status", "confirmed").gte("created_at", start),
   ]);
   for (const r of [ordersRes, bookingsRes, boothsRes]) if (r.error) throw r.error;
@@ -242,7 +246,7 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
     if (entry) entry[key] += amount;
   };
   for (const o of ordersRes.data ?? []) add(o.completed_at, o.source === "pos" ? "register" : "online", Number(o.total));
-  for (const b of bookingsRes.data ?? []) add(b.created_at, "online", b.quantity * Number(b.unit_price));
+  for (const b of bookingsRes.data ?? []) add(b.created_at, "online", b.quantity * Number(b.unit_price) + Number(b.tax_amount));
   for (const r of boothsRes.data ?? []) add(r.created_at, "online", Number(r.fee_amount));
 
   return [...byDay.entries()].map(([date, v]) => ({ date, ...v, total: v.register + v.online }));

@@ -161,7 +161,7 @@ export default async function HomePage() {
               <span className="font-display text-5xl" style={{ color: "var(--gold)" }}>
                 ${RATE_PRICE.adult}
               </span>
-              <span className="text-sm opacity-70">/ month</span>
+              <span className="text-sm opacity-70">/ month + tax</span>
             </div>
             <ul className="mt-5 flex-1 space-y-2.5 text-sm">
               <li className="flex gap-2">

@@ -2,6 +2,7 @@ import "server-only";
 import { siteOrigin } from "@/lib/site-origin";
 import { getStripe } from "@/lib/stripe";
 import { insidersPlusPriceId } from "@/lib/member-rate";
+import { salesTaxRateId } from "@/lib/stripe-tax";
 import type { MemberPriceTier } from "@/lib/types";
 
 export { hasPlusPerks, plusPaidFor, plusNeedsCard } from "@/lib/plus-status";
@@ -28,9 +29,11 @@ export async function createPlusCheckout(p: {
   if (!priceId) return null;
   const origin = await siteOrigin();
   const back = p.returnTo ? `&next=${encodeURIComponent(p.returnTo)}` : "";
+  // Missouri sales tax on top of the monthly price, on every bill.
+  const taxRate = await salesTaxRateId();
   const session = await getStripe().checkout.sessions.create({
     mode: "subscription",
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [{ price: priceId, quantity: 1, tax_rates: [taxRate] }],
     ...(p.customerId ? { customer: p.customerId } : { customer_email: p.email }),
     client_reference_id: p.memberId ?? undefined,
     ...(p.firstChargeAt ? { subscription_data: { trial_end: Math.floor(p.firstChargeAt.getTime() / 1000) } } : {}),

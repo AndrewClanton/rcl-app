@@ -39,7 +39,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       .order("completed_at", { ascending: false }),
     supabase
       .from("bookings")
-      .select("id, quantity, unit_price, status, created_at, screening:screenings(starts_at, movie:movies(title))")
+      .select("id, quantity, unit_price, tax_amount, status, created_at, screening:screenings(starts_at, movie:movies(title))")
       .eq("member_id", memberId)
       .is("order_id", null)
       .in("status", ["confirmed", "refunded"])
@@ -71,8 +71,8 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       date: b.created_at,
       label: s ? `${b.quantity}× ${s.movie.title}` : `${b.quantity} ticket${b.quantity === 1 ? "" : "s"}`,
       detail: s ? `Screening ${new Date(s.starts_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ })}` : "Tickets",
-      amount: Number(b.unit_price) * b.quantity,
-      tax: 0,
+      amount: Number(b.unit_price) * b.quantity + Number(b.tax_amount),
+      tax: Number(b.tax_amount),
       status: b.status === "refunded" ? "refunded" : "completed",
     });
   }
@@ -172,7 +172,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
 
   const { data: b } = await supabase
     .from("bookings")
-    .select("id, quantity, unit_price, status, created_at, screening:screenings(starts_at, movie:movies(title, poster_url), room:rooms(name))")
+    .select("id, quantity, unit_price, tax_amount, status, created_at, screening:screenings(starts_at, movie:movies(title, poster_url), room:rooms(name))")
     .eq("id", id)
     .eq("member_id", member.id)
     .in("status", ["confirmed", "refunded"])
@@ -180,7 +180,8 @@ export async function getReceipt(member: { id: string; name: string; email: stri
   if (!b) return null;
   const s = b.screening as unknown as { starts_at: string; movie: { title: string; poster_url: string | null }; room: { name: string } } | null;
   const pts = await ledgerFor({ bookingId: b.id });
-  const total = Number(b.unit_price) * b.quantity;
+  const subtotal = Number(b.unit_price) * b.quantity;
+  const tax = Number(b.tax_amount);
   return {
     kind,
     id: b.id,
@@ -188,12 +189,12 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     date: b.created_at,
     status: b.status === "refunded" ? "refunded" : "completed",
     lines: [{ name: s ? `Ticket: ${s.movie.title}` : "Ticket", quantity: b.quantity, unitPrice: Number(b.unit_price), modifiers: [] }],
-    subtotal: total,
+    subtotal,
     discounts: [],
-    tax: 0,
+    tax,
     taxFree: false,
     tip: 0,
-    total,
+    total: subtotal + tax,
     payment: "Card (online)",
     pointsEarned: pts.earned,
     pointsRedeemed: pts.redeemed,

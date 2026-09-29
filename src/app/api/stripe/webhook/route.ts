@@ -44,6 +44,8 @@ export async function POST(request: NextRequest) {
           .update({
             status: "confirmed",
             stripe_payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
+            // The sales tax Stripe added on top of the tickets.
+            tax_amount: (session.total_details?.amount_tax ?? 0) / 100,
           })
           .eq("id", bookingId)
           .eq("status", "pending");
@@ -68,6 +70,8 @@ export async function POST(request: NextRequest) {
           .update({
             status: "confirmed",
             stripe_payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
+            // The sales tax Stripe added on top of the tickets.
+            tax_amount: (session.total_details?.amount_tax ?? 0) / 100,
           })
           .eq("id", boothReservationId)
           .eq("status", "pending");

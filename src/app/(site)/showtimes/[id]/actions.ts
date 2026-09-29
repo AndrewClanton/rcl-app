@@ -3,6 +3,7 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
+import { salesTaxRateId } from "@/lib/stripe-tax";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -95,6 +96,9 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
     return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
   }
 
+  // Missouri sales tax goes on top of the ticket price (Stripe adds it).
+  const taxRate = await salesTaxRateId();
+
   const { data: booking, error: insertErr } = await supabase
     .from("bookings")
     .insert({
@@ -127,6 +131,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
         product_data: { name: `${movie.title} — ${showtime}` },
       },
       quantity: paidQuantity,
+      tax_rates: [taxRate],
     },
   ];
   if (freeQuantity > 0) {
@@ -137,6 +142,7 @@ export async function startCheckout(fields: { screeningId: string; quantity: num
         product_data: { name: `${movie.title} — ${showtime} (Insiders+ free entry)` },
       },
       quantity: freeQuantity,
+      tax_rates: [taxRate],
     });
   }
 
