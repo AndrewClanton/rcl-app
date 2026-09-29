@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Room } from "@/lib/types";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import { submitEventInquiry } from "./actions";
+import { ProofStamp, SpecFoot } from "@/components/print";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -180,9 +181,14 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
       </div>
 
       {/* The running estimate, set like a spec panel. */}
-      <aside className="sheet lg:sticky lg:top-28">
+      <aside className="sheet crop lg:sticky lg:top-40">
         <h2 className="spec-head rounded-t-[4px]">
           <span>Your estimate</span>
+          <ProofStamp>
+            Proof · not
+            <br />
+            an invoice
+          </ProofStamp>
         </h2>
         <dl className="space-y-2 px-4 py-4 text-[15px]">
           <Row k="Space" v={room ? room.name : "Not picked yet"} />
@@ -201,6 +207,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
             {submitting ? "Sending…" : missing ?? "Send my request"}
           </button>
         </div>
+        <SpecFoot code="RCL-EVT · EST" />
       </aside>
     </div>
   );

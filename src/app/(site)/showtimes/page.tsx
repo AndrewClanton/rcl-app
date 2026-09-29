@@ -4,6 +4,7 @@ import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import type { Screening } from "@/lib/types";
+import { PageMasthead, ProofStamp, SpecFoot } from "@/components/print";
 
 export const dynamic = "force-dynamic";
 
@@ -59,15 +60,20 @@ export default async function ShowtimesPage() {
   return (
     <div>
       {events.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(events) }} />}
-      <span className="page-eyebrow">Joplin · Route 66</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Showtimes</h1>
-      <p className="mt-3 max-w-2xl text-[15px] text-[var(--muted)]">
-        Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Tap a time to get tickets, or{" "}
-        <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="font-bold text-[var(--accent)] hover:underline">
-          ask us
-        </a>{" "}
-        what&apos;s coming up.
-      </p>
+      <PageMasthead
+        eyebrow="Joplin · Route 66"
+        title="Showtimes"
+        className="!mb-6"
+        intro={
+          <>
+            Showtimes post {PUBLIC_SCHEDULE_WINDOW_DAYS} days out. Tap a time to get tickets, or{" "}
+            <a href="mailto:info@royalecinemajoplin.com?subject=Screening%20request" className="font-bold text-[var(--accent)] hover:underline">
+              ask us
+            </a>{" "}
+            what&apos;s coming up.
+          </>
+        }
+      />
 
       {screenings.length === 0 ? (
         <div className="sheet mt-8 p-5 text-[15px]">No screenings scheduled yet. Check back soon.</div>
@@ -83,11 +89,14 @@ export default async function ShowtimesPage() {
 
           <div className="mt-6 space-y-10">
             {days.map((day) => (
-              <section key={day.key} id={`d-${day.key}`} className="sheet scroll-mt-28">
+              <section key={day.key} id={`d-${day.key}`} className="sheet crop scroll-mt-28">
                 <h2 className="spec-head rounded-t-[4px]">
                   <span>{day.label}</span>
-                  <span className="hidden sm:inline">
-                    {day.films.length} film{day.films.length === 1 ? "" : "s"} · {day.count} show{day.count === 1 ? "" : "s"}
+                  <span className="flex items-center gap-4">
+                    <span className="hidden sm:inline">
+                      {day.films.length} film{day.films.length === 1 ? "" : "s"} · {day.count} show{day.count === 1 ? "" : "s"}
+                    </span>
+                    {day.key === todayKey && <ProofStamp>Tonight</ProofStamp>}
                   </span>
                 </h2>
                 <ul>
@@ -118,6 +127,7 @@ export default async function ShowtimesPage() {
                     </li>
                   ))}
                 </ul>
+                <SpecFoot code={`RCL-SCHED · ${day.key}`} />
               </section>
             ))}
           </div>

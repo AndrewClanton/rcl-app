@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { MemberScreening, PurchaseRow } from "@/lib/data/member-account";
 import MoviePoster from "@/components/MoviePoster";
 import { dateShort, money, showtime } from "./format";
+import { ProofStamp, SpecFoot } from "@/components/print";
 
 // Shared pieces for the member account pages, set in the Royale Proof Sheet
 // style (ink rules, spec heads, ticket stubs) like the rest of the site.
@@ -73,12 +74,29 @@ export function PurchaseRows({ rows }: { rows: PurchaseRow[] }) {
 }
 
 // A spec panel of figures: ink head, then a grid of label/value cells.
-export function SpecPanel({ title, aside, cells, className = "" }: { title: string; aside?: string; cells: { k: string; v: string; hot?: boolean }[]; className?: string }) {
+export function SpecPanel({
+  title,
+  aside,
+  cells,
+  stamp,
+  code,
+  className = "",
+}: {
+  title: string;
+  aside?: string;
+  cells: { k: string; v: string; hot?: boolean }[];
+  stamp?: React.ReactNode;
+  code?: string;
+  className?: string;
+}) {
   return (
-    <section className={`sheet ${className}`}>
+    <section className={`sheet crop ${className}`}>
       <h2 className="spec-head rounded-t-[4px]">
         <span>{title}</span>
-        {aside && <span>{aside}</span>}
+        <span className="flex items-center gap-4">
+          {aside && <span>{aside}</span>}
+          {stamp && <ProofStamp>{stamp}</ProofStamp>}
+        </span>
       </h2>
       <dl className={`spec-grid ${cells.length === 3 ? "spec-grid-3" : ""} ${cells.length === 4 ? "sm:!grid-cols-4" : ""} rounded-b-[4px]`}>
         {cells.map((c) => (
@@ -88,6 +106,7 @@ export function SpecPanel({ title, aside, cells, className = "" }: { title: stri
           </div>
         ))}
       </dl>
+      {code && <SpecFoot code={code} />}
     </section>
   );
 }
@@ -95,7 +114,7 @@ export function SpecPanel({ title, aside, cells, className = "" }: { title: stri
 // A titled sheet (spec head + body), for sections of a page.
 export function Panel({ title, aside, children, className = "" }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`sheet ${className}`}>
+    <section className={`sheet crop ${className}`}>
       <h2 className="spec-head rounded-t-[4px]">
         <span>{title}</span>
         {aside && <span>{aside}</span>}

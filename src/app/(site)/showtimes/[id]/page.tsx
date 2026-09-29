@@ -7,6 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
 import TicketReservation from "./TicketReservation";
+import { Callout, ProofStamp, RegNote, SpecFoot } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { RATE_PRICE } from "@/lib/membership-rates";
@@ -122,14 +123,18 @@ export default async function ScreeningDetailPage({
   return (
     <div className="mx-auto max-w-4xl">
       {eventJsonLd && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdScript(eventJsonLd) }} />}
-      <div className="mb-7">
+      <div className="masthead-rule mb-8 pb-6">
         <span className="page-eyebrow">{day}</span>
-        <h1 className="font-display mt-3 text-4xl leading-[0.95] text-balance sm:text-5xl">{screening.movie.title}</h1>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h1 className="font-display text-4xl leading-[0.95] text-balance sm:text-5xl">{screening.movie.title}</h1>
+          <Callout className="hidden md:inline-flex">Archivo Black · K100</Callout>
+        </div>
       </div>
 
       <div className="grid gap-8 md:grid-cols-[230px_1fr]">
-        <div className="mx-auto w-44 md:w-full">
-          <div className="sheet overflow-hidden">
+        <div className="relative mx-auto w-44 pt-7 md:w-full">
+          <RegNote className="top-0 left-0">Key art · 2:3</RegNote>
+          <div className="sheet overflow-hidden !border-4 !shadow-[7px_7px_0_var(--foreground)]">
             <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="230px" priority />
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -145,7 +150,14 @@ export default async function ScreeningDetailPage({
           <section className="sheet crop">
             <div className="spec-head rounded-t-[4px]">
               <span>{screening.room.name}</span>
-              <span>{time}</span>
+              <span className="flex items-center gap-4">
+                <span>{time}</span>
+                <ProofStamp>
+                  Admit
+                  <br />
+                  one
+                </ProofStamp>
+              </span>
             </div>
             <div className="spec-grid">
               {spec.map(([k, v]) => (
@@ -156,14 +168,7 @@ export default async function ScreeningDetailPage({
               ))}
             </div>
             {screening.movie.synopsis && <p className="border-t border-[var(--border)] px-4 py-4 text-[15px] leading-relaxed">{screening.movie.synopsis}</p>}
-            <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-2">
-              <span className="colorbar" aria-hidden="true">
-                <i style={{ background: "var(--gold)" }} />
-                <i style={{ background: "var(--accent)" }} />
-                <i style={{ background: "var(--foreground)" }} />
-              </span>
-              <span className="spec-code">RCL · 715 E Broadway · Route 66</span>
-            </div>
+            <SpecFoot code={`RCL-SHOW-${screening.id.slice(0, 4).toUpperCase()} · REV A`} />
           </section>
 
           {paymentConfirmed ? (

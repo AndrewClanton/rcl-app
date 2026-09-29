@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Receipt } from "@/lib/data/member-account";
 import MoviePoster from "@/components/MoviePoster";
 import { money, points, showtime } from "../../../format";
+import { ProofStamp, SpecFoot } from "@/components/print";
 
 const TZ = "America/Chicago";
 
@@ -27,9 +28,12 @@ export default function ReceiptView({ r }: { r: Receipt }) {
             <div className="font-display text-lg leading-tight">Royale Cinema Lounge</div>
             <div className="text-xs opacity-70">715 E Broadway, Joplin, MO 64801</div>
           </div>
-          <div className="text-right">
-            <div className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--gold)]">Receipt</div>
-            <div className="font-display text-lg">{r.number}</div>
+          <div className="flex items-center gap-4">
+            <ProofStamp>{r.status === "refunded" ? "Refunded" : "Paid"}</ProofStamp>
+            <div className="text-right">
+              <div className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--gold)]">Receipt</div>
+              <div className="font-display text-lg">{r.number}</div>
+            </div>
           </div>
         </header>
         <div className="h-1 bg-[var(--accent)]" />
@@ -120,6 +124,7 @@ export default function ReceiptView({ r }: { r: Receipt }) {
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-dashed border-[var(--border)] px-6 py-4 text-xs text-[var(--muted)]">
           Questions about this receipt? info@royalecinemajoplin.com · 417-281-4172
         </footer>
+        <SpecFoot code={`RCL-RCPT ${r.number}`} />
       </article>
     </div>
   );

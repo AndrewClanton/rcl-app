@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { submitMembershipSignup, startMembershipCheckout } from "./actions";
+import { SpecFoot } from "@/components/print";
 
 type Plan = "free" | "plus" | "annual";
 
@@ -69,7 +70,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
   ];
 
   return (
-    <section className="sheet">
+    <section className="sheet crop">
       <h2 className="spec-head rounded-t-[4px]">
         <span>Join</span>
         <span>Takes a minute</span>
@@ -135,6 +136,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
         and {plan !== "free" ? "go straight to payment" : "skip this form"}.
       </p>
       </div>
+      <SpecFoot code="RCL-JOIN · REV A" />
     </section>
   );
 }

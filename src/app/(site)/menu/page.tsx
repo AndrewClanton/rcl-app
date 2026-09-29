@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { getMenuTree } from "@/lib/data/menu";
 import type { MenuCategory, MenuItem } from "@/lib/types";
+import { PageMasthead } from "@/components/print";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,7 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
         <div className="space-y-6">
           {category.subcategories.map((sub) => (
             <div key={sub.id}>
-              <div className="sheet">
+              <div className="sheet crop">
               <h3 className="spec-head rounded-t-[4px]">{sub.label}</h3>
               <div className="px-4 py-2 sm:columns-2 sm:gap-x-10">
                 {sub.items.map((item) => (
@@ -59,7 +60,7 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
           ))}
         </div>
       ) : (
-        <div className="sheet px-4 py-2 sm:columns-2 sm:gap-x-10">
+        <div className="sheet crop px-4 py-2 sm:columns-2 sm:gap-x-10">
           {category.items.map((item) => (
             <div key={item.id} className="break-inside-avoid">
               <ItemRow item={item} />
@@ -75,9 +76,7 @@ export default async function MenuPage() {
   const categories = await getMenuTree();
   return (
     <div>
-      <span className="page-eyebrow">Food &amp; drink</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Menu</h1>
-      <p className="mt-3 mb-10 max-w-2xl text-[15px] text-[var(--muted)]">Order at the counter. This page is for browsing and prices.</p>
+      <PageMasthead eyebrow="Food & drink" title="Menu" intro="Order at the counter. This page is for browsing and prices." />
 
       {categories
         .filter((c) => c.key !== "tickets")

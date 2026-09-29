@@ -312,30 +312,6 @@ body {
     border-radius: 6px;
     box-shadow: 4px 4px 0 var(--foreground);
   }
-  .crop {
-    position: relative;
-  }
-  .crop::before,
-  .crop::after {
-    content: "";
-    position: absolute;
-    width: 12px;
-    height: 12px;
-    pointer-events: none;
-    border-color: rgba(20, 17, 12, 0.55);
-    border-style: solid;
-  }
-  .crop::before {
-    top: -9px;
-    left: -9px;
-    border-width: 1.5px 0 0 1.5px;
-  }
-  .crop::after {
-    bottom: -9px;
-    right: -9px;
-    border-width: 0 1.5px 1.5px 0;
-  }
-
   /* Spec panel: an ink header bar in yellow type over a grid of hard data,
      the way the proof sheet sets a showtime. */
   .spec-head {
@@ -401,34 +377,6 @@ body {
     border: 1px solid rgba(20, 17, 12, 0.6);
   }
 
-  /* Rotated print tags from the proof sheet (NOW SHOWING, SOLD OUT, 21+). */
-  .ctag {
-    display: inline-block;
-    font-family: var(--font-display), Arial Black, sans-serif;
-    font-size: 11px;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-    padding: 0.3rem 0.6rem;
-    border: 2px solid var(--foreground);
-    border-radius: 3px;
-    white-space: nowrap;
-  }
-  .ctag-yellow {
-    background: var(--gold);
-    color: var(--foreground);
-    transform: rotate(-3deg);
-  }
-  .ctag-red {
-    background: var(--accent);
-    color: #fff;
-    transform: rotate(2deg);
-  }
-  .ctag-ink {
-    background: var(--foreground);
-    color: var(--gold);
-    transform: rotate(-2deg);
-  }
-
   /* Page title block: a yellow eyebrow chip over an Archivo Black head. */
   .page-eyebrow {
     display: inline-block;
@@ -486,5 +434,305 @@ body {
   .day-chip-today {
     background: var(--foreground);
     color: var(--gold);
+  }
+}
+
+@layer components {
+  /* The proof sheet's photo treatment: greyscale with a hard contrast, a
+     red multiply tint and a yellow Ben-Day screen -- for venue and people
+     photos. Food photos stay in full color (they're selling the food). */
+  .print-photo {
+    position: relative;
+    overflow: hidden;
+    background: var(--foreground);
+  }
+  .print-photo img {
+    filter: grayscale(1) contrast(1.2) brightness(1.25);
+  }
+  .print-photo::before,
+  .print-photo::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .print-photo::before {
+    background: var(--accent);
+    mix-blend-mode: multiply;
+    opacity: 0.45;
+  }
+  .print-photo::after {
+    background-image: radial-gradient(circle, var(--gold) 26%, transparent 28%);
+    background-size: 7px 7px;
+    mix-blend-mode: screen;
+    opacity: 0.4;
+    -webkit-mask-image: linear-gradient(135deg, transparent 20%, black);
+    mask-image: linear-gradient(135deg, transparent 20%, black);
+  }
+
+  /* Pre-press markup: a registration mark with a technical note, kept to a
+     corner of a Panel Pop piece, small, grey and monospace -- never inline
+     with the headline or copy. */
+  .reg-note {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(20, 17, 12, 0.62);
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 8.5px;
+    letter-spacing: 0.03em;
+    line-height: 1.4;
+    text-transform: uppercase;
+    z-index: 2;
+  }
+
+  /* The proof stamp, for a spec panel's header. */
+  .proof-stamp {
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    line-height: 1.3;
+    text-align: center;
+    text-transform: uppercase;
+    color: var(--gold);
+    border: 2px solid var(--gold);
+    border-radius: 3px;
+    padding: 3px 6px;
+    transform: rotate(-6deg);
+    opacity: 0.9;
+  }
+}
+
+/*
+ * The print kit -- every device from the Royale style studies (Kodachrome,
+ * Ben-Day, Proof Sheet), as small reusable pieces:
+ *   crop marks, registration mark + alignment note, color bar, proof stamp,
+ *   spec callout (Proof Sheet); comic panels, canted tags, starburst,
+ *   halftone blends, photo treatment (Ben-Day); sprockets, seal, spec
+ *   panel (Kodachrome).
+ * Markup stays technical grey, monospace and small, and sits at corners and
+ * edges -- never inline with a headline or body copy.
+ */
+@layer components {
+  /* Crop marks at all four corners, just outside the trim, drawn by one
+     pseudo-element so the element's ::after stays free (halftone). Don't
+     put .crop on an element with overflow: hidden -- they'd be clipped. */
+  .crop {
+    position: relative;
+    --tech: rgba(20, 17, 12, 0.55);
+  }
+  .crop::before {
+    content: "";
+    position: absolute;
+    inset: -16px;
+    pointer-events: none;
+    background:
+      linear-gradient(var(--tech), var(--tech)) 0 14px / 9px 1.5px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) 14px 0 / 1.5px 9px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) 100% 14px / 9px 1.5px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) calc(100% - 14px) 0 / 1.5px 9px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) 0 calc(100% - 14px) / 9px 1.5px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) 14px 100% / 1.5px 9px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) 100% calc(100% - 14px) / 9px 1.5px no-repeat,
+      linear-gradient(var(--tech), var(--tech)) calc(100% - 14px) 100% / 1.5px 9px no-repeat;
+  }
+
+  /* Canted tags, at the Ben-Day weights: 3px ink outline, Archivo Black. */
+  .ctag {
+    display: inline-block;
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    line-height: 1.1;
+    text-transform: uppercase;
+    padding: 0.45rem 0.8rem;
+    border: 3px solid var(--foreground);
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .ctag-yellow {
+    background: var(--gold);
+    color: var(--foreground);
+    transform: rotate(-4deg);
+  }
+  .ctag-red {
+    background: var(--accent);
+    color: #fff;
+    transform: rotate(3deg);
+  }
+  .ctag-ink {
+    background: var(--foreground);
+    color: var(--gold);
+    transform: rotate(-2deg);
+  }
+
+  /* Starburst caption -- one per page at most; punctuation, not pattern. */
+  .starburst {
+    width: 104px;
+    height: 104px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 0 18px;
+    background: var(--gold);
+    color: var(--foreground);
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 11px;
+    line-height: 1.1;
+    text-transform: uppercase;
+    clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    transform: rotate(-6deg);
+    filter: drop-shadow(0 0 0 var(--foreground));
+  }
+  .starburst-ink {
+    padding: 3px;
+    background: var(--foreground);
+    clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    transform: rotate(-6deg);
+  }
+  .starburst-ink > .starburst {
+    transform: none;
+    width: 98px;
+    height: 98px;
+  }
+
+  /* Stamped seal (Kodachrome): a credential -- est. date, tier, confirmed. */
+  .seal {
+    position: relative;
+    width: 104px;
+    height: 104px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border-radius: 50%;
+    border: 4px solid var(--foreground);
+    background: var(--gold);
+    color: var(--foreground);
+    font-family: var(--font-display), Arial Black, sans-serif;
+    font-size: 11px;
+    line-height: 1.3;
+    text-transform: uppercase;
+  }
+  .seal::before {
+    content: "";
+    position: absolute;
+    inset: 8px;
+    border: 2px dashed var(--foreground);
+    border-radius: 50%;
+    opacity: 0.5;
+  }
+
+  /* Film sprockets (Kodachrome): a row of perforations as a divider. */
+  .sprockets {
+    height: 16px;
+    background-image: repeating-linear-gradient(90deg, var(--foreground) 0 12px, transparent 12px 18px);
+    border-radius: 2px;
+    opacity: 0.85;
+  }
+
+  /* Spec callout: a dot, a leader line, a technical note. */
+  .callout {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    color: rgba(20, 17, 12, 0.62);
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .callout::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+    flex: none;
+  }
+  .callout > i {
+    display: block;
+    width: 26px;
+    height: 1px;
+    background: currentColor;
+    flex: none;
+  }
+
+  /* Color bar chips with their plate codes under them. */
+  .colorbar-codes {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .colorbar-codes span {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-family: var(--font-mono), "Courier New", monospace;
+    font-size: 8px;
+    color: rgba(20, 17, 12, 0.62);
+  }
+  .colorbar-codes b {
+    width: 14px;
+    height: 14px;
+    border: 1px solid rgba(20, 17, 12, 0.62);
+  }
+
+  /* Proof stamp on a light ground (red), next to the ink-bar version. */
+  .proof-stamp-red {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  /* Ben-Day blends: one ink's dot screen over another's solid field,
+     fading in from one edge. */
+  .ht-ink-red,
+  .ht-red-yellow {
+    position: relative;
+    overflow: hidden;
+  }
+  .ht-ink-red::after,
+  .ht-red-yellow::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(45deg, transparent, black);
+    mask-image: linear-gradient(45deg, transparent, black);
+  }
+  .ht-ink-red::after {
+    background-image: radial-gradient(circle, var(--accent) 34%, transparent 36%);
+    background-size: 9px 9px;
+    opacity: 0.9;
+  }
+  .ht-red-yellow::after {
+    background-image: radial-gradient(circle, var(--gold) 34%, transparent 36%);
+    background-size: 13px 13px;
+    -webkit-mask-image: linear-gradient(90deg, transparent, black);
+    mask-image: linear-gradient(90deg, transparent, black);
+  }
+
+  /* Page masthead: yellow eyebrow chip, Archivo Black head, a 3px ink rule. */
+  .masthead-rule {
+    border-bottom: 3px solid var(--foreground);
+  }
+}
+
+@layer components {
+  /* On a yellow panel the starburst prints red, so it doesn't vanish. */
+  .starburst-red > .starburst {
+    background: var(--accent);
+    color: #fff;
+  }
+  .starburst-ink > .starburst {
+    font-size: 15px;
+    line-height: 1;
+    padding: 0 24px;
   }
 }

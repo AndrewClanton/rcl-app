@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveBooths, getBoothBusyTimes } from "@/lib/data/booths";
 import BoothReservationForm from "./BoothReservationForm";
 import PlusLink from "@/components/PlusLink";
+import { PageMasthead } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 
@@ -57,22 +58,25 @@ export default async function BoothsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <span className="page-eyebrow">Lounge booths</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Reserve a booth</h1>
-      <p className="mt-3 mb-8 max-w-2xl text-[15px] text-[var(--muted)]">
-        Pick a booth below to hold it for a two-hour window with a flat reservation fee — food, drinks, and any movie
-        tickets are ordered separately once you&apos;re seated.{" "}
-        {me?.plus ? (
-          <strong>Your Insiders+ includes 2 free reservations every month.</strong>
-        ) : (
+      <PageMasthead
+        eyebrow="Lounge booths"
+        title="Reserve a booth"
+        intro={
           <>
-            <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
-              Insiders+ members get 2 free reservations every month
-            </PlusLink>
-            .
+            Pick a booth below to hold it for a two-hour window with a flat reservation fee. Food, drinks, and any movie tickets are ordered separately once you&apos;re seated.{" "}
+            {me?.plus ? (
+              <strong className="text-[var(--foreground)]">Your Insiders+ includes 2 free reservations every month.</strong>
+            ) : (
+              <>
+                <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
+                  Insiders+ members get 2 free reservations every month
+                </PlusLink>
+                .
+              </>
+            )}
           </>
-        )}
-      </p>
+        }
+      />
 
       {paymentConfirmed || freeReservationConfirmed ? (
         <div className="notice notice-success">

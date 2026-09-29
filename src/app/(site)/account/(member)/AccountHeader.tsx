@@ -8,7 +8,7 @@ export default function AccountHeader({ member, showBackOffice }: { member: Memb
   const rate = member.price_tier && member.price_tier !== "adult" ? `${RATE_LABEL[member.price_tier]} rate` : null;
   const plus = member.tier === "Insiders+";
   return (
-    <header className="flex flex-wrap items-center gap-5">
+    <header className="masthead-rule flex flex-wrap items-center gap-5 pb-6">
       <Link href="/account/profile" className="group relative" title={member.avatar_url ? "Change your photo" : "Add your photo"}>
         <MemberAvatar
           name={member.name}

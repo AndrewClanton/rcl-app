@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PageMasthead, SpecFoot } from "@/components/print";
 
 // Shared frame for the privacy policy and data deletion pages: readable
 // measure, a small table of contents, and a draft banner until published.
@@ -25,15 +26,13 @@ export default function LegalPage({
           skip it. It goes public once it&apos;s approved.
         </div>
       )}
-      <div className="eyebrow mb-2">Royale Cinema Lounge</div>
-      <h1 className="font-display text-4xl leading-tight">{title}</h1>
-      <p className="mt-2 text-sm text-[var(--muted)]">Effective {effectiveDate ?? "[date of approval]"}</p>
-      <div className="mt-6 text-lg leading-relaxed">{intro}</div>
+      <PageMasthead eyebrow="Royale Cinema Lounge" title={title} callout={`Effective ${effectiveDate ?? "[date of approval]"}`} className="!mb-8" />
+      <div className="text-lg leading-relaxed">{intro}</div>
 
       {sections && sections.length > 0 && (
-        <nav aria-label="On this page" className="mt-8 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
-          <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">On this page</div>
-          <ol className="mt-2 grid gap-1 text-sm sm:grid-cols-2">
+        <nav aria-label="On this page" className="sheet crop mt-10">
+          <div className="spec-head rounded-t-[4px]">On this page</div>
+          <ol className="grid gap-1.5 p-5 text-[15px] font-bold sm:grid-cols-2">
             {sections.map((s) => (
               <li key={s.id}>
                 <a href={`#${s.id}`} className="hover:text-[var(--accent)] hover:underline">
@@ -42,6 +41,7 @@ export default function LegalPage({
               </li>
             ))}
           </ol>
+          <SpecFoot code={`RCL-LEGAL · ${effectiveDate ?? "DRAFT"}`} />
         </nav>
       )}
 
@@ -49,7 +49,7 @@ export default function LegalPage({
         {children}
       </div>
 
-      <footer className="mt-14 border-t border-[var(--border)] pt-6 text-sm text-[var(--muted)]">
+      <footer className="mt-14 border-t-[3px] border-[var(--foreground)] pt-6 text-sm text-[var(--muted)]">
         Royale Cinema Lounge · 715 E Broadway, Joplin, MO 64801 ·{" "}
         <a href="mailto:info@royalecinemajoplin.com" className="hover:text-[var(--accent)]">
           info@royalecinemajoplin.com

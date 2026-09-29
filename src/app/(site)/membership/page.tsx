@@ -10,6 +10,7 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { safePath } from "@/lib/safe-path";
 import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
+import { PageMasthead, ProofStamp, RegNote, SpecFoot, Starburst } from "@/components/print";
 
 export const dynamic = "force-dynamic";
 
@@ -79,15 +80,16 @@ export default async function MembershipPage({
         </div>
       )}
 
-      <span className="page-eyebrow">Membership</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">{isPlus ? "Your Insiders+ membership" : "Join the Royale"}</h1>
-      <p className="mt-3 max-w-2xl text-[15px] text-[var(--muted)]">
-        {isPlus ? "Unlimited entry to every screening, no ticket cost, ever. Here's everything it includes." : "Insiders is free and earns points on everything. Insiders+ gets you into every screening free, every time."}
-      </p>
+      <PageMasthead
+        eyebrow="Membership"
+        title={isPlus ? "Your Insiders+ membership" : "Join the Royale"}
+        intro={isPlus ? "Unlimited entry to every screening, no ticket cost, ever. Here's everything it includes." : "Insiders is free and earns points on everything. Insiders+ gets you into every screening free, every time."}
+        className="!mb-0"
+      />
 
       <div className="mt-8 grid gap-7 md:grid-cols-2">
         {/* Free */}
-        <section className="sheet flex flex-col">
+        <section className="sheet crop flex flex-col">
           <div className="border-b-2 border-[var(--foreground)] px-5 py-5">
             <div className="spec-k">Free forever</div>
             <h2 className="font-display text-3xl">Insiders</h2>
@@ -111,15 +113,22 @@ export default async function MembershipPage({
         </section>
 
         {/* Insiders+ -- the Panel Pop treatment from the proof sheet. */}
-        <section className="sheet flex flex-col !shadow-[6px_6px_0_var(--foreground)]">
-          <div className="halftone halftone-hero relative rounded-t-[4px] border-b-2 border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
+        <section className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+          <RegNote className="-top-7 left-0">Align to centerline</RegNote>
+          {!isPlus && (
+            <Starburst className="starburst-red absolute -top-9 -right-6 z-[2] hidden sm:block">
+              Save
+              <br />
+              15%
+            </Starburst>
+          )}
+          <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
             <div className="relative z-[1]">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="spec-k !text-[var(--foreground)]">{isPlus ? "Your plan" : "Unlimited screenings"}</div>
                   <h2 className="font-display text-3xl">Insiders+</h2>
                 </div>
-                <span className="ctag ctag-red">Free entry</span>
               </div>
               <div className="mt-2 flex flex-wrap items-baseline gap-x-3">
                 <span className="font-display text-4xl leading-none">${price}/mo</span>
@@ -165,10 +174,17 @@ export default async function MembershipPage({
       </div>
 
       {/* Every rate in one place, set as a spec panel. */}
-      <section className="sheet crop mt-10">
+      <section className="sheet crop mt-12">
         <h2 className="spec-head rounded-t-[4px]">
           <span>Insiders+ rates</span>
-          <span>Plus {SALES_TAX_PERCENT}% sales tax</span>
+          <span className="flex items-center gap-4">
+            <span>Plus {SALES_TAX_PERCENT}% sales tax</span>
+            <ProofStamp>
+              Rate
+              <br />
+              card
+            </ProofStamp>
+          </span>
         </h2>
         <div className="spec-grid spec-grid-3">
           {rates.map(([who, mo, yr]) => (
@@ -180,6 +196,7 @@ export default async function MembershipPage({
           ))}
         </div>
         <p className="border-t border-[var(--border)] px-4 py-3 text-sm">Senior or student? Join at the adult rate, then show your ID at the box office and we&apos;ll switch you. The lower price starts with your next bill.</p>
+        <SpecFoot code="RCL-RATES · 2026 · REV A" />
       </section>
 
       <div id="join" className="mt-10 scroll-mt-40">

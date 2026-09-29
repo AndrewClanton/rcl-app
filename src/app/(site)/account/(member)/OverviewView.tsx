@@ -10,6 +10,7 @@ import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
 import { Empty, Panel, PurchaseRows, SectionHead, TicketStub } from "./ui";
+import { RegNote } from "@/components/print";
 
 export default function OverviewView({
   member,
@@ -43,7 +44,12 @@ export default function OverviewView({
 
       <div className="grid gap-7 md:grid-cols-[1.3fr_1fr]">
         {/* Points: the Panel Pop treatment, the loudest thing on the page. */}
-        <section className="sheet halftone halftone-hero bg-[var(--gold)] !shadow-[6px_6px_0_var(--foreground)]">
+        <section className="sheet halftone halftone-hero bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+          <RegNote className="top-3 right-3">
+            Plate Y
+            <br />
+            100%
+          </RegNote>
           <div className="relative z-[1] p-6">
             <div className="spec-k !text-[var(--foreground)]">Points balance</div>
             <div className="font-display mt-1 text-7xl leading-none tabular-nums">{points(balance)}</div>

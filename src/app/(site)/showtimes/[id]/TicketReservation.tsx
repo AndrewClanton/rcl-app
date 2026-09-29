@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PlusLink from "@/components/PlusLink";
+import { ProofStamp } from "@/components/print";
 import { salesTaxOn } from "@/lib/sales-tax";
 import { startCheckout } from "./actions";
 
@@ -70,10 +71,17 @@ export default function TicketReservation({
   const maxQty = Math.min(seatsLeft, 10);
 
   return (
-    <section className="sheet">
+    <section className="sheet crop">
       <div className="spec-head rounded-t-[4px]">
         <span>Get tickets</span>
-        <span>{seatsLeft} seats left</span>
+        <span className="flex items-center gap-4">
+          <span>{seatsLeft} seats left</span>
+          <ProofStamp>
+            Box
+            <br />
+            office
+          </ProofStamp>
+        </span>
       </div>
 
       <div className="space-y-5 p-4 sm:p-5">

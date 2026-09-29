@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { getRooms } from "@/lib/data/rooms";
 import EventBookingForm from "./EventBookingForm";
+import { PageMasthead } from "@/components/print";
 
 export const dynamic = "force-dynamic";
 
@@ -14,11 +15,11 @@ export default async function EventsPage() {
 
   return (
     <div>
-      <span className="page-eyebrow">Private events</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Have the place to yourselves</h1>
-      <p className="mt-3 mb-10 max-w-2xl text-[15px] text-[var(--muted)]">
-        A private screening, a birthday, a work night out. Tell us what you have in mind and we&apos;ll follow up by email to confirm the details and arrange a deposit.
-      </p>
+      <PageMasthead
+        eyebrow="Private events"
+        title="Have the place to yourselves"
+        intro="A private screening, a birthday, a work night out. Tell us what you have in mind and we'll follow up by email to confirm the details and arrange a deposit."
+      />
       <EventBookingForm rooms={rooms} />
     </div>
   );

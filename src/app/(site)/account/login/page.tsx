@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
 import { getSignInProviders } from "@/lib/auth-providers";
 import { safePath } from "@/lib/safe-path";
+import { PageMasthead } from "@/components/print";
 import AccountForm from "./AccountForm";
 
 const ERRORS: Record<string, string> = {
@@ -32,9 +33,8 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
 
   return (
     <div className="mx-auto max-w-md">
-      <span className="page-eyebrow">My account</span>
-      <h1 className="font-display mt-3 text-4xl leading-none sm:text-5xl">Sign in</h1>
-      <p className="mt-3 text-[15px] text-[var(--muted)]">
+      <PageMasthead eyebrow="My account" title="Sign in" className="!mb-6" />
+      <p className="text-[15px] text-[var(--muted)]">
         Sign in to check your points, purchase history, and membership. New here? Creating an account is free and joins you as a
         Royale Insider.
       </p>
