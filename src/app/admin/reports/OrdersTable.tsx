@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { DayOrder } from "@/lib/data/reports";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
-import { refundOrder } from "./actions";
+import { refundOrder, refundOrderPart } from "./actions";
 
 function money(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -16,13 +16,16 @@ function time(iso: string) {
 }
 
 // One line per order, newest first. Refunds need a manager PIN and return
-// card money through Stripe.
-export default function OrdersTable({ orders }: { orders: DayOrder[] }) {
+// card money through Stripe: all of an order, or part of it (a wrong drink,
+// a dish sent back).
+export default function OrdersTable({ orders, emptyText = "No orders this day." }: { orders: DayOrder[]; emptyText?: string }) {
   const router = useRouter();
-  const [refunding, setRefunding] = useState<DayOrder | null>(null);
+  const [choosing, setChoosing] = useState<DayOrder | null>(null);
+  const [full, setFull] = useState<DayOrder | null>(null);
+  const [part, setPart] = useState<{ order: DayOrder; amount: number; reason: string } | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  if (orders.length === 0) return <p className="text-sm text-[var(--muted)]">No orders this day.</p>;
+  if (orders.length === 0) return <p className="text-sm text-[var(--muted)]">{emptyText}</p>;
 
   return (
     <div className="overflow-x-auto">
@@ -54,10 +57,19 @@ export default function OrdersTable({ orders }: { orders: DayOrder[] }) {
                 </td>
                 <td className="py-1 pr-2 capitalize">{o.method ?? "—"}</td>
                 <td className="py-1 pr-2 text-right">{o.tip > 0 ? money(o.tip) : ""}</td>
-                <td className={`py-1 pr-2 text-right font-medium ${off ? "line-through" : ""}`}>{money(o.total)}</td>
+                <td className={`py-1 pr-2 text-right font-medium ${off ? "line-through" : ""}`}>
+                  {money(o.total)}
+                  {o.refunded > 0 && !off && <div className="text-xs font-normal text-[var(--danger-text)]">−{money(o.refunded)} refunded</div>}
+                </td>
                 <td className="py-1 text-right">
                   {o.status === "completed" ? (
-                    <button className="rounded border border-[var(--border)] px-2 py-0.5 text-xs hover:border-[var(--accent)]" onClick={() => setRefunding(o)}>
+                    <button
+                      className="rounded border border-[var(--border)] px-2 py-0.5 text-xs hover:border-[var(--accent)]"
+                      onClick={() => {
+                        setDone(null);
+                        setChoosing(o);
+                      }}
+                    >
                       Refund
                     </button>
                   ) : (
@@ -70,19 +82,109 @@ export default function OrdersTable({ orders }: { orders: DayOrder[] }) {
         </tbody>
       </table>
 
-      {refunding && (
+      {choosing && (
+        <RefundChooser
+          order={choosing}
+          onCancel={() => setChoosing(null)}
+          onFull={() => {
+            setFull(choosing);
+            setChoosing(null);
+          }}
+          onPart={(amount, reason) => {
+            setPart({ order: choosing, amount, reason });
+            setChoosing(null);
+          }}
+        />
+      )}
+
+      {full && (
         <ManagerPinModal
-          description={`Manager approval is required to refund order #${refunding.orderNumber} (${money(refunding.total)}).`}
-          onCancel={() => setRefunding(null)}
+          description={`Manager approval is required to refund all of order #${full.orderNumber} (${money(full.total)}${full.refunded > 0 ? `, less the ${money(full.refunded)} already refunded` : ""}).`}
+          onCancel={() => setFull(null)}
           onSubmit={async (pin) => {
-            const r = await refundOrder(refunding.id, pin);
+            const r = await refundOrder(full.id, pin);
             if (!r.ok) throw new Error(r.error); // shown in the PIN box
-            setDone(`Order #${refunding.orderNumber} refunded. ${approvalText(r)}`);
-            setRefunding(null);
+            setDone(`Order #${full.orderNumber} refunded. ${approvalText(r)}`);
+            setFull(null);
             router.refresh();
           }}
         />
       )}
+
+      {part && (
+        <ManagerPinModal
+          description={`Manager approval is required to give back ${money(part.amount)} of order #${part.order.orderNumber}${part.order.paidByCard ? " (card money goes back to their card)" : ""}.`}
+          onCancel={() => setPart(null)}
+          onSubmit={async (pin) => {
+            const r = await refundOrderPart(part.order.id, part.amount, part.reason, pin);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            setDone(`${r.message} ${approvalText(r)}`);
+            setPart(null);
+            router.refresh();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// All of it, or part: how much, and why (kept with the refund).
+function RefundChooser({ order, onCancel, onFull, onPart }: { order: DayOrder; onCancel: () => void; onFull: () => void; onPart: (amount: number, reason: string) => void }) {
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const value = Math.round(parseFloat(amount) * 100) / 100;
+  const tooMuch = value > order.refundable;
+  const canPart = value > 0 && !tooMuch;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-sm shadow-2xl">
+        <h3 className="text-lg font-semibold">Refund order #{order.orderNumber}</h3>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
+          {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
+        </p>
+
+        <button className="btn-secondary mt-4 w-full" onClick={onFull}>
+          Refund all of it{order.refunded > 0 ? " (the rest)" : ""}
+        </button>
+
+        <div className="mt-4 border-t border-[var(--border)] pt-3">
+          <div className="text-sm font-medium">Or give back part of it</div>
+          {order.refundable > 0 ? (
+            <>
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-sm">$</span>
+                <input
+                  className="input w-28 !py-1"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  autoFocus
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                  onKeyDown={(e) => e.key === "Enter" && canPart && onPart(value, reason)}
+                />
+                <span className="text-xs text-[var(--muted)]">up to {money(order.refundable)}</span>
+              </div>
+              <input className="input mt-2 !py-1 text-sm" placeholder="Why (optional), e.g. wrong drink" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
+              {tooMuch && <p className="mt-1 text-xs text-[var(--danger-text)]">That&apos;s more than can go back in part. Use &ldquo;Refund all of it&rdquo; instead.</p>}
+              <p className="mt-2 text-xs text-[var(--muted)]">
+                Enter what the customer gets back, tax included. Card money goes back to the card; cash comes from the drawer. Tips and vouchers only come back with a full
+                refund.
+              </p>
+              <button className="btn-primary mt-3 w-full" disabled={!canPart} onClick={() => onPart(value, reason)}>
+                Give back {canPart ? money(value) : "part"}
+              </button>
+            </>
+          ) : (
+            <p className="mt-1 text-xs text-[var(--muted)]">Nothing left to give back in part (tips and vouchers only come back with a full refund).</p>
+          )}
+        </div>
+
+        <button className="mt-3 w-full text-sm text-[var(--muted)] hover:underline" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

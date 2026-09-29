@@ -1,15 +1,27 @@
 import Link from "next/link";
-import { getDayReport, getRevenueTrend, getMembershipAnalytics, getAlcoholUsageReport, getPourCostReport, type RevenueDay } from "@/lib/data/reports";
+import {
+  getDayReport,
+  getRevenueTrend,
+  getMembershipAnalytics,
+  getAlcoholUsageReport,
+  getPourCostReport,
+  getOrderByNumber,
+  getSalesTaxReport,
+  expectedTax,
+  type RevenueDay,
+  type TaxMonth,
+} from "@/lib/data/reports";
 import { businessDay, shiftDate } from "@/lib/ops/time";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
+import OrderSearch from "./OrderSearch";
 
 export const dynamic = "force-dynamic";
 
 // One screen per question: "how did a day go" (Day, the default), "are
 // drinks costing what they should" (Bar costs), "who are our members"
-// (Members). Everything on Day is for the one business day picked, 4 a.m.
-// to 4 a.m. Central.
+// (Members), "what do we owe the state" (Sales tax). Everything on Day is
+// for the one business day picked, 4 a.m. to 4 a.m. Central.
 
 const RANGES = [7, 30, 90];
 
@@ -21,7 +33,7 @@ function longDate(date: string) {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-type Params = { view?: string; date?: string; days?: string };
+type Params = { view?: string; date?: string; days?: string; order?: string; period?: string };
 
 function href(p: Params) {
   const q = new URLSearchParams(Object.entries(p).filter(([, v]) => v) as [string, string][]);
@@ -31,9 +43,12 @@ function href(p: Params) {
 
 export default async function AdminReportsPage({ searchParams }: { searchParams: Promise<Params> }) {
   const p = await searchParams;
-  const view = p.view === "bar" || p.view === "members" ? p.view : "day";
+  const view = p.view === "bar" || p.view === "members" || p.view === "tax" ? p.view : "day";
   const today = businessDay().date;
-  const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date <= today ? p.date : today;
+  // Order search (?order=7851): the order, and its day below it.
+  const orderNumber = view === "day" && p.order && /^\d{1,12}$/.test(p.order) ? Number(p.order) : null;
+  const found = orderNumber ? await getOrderByNumber(orderNumber) : null;
+  const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date <= today ? p.date : (found?.businessDate ?? today);
   const days = RANGES.includes(Number(p.days)) ? Number(p.days) : 30;
   const keep = { date: date === today ? undefined : date, days: days === 30 ? undefined : String(days) };
 
@@ -45,6 +60,7 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
           ["day", "Day"],
           ["bar", "Bar costs"],
           ["members", "Members"],
+          ["tax", "Sales tax"],
         ].map(([v, label]) => (
           <Link key={v} href={href({ ...keep, view: v === "day" ? undefined : v })} className={`chip !px-3 !py-1 !text-sm ${view === v ? "chip-selected font-bold" : ""}`}>
             {label}
@@ -54,21 +70,51 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
           Daily email →
         </Link>
       </div>
-      {view === "day" && <DayView date={date} today={today} days={days} keep={keep} />}
+      {view === "day" && <DayView date={date} today={today} days={days} keep={keep} orderNumber={orderNumber} found={found} />}
       {view === "bar" && <BarView days={days} keep={keep} />}
       {view === "members" && <MembersView />}
+      {view === "tax" && <TaxView period={p.period} today={today} />}
     </div>
   );
 }
 
 // ---------- Day ----------
 
-async function DayView({ date, today, days, keep }: { date: string; today: string; days: number; keep: Params }) {
+async function DayView({
+  date,
+  today,
+  days,
+  keep,
+  orderNumber,
+  found,
+}: {
+  date: string;
+  today: string;
+  days: number;
+  keep: Params;
+  orderNumber: number | null;
+  found: Awaited<ReturnType<typeof getOrderByNumber>>;
+}) {
   const [r, trend] = await Promise.all([getDayReport(date), getRevenueTrend(days)]);
   const completed = r.orders.filter((o) => o.status === "completed").length;
 
   return (
     <>
+      {orderNumber !== null && (
+        <section className="rounded-lg border border-[var(--accent)] bg-[var(--surface)] p-4">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">Order #{orderNumber}</h3>
+            {found && <span className="text-xs text-[var(--muted)]">sold {longDate(found.businessDate)}, shown below</span>}
+            <Link href={href({ ...keep })} className="ml-auto text-xs text-[var(--muted)] hover:underline">
+              Clear search
+            </Link>
+          </div>
+          <OrdersTable
+            orders={found ? [found] : []}
+            emptyText={`No finished order #${orderNumber}. Check the number on the receipt. Open tabs and held orders are on the register, not here.`}
+          />
+        </section>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Link href={href({ ...keep, date: shiftDate(date, -1) })} className="chip !px-2.5 !py-1 !text-sm" aria-label="Previous day">
           ◀
@@ -87,6 +133,9 @@ async function DayView({ date, today, days, keep }: { date: string; today: strin
           </Link>
         )}
         <DateJump date={date} max={today} days={keep.days} />
+        <span className="ml-auto">
+          <OrderSearch key={orderNumber ?? "none"} initial={orderNumber ? String(orderNumber) : undefined} />
+        </span>
       </div>
 
       <TrendStrip trend={trend} date={date} days={days} keep={keep} />
@@ -132,6 +181,12 @@ async function DayView({ date, today, days, keep }: { date: string; today: strin
                   <tr className="text-[var(--muted)]">
                     <td className="py-0.5">Member discounts</td>
                     <td className="py-0.5 text-right">−{money(r.discounts)}</td>
+                  </tr>
+                )}
+                {r.partialRefunds > 0 && (
+                  <tr className="text-[var(--muted)]">
+                    <td className="py-0.5">Given back in partial refunds</td>
+                    <td className="py-0.5 text-right">−{money(r.partialRefunds)}</td>
                   </tr>
                 )}
                 <tr className="border-t border-[var(--border)] font-semibold">
@@ -372,5 +427,189 @@ async function MembersView() {
         )}
       </section>
     </div>
+  );
+}
+
+// ---------- Sales tax ----------
+// Sales tax collected for the Missouri return, by month or by quarter.
+// Figures come from src/lib/data/reports.ts (getSalesTaxReport), which
+// says what's counted and how refunds are handled.
+
+function shiftMonth(month: string, n: number) {
+  const [y, m] = month.split("-").map(Number);
+  const i = y * 12 + (m - 1) + n;
+  return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+}
+
+function quarterOf(month: string) {
+  const [y, m] = month.split("-").map(Number);
+  return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+}
+
+function shiftQuarter(period: string, n: number) {
+  const [y, q] = period.split("-Q").map(Number);
+  const i = y * 4 + (q - 1) + n;
+  return `${Math.floor(i / 4)}-Q${(i % 4) + 1}`;
+}
+
+async function TaxView({ period: asked, today }: { period?: string; today: string }) {
+  const thisMonth = today.slice(0, 7);
+  const thisQuarter = quarterOf(thisMonth);
+  const wanted = asked && asked <= (asked.includes("Q") ? thisQuarter : thisMonth) ? asked : thisMonth;
+  const report = (await getSalesTaxReport(wanted)) ?? (await getSalesTaxReport(thisMonth))!;
+  const isQuarter = report.period.includes("Q");
+  const prev = isQuarter ? shiftQuarter(report.period, -1) : shiftMonth(report.period, -1);
+  const next = isQuarter ? shiftQuarter(report.period, 1) : shiftMonth(report.period, 1);
+  const hasNext = isQuarter ? next <= thisQuarter : next <= thisMonth;
+  const t = report.total;
+  const taxable = t.sales - t.exemptSales;
+  const expected = expectedTax(t);
+  const taxHref = (period: string) => href({ view: "tax", period: period === thisMonth ? undefined : period });
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-2">
+        <Link href={taxHref(prev)} className="chip !px-2.5 !py-1 !text-sm" aria-label="Earlier">
+          ◀
+        </Link>
+        <h2 className="min-w-[11rem] text-center text-base font-semibold">{report.label}</h2>
+        {hasNext ? (
+          <Link href={taxHref(next)} className="chip !px-2.5 !py-1 !text-sm" aria-label="Later">
+            ▶
+          </Link>
+        ) : (
+          <span className="chip !px-2.5 !py-1 !text-sm opacity-30">▶</span>
+        )}
+        <span className="ml-2 flex flex-wrap gap-1">
+          {[
+            [thisMonth, "This month"],
+            [shiftMonth(thisMonth, -1), "Last month"],
+            [thisQuarter, "This quarter"],
+            [shiftQuarter(thisQuarter, -1), "Last quarter"],
+          ].map(([p, label]) => (
+            <Link key={label} href={taxHref(p)} className={`chip !px-2 !py-0.5 text-xs ${report.period === p ? "chip-selected font-bold" : ""}`}>
+              {label}
+            </Link>
+          ))}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface)] sm:grid-cols-3">
+        {[
+          ["Sales tax collected", money(t.tax), true],
+          ["Taxable sales", money(taxable)],
+          ["Tax-free sales", money(t.exemptSales)],
+        ].map(([label, value, strong]) => (
+          <div key={label as string} className="-mb-px -mr-px border-b border-r border-[var(--border)] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{label}</div>
+            <div className={`tabular-nums ${strong ? "text-lg font-bold text-[var(--accent)]" : "text-base font-semibold"}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+          <h3 className="mb-2 text-sm font-semibold">Where it came from</h3>
+          <TaxTable month={t} />
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            At {report.ratePercent}%, {money(taxable)} of taxable sales comes to {money(expected)}; {money(t.tax)} was collected.
+            {Math.abs(expected - t.tax) >= 0.05 && " The gap is rounding, plus any sales that didn't carry tax (online tickets before Sept. 28 had none added)."}
+          </p>
+        </section>
+
+        {isQuarter ? (
+          <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <h3 className="mb-2 text-sm font-semibold">By month</h3>
+            <table className="w-full text-sm tabular-nums">
+              <thead>
+                <tr className="text-left text-xs text-[var(--muted)]">
+                  <th className="pb-1 font-medium">Month</th>
+                  <th className="pb-1 text-right font-medium">Sales</th>
+                  <th className="pb-1 text-right font-medium">Tax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.months.map((m) => (
+                  <tr key={m.month} className="border-t border-[var(--border)]">
+                    <td className="py-1">
+                      <Link href={taxHref(m.month)} className="hover:underline">
+                        {m.label}
+                      </Link>
+                    </td>
+                    <td className="py-1 text-right">{money(m.sales)}</td>
+                    <td className="py-1 text-right font-medium">{money(m.tax)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        ) : (
+          <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
+            <h3 className="mb-2 text-sm font-semibold">Filing quarterly?</h3>
+            <p>
+              <Link href={taxHref(quarterOf(report.period))} className="text-[var(--accent)] hover:underline">
+                See {quarterOf(report.period).replace(/^(\d{4})-Q(\d)$/, "Q$2 $1")} as a whole
+              </Link>{" "}
+              for the three months together, with each month underneath.
+            </p>
+          </section>
+        )}
+      </div>
+
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-xs text-[var(--muted)]">
+        <h3 className="mb-1 text-sm font-semibold text-[var(--foreground)]">What&apos;s counted</h3>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>Sales are before tax and after member discounts. Tips aren&apos;t sales and are left out.</li>
+          <li>
+            Days run 4 a.m. to 4 a.m. Central, like the rest of Reports, so a sale after midnight on the last night of a month counts in that month.
+          </li>
+          <li>
+            Refunds: a fully refunded order, ticket or cancelled booth isn&apos;t counted at all. A partial refund comes off the month the order was sold. So a refund
+            made after you&apos;ve filed a month changes that month here; the amount you filed stays what it was.
+          </li>
+          <li>
+            Not included: Insiders+ monthly and yearly memberships. Stripe bills and taxes those itself, so their tax is in Stripe&apos;s tax reports, not here. Add it
+            to these figures when you file.
+          </li>
+          {!report.giftsTracked && <li>Gift memberships aren&apos;t counted yet: their database update hasn&apos;t been applied.</li>}
+        </ul>
+      </section>
+    </>
+  );
+}
+
+function TaxTable({ month }: { month: TaxMonth }) {
+  if (month.lines.length === 0 && month.refunds.sales === 0) return <p className="text-sm text-[var(--muted)]">No sales in this period.</p>;
+  return (
+    <table className="w-full text-sm tabular-nums">
+      <thead>
+        <tr className="text-left text-xs text-[var(--muted)]">
+          <th className="pb-1 font-medium" />
+          <th className="pb-1 text-right font-medium">Sales</th>
+          <th className="pb-1 text-right font-medium">Tax</th>
+        </tr>
+      </thead>
+      <tbody>
+        {month.lines.map((l) => (
+          <tr key={l.label} className="border-t border-[var(--border)]">
+            <td className="py-1 pr-2">{l.label}</td>
+            <td className="py-1 text-right">{money(l.sales)}</td>
+            <td className="py-1 text-right">{money(l.tax)}</td>
+          </tr>
+        ))}
+        {(month.refunds.sales > 0 || month.refunds.tax > 0) && (
+          <tr className="border-t border-[var(--border)] text-[var(--muted)]">
+            <td className="py-1 pr-2">Partial refunds</td>
+            <td className="py-1 text-right">−{money(month.refunds.sales)}</td>
+            <td className="py-1 text-right">−{money(month.refunds.tax)}</td>
+          </tr>
+        )}
+        <tr className="border-t-2 border-[var(--border)] font-semibold">
+          <td className="pt-1 pr-2">Total</td>
+          <td className="pt-1 text-right">{money(month.sales)}</td>
+          <td className="pt-1 text-right">{money(month.tax)}</td>
+        </tr>
+      </tbody>
+    </table>
   );
 }
