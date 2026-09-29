@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/lib/types";
-import type { MemberPurchase } from "@/lib/data/members";
+import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
 import GiftCard from "./GiftCard";
@@ -29,6 +29,8 @@ export default function MemberDetail({
   staffInfo,
   viewerIsAdmin,
   gifts,
+  canEditContact,
+  eraseLog,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -36,10 +38,23 @@ export default function MemberDetail({
   communityPrograms: CommunityProgram[];
   staffInfo: MemberStaffInfo | undefined;
   viewerIsAdmin: boolean;
+  // False for a cashier: email and phone arrive shortened (j•••@gmail.com)
+  // and are shown, not edited.
+  canEditContact: boolean;
+  eraseLog: EraseLogEntry | null;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
   if (member.erased_at) {
+    const day = (d: string) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+    // The request date is a plain YYYY-MM-DD; read it at noon so no
+    // timezone can shift it a day. Days taken count calendar days in
+    // Central time, against the 30 promised on /data-deletion.
+    const askedDay = eraseLog?.requested_on ? day(`${eraseLog.requested_on}T12:00:00`) : null;
+    const erasedOn = new Date(member.erased_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+    const daysTaken = eraseLog?.requested_on
+      ? Math.max(0, Math.round((Date.parse(`${erasedOn}T00:00:00Z`) - Date.parse(`${eraseLog.requested_on}T00:00:00Z`)) / 86_400_000))
+      : null;
     return (
       <div className="space-y-6">
         <div>
@@ -50,11 +65,16 @@ export default function MemberDetail({
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
           <h1 className="text-xl font-semibold">Removed member</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Personal info removed on{" "}
-            {new Date(member.erased_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}
+            Personal info removed on {day(member.erased_at)}
             {member.erased_by_staff?.name ? ` by ${member.erased_by_staff.name}` : ""}, at their request. Their purchases below stay for taxes and
             refunds, without their name.
           </p>
+          {askedDay && (
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              They asked on {askedDay}
+              {daysTaken !== null ? ` (done ${daysTaken === 0 ? "the same day" : `${daysTaken} day${daysTaken === 1 ? "" : "s"} later`}; we promise 30)` : ""}.
+            </p>
+          )}
         </div>
         <PurchaseHistoryCard purchases={purchases} />
       </div>
@@ -69,7 +89,7 @@ export default function MemberDetail({
         </Link>
       </div>
 
-      <ProfileCard member={member} staffInfo={staffInfo} />
+      <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} />
       <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
       <BillingCard member={member} />
       <GiftCard member={member} gifts={gifts} />
@@ -79,7 +99,7 @@ export default function MemberDetail({
   );
 }
 
-function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberStaffInfo | undefined }) {
+function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; staffInfo: MemberStaffInfo | undefined; canEditContact: boolean }) {
   const [pending, run] = useRefreshingAction();
   const [name, setName] = useState(member.name);
   const [email, setEmail] = useState(member.email ?? "");
@@ -96,7 +116,9 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
     if (!dirty || saving) return;
     setSaved(null);
     startSave(async () => {
-      const r = await saveMemberDetails(member.id, { name, email, phone, points }).catch(() => null);
+      // A cashier's copy of the email and phone is shortened, so it's never
+      // sent back: saving would overwrite the real ones with the dots.
+      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, points } : { name, points }).catch(() => null);
       if (!r) return setSaved({ ok: false, text: "Couldn't save. Try again." });
       setSaved(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
       if (r.ok) router.refresh();
@@ -165,17 +187,30 @@ function ProfileCard({ member, staffInfo }: { member: Member; staffInfo: MemberS
           <Field label="Name">
             <input className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Email" hint={member.stripe_customer_id ? "Saving a new email updates Stripe too, so their receipts follow it." : undefined}>
-            <input
-              type="email"
-              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </Field>
-          <Field label="Phone">
-            <input type="tel" className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </Field>
+          {canEditContact ? (
+            <>
+              <Field label="Email" hint={member.stripe_customer_id ? "Saving a new email updates Stripe too, so their receipts follow it." : undefined}>
+                <input
+                  type="email"
+                  className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </Field>
+              <Field label="Phone">
+                <input type="tel" className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={phone} onChange={(e) => setPhone(e.target.value)} />
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="Email" hint="Shortened for privacy. A manager can see or change it.">
+                <div className="px-2 py-1.5 text-sm text-[var(--muted)]">{member.email ?? "—"}</div>
+              </Field>
+              <Field label="Phone">
+                <div className="px-2 py-1.5 text-sm text-[var(--muted)]">{member.phone ?? "—"}</div>
+              </Field>
+            </>
+          )}
           <Field label="Points">
             <input
               type="number"
@@ -570,6 +605,10 @@ function RemovePersonalInfo({
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // The day they asked, logged with the removal: /data-deletion promises
+  // it's done within 30 days of the request.
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const [askedOn, setAskedOn] = useState(today);
   const subscribed = !!member.stripe_subscription_id && ["active", "trialing", "past_due"].includes(member.subscription_status ?? "");
   const points = Math.floor(Number(member.points));
 
@@ -596,6 +635,7 @@ function RemovePersonalInfo({
           onClick={() => {
             setOpen(true);
             setTyped("");
+            setAskedOn(today);
             setError(null);
           }}
         >
@@ -614,13 +654,28 @@ function RemovePersonalInfo({
                 <strong>Cancels their Insiders+ in Stripe right away</strong> and removes their saved card. No refund is issued automatically.
               </li>
             )}
+            {member.stripe_customer_id && <li>Clears their name, email and phone in Stripe. Stripe keeps the payment records, for taxes.</li>}
             <li>
               {purchaseCount > 0
                 ? `Keeps their ${purchaseCount} purchase${purchaseCount === 1 ? "" : "s"} for taxes and refunds, shown as "Removed member".`
                 : "They have no purchases, so nothing else is kept except an empty placeholder."}
             </li>
-            <li>Also clears their name and email from ticket, booth and private-event bookings, and from the old-site copy.</li>
+            <li>
+              Also clears their name and contact details from ticket, booth and private-event bookings, gift memberships, bar tabs and custom
+              items on their orders, their profile quote, and the old-site copy.
+            </li>
           </ul>
+          <label className="block text-sm">
+            Day they asked
+            <input
+              type="date"
+              className="mt-1 block w-48 rounded border border-[var(--border)] px-2 py-1.5 text-sm"
+              value={askedOn}
+              max={today}
+              onChange={(e) => setAskedOn(e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-[var(--muted)]">Logged with the removal. We promise it&apos;s done within 30 days of the request.</span>
+          </label>
           <p className="text-sm font-bold">This can&apos;t be undone.</p>
           <label className="block text-sm">
             Type <strong>DELETE</strong> to confirm
@@ -635,11 +690,11 @@ function RemovePersonalInfo({
           <div className="flex flex-wrap items-center gap-3">
             <button
               className="rounded bg-[var(--danger-text)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
-              disabled={pending || typed.trim() !== "DELETE"}
+              disabled={pending || typed.trim() !== "DELETE" || !askedOn}
               onClick={() => {
                 setError(null);
                 startTransition(async () => {
-                  const r = await eraseMemberPersonalInfo(member.id).catch(() => ({ ok: false as const, error: "Something went wrong. Nothing may have changed; try again." }));
+                  const r = await eraseMemberPersonalInfo(member.id, askedOn).catch(() => ({ ok: false as const, error: "Something went wrong. Nothing may have changed; try again." }));
                   if (!r.ok) {
                     setError(r.error);
                     return;

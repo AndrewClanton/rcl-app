@@ -5,6 +5,7 @@ import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/p
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
+import { allowFromConnection, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only the generic "Minified React error #441..." reaches the
@@ -20,6 +21,9 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
   const email = fields.email.trim();
   if (!name) return { ok: false, error: "Enter your name." };
   if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
+  // A cap per connection, so a script can't fill Members with sign-ups (or
+  // use the "already exists" answer to test which emails are members).
+  if (!(await allowFromConnection("membership"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
 
   const supabase = createAdminClient();
 
@@ -55,6 +59,8 @@ export async function startMembershipCheckout(fields: {
   const email = fields.email.trim();
   if (!name) return { ok: false, error: "Enter your name." };
   if (!email || !email.includes("@")) return { ok: false, error: "Enter a valid email." };
+  // Same per-connection cap: each try opens a Stripe checkout.
+  if (!(await allowFromConnection("membership"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
 
   const supabase = createAdminClient();
   const { data: existing } = await supabase

@@ -53,8 +53,10 @@ export async function GET(request: NextRequest) {
           .in("id", screeningIds)
           .order("starts_at")
       : Promise.resolve({ data: [] as ScreeningWithYear[], error: null }),
+    // Never the event's name or organizer: a private booking only ever shows
+    // as "Private event" on the flyer (see render.tsx).
     eventIds.length > 0
-      ? supabase.from("events").select("id, event_name, event_date, event_time, hours, room:rooms(name)").in("id", eventIds)
+      ? supabase.from("events").select("id, event_date, event_time, hours, room:rooms(name)").in("id", eventIds)
       : Promise.resolve({ data: [] as EventRow[], error: null }),
     noteIds.length > 0
       ? supabase.from("calendar_notes").select("id, note_date, start_time, end_time, label").in("id", noteIds)

@@ -6,6 +6,7 @@ import type { BoothBusy } from "@/lib/data/booths";
 import { startBoothCheckout, getAvailabilityForDate } from "./actions";
 import BoothPhotoGrid from "./BoothPhotoGrid";
 import PlusLink from "@/components/PlusLink";
+import Honeypot from "@/components/Honeypot";
 
 const RESERVATION_HOURS = 2;
 
@@ -41,6 +42,7 @@ function BoothDetailModal({
   bookedWindows,
   onClose,
   me,
+  formToken,
 }: {
   booth: Booth;
   date: string;
@@ -50,7 +52,9 @@ function BoothDetailModal({
   bookedWindows: string[];
   onClose: () => void;
   me: BoothMe | null;
+  formToken: string;
 }) {
+  const [honeypot, setHoneypot] = useState("");
   const [startTime, setStartTime] = useState("18:00");
   const [partySize, setPartySize] = useState(Math.min(2, booth.capacity));
   // A signed-in member's details are already on file: not asked again.
@@ -99,6 +103,8 @@ function BoothDetailModal({
         customerName: name,
         customerEmail: email,
         customerPhone: phone,
+        formToken,
+        honeypot,
       });
       if (!result.ok) {
         setError(result.error);
@@ -279,6 +285,7 @@ function BoothDetailModal({
           </div>
 
           <div className="border-t-2 border-dashed border-[var(--border)] px-4 py-4 sm:px-5">
+            <Honeypot value={honeypot} onChange={setHoneypot} />
             {error && (
               <div role="alert" className="mb-3 text-sm font-bold text-[var(--danger-text)]">
                 {error}
@@ -317,16 +324,21 @@ function Legend({ n, children }: { n: number; children: React.ReactNode }) {
 
 export type BoothMe = { name: string; email: string; phone: string | null; plus: boolean };
 
+// `formToken` (stamped when the page was built) goes back with the
+// reservation for the bot check on free Insiders+ bookings
+// (lib/public-form-guard.ts), with the hidden field in the pop-up.
 export default function BoothReservationForm({
   booths,
   initialDate,
   initialReservations,
   me = null,
+  formToken,
 }: {
   booths: Booth[];
   initialDate: string;
   initialReservations: BoothBusy[];
   me?: BoothMe | null;
+  formToken: string;
 }) {
   // Same-day booking is disabled (see actions.ts) so no one reserves a seat
   // out from under a customer who's currently sitting in it -- initialDate
@@ -374,6 +386,7 @@ export default function BoothReservationForm({
           bookedWindows={bookedWindowsByBooth.get(selectedBooth.id) ?? []}
           onClose={() => setBoothId(null)}
           me={me}
+          formToken={formToken}
         />
       )}
     </div>

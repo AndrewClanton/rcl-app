@@ -17,11 +17,12 @@ interface ScreeningLite {
 }
 interface EventLite {
   id: string;
-  name: string;
+  name: string; // shown to staff here only; the flyer says "Private event"
   date: string; // YYYY-MM-DD, already a plain date (not a timestamp)
   time: string; // HH:MM:SS wall-clock
   hours: number;
   room: string;
+  confirmed: boolean; // paid or deposit in; an unconfirmed inquiry starts unchecked
 }
 interface NoteLite {
   id: string;
@@ -95,7 +96,11 @@ export default function ScheduleGraphicBuilder({
   const [audience, setAudience] = useState<Audience>("public");
   const [planAheadNote, setPlanAheadNote] = useState("");
   const [excludedScreeningIds, setExcludedScreeningIds] = useState<Set<string>>(new Set());
-  const [excludedEventIds, setExcludedEventIds] = useState<Set<string>>(new Set());
+  // Events flipped from their default: a confirmed booking starts checked,
+  // an inquiry nobody has confirmed yet starts unchecked (it may never
+  // happen, and it shouldn't close the room on a public flyer by default).
+  const [flippedEventIds, setFlippedEventIds] = useState<Set<string>>(new Set());
+  const eventIncluded = (e: EventLite) => e.confirmed !== flippedEventIds.has(e.id);
   const [excludedNoteIds, setExcludedNoteIds] = useState<Set<string>>(new Set());
 
   const [newNoteDate, setNewNoteDate] = useState(todayCentral());
@@ -165,7 +170,7 @@ export default function ScheduleGraphicBuilder({
   }
 
   const includedScreeningIds = screeningsInRange.filter((s) => !excludedScreeningIds.has(s.id)).map((s) => s.id);
-  const includedEventIds = eventsInRange.filter((e) => !excludedEventIds.has(e.id)).map((e) => e.id);
+  const includedEventIds = eventsInRange.filter(eventIncluded).map((e) => e.id);
   const includedNoteIds = notesInRange.filter((n) => !excludedNoteIds.has(n.id)).map((n) => n.id);
   const totalIncluded = includedScreeningIds.length + includedEventIds.length + includedNoteIds.length;
   const totalInRange = screeningsInRange.length + eventsInRange.length + notesInRange.length;
@@ -304,9 +309,12 @@ export default function ScheduleGraphicBuilder({
                     ))}
                     {list.events.map((e) => (
                       <label key={e.id} className="flex items-start gap-2 text-sm">
-                        <input type="checkbox" checked={!excludedEventIds.has(e.id)} onChange={() => toggleIn(setExcludedEventIds, e.id)} className="mt-0.5" />
-                        <span className={excludedEventIds.has(e.id) ? "text-[var(--muted)] line-through" : "text-[var(--warn-text)] "}>
-                          {eventTimeRange(e.time, e.hours)} — {e.name} <span className="text-xs text-[var(--muted)]">({e.room})</span>
+                        <input type="checkbox" checked={eventIncluded(e)} onChange={() => toggleIn(setFlippedEventIds, e.id)} className="mt-0.5" />
+                        <span className={eventIncluded(e) ? "text-[var(--warn-text)] " : "text-[var(--muted)] line-through"}>
+                          {eventTimeRange(e.time, e.hours)} — Private event <span className="text-xs text-[var(--muted)]">({e.room})</span>
+                          <span className="block text-xs text-[var(--muted)]">
+                            {e.name} · staff only, never on the flyer{e.confirmed ? "" : " · inquiry, not confirmed yet"}
+                          </span>
                         </span>
                       </label>
                     ))}
