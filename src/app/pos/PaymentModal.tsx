@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
 import { startReaderPayment, checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
+import { chargeTabCard } from "./tab-card-actions";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 
 function money(n: number) {
@@ -153,16 +154,19 @@ export default function PaymentModal({
   total,
   readerId,
   tipEligible,
+  tabCard = null,
   onConfirm,
   onCancel,
 }: {
   total: number;
   readerId: string | null; // this register's card reader, or null if none is set up
   tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
+  tabCard?: { tabId: string; label: string } | null; // the tab's card on file, charged without a tap
   onConfirm: (payment: CheckoutPayment) => void;
   onCancel: () => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
+  const [onFile, setOnFile] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const [cashOpen, setCashOpen] = useState(false);
   const [voucherOpen, setVoucherOpen] = useState(false);
   // Paper vouchers applied so far; cash or card covers the rest (`due`).
@@ -242,6 +246,17 @@ export default function PaymentModal({
     } catch (e) {
       setReader({ state: "failed", paymentIntentId: "", message: isStaleBuildError(e) ? STALE_BUILD_MESSAGE : e instanceof Error ? e.message : "Could not reach the card reader." });
     }
+  }
+
+  // The tab's saved card: charged for what's due (tip included), no tap needed.
+  async function handleCardOnFile() {
+    if (!tabCard || onFile.busy) return;
+    setOnFile({ busy: true, error: null });
+    const r = await chargeTabCard(tabCard.tabId, Math.round(due * 100)).catch(() => ({ ok: false as const, error: "Couldn't reach Stripe. Try again." }));
+    if (!r.ok) return setOnFile({ busy: false, error: r.error });
+    if (confirmedRef.current) return;
+    confirmedRef.current = true;
+    onConfirm({ method: "card", cash: 0, card: r.amountCents / 100, stripePaymentIntentId: r.paymentIntentId, ...withVoucher });
   }
 
   async function handleCancelReader() {
@@ -337,6 +352,19 @@ export default function PaymentModal({
               remove
             </button>
           </p>
+        )}
+
+        {tabCard && !splitOpen && (
+          <div className="mt-4">
+            <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={handleCardOnFile}>
+              {onFile.busy ? "Charging..." : `Charge card on file · ${tabCard.label}`}
+            </button>
+            {onFile.error && (
+              <p className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
+                {onFile.error}
+              </p>
+            )}
+          </div>
         )}
 
         {!splitOpen ? (

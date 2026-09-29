@@ -6,6 +6,7 @@ import { verifyPin } from "@/lib/pin";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
+import { releaseTabCard } from "@/lib/tab-card";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -52,6 +53,7 @@ export interface DraftOrderSummary {
   order_name: string | null;
   item_count: number;
   total: number;
+  card_label: string | null; // a tab's card on file, e.g. "Visa ••4242"
 }
 
 export interface DraftOrderFull {
@@ -224,6 +226,9 @@ export async function completeOrder(params: DraftFields & {
 
   await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
 
+  // A closed tab's card on file comes off file, however the tab was paid.
+  if (params.draftOrderId) await releaseTabCard(orderId);
+
   // A custom item usually means the menu couldn't describe the sale, so each
   // one becomes a dev note to review. Best-effort: never blocks the sale.
   const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id);
@@ -319,7 +324,7 @@ export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrder
   const supabase = createAdminClient();
   const { data: orders, error } = await supabase
     .from("orders")
-    .select("id, order_name, total, items:order_items(quantity)")
+    .select("id, order_name, total, tab_card_label, items:order_items(quantity)")
     .eq("status", status)
     .order("created_at");
   if (error) throw error;
@@ -328,6 +333,7 @@ export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrder
     order_name: o.order_name,
     item_count: (o.items as { quantity: number }[]).reduce((s, i) => s + i.quantity, 0),
     total: Number(o.total),
+    card_label: o.tab_card_label ?? null,
   }));
 }
 
@@ -365,6 +371,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
 export async function discardDraftOrder(id: string): Promise<void> {
   await assertStaff();
   const supabase = createAdminClient();
+  await releaseTabCard(id);
   await supabase.from("orders").delete().eq("id", id);
   revalidate();
 }

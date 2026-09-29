@@ -9,6 +9,7 @@ import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
+import TabCardModal from "./TabCardModal";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, getTicketPrintInfo, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
@@ -284,6 +285,8 @@ export default function PosApp({
   // which avoids a stale closure in the long-lived channel subscription.
   const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
   const finalizingRef = useRef(false);
+  // "Put a card on file?" for a tab (right after opening it, or from its chip).
+  const [tabCardFor, setTabCardFor] = useState<{ id: string; name: string } | null>(null);
   cartSnapshotRef.current = {
     orderName,
     items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods })),
@@ -408,6 +411,7 @@ export default function PosApp({
       resetOrder();
       setActiveTabId(id);
       setOrderName(name);
+      setTabCardFor({ id, name });
       router.refresh();
     } finally {
       setBusy(false);
@@ -582,10 +586,20 @@ export default function PosApp({
 
           <div className="mb-2 flex items-center gap-2">
             {activeTab && (
-              <span className="chip chip-selected max-w-[45%] shrink-0 truncate !px-3 !py-1.5 text-sm font-bold">
+              <span className="chip chip-selected max-w-[40%] shrink-0 truncate !px-3 !py-1.5 text-sm font-bold">
                 Tab: {activeTab.order_name}
               </span>
             )}
+            {activeTab &&
+              (activeTab.card_label ? (
+                <span className="chip shrink-0 whitespace-nowrap !px-2.5 !py-1.5 text-xs" title="Card on file for this tab">
+                  💳 {activeTab.card_label}
+                </span>
+              ) : (
+                <button className="chip shrink-0 whitespace-nowrap !px-2.5 !py-1.5 text-xs" onClick={() => setTabCardFor({ id: activeTab.id, name: activeTab.order_name ?? "Tab" })}>
+                  + Card
+                </button>
+              ))}
             <input className="input min-w-0 flex-1 !py-2" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
           </div>
         </div>
@@ -629,7 +643,7 @@ export default function PosApp({
                 openTabs.map((t) => (
                   <div key={t.id} className="flex items-center justify-between gap-2 border-b py-1.5 text-sm last:border-0" style={{ borderColor: "var(--border)" }}>
                     <span style={{ color: "var(--foreground)" }}>
-                      {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"})
+                      {t.order_name} — {money(t.total)} ({t.item_count} item{t.item_count === 1 ? "" : "s"}){t.card_label ? ` · 💳 ${t.card_label}` : ""}
                       {t.id === activeTabId ? " · active now" : ""}
                     </span>
                     <div className="flex gap-1">
@@ -917,7 +931,14 @@ export default function PosApp({
       )}
 
       {payOpen && (
-        <PaymentModal total={totals.total + tip} readerId={readerId} tipEligible={activeTabId ? null : totals.total - totals.tax} onConfirm={finalizeCheckout} onCancel={() => setPayOpen(false)} />
+        <PaymentModal
+          total={totals.total + tip}
+          readerId={readerId}
+          tipEligible={activeTabId ? null : totals.total - totals.tax}
+          tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
+          onConfirm={finalizeCheckout}
+          onCancel={() => setPayOpen(false)}
+        />
       )}
 
       {cancelTabId && (
@@ -925,6 +946,19 @@ export default function PosApp({
           description="Manager approval is required to cancel this tab."
           onCancel={() => setCancelTabId(null)}
           onSubmit={handleCancelTab}
+        />
+      )}
+
+      {tabCardFor && (
+        <TabCardModal
+          tabId={tabCardFor.id}
+          tabName={tabCardFor.name}
+          readerId={readerId}
+          onSaved={() => router.refresh()}
+          onClose={() => {
+            setTabCardFor(null);
+            router.refresh();
+          }}
         />
       )}
 
