@@ -152,12 +152,22 @@ const CLAIM_LINK_EVERY_MS = 10 * 60_000;
 // streak reward. Once a day per member; a repeat says so and pays nothing.
 // A member with no website login also gets a claim link (lib/member-claim.ts)
 // for the tablet to show as a QR code: only here, once staff have said it's
-// them, never from the number typed at the screen alone.
+// them, never from the number typed at the screen alone. Not for anyone with
+// billing on file (Insiders+, a Stripe customer): they just typed their whole
+// number in front of the line, so someone behind them knows the last four
+// the claim page asks for, and the account holds a billing portal. Theirs
+// comes on their receipt, which is handed to them.
+async function tabletClaimLink(memberId: string): Promise<string | null> {
+  const { data: m } = await createAdminClient().from("members").select("tier, stripe_customer_id, stripe_subscription_id").eq("id", memberId).maybeSingle();
+  if (!m || m.tier === "Insiders+" || m.stripe_customer_id || m.stripe_subscription_id) return null;
+  return issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS });
+}
+
 export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
   const staff = await assertStaff();
   const visit = await recordVisit(memberId, staff.employeeId);
   if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
-  const [rewards, claimUrl] = await Promise.all([openRewards(memberId), issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS })]);
+  const [rewards, claimUrl] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId)]);
   return { ok: true, visit, rewards, claimUrl };
 }
 
