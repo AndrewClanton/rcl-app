@@ -9,6 +9,7 @@ import { Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import type { Screening } from "@/lib/types";
+import { businessDay, businessDayWindow } from "@/lib/ops/time";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,56 @@ function nextFilms(screenings: Screening[], limit: number) {
   return films;
 }
 
+// What's still to come today, by the business day (4 AM to 4 AM Central),
+// so a late show after midnight still counts as tonight's. The screenings
+// are already upcoming-only and MPLC-filtered.
+function laterToday(screenings: Screening[]) {
+  const { date } = businessDay();
+  const end = new Date(businessDayWindow(date).end).getTime();
+  const showings = screenings.filter((s) => new Date(s.starts_at).getTime() < end);
+  const hour = (iso: string) => Number(new Date(iso).toLocaleString("en-US", { hour: "numeric", hourCycle: "h23", timeZone: TZ }));
+  // "Tonight" only when every remaining show is an evening (or after-midnight) one.
+  const evening = showings.every((s) => hour(s.starts_at) >= 17 || hour(s.starts_at) < 4);
+  const dateLabel = new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return { showings, label: evening ? "Tonight" : "Today", dateLabel };
+}
+
+// A compact strip right under the hero: today's remaining showtimes, each a
+// ticket-stub chip with its film. Hidden when nothing's left today.
+function TonightStrip({ showings, label, dateLabel }: ReturnType<typeof laterToday>) {
+  if (showings.length === 0) return null;
+  return (
+    // Pulled up under the hero: the page's 80px section gap is too loose for
+    // something that belongs to it.
+    <section aria-labelledby="tonight-strip" className="sheet -mt-15 flex flex-col sm:flex-row">
+      <h2
+        id="tonight-strip"
+        className="spec-head flex-none rounded-t-[4px] sm:flex-col sm:items-start sm:justify-center sm:gap-1 sm:rounded-tr-none sm:rounded-bl-[4px] sm:px-5"
+      >
+        <span className="text-base leading-none">{label}</span>
+        <span className="font-mono text-[10.5px] tracking-[0.1em] text-[rgba(248,245,236,0.72)]">{dateLabel}</span>
+      </h2>
+      <ul className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5 p-3 sm:p-4">
+        {showings.map((s) => {
+          const time = new Date(s.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+          return (
+            <li key={s.id} className="max-w-full min-w-0">
+              <Link href={`/showtimes/${s.id}`} className="time-chip max-w-full !gap-2" aria-label={`${s.movie.title} at ${time}`}>
+                <span className="flex-none">
+                  {time.replace(/ (AM|PM)$/, "")}
+                  <small> {time.slice(-2)}</small>
+                </span>
+                <span aria-hidden="true" className="w-0.5 flex-none self-stretch bg-[var(--foreground)] opacity-25" />
+                <span className="min-w-0 truncate">{s.movie.title}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function Perk({ children, off = false }: { children: React.ReactNode; off?: boolean }) {
   return (
     <li className={`flex gap-2.5 ${off ? "text-[var(--muted)]" : ""}`}>
@@ -57,6 +108,7 @@ export default async function HomePage() {
   // Visitors get the Insiders+ tile as the last spot in the grid, so the
   // offer sits right among the showings it pays for.
   const films = nextFilms(allScreenings, plus ? 6 : 5);
+  const today = laterToday(allScreenings);
 
   return (
     <div className="space-y-20">
@@ -89,6 +141,8 @@ export default async function HomePage() {
           <span className="relative z-[1]">715 E BROADWAY · JOPLIN, MO · ON ROUTE 66</span>
         </div>
       </section>
+
+      <TonightStrip {...today} />
 
       <section>
         <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
