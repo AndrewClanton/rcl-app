@@ -6,7 +6,9 @@ import { ProofStamp, SpecFoot } from "@/components/print";
 
 const TZ = "America/Chicago";
 
-export default function ReceiptView({ r }: { r: Receipt }) {
+// ticketHref: the tickets' page (their code for the door), for a showing
+// that hasn't happened yet.
+export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; ticketHref?: string | null }) {
   const kind = r.kind;
   const id = r.id;
   const when = new Date(r.date);
@@ -17,9 +19,16 @@ export default function ReceiptView({ r }: { r: Receipt }) {
         <Link href="/account/purchases" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--foreground)]">
           ← All purchases
         </Link>
-        <a href={`/account/purchases/${kind}/${id}/pdf`} className="btn-primary px-4 py-2 text-sm">
-          Download PDF receipt
-        </a>
+        <div className="flex flex-wrap items-center gap-3">
+          {ticketHref && (
+            <Link href={ticketHref} className="btn-secondary px-4 py-2 text-sm">
+              Show tickets
+            </Link>
+          )}
+          <a href={`/account/purchases/${kind}/${id}/pdf`} className="btn-primary px-4 py-2 text-sm">
+            Download PDF receipt
+          </a>
+        </div>
       </div>
 
       <article className="sheet crop mx-auto max-w-xl !bg-white">

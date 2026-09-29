@@ -209,7 +209,9 @@ export interface TicketPrint {
   room: string;
   rating: string | null;
   runtime: number | null;
-  orderNumber: number;
+  // A register sale's order number, or an online booking's number
+  // ("T-1A2B3C4D") when its tickets print at the door.
+  orderNumber: number | string;
   code: string; // what the QR code holds
 }
 
@@ -226,7 +228,7 @@ export function ticketXml(t: TicketPrint, pics: { logo?: Raster | null; poster?:
   d.line([t.room, t.rating, t.runtime ? `${t.runtime} min` : null].filter(Boolean).join("  ·  "));
   if (pics.poster) d.feed(1).image(pics.poster);
   d.feed(1).align("left").line(rule("="));
-  d.align("center").line(`Order #${t.orderNumber}`).align("left");
+  d.align("center").line(typeof t.orderNumber === "number" ? `Order #${t.orderNumber}` : `Order ${t.orderNumber}`).align("left");
   d.line(rule("=")).feed(1).align("center");
   d.qr(t.code).feed(1);
   d.line("Thanks for spending the night at the Royale.");
