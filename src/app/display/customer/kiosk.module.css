@@ -259,6 +259,65 @@
   font-size: 17px;
   margin-top: 2px;
 }
+.ticketsCard {
+  border-radius: 14px;
+  border: 3px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 14px 16px;
+  box-shadow: 6px 6px 0 var(--gold);
+  animation: slide 260ms ease-out both;
+}
+.ticketsHead {
+  font-family: var(--display);
+  font-size: 22px;
+  line-height: 1.1;
+}
+.ticketRows {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.ticketRow {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+.ticketPoster {
+  position: relative;
+  width: 56px;
+  aspect-ratio: 2 / 3;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--ink-3);
+}
+.ticketTitle {
+  font-family: var(--display);
+  font-size: 19px;
+  line-height: 1.1;
+}
+.ticketMeta {
+  font-size: 15px;
+  margin-top: 2px;
+}
+.ticketTodo,
+.ticketDone {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 2px solid var(--ink);
+  white-space: nowrap;
+}
+.ticketTodo {
+  background: var(--gold);
+}
+.ticketDone {
+  background: transparent;
+}
 @keyframes slide {
   from {
     transform: translateY(-12px);
@@ -489,7 +548,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .check,
-  .toast {
+  .toast,
+  .ticketsCard {
     animation: none;
   }
   .key,

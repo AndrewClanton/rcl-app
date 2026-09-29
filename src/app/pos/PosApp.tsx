@@ -24,6 +24,8 @@ import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
 import { printTickets, type TicketSale } from "./print-tickets";
+import { useScanner } from "./useScanner";
+import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
 import EasterEggs from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
@@ -166,6 +168,25 @@ export default function PosApp({
   const [toast, setToast] = useState<string | null>(null);
   const devices = useDeviceSettings();
   const readerId = devices.readerId || defaultReaderId;
+  // A scanner at the counter: an online ticket's QR prints its tickets right
+  // away (one print per ticket, ever); a member card checks them in. An empty
+  // register also picks up the scanned member so the order goes on their
+  // account. Paused while the pay screen is open.
+  const scanStateRef = useRef({ member, empty: true });
+  useEffect(() => {
+    scanStateRef.current = { member, empty: cart.length === 0 && !activeTabId };
+  }, [member, cart.length, activeTabId]);
+  useScanner(
+    (text) => {
+      void handleDoorScan(text, devices.printerAddress).then(({ scan, message }) => {
+        const now = scanStateRef.current;
+        if (scan?.ok && scan.member && !now.member && now.empty) setMember(scan.member);
+        setToast(message);
+        setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
+      });
+    },
+    { enabled: !payOpen },
+  );
   // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [printNote, setPrintNote] = useState<string | null>(null);

@@ -6,6 +6,8 @@ import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type Che
 import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
 import { REWARD_LABEL } from "@/lib/visits";
+import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
+import type { TicketsShown } from "./TicketsCard";
 import k from "./kiosk.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -49,7 +51,17 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 // then just a first name and points. When a sale with a member on it
 // completes, the register says so and the points burst plays here.
 // initialStep is for previews only.
-export default function CheckinKiosk({ registerTopic, initialStep }: { registerTopic: string; initialStep?: CheckinStep }) {
+// onTickets: someone's online tickets for today, after staff confirm their
+// check-in. CustomerDisplay shows them beside the order, clear of the keypad.
+export default function CheckinKiosk({
+  registerTopic,
+  initialStep,
+  onTickets,
+}: {
+  registerTopic: string;
+  initialStep?: CheckinStep;
+  onTickets?: (shown: TicketsShown) => void;
+}) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   const [digits, setDigits] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -58,6 +70,9 @@ export default function CheckinKiosk({ registerTopic, initialStep }: { registerT
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [celebration, setCelebration] = useState<(PointsEarned & { key: number }) | null>(null);
+  // Our own requests the register confirmed lately: their tickets (a
+  // separate, later message) are ours to show; anyone else's aren't.
+  const confirmedHere = useRef(new Map<string, number>());
   const channelRef = useRef<Channel | null>(null);
   // Requests sent to the register and not yet answered.
   const outbox = useRef(new Map<string, { request: CheckinRequest; seen: boolean; at: number }>());
@@ -97,6 +112,8 @@ export default function CheckinKiosk({ registerTopic, initialStep }: { registerT
     if (!p || typeof p.id !== "string" || typeof p.firstName !== "string") return;
     // Only our own requests (another screen's check-ins aren't ours to announce).
     if (!outbox.current.delete(p.id)) return;
+    confirmedHere.current.set(p.id, Date.now());
+    for (const [id, at] of confirmedHere.current) if (Date.now() - at > 5 * 60_000) confirmedHere.current.delete(id);
     const name = p.firstName.slice(0, 40);
     const points = Math.max(0, Math.round(Number(p.points) || 0));
     const v = p.visit;
@@ -113,6 +130,24 @@ export default function CheckinKiosk({ registerTopic, initialStep }: { registerT
       reward: reward ? `🎉 You earned a ${REWARD_LABEL[reward].toLowerCase()}! Just ask your bartender.` : null,
       tone: "ok",
     });
+  });
+
+  const onTicketsMessage = useEffectEvent((p: Partial<CheckinTickets> | null) => {
+    if (!p || typeof p.id !== "string" || typeof p.firstName !== "string" || !Array.isArray(p.tickets)) return;
+    if (!confirmedHere.current.has(p.id)) return;
+    const tickets = p.tickets
+      .filter((t): t is TabletTicket => !!t && typeof t.title === "string" && typeof t.startsAt === "string")
+      .slice(0, 4)
+      .map((t) => ({
+        title: t.title.slice(0, 80),
+        posterUrl: typeof t.posterUrl === "string" && t.posterUrl.startsWith("https://") ? t.posterUrl : null,
+        startsAt: t.startsAt,
+        room: typeof t.room === "string" ? t.room.slice(0, 60) : "",
+        quantity: Math.max(1, Math.round(Number(t.quantity) || 1)),
+        status: t.status === "printed" ? ("printed" as const) : ("to_print" as const),
+      }));
+    if (!tickets.length) return;
+    onTickets?.({ key: Date.now(), firstName: p.firstName.slice(0, 40), tickets });
   });
 
   const onDeclined = useEffectEvent((id: unknown) => {
@@ -152,6 +187,7 @@ export default function CheckinKiosk({ registerTopic, initialStep }: { registerT
       ch.on("broadcast", { event: "checkin-seen" }, (msg) => onSeen(msg.payload?.id))
         .on("broadcast", { event: "checkin-confirmed" }, (msg) => onConfirmed(msg.payload))
         .on("broadcast", { event: "checkin-declined" }, (msg) => onDeclined(msg.payload?.id))
+        .on("broadcast", { event: "checkin-tickets" }, (msg) => onTicketsMessage(msg.payload))
         .on("broadcast", { event: "checkin-sync" }, () => resendAll(false))
         .on("broadcast", { event: "points-earned" }, (msg) => onPoints(msg.payload))
         .subscribe((status) => {
@@ -385,3 +421,4 @@ function ClaimQrSlot({ url }: { url: string }) {
     </p>
   );
 }
+

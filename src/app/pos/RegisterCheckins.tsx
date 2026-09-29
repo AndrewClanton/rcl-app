@@ -8,6 +8,10 @@ import type { ReceiptData } from "@/lib/print/receipt";
 import { REWARD_LABEL } from "@/lib/visits";
 import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
+import { getMemberTicketsToday } from "./scan-actions";
+import { printDoorTickets } from "./door-print";
+import { useDeviceSettings } from "./devices/settings";
+import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -84,6 +88,11 @@ export default function RegisterCheckins({
   const [now, setNow] = useState(0);
   const [here, setHere] = useState<HereToday[]>([]);
   const [hereOpen, setHereOpen] = useState(false);
+  // Tickets bought online for today by whoever just checked in: one tap
+  // prints them, instead of scanning.
+  const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const devices = useDeviceSettings();
   const channelRef = useRef<Channel | null>(null);
   // Requests answered here, so a screen that missed the answer can get it
   // again, and every request already on screen (screens resend until seen).
@@ -141,6 +150,17 @@ export default function RegisterCheckins({
       ...(visit ? { visit: { earned: visit.earned, streak: visit.streak, alreadyToday: visit.alreadyToday, reward: visit.reward } } : {}),
     };
     answer(p.id, "checkin-confirmed", confirmed);
+    // Their tickets for today, if they bought any online: a Print row here,
+    // and the tickets on the customer screen. A separate message, so the
+    // confirmation above never waits on it.
+    void getMemberTicketsToday(m.id)
+      .then((t) => {
+        if (!t.ok || t.tickets.length === 0) return;
+        setTonight({ member: m, tickets: t.tickets });
+        const shown: CheckinTickets = { id: p.id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
+        send("checkin-tickets", shown);
+      })
+      .catch(() => {});
     const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
     if (visit?.alreadyToday) bits.push("Already checked in today, so no new points.");
     else if (visit) bits.push(`Day ${visit.streak} streak, +${visit.earned} pts.`);
@@ -158,6 +178,20 @@ export default function RegisterCheckins({
     if (!r) return patch(p.id, { working: false, error: OFFLINE });
     if (!r.ok) return patch(p.id, { working: false, error: r.error });
     await confirm(p, r.member, r.isNew, r.note, addToOrder);
+  }
+
+  async function printTonight() {
+    if (!tonight || printing) return;
+    setPrinting(true);
+    const messages: string[] = [];
+    for (const t of tonight.tickets.filter((x) => x.printable)) {
+      const r = await printDoorTickets(devices.printerAddress, t.bookingId).catch(() => null);
+      messages.push(!r ? OFFLINE : r.ok ? r.message : r.error);
+    }
+    const fresh = await getMemberTicketsToday(tonight.member.id).catch(() => null);
+    setTonight(fresh?.ok && fresh.tickets.length ? { member: tonight.member, tickets: fresh.tickets } : null);
+    setPrinting(false);
+    if (messages.length) setNotice(messages.join(" "));
   }
 
   async function refreshHere() {
@@ -282,7 +316,7 @@ export default function RegisterCheckins({
   }, [lastSale]);
 
   const showRecent = !!recent && !member && pending.length === 0;
-  if (!pending.length && !notice && !showRecent && !here.length) return null;
+  if (!pending.length && !notice && !showRecent && !here.length && !tonight) return null;
 
   return (
     <div className="fixed right-3 top-3 z-40 m-0 flex max-h-[calc(100dvh-1.5rem)] w-[min(23rem,calc(100vw-1.5rem))] flex-col items-end gap-2 overflow-y-auto p-1">
@@ -291,6 +325,8 @@ export default function RegisterCheckins({
           {notice}
         </div>
       )}
+
+      {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
 
       {showRecent && recent && (
         <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
@@ -384,6 +420,56 @@ export default function RegisterCheckins({
       {here.length > 0 && pending.length === 0 && (
         <HereTodayPanel here={here} open={hereOpen} onToggle={() => setHereOpen((o) => !o)} current={member} onAttach={(m) => onAttach(m)} />
       )}
+    </div>
+  );
+}
+
+// "🎟 2 tickets today · Print": online tickets for someone who just checked
+// in. Print claims and prints them (one print per ticket, like a scan);
+// tickets that already have paper show as printed.
+function TonightTickets({
+  tonight,
+  printing,
+  onPrint,
+  onDismiss,
+}: {
+  tonight: { member: PosMember; tickets: DoorTicket[] };
+  printing: boolean;
+  onPrint: () => void;
+  onDismiss: () => void;
+}) {
+  const toPrint = tonight.tickets.filter((t) => t.printable);
+  const count = tonight.tickets.reduce((n, t) => n + t.quantity, 0);
+  const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  return (
+    <div className="w-full rounded-lg border-2 bg-[var(--surface)] p-2.5 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1">
+          <strong>
+            🎟 {firstNameOf(tonight.member.name)}: {count} ticket{count === 1 ? "" : "s"} today
+          </strong>
+        </span>
+        {toPrint.length > 0 ? (
+          <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" disabled={printing} onClick={onPrint}>
+            {printing ? "Printing…" : "Print"}
+          </button>
+        ) : (
+          <span className="shrink-0 text-xs font-bold" style={{ color: "var(--muted)" }}>
+            Printed
+          </span>
+        )}
+        <button className="shrink-0 px-1 text-base" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={onDismiss}>
+          ×
+        </button>
+      </div>
+      <ul className="mt-1 space-y-0.5 text-xs" style={{ color: "var(--muted)" }}>
+        {tonight.tickets.map((t) => (
+          <li key={t.bookingId}>
+            {t.quantity}× {t.title} · {time(t.startsAt)} · {t.room}
+            {t.printable ? "" : " · printed"}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

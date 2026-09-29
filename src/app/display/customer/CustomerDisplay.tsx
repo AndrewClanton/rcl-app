@@ -5,6 +5,7 @@ import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import { LADDER, REWARD_LABEL } from "@/lib/visits";
+import TicketsCard, { type TicketsShown } from "./TicketsCard";
 import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import k from "./kiosk.module.css";
@@ -30,20 +31,29 @@ function showtime(iso: string) {
 //   broadcasts cart snapshots; nothing is saved until the sale), or,
 //   between orders, a Royale welcome: tonight's movies and the points path.
 // The register's ✨ Celebrate throws streamers across the whole screen.
-// previewCart / previewStep are for previews only.
+// previewCart / previewStep / previewTickets are for previews only.
 export default function CustomerDisplay({
   movies,
   registerTopic,
   previewCart,
   previewStep,
+  previewTickets,
 }: {
   movies: PromoMovie[];
   registerTopic: string;
   previewCart?: RegisterCartSnapshot;
   previewStep?: CheckinStep;
+  previewTickets?: TicketsShown;
 }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[] } | null>(null);
+  // Online tickets for whoever just checked in, beside the order for a bit.
+  const [tickets, setTickets] = useState<TicketsShown | null>(previewTickets ?? null);
+  useEffect(() => {
+    if (!tickets) return;
+    const timer = setTimeout(() => setTickets(null), 25_000);
+    return () => clearTimeout(timer);
+  }, [tickets]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -74,8 +84,11 @@ export default function CustomerDisplay({
 
   return (
     <div className={k.screen}>
-      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} />
-      <aside className={k.side}>{hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}</aside>
+      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} />
+      <aside className={k.side}>
+        {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
+        {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
+      </aside>
       {burst && <Streamers key={burst.id} pieces={burst.pieces} onDone={clearBurst} />}
     </div>
   );
