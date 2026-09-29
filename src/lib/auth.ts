@@ -104,9 +104,10 @@ export async function requireStaff(): Promise<StaffSession> {
   return session;
 }
 
-// 'owner' is a superset of 'admin' (the single primary admin, who can also
-// grant/revoke admin access for everyone else -- see requireOwner() below),
-// so anything gated to "admin-level" access should treat the two the same.
+// 'owner' is a superset of 'admin' (the co-owners -- Andrew, Caleb and
+// Nathan -- who can also grant/revoke admin access for everyone else -- see
+// requireOwner() below), so anything gated to "admin-level" access should
+// treat the two the same.
 export function hasAdminAccess(role: EmployeeRole): boolean {
   return role === "admin" || role === "owner";
 }
@@ -138,8 +139,8 @@ export async function requireAdmin(): Promise<StaffSession> {
   return session;
 }
 
-// Stricter still -- only 'owner' (Andrew). Gates the staff/role-management
-// page, since deciding who else gets admin access is a one-person call.
+// Stricter still -- only 'owner' (the co-owners). Gates the staff/role-management
+// page, since deciding who else gets admin access is an owners' call.
 export async function requireOwner(): Promise<StaffSession> {
   const session = await requireStaff();
   if (session.role !== "owner") redirect("/admin");

@@ -11,10 +11,10 @@ import { pinProblem } from "@/lib/pin-rules";
 import { siteOrigin } from "@/lib/site-origin";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
-// there's exactly one (Andrew), and handing it out via a dropdown risks
-// creating a second one or an accidental self-demotion. Changing who the
-// owner is is a one-off, done directly against the database, not a routine
-// admin action.
+// the co-owners (Andrew, Caleb, Nathan) are set directly against the
+// database, since handing it out via a dropdown risks creating one by
+// accident or an accidental self-demotion. Adding or removing an owner is a
+// one-off, not a routine admin action.
 const ASSIGNABLE_ROLES: EmployeeRole[] = ["cashier", "manager", "admin", "display"];
 
 // Display accounts are screens, not people -- they never enter a PIN, and a
@@ -140,7 +140,7 @@ export async function makeStaff(memberId: string, role: EmployeeRole): Promise<{
   if (!member.auth_user_id) return { ok: false, error: "They haven't signed in to the website yet. Ask them to sign in once, then find them here." };
 
   const { data: existing } = await supabase.from("employees").select("id, role, active").eq("auth_user_id", member.auth_user_id).maybeSingle();
-  if (existing?.role === "owner") return { ok: false, error: "That's the owner's account." };
+  if (existing?.role === "owner") return { ok: false, error: "That's an owner's account." };
   if (existing?.active) return { ok: false, error: "They're already on staff. Change their role in the list below." };
   const { error } = existing
     ? await supabase.from("employees").update({ role, active: true }).eq("id", existing.id)
@@ -165,7 +165,7 @@ export async function updateEmployeeRole(employeeId: string, role: EmployeeRole)
   const supabase = createAdminClient();
   const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
   if (fetchErr || !target) return { ok: false, error: "That person wasn't found. Reload the page." };
-  if (target.role === "owner") return { ok: false, error: "The owner's role can't be changed here." };
+  if (target.role === "owner") return { ok: false, error: "An owner's role can't be changed here." };
 
   const { error } = await supabase.from("employees").update({ role }).eq("id", employeeId);
   if (error) return { ok: false, error: "Couldn't change their role. Try again." };
@@ -180,7 +180,7 @@ export async function setEmployeeActive(employeeId: string, active: boolean): Pr
   const supabase = createAdminClient();
   const { data: target, error: fetchErr } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
   if (fetchErr || !target) return { ok: false, error: "That person wasn't found. Reload the page." };
-  if (target.role === "owner") return { ok: false, error: "The owner can't be deactivated." };
+  if (target.role === "owner") return { ok: false, error: "Owners can't be deactivated here." };
 
   const { error } = await supabase.from("employees").update({ active }).eq("id", employeeId);
   if (error) return { ok: false, error: `Couldn't ${active ? "reactivate" : "deactivate"} them. Try again.` };
