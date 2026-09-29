@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import { startCheckin, startNewCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
+import StreakPath from "./StreakPath";
+import { REWARD_LABEL } from "@/lib/visits";
 import styles from "./checkin.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -14,7 +16,7 @@ type Step =
   | { name: "phone" }
   | { name: "new" }
   | { name: "waiting"; request: CheckinRequest; seen: boolean }
-  | { name: "welcome"; firstName: string; points: number; isNew: boolean }
+  | { name: "welcome"; firstName: string; points: number; isNew: boolean; visit?: CheckinConfirmed["visit"] }
   | { name: "help" };
 
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
@@ -23,7 +25,7 @@ const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 // clear after a few seconds. Waiting gives up quietly after a few minutes --
 // the register keeps the request, and if staff confirm it later the welcome
 // still shows here.
-const TIMEOUT_MS: Record<Step["name"], number> = { closed: 0, phone: 60_000, new: 90_000, waiting: 3 * 60_000, welcome: 9_000, help: 9_000 };
+const TIMEOUT_MS: Record<Step["name"], number> = { closed: 0, phone: 60_000, new: 90_000, waiting: 3 * 60_000, welcome: 14_000, help: 9_000 };
 
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
 
@@ -92,7 +94,10 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
     misses.current = 0;
     setLocked(false);
     resetForm();
-    setStep({ name: "welcome", firstName: p.firstName.slice(0, 40), points: Math.max(0, Math.round(Number(p.points) || 0)), isNew: p.isNew === true });
+    const v = p.visit;
+    const visit =
+      v && Number.isFinite(Number(v.streak)) ? { earned: Math.max(0, Math.round(Number(v.earned) || 0)), streak: Math.max(1, Math.round(Number(v.streak))), alreadyToday: v.alreadyToday === true, reward: v.reward === "popcorn" || v.reward === "pizza" ? v.reward : null } : undefined;
+    setStep({ name: "welcome", firstName: p.firstName.slice(0, 40), points: Math.max(0, Math.round(Number(p.points) || 0)), isNew: p.isNew === true, visit });
   });
 
   const onDeclined = useEffectEvent((id: unknown) => {
@@ -374,9 +379,39 @@ export default function CheckinKiosk({ registerTopic }: { registerTopic: string 
               <>
                 <span className="ctag ctag-yellow mb-4">Checked in</span>
                 <h2 className="font-display mb-2 text-3xl">{step.isNew ? `Welcome to the Royale, ${step.firstName}!` : `Welcome back, ${step.firstName}!`}</h2>
-                <p className="text-base">
-                  {step.isNew ? "You're all set. Every dollar you spend here earns a point." : `You have ${pts(step.points)}. Today's order adds more.`}
-                </p>
+                {step.visit && !step.visit.alreadyToday ? (
+                  <>
+                    <p className="font-display text-4xl" style={{ color: "var(--accent)" }}>
+                      +{step.visit.earned} points
+                    </p>
+                    <p className="mt-1 text-base">
+                      for checking in{step.visit.streak > 1 ? ` · 🔥 ${step.visit.streak} visits in a row` : ""}. You have {pts(step.points)}.
+                    </p>
+                    {step.visit.reward && (
+                      <p className="mt-3 rounded-md border-2 px-3 py-2 text-lg font-bold" style={{ borderColor: "var(--foreground)", background: "var(--gold)" }}>
+                        🎉 You earned a {REWARD_LABEL[step.visit.reward].toLowerCase()}! Just ask your bartender.
+                      </p>
+                    )}
+                    <StreakPath streak={step.visit.streak} />
+                  </>
+                ) : step.visit?.alreadyToday ? (
+                  <p className="text-base">
+                    You&apos;re already checked in today. You have {pts(step.points)}. Come back next time for visit {step.visit.streak + 1} in a row!
+                  </p>
+                ) : (
+                  <p className="text-base">
+                    {step.isNew ? "You're all set. Every dollar you spend here earns a point." : `You have ${pts(step.points)}. Today's order adds more.`}
+                  </p>
+                )}
+                <button
+                  className="btn-primary mt-5 w-full !py-3 !text-base"
+                  onClick={() => {
+                    resetForm();
+                    setStep({ name: "phone" });
+                  }}
+                >
+                  Next person? Check in →
+                </button>
               </>
             )}
 

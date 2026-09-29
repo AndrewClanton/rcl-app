@@ -17,6 +17,8 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       return { title: l.note ?? "Welcome bonus", href: null };
     case "opening_balance":
       return { title: "Starting balance", href: null };
+    case "visit":
+      return { title: l.note ?? "Checked in", href: null };
     default:
       return { title: l.note && l.note !== "Adjusted by staff" ? `Adjusted by staff: ${l.note}` : "Adjusted by staff", href: null };
   }

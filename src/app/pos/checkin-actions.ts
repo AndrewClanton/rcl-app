@@ -6,7 +6,9 @@ import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
 import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
 import { sameEmail } from "@/lib/email-match";
 import { allowAttempt } from "@/lib/rate-limit";
-import { getPosMember, type PosMember } from "./member-actions";
+import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
+import { openRewards, recordVisit, redeemReward, todaysVisitors, unredeemReward, type OpenReward } from "@/lib/visits-server";
+import type { VisitResult } from "@/lib/visits";
 
 // The register's half of check-in for points (the customer screen's half is
 // in display/customer/actions.ts). Staff-only: this is where a sealed
@@ -134,4 +136,52 @@ export async function createCheckinMember(ref: string, existingId: string | null
   const member = await getPosMember(data.id);
   if (!member) return { ok: false, error: OFFLINE };
   return { ok: true, member, isNew: true, note };
+}
+
+// ---------- visits, streaks and rewards (lib/visits.ts) ----------
+
+export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[] } | { ok: false; error: string };
+
+// Staff tapped Check in: today's visit, with its streak points and any
+// streak reward. Once a day per member; a repeat says so and pays nothing.
+export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
+  const staff = await assertStaff();
+  const visit = await recordVisit(memberId, staff.employeeId);
+  if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
+  return { ok: true, visit, rewards: await openRewards(memberId) };
+}
+
+export interface HereToday {
+  member: PosMember;
+  at: string;
+  streak: number | null;
+}
+
+// Everyone who's checked in today, newest first: faces and names for the
+// staff, and a quick way to put someone on an order when they buy later.
+export async function getHereToday(): Promise<HereToday[]> {
+  await assertStaff();
+  const visits = await todaysVisitors();
+  const members = await getPosMembers(visits.map((v) => v.memberId));
+  const byId = new Map(members.map((m) => [m.id, m]));
+  return visits.flatMap((v) => {
+    const member = byId.get(v.memberId);
+    return member ? [{ member, at: v.at, streak: v.streak }] : [];
+  });
+}
+
+export async function getMemberRewards(memberId: string): Promise<OpenReward[]> {
+  await assertStaff();
+  return openRewards(memberId);
+}
+
+// Redeem puts the reward on the order at $0; Undo gives it back.
+export async function useMemberReward(id: string): Promise<boolean> {
+  const staff = await assertStaff();
+  return redeemReward(id, staff.employeeId);
+}
+
+export async function undoMemberReward(id: string): Promise<void> {
+  await assertStaff();
+  await unredeemReward(id);
 }

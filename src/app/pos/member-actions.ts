@@ -22,10 +22,11 @@ export interface PosMember {
   price_tier_set_at: string | null;
   price_tier_set_by_name: string | null;
   avatar_url: string | null;
+  tagline: string | null; // their own line from their account, for staff
 }
 
 const POS_MEMBER_SELECT =
-  "id, name, email, phone, tier, points, comped, avatar_url, stripe_subscription_id, subscription_status, price_tier, price_tier_set_at, set_by:employees!members_price_tier_set_by_fkey(name)";
+  "id, name, email, phone, tier, points, comped, avatar_url, tagline, stripe_subscription_id, subscription_status, price_tier, price_tier_set_at, set_by:employees!members_price_tier_set_by_fkey(name)";
 
 type Row = {
   id: string;
@@ -40,6 +41,7 @@ type Row = {
   price_tier: MemberPriceTier | null;
   price_tier_set_at: string | null;
   avatar_url: string | null;
+  tagline: string | null;
   set_by: { name: string } | { name: string }[] | null;
 };
 
@@ -58,6 +60,7 @@ function toPosMember(r: Row): PosMember {
     price_tier_set_at: r.price_tier_set_at,
     price_tier_set_by_name: setBy?.name ?? null,
     avatar_url: r.avatar_url,
+    tagline: r.tagline ?? null,
   };
 }
 
@@ -69,6 +72,15 @@ export async function getPosMember(id: string): Promise<PosMember | null> {
   await assertStaff();
   const { data } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).eq("id", id).is("erased_at", null).maybeSingle();
   return data ? toPosMember(data as unknown as Row) : null;
+}
+
+// Several members at once (the register's "here today" list), in the order asked.
+export async function getPosMembers(ids: string[]): Promise<PosMember[]> {
+  await assertStaff();
+  if (!ids.length) return [];
+  const { data } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).in("id", ids.slice(0, 100)).is("erased_at", null);
+  const byId = new Map(((data ?? []) as unknown as Row[]).map((r) => [r.id, toPosMember(r)]));
+  return ids.map((id) => byId.get(id)).filter((m): m is PosMember => !!m);
 }
 
 // Name, email, phone (any formatting), or a scanned member QR code.

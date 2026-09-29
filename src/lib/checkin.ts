@@ -20,6 +20,8 @@
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
+import type { RewardKind } from "@/lib/visits";
+
 export type CheckinKind = "known" | "new";
 
 export interface CheckinRequest {
@@ -31,8 +33,11 @@ export interface CheckinRequest {
 export interface CheckinConfirmed {
   id: string;
   firstName: string;
-  points: number;
+  points: number; // balance, after any visit points
   isNew: boolean;
+  // Today's visit (lib/visits.ts): its points, streak, and any reward.
+  // Missing if the visit couldn't be saved.
+  visit?: { earned: number; streak: number; alreadyToday: boolean; reward: RewardKind | null };
 }
 
 export interface PointsEarned {
