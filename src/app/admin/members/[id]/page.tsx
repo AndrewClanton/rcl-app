@@ -1,28 +1,41 @@
 import { notFound } from "next/navigation";
 import { getStaffSession, hasAdminAccess } from "@/lib/auth";
-import { getCommunityPrograms, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
+import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getGiftsForMember } from "@/lib/gift-membership";
+import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import MemberDetail from "./MemberDetail";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminMemberDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const member = await getMemberById(id);
+  // A cashier gets the member's email and phone (and a gift buyer's email)
+  // shortened before anything reaches the page (lib/contact-mask.ts).
+  const session = await getStaffSession();
+  const role = session?.role ?? "cashier";
+  const fullContact = seesFullContact(role);
+  const member = await getMemberById(id, role);
   if (!member) notFound();
 
-  const [purchases, communityPrograms, session, gifts] = await Promise.all([getMemberPurchaseHistory(id), getCommunityPrograms(), getStaffSession(), getGiftsForMember(id)]);
+  const [purchases, communityPrograms, gifts, eraseLog] = await Promise.all([
+    getMemberPurchaseHistory(id),
+    getCommunityPrograms(),
+    getGiftsForMember(id),
+    member.erased_at ? getEraseLogEntry(id) : Promise.resolve(null),
+  ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
 
   return (
     <MemberDetail
       member={member}
       purchases={purchases}
-      gifts={gifts}
+      gifts={fullContact ? gifts : gifts.map((g) => ({ ...g, buyer_email: maskEmail(g.buyer_email) ?? "" }))}
       communityPrograms={communityPrograms}
       staffInfo={staffInfo[member.id]}
       viewerIsAdmin={!!session && hasAdminAccess(session.role)}
+      canEditContact={fullContact}
+      eraseLog={eraseLog}
     />
   );
 }

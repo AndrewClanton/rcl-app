@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { CommunityProgram, Member } from "@/lib/types";
+import { contactForRole } from "@/lib/contact-mask";
+import type { CommunityProgram, EmployeeRole, Member } from "@/lib/types";
 
 const MEMBER_SELECT =
   "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name), erased_by_staff:employees!members_erased_by_fkey(name)";
@@ -18,7 +19,17 @@ export interface MembersPage {
 // Paginated + searched at the DB level (not fetch-all-then-filter) --
 // the business has ~3,000 members, too many to reasonably mount as
 // editable rows in the browser at once.
-export async function getMembersPage(opts: { query?: string; page?: number; pageSize?: number; compedOnly?: boolean }): Promise<MembersPage> {
+//
+// `viewerRole` is whoever is looking: a cashier gets email and phone
+// shortened (j•••@gmail.com, ••1234) before the rows leave the server; the
+// search itself still matches the full details. See lib/contact-mask.ts.
+export async function getMembersPage(opts: {
+  query?: string;
+  page?: number;
+  pageSize?: number;
+  compedOnly?: boolean;
+  viewerRole: EmployeeRole;
+}): Promise<MembersPage> {
   const pageSize = opts.pageSize ?? 25;
   const page = Math.max(1, opts.page ?? 1);
   const supabase = createAdminClient();
@@ -36,14 +47,37 @@ export async function getMembersPage(opts: { query?: string; page?: number; page
   const to = from + pageSize - 1;
   const { data, error, count } = await q.order("name").range(from, to);
   if (error) throw error;
-  return { members: (data ?? []) as unknown as Member[], total: count ?? 0, page, pageSize };
+  const members = ((data ?? []) as unknown as Member[]).map((m) => contactForRole(m, opts.viewerRole));
+  return { members, total: count ?? 0, page, pageSize };
 }
 
-export async function getMemberById(id: string): Promise<Member | null> {
+// Same masking as getMembersPage for a cashier.
+export async function getMemberById(id: string, viewerRole: EmployeeRole): Promise<Member | null> {
   const supabase = createAdminClient();
   const { data, error } = await supabase.from("members").select(MEMBER_SELECT).eq("id", id).maybeSingle();
   if (error) throw error;
-  return (data as unknown as Member) ?? null;
+  return data ? contactForRole(data as unknown as Member, viewerRole) : null;
+}
+
+export interface EraseLogEntry {
+  requested_on: string | null; // YYYY-MM-DD the person asked, if staff entered it
+  erased_at: string;
+  erased_by_staff: { name: string } | null;
+}
+
+// When a removed member asked and when it was done, for the 30-day promise
+// on /data-deletion. Null until the member_erasures migration
+// (20260929213000) is applied, or for anyone removed before it.
+export async function getEraseLogEntry(memberId: string): Promise<EraseLogEntry | null> {
+  const { data, error } = await createAdminClient()
+    .from("member_erasures")
+    .select("requested_on, erased_at, erased_by_staff:employees!member_erasures_erased_by_fkey(name)")
+    .eq("member_id", memberId)
+    .order("erased_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data as unknown as EraseLogEntry;
 }
 
 export async function getCommunityPrograms(): Promise<CommunityProgram[]> {

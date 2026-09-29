@@ -15,10 +15,13 @@ export default async function AdminMembersPage({
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const [membersPage, communityPrograms, session] = await Promise.all([
-    getMembersPage({ query: params.q, page, compedOnly: params.comped === "1" }),
+  // Who's looking decides how much contact info comes back: a cashier sees
+  // emails and phones shortened (lib/contact-mask.ts). No session can't
+  // happen under the admin layout, but would get the cashier view.
+  const session = await getStaffSession();
+  const [membersPage, communityPrograms] = await Promise.all([
+    getMembersPage({ query: params.q, page, compedOnly: params.comped === "1", viewerRole: session?.role ?? "cashier" }),
     getCommunityPrograms(),
-    getStaffSession(),
   ]);
   const staffInfo = await getStaffInfoForMembers(membersPage.members, session?.employeeId ?? null);
   const legacy = session && hasAdminAccess(session.role) ? await getLegacySummary() : null;

@@ -73,12 +73,17 @@ export async function getPosMember(id: string): Promise<PosMember | null> {
 
 // Name, email, phone (any formatting), or a scanned member QR code.
 export async function searchPosMembers(query: string, limit = 8): Promise<PosMember[]> {
-  await assertStaff();
+  const staff = await assertStaff();
+  // A cashier gets each match's email and phone shortened (j•••@gmail.com,
+  // ••1234): enough to tell two Sarahs apart. The match itself still runs
+  // on the full details in the database, and attaching only needs the id.
+  const { contactForRole } = await import("@/lib/contact-mask");
+  const forViewer = (m: PosMember) => contactForRole(m, staff.role);
   const q = query.trim();
   const qr = q.match(QR_PATTERN);
   if (qr) {
     const member = await getPosMember(qr[1]);
-    return member ? [member] : [];
+    return member ? [forViewer(member)] : [];
   }
   // Characters that would break PostgREST's or() syntax, plus escaped wildcards.
   const text = q.replace(/[,()"*\\]/g, " ").replace(/[%_]/g, (c) => `\\${c}`).trim();
@@ -89,7 +94,7 @@ export async function searchPosMembers(query: string, limit = 8): Promise<PosMem
 
   const { data, error } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).is("erased_at", null).or(filters.join(",")).order("name").limit(Math.min(Math.max(limit, 1), 40));
   if (error) return [];
-  return (data as unknown as Row[]).map(toPosMember);
+  return (data as unknown as Row[]).map(toPosMember).map(forViewer);
 }
 
 // Only after checking the person's ID in person. `employeeId` is whoever is

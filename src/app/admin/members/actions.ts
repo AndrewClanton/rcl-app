@@ -12,6 +12,7 @@ import { eraseMember, type EraseResult } from "@/lib/member-erase";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
+import { seesFullContact } from "@/lib/contact-mask";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -43,9 +44,17 @@ export async function updateMember(
     avatar_url: string | null;
   }>
 ) {
-  await assertStaff();
+  const staff = await assertStaff();
+  // Contact details are managers-and-up (see saveMemberDetails); a
+  // cashier's email or phone change is dropped rather than applied.
+  const allowed = { ...fields };
+  if (!seesFullContact(staff.role)) {
+    delete allowed.email;
+    delete allowed.phone;
+  }
+  if (Object.keys(allowed).length === 0) return;
   const supabase = createAdminClient();
-  await supabase.from("members").update(fields).eq("id", id).is("erased_at", null);
+  await supabase.from("members").update(allowed).eq("id", id).is("erased_at", null);
   revalidate();
 }
 
@@ -54,11 +63,18 @@ export type SaveDetailsResult = { ok: true; message: string } | { ok: false; err
 // The Save button on a member's page: name, email, phone and points
 // together. A changed email or name is copied to their Stripe customer too,
 // since that's where Stripe sends receipts and renewal notices.
-export async function saveMemberDetails(id: string, fields: { name: string; email: string; phone: string; points: string }): Promise<SaveDetailsResult> {
-  await assertStaff();
+//
+// Email and phone are managers-and-up: a cashier only ever sees them
+// shortened (lib/contact-mask.ts), so their page leaves them out, and
+// they're refused here too. Left out means "unchanged".
+export async function saveMemberDetails(id: string, fields: { name: string; email?: string; phone?: string; points: string }): Promise<SaveDetailsResult> {
+  const staff = await assertStaff();
+  if ((fields.email !== undefined || fields.phone !== undefined) && !seesFullContact(staff.role)) {
+    return { ok: false, error: "Only a manager can change a member's email or phone." };
+  }
   const name = fields.name.trim();
-  const email = fields.email.trim();
-  const phone = fields.phone.trim();
+  const email = fields.email?.trim();
+  const phone = fields.phone?.trim();
   const points = Number(fields.points);
   if (!name) return { ok: false, error: "Name can't be blank." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
@@ -70,8 +86,8 @@ export async function saveMemberDetails(id: string, fields: { name: string; emai
 
   const changes: { name?: string; email?: string | null; phone?: string | null } = {};
   if (name !== before.name) changes.name = name;
-  if (email !== (before.email ?? "")) changes.email = email || null;
-  if (phone !== (before.phone ?? "")) changes.phone = phone || null;
+  if (email !== undefined && email !== (before.email ?? "")) changes.email = email || null;
+  if (phone !== undefined && phone !== (before.phone ?? "")) changes.phone = phone || null;
   if (Object.keys(changes).length) {
     const { error } = await supabase.from("members").update(changes).eq("id", id).is("erased_at", null);
     if (error?.code === "23505") return { ok: false, error: "Another member already has that email. Search for them in Members." };
@@ -123,9 +139,16 @@ export async function adjustMemberPoints(id: string, newBalance: number, note?: 
 // Removes a member's personal info on request (see /data-deletion): cancels
 // Stripe billing, deletes their login, and clears their details everywhere,
 // keeping anonymous purchase records for taxes. Admin only.
-export async function eraseMemberPersonalInfo(id: string): Promise<EraseResult> {
+//
+// `requestedOn` (YYYY-MM-DD) is the day they asked, logged with the
+// removal so the 30-day promise can be checked.
+export async function eraseMemberPersonalInfo(id: string, requestedOn: string): Promise<EraseResult> {
   const staff = await assertAdmin();
-  const result = await eraseMember(id, staff.employeeId);
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedOn) || requestedOn > today) {
+    return { ok: false, error: "Enter the day they asked (today or earlier)." };
+  }
+  const result = await eraseMember(id, staff.employeeId, requestedOn);
   revalidate();
   revalidatePath(`/admin/members/${id}`);
   return result;
