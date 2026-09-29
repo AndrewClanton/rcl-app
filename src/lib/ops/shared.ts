@@ -39,6 +39,18 @@ export interface DueReminder {
 }
 
 // A one-off to-do from Back office → Team, for a person or for whoever's on.
+// A training assigned to someone on shift that they haven't signed off yet
+// (Back office → Training). Opens in the register's training window.
+export interface ShiftTraining {
+  employeeId: string;
+  name: string; // first name
+  slug: string;
+  title: string;
+  dueDate: string | null;
+  overdue: boolean;
+  updated: boolean; // signed an older version; needs signing again
+}
+
 export interface ShiftTodo {
   id: string;
   title: string;
@@ -69,6 +81,7 @@ export interface ShiftStatus {
   tasks: TodayTask[];
   reminders: DueReminder[];
   todos: ShiftTodo[];
+  training: ShiftTraining[];
   booths: { today: BoothHold[]; tomorrow: BoothHold[] };
   // Today's staff schedule, by person: "4:00 PM–10:00 PM".
   scheduled: Record<string, string>;
