@@ -57,27 +57,36 @@ export async function addScheduledShift(input: { employeeId: string; date: strin
   const { error } = await createAdminClient()
     .from("staff_schedule")
     .insert({ employee_id: input.employeeId, starts_at: startsAt, ends_at: endsAt, note: input.note.trim() || null, created_by: staff.employeeId });
-  if (error) return { ok: false, error: "Couldn't save that shift. Try again." };
+  if (error) return { ok: false, error: error.code === "23505" ? "They're already scheduled to start then." : "Couldn't save that shift. Try again." };
   revalidate();
   return { ok: true };
 }
 
+// Removed, not erased: the record stays (who removed it and when) and Undo
+// brings it back.
 export async function deleteScheduledShift(id: string): Promise<Result> {
-  await assertManager();
-  await createAdminClient().from("staff_schedule").delete().eq("id", id);
+  const staff = await assertManager();
+  await createAdminClient().from("staff_schedule").update({ deleted_at: new Date().toISOString(), deleted_by: staff.employeeId }).eq("id", id);
   revalidate();
   return { ok: true };
+}
+
+export async function restoreScheduledShift(id: string): Promise<Result> {
+  await assertManager();
+  const { error } = await createAdminClient().from("staff_schedule").update({ deleted_at: null, deleted_by: null }).eq("id", id);
+  revalidate();
+  return error ? { ok: false, error: "Couldn't bring it back: that person already has a shift starting then." } : { ok: true };
 }
 
 // Copies every shift from one week onto the next (same days and times), for
 // a schedule that mostly repeats.
-export async function copyWeekForward(weekStart: string): Promise<Result & { copied?: number }> {
+export async function copyWeekForward(weekStart: string): Promise<Result & { copied?: number; skipped?: number }> {
   const staff = await assertManager();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) return { ok: false, error: "Pick a week." };
   const supabase = createAdminClient();
   const from = centralToIso(weekStart, "04:00");
   const to = new Date(new Date(from).getTime() + 7 * 86_400_000).toISOString();
-  const { data } = await supabase.from("staff_schedule").select("employee_id, starts_at, ends_at, note").gte("starts_at", from).lt("starts_at", to);
+  const { data } = await supabase.from("staff_schedule").select("employee_id, starts_at, ends_at, note").is("deleted_at", null).gte("starts_at", from).lt("starts_at", to);
   if (!data?.length) return { ok: false, error: "There's nothing on this week to copy." };
   const week = 7 * 86_400_000;
   // Same wall-clock times next week, even across a daylight-saving change.
@@ -89,10 +98,20 @@ export async function copyWeekForward(weekStart: string): Promise<Result & { cop
     date.setUTCDate(date.getUTCDate() + 7);
     return centralToIso(date.toISOString().slice(0, 10), `${get("hour")}:${get("minute")}`) || d.toISOString();
   };
-  const { error } = await supabase
+  // Skip anything already on next week, so copying twice can't double it.
+  const next = data.map((s) => ({ employee_id: s.employee_id, starts_at: shift(s.starts_at), ends_at: shift(s.ends_at), note: s.note, created_by: staff.employeeId }));
+  const { data: existing } = await supabase
     .from("staff_schedule")
-    .insert(data.map((s) => ({ employee_id: s.employee_id, starts_at: shift(s.starts_at), ends_at: shift(s.ends_at), note: s.note, created_by: staff.employeeId })));
-  if (error) return { ok: false, error: "Couldn't copy the week. Try again." };
+    .select("employee_id, starts_at")
+    .is("deleted_at", null)
+    .gte("starts_at", to)
+    .lt("starts_at", new Date(new Date(to).getTime() + 7 * 86_400_000).toISOString());
+  const taken = new Set((existing ?? []).map((e) => `${e.employee_id}|${new Date(e.starts_at).getTime()}`));
+  const fresh = next.filter((s) => !taken.has(`${s.employee_id}|${new Date(s.starts_at).getTime()}`));
+  if (fresh.length) {
+    const { error } = await supabase.from("staff_schedule").insert(fresh);
+    if (error) return { ok: false, error: "Couldn't copy the week. Try again." };
+  }
   revalidate();
-  return { ok: true, copied: data.length };
+  return { ok: true, copied: fresh.length, skipped: next.length - fresh.length };
 }

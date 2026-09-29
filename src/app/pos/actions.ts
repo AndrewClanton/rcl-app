@@ -380,7 +380,7 @@ export async function discardDraftOrder(id: string): Promise<void> {
 export async function cancelTab(id: string, pin: string): Promise<void> {
   await assertStaff();
   const supabase = createAdminClient();
-  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin"]).eq("active", true);
+  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin", "owner"]).eq("active", true);
   const ok = (managers ?? []).some((m) => verifyPin(pin, m.pin_hash));
   if (!ok) throw new Error("Incorrect manager PIN.");
   await supabase.from("orders").delete().eq("id", id);

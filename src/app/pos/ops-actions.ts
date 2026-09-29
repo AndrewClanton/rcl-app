@@ -492,3 +492,9 @@ export async function setTodoDone(todoId: string, employeeId: string | null): Pr
   const { error } = await db().from("staff_todos").update({ done_at: new Date().toISOString(), done_by: by }).eq("id", todoId).is("done_at", null);
   return error ? { ok: false, error: "Couldn't mark that done. Try again." } : { ok: true };
 }
+
+export async function undoTodoDone(todoId: string): Promise<Result> {
+  await assertStaff();
+  const { error } = await db().from("staff_todos").update({ done_at: null, done_by: null }).eq("id", todoId);
+  return error ? { ok: false, error: "Couldn't undo that. Try again." } : { ok: true };
+}

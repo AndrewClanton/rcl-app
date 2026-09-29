@@ -14,7 +14,9 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+  // null: not picked yet ("" means anyone on shift). Picking is required, so
+  // Caleb's job can't land on whoever happens to be on by accident.
+  const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,12 +26,13 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
   async function add() {
     setBusy(true);
     setError(null);
-    const r = await addTodo({ title, details, assigneeId, dueDate }).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
+    const r = await addTodo({ title, details, assigneeId: assigneeId ?? "", dueDate }).catch(() => ({ ok: false as const, error: "Couldn't save that." }));
     setBusy(false);
     if (!r.ok) return setError(r.error);
     setTitle("");
     setDetails("");
     setDueDate("");
+    setAssigneeId(null);
     router.refresh();
   }
 
@@ -38,21 +41,23 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
       <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
         <h2 className="mb-1 text-sm font-semibold">Give someone a to-do</h2>
         <p className="mb-3 text-xs text-[var(--muted)]">It pops up on the register for them when they&apos;re on shift, until they tap Done.</p>
+        <div className="mb-3">
+          <div className="mb-1 text-xs text-[var(--muted)]">Who&apos;s it for?</div>
+          <div className="flex flex-wrap gap-2">
+            {team.map((m) => (
+              <button key={m.id} className={`chip !px-3 !py-1.5 !text-sm ${assigneeId === m.id ? "chip-selected font-bold" : ""}`} onClick={() => setAssigneeId(m.id)}>
+                {m.name}
+              </button>
+            ))}
+            <button className={`chip !px-3 !py-1.5 !text-sm ${assigneeId === "" ? "chip-selected font-bold" : ""}`} onClick={() => setAssigneeId("")}>
+              Anyone on shift
+            </button>
+          </div>
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[14rem] flex-[2] text-xs text-[var(--muted)]">
             What needs doing
             <input className="mt-1 block w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm text-[var(--foreground)]" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Update the Now Playing movies" />
-          </label>
-          <label className="text-xs text-[var(--muted)]">
-            For
-            <select className="mt-1 block rounded border border-[var(--border)] px-2 py-1.5 text-sm text-[var(--foreground)]" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-              <option value="">Whoever&apos;s on shift</option>
-              {team.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
           </label>
           <label className="text-xs text-[var(--muted)]">
             Due (optional)
@@ -62,8 +67,8 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
             Details (optional)
             <input className="mt-1 block w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm text-[var(--foreground)]" value={details} onChange={(e) => setDetails(e.target.value)} placeholder="The new posters are in the office" />
           </label>
-          <button className="btn-primary !px-4 !py-1.5 text-sm" disabled={busy || !title.trim()} onClick={add}>
-            {busy ? "Adding…" : "Add"}
+          <button className="btn-primary !px-4 !py-1.5 text-sm" disabled={busy || !title.trim() || assigneeId === null} onClick={add}>
+            {busy ? "Adding…" : assigneeId === null ? "Pick who it's for" : "Add"}
           </button>
         </div>
         {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}

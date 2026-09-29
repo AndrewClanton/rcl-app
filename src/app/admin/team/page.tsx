@@ -99,6 +99,7 @@ async function TimesheetView({ week }: { week: string }) {
             </span>
             {p.lateCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.lateCount} late</span>}
             {p.missedCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.missedCount} missed</span>}
+            {p.overtime && <span className="rounded bg-[var(--gold)] px-1.5 text-sm font-bold text-[var(--gold-foreground)]">Over 40 h: overtime</span>}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[560px] text-sm tabular-nums">

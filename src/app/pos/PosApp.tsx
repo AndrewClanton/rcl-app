@@ -10,6 +10,7 @@ import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
 import TabCardModal from "./TabCardModal";
+import { useOnShift } from "./shift/on-shift-store";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
@@ -118,7 +119,15 @@ export default function PosApp({
   const [builderItemId, setBuilderItemId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderName, setOrderName] = useState("");
-  const [employeeId, setEmployeeId] = useState<string>("");
+  // The cashier: whoever picked themselves in the list, else the person
+  // using this iPad per the shift bar, else the only person on shift. No
+  // more re-picking after every reload.
+  const [pickedCashier, setPickedCashier] = useState<string>("");
+  const onShift = useOnShift();
+  const employeeId =
+    (pickedCashier && employees.some((e) => e.id === pickedCashier) ? pickedCashier : "") ||
+    (onShift.meEmployeeId && employees.some((e) => e.id === onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
+    (onShift.onShift.length === 1 && employees.some((e) => e.id === onShift.onShift[0].employeeId) ? onShift.onShift[0].employeeId : "");
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
   const [taxFree, setTaxFree] = useState(false);
@@ -530,7 +539,7 @@ export default function PosApp({
       <div className="card flex flex-col !p-3 md:min-h-0">
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setPickedCashier(e.target.value)}>
               <option value="">Choose cashier</option>
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
@@ -741,6 +750,11 @@ export default function PosApp({
           <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy} onClick={startCheckout}>
             Complete order
           </button>
+          {!employeeId && cart.length > 0 && (
+            <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
+              Start your shift (or choose a cashier above) to ring this up.
+            </p>
+          )}
           <div className="mt-2 grid grid-cols-4 gap-2">
             <button
               className="btn-secondary whitespace-nowrap py-2 text-sm"

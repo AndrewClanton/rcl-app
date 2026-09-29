@@ -82,7 +82,7 @@ export function thisWeek(): string {
 export async function getSchedule(weekStart: string): Promise<ScheduledShift[]> {
   const from = businessDayWindow(weekStart).start;
   const to = businessDayWindow(shiftDate(weekStart, 7)).start;
-  const [n, { data }] = await Promise.all([names(), createAdminClient().from("staff_schedule").select("*").gte("starts_at", from).lt("starts_at", to).order("starts_at")]);
+  const [n, { data }] = await Promise.all([names(), createAdminClient().from("staff_schedule").select("*").is("deleted_at", null).gte("starts_at", from).lt("starts_at", to).order("starts_at")]);
   return (data ?? []).map((s) => ({ id: s.id, employeeId: s.employee_id, name: n.get(s.employee_id) ?? "Someone", startsAt: s.starts_at, endsAt: s.ends_at, note: s.note }));
 }
 
@@ -107,6 +107,7 @@ export interface TimesheetPerson {
   scheduledHours: number;
   lateCount: number;
   missedCount: number;
+  overtime: boolean; // over 40 hours in the week (Monday 4 AM to Monday 4 AM)
 }
 
 const MATCH_WINDOW_MS = 4 * 3_600_000; // a clock-in within 4 hours of a scheduled start counts as that shift
@@ -126,7 +127,7 @@ export async function getTimesheet(weekStart: string): Promise<TimesheetPerson[]
   const person = (id: string) => {
     let p = people.get(id);
     if (!p) {
-      p = { employeeId: id, name: n.get(id) ?? "Someone", shifts: [], hours: 0, scheduledHours: 0, lateCount: 0, missedCount: 0 };
+      p = { employeeId: id, name: n.get(id) ?? "Someone", shifts: [], hours: 0, scheduledHours: 0, lateCount: 0, missedCount: 0, overtime: false };
       people.set(id, p);
     }
     return p;
@@ -167,6 +168,7 @@ export async function getTimesheet(weekStart: string): Promise<TimesheetPerson[]
     if (over) p.missedCount++;
   }
 
+  for (const p of people.values()) p.overtime = p.hours > 40;
   for (const p of people.values()) p.shifts.sort((a, b) => (a.date + (a.clockedIn ?? "")).localeCompare(b.date + (b.clockedIn ?? "")));
   return [...people.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

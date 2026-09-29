@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ScheduledShift, TeamMember } from "@/lib/data/team";
-import { addScheduledShift, copyWeekForward, deleteScheduledShift } from "./actions";
+import { addScheduledShift, copyWeekForward, deleteScheduledShift, restoreScheduledShift } from "./actions";
 
 type Shift = ScheduledShift & { time: string; date: string };
 
 // The week on one screen: a row per person, a column per day. Tap a day
-// cell to put someone on; tap a shift to take it off.
+// cell to put someone on; tap a shift to remove it (asks first, can be undone).
 export default function ScheduleWeek({ week, days, team, shifts }: { week: string; days: { date: string; label: string }[]; team: TeamMember[]; shifts: Shift[] }) {
   const router = useRouter();
   const [adding, setAdding] = useState<{ employeeId: string; date: string } | null>(null);
@@ -18,6 +18,10 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<Shift | null>(null);
+  const [undo, setUndo] = useState<{ id: string; label: string } | null>(null);
+  const nameOf = (id: string) => team.find((t) => t.id === id)?.name ?? "Someone";
+  const dayOf = (date: string) => days.find((d) => d.date === date)?.label ?? date;
 
   async function save() {
     if (!adding) return;
@@ -66,9 +70,9 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
                               key={s.id}
                               className="rounded bg-[var(--foreground)] px-1.5 py-1 text-left text-xs text-[var(--background)]"
                               title="Remove this shift"
-                              onClick={async () => {
-                                await deleteScheduledShift(s.id);
-                                router.refresh();
+                              onClick={() => {
+                                setConfirm(s);
+                                setAdding(null);
                               }}
                             >
                               {s.time}
@@ -94,6 +98,47 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
           </tbody>
         </table>
       </div>
+
+      {confirm && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--danger-text)] bg-[var(--surface)] p-3 text-sm">
+          <span className="flex-1">
+            Remove <strong>{nameOf(confirm.employeeId)}</strong> · {dayOf(confirm.date)} {confirm.time}?
+          </span>
+          <button
+            className="btn-primary !px-4 !py-1.5 text-sm"
+            onClick={async () => {
+              const s = confirm;
+              setConfirm(null);
+              await deleteScheduledShift(s.id);
+              setUndo({ id: s.id, label: `${nameOf(s.employeeId)} · ${dayOf(s.date)} ${s.time}` });
+              setTimeout(() => setUndo((u) => (u?.id === s.id ? null : u)), 8000);
+              router.refresh();
+            }}
+          >
+            Remove
+          </button>
+          <button className="text-sm text-[var(--muted)] hover:underline" onClick={() => setConfirm(null)}>
+            Keep it
+          </button>
+        </div>
+      )}
+
+      {undo && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg bg-[var(--foreground)] px-3 py-2 text-sm text-[var(--background)]">
+          <span className="flex-1">Removed {undo.label}.</span>
+          <button
+            className="font-bold underline"
+            onClick={async () => {
+              const r = await restoreScheduledShift(undo.id);
+              setUndo(null);
+              if (!r.ok) setInfo(r.error);
+              router.refresh();
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      )}
 
       {adding && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-[var(--accent)] bg-[var(--surface)] p-3">
@@ -128,14 +173,14 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
           onClick={async () => {
             setInfo(null);
             const r = await copyWeekForward(week).catch(() => ({ ok: false as const, error: "Couldn't copy the week." }));
-            setInfo(r.ok ? `Copied ${"copied" in r ? r.copied : ""} shifts onto next week.` : r.error);
+            setInfo(r.ok ? `Copied ${r.copied ?? 0} shift${r.copied === 1 ? "" : "s"} onto next week${r.skipped ? ` · ${r.skipped} already there` : ""}.` : r.error);
             router.refresh();
           }}
         >
           Copy this week to next week
         </button>
         {info && <span className="text-[var(--muted)]">{info}</span>}
-        <span className="text-xs text-[var(--muted)]">Tap + to add a shift, tap a shift to remove it. Shifts ending after midnight count on the day they start.</span>
+        <span className="text-xs text-[var(--muted)]">Tap + to add a shift, tap a shift to remove it. Shifts ending after midnight count on the day they start. Copying never doubles a shift that&apos;s already there.</span>
       </div>
     </div>
   );

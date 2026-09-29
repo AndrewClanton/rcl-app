@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useOpsApi } from "./api";
 import type { OnShift, ShiftStatus } from "@/lib/ops/shared";
 import OpsPanel, { type OpsTab } from "./OpsPanel";
+import { publishOnShift } from "./on-shift-store";
 
 // The register's shift tools: who's working, reminders, and the buttons that
 // open the checklist, par count, shopping list and history. Sits above the
@@ -90,10 +91,17 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const me: OnShift | null = status?.onShift.find((o) => o.shiftId === meShift) ?? null;
   const reminders = (status?.reminders ?? []).filter((r) => !snoozed[`${r.reminderId}:${r.occurrence}`]);
   const tasksLeft = status?.tasks.filter((t) => !t.done).length ?? 0;
-  // To-dos from Back office → Team: the ones for whoever's on shift, plus
-  // (once someone has said which shift is theirs) the ones for them by name.
-  // With nobody picked, everyone's show, labelled.
-  const todos = (status?.todos ?? []).filter((t) => !t.assigneeId || !me || t.assigneeId === me.employeeId);
+  // To-dos from Back office → Team: the ones for whoever's on shift, and the
+  // ones for anybody who's on right now (labelled with their name).
+  const onShiftIds = new Set((status?.onShift ?? []).map((o) => o.employeeId));
+  const todos = (status?.todos ?? []).filter((t) => !t.assigneeId || onShiftIds.size === 0 || onShiftIds.has(t.assigneeId));
+  const [justDone, setJustDone] = useState<{ id: string; title: string } | null>(null);
+  const [todoError, setTodoError] = useState<string | null>(null);
+
+  // Tell the register who's working, so the cashier fills itself in.
+  useEffect(() => {
+    publishOnShift(status?.onShift ?? [], me?.employeeId ?? null);
+  }, [status, me]);
 
   async function begin(employeeId: string) {
     const r = await api.startShift(employeeId).catch(() => null);
@@ -130,7 +138,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             {status?.onShift.map((o) => (
               <button
                 key={o.shiftId}
-                className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 !text-sm ${o.shiftId === meShift ? "chip-selected font-bold" : ""}`}
+                className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 !text-sm min-h-11 ${o.shiftId === meShift ? "chip-selected font-bold" : ""}`}
                 onClick={() => {
                   writeMe(o.shiftId);
                   setMeShift(o.shiftId);
@@ -140,27 +148,32 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                 {o.name} <span style={{ color: "var(--muted)" }}>· {time(o.startedAt)}</span>
               </button>
             ))}
-            <button className="btn-secondary shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setStartOpen(true)}>
+            {status && status.onShift.length > 1 && (
+              <span className="shrink-0 text-xs" style={{ color: "var(--muted)" }}>
+                Tap your name if it&apos;s you
+              </span>
+            )}
+            <button className="btn-secondary min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setStartOpen(true)}>
               Start shift
             </button>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
-            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
+            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
               Checklist
               {tasksLeft > 0 && <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>{tasksLeft}</span>}
             </button>
-            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "par" })}>
+            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "par" })}>
               Par sheet
             </button>
-            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
+            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
               Shopping
               {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
             </button>
-            <button className="btn-secondary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "history" })}>
+            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "history" })}>
               History
             </button>
             {me && (
-              <button className="btn-primary whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setEndOpen(true)}>
+              <button className="btn-primary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setEndOpen(true)}>
                 End shift
               </button>
             )}
@@ -214,6 +227,35 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
         </div>
       )}
 
+      {(justDone || todoError) && (
+        <div className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border-2 px-4 py-2 text-sm" style={{ borderColor: "var(--foreground)" }}>
+          {todoError ? (
+            <span className="font-bold" style={{ color: "var(--danger-text)" }}>
+              {todoError}
+            </span>
+          ) : (
+            justDone && (
+              <>
+                <span className="flex-1">
+                  Done: <strong>{justDone.title}</strong>
+                </span>
+                <button
+                  className="min-h-11 px-3 font-bold underline"
+                  onClick={async () => {
+                    const id = justDone.id;
+                    setJustDone(null);
+                    await api.undoTodoDone(id).catch(() => null);
+                    refresh();
+                  }}
+                >
+                  Undo
+                </button>
+              </>
+            )
+          )}
+        </div>
+      )}
+
       {todos.length > 0 && (
         <div className="mb-3 grid gap-2">
           {todos.map((t) => {
@@ -243,10 +285,15 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                   </div>
                 </div>
                 <button
-                  className="rounded-lg border-2 px-4 py-2 text-sm font-bold"
+                  className="min-h-11 rounded-lg border-2 px-4 py-2 text-sm font-bold"
                   style={{ borderColor: "currentColor" }}
                   onClick={async () => {
-                    await api.setTodoDone(t.id, me?.employeeId ?? null).catch(() => null);
+                    setTodoError(null);
+                    // A to-do for Caleb is done by Caleb, whoever's tapping.
+                    const r = await api.setTodoDone(t.id, t.assigneeId ?? me?.employeeId ?? null).catch(() => null);
+                    if (!r || !r.ok) return setTodoError(`"${t.title}" didn't save. Tap Done again.`);
+                    setJustDone({ id: t.id, title: t.title });
+                    setTimeout(() => setJustDone((j) => (j?.id === t.id ? null : j)), 6000);
                     refresh();
                   }}
                 >
@@ -260,20 +307,35 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
 
       {startOpen && (
         <Dialog title="Who's starting a shift?" onClose={() => setStartOpen(false)} closeLabel="Not now">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {staff
-              .filter((s) => !status?.onShift.some((o) => o.employeeId === s.id))
-              // Who's on the schedule today comes first, with their hours.
-              .sort((a, b) => Number(!!status?.scheduled[b.id]) - Number(!!status?.scheduled[a.id]))
-              .map((s) => (
-                <button key={s.id} className="btn-secondary !py-4 text-base" onClick={() => begin(s.id)}>
-                  {s.name}
-                  {status?.scheduled[s.id] && <span className="mt-0.5 block text-xs font-normal opacity-70">Scheduled {status.scheduled[s.id]}</span>}
-                </button>
-              ))}
-          </div>
+          {(() => {
+            const free = staff.filter((s) => !status?.onShift.some((o) => o.employeeId === s.id));
+            const today = free.filter((s) => status?.scheduled[s.id]);
+            const others = free.filter((s) => !status?.scheduled[s.id]);
+            const tile = (s: { id: string; name: string }) => (
+              <button key={s.id} className="btn-secondary min-h-16 !py-4 text-base" onClick={() => begin(s.id)}>
+                {s.name}
+                {status?.scheduled[s.id] && <span className="mt-0.5 block text-xs font-normal opacity-70">{status.scheduled[s.id]}</span>}
+              </button>
+            );
+            return (
+              <div className="space-y-4">
+                {today.length > 0 && (
+                  <div>
+                    <div className="eyebrow mb-2">On today&apos;s schedule</div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{today.map(tile)}</div>
+                  </div>
+                )}
+                {others.length > 0 && (
+                  <div>
+                    {today.length > 0 && <div className="eyebrow mb-2">Everyone else</div>}
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{others.map(tile)}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <p className="mt-3 text-xs" style={{ color: "var(--muted)" }}>
-            Not listed? Add them in Admin → Staff.
+            Not listed? Ask Andrew to add you on the Staff page.
           </p>
         </Dialog>
       )}
@@ -334,7 +396,7 @@ function EndShiftDialog({
 
   return (
     <Dialog title={`End ${me.name}'s shift`} onClose={onClose} closeLabel="Cancel">
-      {closingLeft.length > 0 && (
+      {closing && closingLeft.length > 0 && (
         <div className="notice notice-warn mb-4">
           <div className="font-bold">
             {closingLeft.length} closing task{closingLeft.length === 1 ? " isn't" : "s aren't"} ticked off

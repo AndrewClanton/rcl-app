@@ -17,7 +17,7 @@ export async function verifyManagerPin(pin: string): Promise<boolean> {
 async function managerPinMatches(pin: string): Promise<boolean> {
   if (!pin) return false;
   const supabase = createAdminClient();
-  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin"]).eq("active", true);
+  const { data: managers } = await supabase.from("employees").select("pin_hash").in("role", ["manager", "admin", "owner"]).eq("active", true);
   return (managers ?? []).some((m) => verifyPin(pin, m.pin_hash));
 }
 
