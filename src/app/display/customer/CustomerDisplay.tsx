@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, realtimeReady } from "@/lib/supabase/realtime";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import CheckinKiosk from "./CheckinKiosk";
 
@@ -36,10 +37,10 @@ export default function CustomerDisplay({ movies, registerTopic }: { movies: Pro
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
 
-    supabase.auth.getSession().then(() => {
+    realtimeReady(supabase).then(() => {
       if (cancelled) return;
       channel = supabase
-        .channel(registerTopic)
+        .channel(registerTopic, PRIVATE_CHANNEL)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
         .subscribe((status) => {
           // A kiosk that just loaded (or refreshed) has missed every prior
