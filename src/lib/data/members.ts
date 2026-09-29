@@ -37,9 +37,15 @@ export async function getMembersPage(opts: {
   let q = supabase.from("members").select(MEMBER_SELECT, { count: "exact" }).is("erased_at", null);
   const query = opts.query?.trim();
   if (query) {
-    // Escape wildcard chars so a search for e.g. "50% off" doesn't become a pattern.
-    const escaped = query.replace(/[%_]/g, (c) => `\\${c}`);
-    q = q.or(`name.ilike.%${escaped}%,email.ilike.%${escaped}%`);
+    // Escape wildcard chars so a search for e.g. "50% off" doesn't become a
+    // pattern; commas and parentheses would break the filter itself.
+    const escaped = query.replace(/[%_]/g, (c) => `\\${c}`).replace(/[,()]/g, " ");
+    const filters = [`name.ilike.%${escaped}%`, `email.ilike.%${escaped}%`];
+    // Phone numbers however they're typed ("(417) 555-0100", "4175550100",
+    // or just the last four), against the digits-only copy.
+    const digits = query.replace(/\D/g, "");
+    if (digits.length >= 4) filters.push(`phone_digits.like.%${digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits}%`);
+    q = q.or(filters.join(","));
   }
   if (opts.compedOnly) q = q.eq("comped", true);
 

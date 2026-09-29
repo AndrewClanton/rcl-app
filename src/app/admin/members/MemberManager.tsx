@@ -77,7 +77,7 @@ export default function MemberManager({
         <div className="flex flex-wrap items-center gap-3">
           <input
             className="min-w-[200px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
-            placeholder="Search members by name or email..."
+            placeholder="Search members by name, email or phone..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
