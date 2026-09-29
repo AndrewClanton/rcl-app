@@ -501,7 +501,7 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
   const { data, error } = await createAdminClient()
     .from("orders")
     .select(
-      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
+      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
     )
     .in("status", ["completed", "refunded", "voided"])
     .not("completed_at", "is", null)

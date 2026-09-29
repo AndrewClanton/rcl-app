@@ -96,7 +96,7 @@ export async function getDayReport(date: string): Promise<DayReport> {
     supabase
       .from("orders")
       .select(
-        "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tip, total, tier_discount, monthly_discount, redemption_discount, employee:employees(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)",
+        "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tip, total, tier_discount, monthly_discount, redemption_discount, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)",
       )
       .in("status", ["completed", "refunded", "voided"])
       .gte("completed_at", start)
