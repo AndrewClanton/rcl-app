@@ -30,7 +30,8 @@ export const viewport: Viewport = {
 };
 
 export default async function PosPage() {
-  await requireStaff();
+  // Signing in again comes back here, not to the back office.
+  await requireStaff("/pos");
 
   const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
