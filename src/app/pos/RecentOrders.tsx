@@ -4,6 +4,7 @@ import { useState } from "react";
 import { receiptXml, type ReceiptData } from "@/lib/print/receipt";
 import { printerBaseUrl, sendToPrinter, type PrintResult } from "@/lib/print/epos-client";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
 import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "./actions";
 import { printTickets } from "./print-tickets";
 
@@ -239,7 +240,7 @@ export default function RecentOrders({ printerAddress }: { printerAddress: strin
             const r = await refundRegisterOrder(selected.id, pin);
             if (!r.ok) throw new Error(r.error);
             setRefunding(false);
-            setNote({ tone: "ok", text: `Order #${selected.orderNumber} refunded.${selected.cash > 0 ? ` Hand back ${money(selected.cash)} cash.` : ""}` });
+            setNote({ tone: "ok", text: `Order #${selected.orderNumber} refunded.${selected.cash > 0 ? ` Hand back ${money(selected.cash)} cash.` : ""} ${approvalText(r)}` });
             await load(selected.id);
           }}
         />

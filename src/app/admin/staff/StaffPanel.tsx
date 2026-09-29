@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, type AccountMatch } from "./actions";
+import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
   owner: "Owner",
@@ -17,9 +17,15 @@ const ROLE_LABEL: Record<EmployeeRole, string> = {
 
 const ASSIGNABLE = ["cashier", "manager", "admin", "display"] as const;
 
-const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px] items-center gap-3";
+const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px] items-center gap-3";
+
+const MANAGER_ROLES: EmployeeRole[] = ["manager", "admin", "owner"];
 
 export default function StaffPanel({ employees }: { employees: EmployeeWithEmail[] }) {
+  // Until every manager has their own PIN, 9999 still approves refunds.
+  const stillDefault = employees.filter((e) => e.active && e.pin === "default");
+  const managersOnDefault = stillDefault.filter((e) => MANAGER_ROLES.includes(e.role));
+
   return (
     <div className="space-y-6">
       <FindAccount />
@@ -30,11 +36,22 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
         </div>
       </details>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+        {managersOnDefault.length > 0 ? (
+          <div className="notice notice-warn mb-3">
+            Still on PIN 9999: {managersOnDefault.map((e) => e.name).join(", ")}. Until every manager picks their own PIN (My PIN, at the top of the back office), anyone who knows
+            9999 can approve refunds.
+          </div>
+        ) : stillDefault.length > 0 ? (
+          <p className="mb-3 text-xs text-[var(--muted)]">
+            Every manager has their own PIN, so 9999 no longer approves anything. Still on 9999 (not a manager, so it doesn&apos;t approve anything): {stillDefault.map((e) => e.name).join(", ")}.
+          </p>
+        ) : null}
         <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
           <span>Name</span>
           <span>Email</span>
           <span>Role</span>
           <span>Status</span>
+          <span>PIN</span>
         </div>
         <div className="divide-y divide-[var(--border)]">
           {employees.map((e) => (
@@ -107,7 +124,7 @@ function FindAccount() {
       {done && (
         <div className="notice notice-success mt-3 !p-3 text-sm">
           {done.name} is now {ROLE_LABEL[done.role] === "Admin" ? "an" : "a"} {ROLE_LABEL[done.role]}. They sign in at <strong>/login</strong> with the same Google or email login they
-          already use. Their register PIN starts as 9999.
+          already use. Their PIN starts as 9999, and the back office asks them to pick their own under My PIN.
         </div>
       )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
@@ -292,6 +309,100 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
           {employee.active ? "Deactivate" : "Reactivate"}
         </button>
       )}
+      <PinCell employee={employee} />
     </div>
+  );
+}
+
+const PIN_LABEL: Record<EmployeeWithEmail["pin"], string> = {
+  default: "Still 9999",
+  temporary: "Temporary",
+  own: "Their own",
+  none: "—",
+};
+
+// Where they stand on their PIN, and a reset for someone who forgot theirs:
+// the owner picks a temporary PIN and tells them, and the back office asks
+// them to change it.
+function PinCell({ employee }: { employee: EmployeeWithEmail }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const firstName = employee.name.split(" ")[0];
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    const r = await resetEmployeePin(employee.id, pin).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+    setBusy(false);
+    if (!r.ok) return setError(r.error);
+    setOpen(false);
+    setPin("");
+    setSaved(true);
+    router.refresh();
+  }
+
+  if (employee.pin === "none") return <span className="text-xs text-[var(--muted)]">—</span>;
+
+  return (
+    <>
+      <span className="flex items-center gap-2 text-xs">
+        <span className={employee.pin === "default" ? "text-[var(--warn-text)]" : "text-[var(--muted)]"}>{PIN_LABEL[employee.pin]}</span>
+        {!open && (
+          <button
+            className="text-[var(--muted)] underline hover:text-[var(--foreground)]"
+            onClick={() => {
+              setOpen(true);
+              setSaved(false);
+            }}
+          >
+            Reset
+          </button>
+        )}
+      </span>
+      {open && (
+        <div className="col-span-full rounded-lg border border-[var(--border)] p-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={`pin-${employee.id}`}>Temporary PIN for {employee.name}:</label>
+            <input
+              id={`pin-${employee.id}`}
+              inputMode="numeric"
+              autoComplete="off"
+              maxLength={6}
+              placeholder="4–6 digits"
+              className="w-28 rounded border border-[var(--border)] px-2 py-1 text-sm tracking-widest"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+              onKeyDown={(e) => e.key === "Enter" && pin.length >= 4 && !busy && save()}
+            />
+            <button className="btn-primary !px-3 !py-1 text-xs" disabled={busy || pin.length < 4} onClick={save}>
+              {busy ? "Saving…" : "Set PIN"}
+            </button>
+            <button
+              className="text-xs text-[var(--muted)] hover:underline"
+              onClick={() => {
+                setOpen(false);
+                setPin("");
+                setError(null);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-[var(--muted)]">
+            For someone who forgot theirs. Tell them in person. It works right away, and the back office asks them to change it to one only they know.
+          </p>
+          {error && <p className="mt-1 text-xs text-[var(--danger-text)]">{error}</p>}
+        </div>
+      )}
+      {saved && (
+        <div className="notice notice-success col-span-full !p-2.5 text-xs">
+          {firstName}&apos;s temporary PIN is saved. Tell them in person. Next time they open the back office, it asks them to pick their own under My PIN.
+        </div>
+      )}
+    </>
   );
 }

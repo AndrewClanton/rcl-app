@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Employee, EmployeeRole, Member } from "@/lib/types";
+import { isDefaultPin } from "@/lib/pin";
 
 export interface MemberStaffInfo {
   role: EmployeeRole;
@@ -36,6 +37,7 @@ export async function getActiveEmployees(): Promise<Employee[]> {
 
 export interface EmployeeWithEmail extends Employee {
   email: string | null;
+  pin: PinStatus;
 }
 
 // employees.auth_user_id points at auth.users, which PostgREST doesn't
@@ -44,19 +46,66 @@ export interface EmployeeWithEmail extends Employee {
 // scripts/create-admin-user.mjs.
 export async function getEmployees(): Promise<EmployeeWithEmail[]> {
   const supabase = createAdminClient();
-  const [{ data: employees, error }, { data: usersRes, error: usersErr }] = await Promise.all([
-    supabase.from("employees").select("id, name, role, active, auth_user_id").order("created_at"),
-    supabase.auth.admin.listUsers(),
-  ]);
-  if (error) throw error;
+  const [employees, { data: usersRes, error: usersErr }] = await Promise.all([selectWithPinFlag(), supabase.auth.admin.listUsers()]);
   if (usersErr) throw usersErr;
 
   const emailById = new Map(usersRes.users.map((u) => [u.id, u.email ?? null]));
-  return (employees ?? []).map((e) => ({
+  return employees.map((e) => ({
     id: e.id,
     name: e.name,
     role: e.role,
     active: e.active,
     email: e.auth_user_id ? (emailById.get(e.auth_user_id) ?? null) : null,
+    pin: pinStatus(e),
   }));
+}
+
+// ---------- PINs ----------
+// "default": still 9999. "temporary": the owner reset it (Staff page) and
+// they haven't picked their own yet. "own": they picked it. "none": a
+// display screen, which never uses a PIN.
+export type PinStatus = "default" | "temporary" | "own" | "none";
+
+function pinStatus(row: { pin_hash: string; pin_must_change?: boolean | null }): PinStatus {
+  if (!row.pin_hash?.startsWith("scrypt$")) return "none";
+  if (isDefaultPin(row.pin_hash)) return "default";
+  return row.pin_must_change ? "temporary" : "own";
+}
+
+interface EmployeePinRow {
+  id: string;
+  name: string;
+  role: EmployeeRole;
+  active: boolean;
+  auth_user_id: string | null;
+  pin_hash: string;
+  pin_must_change?: boolean;
+}
+
+// Everyone (or one person), with their PIN hash. employees.pin_must_change
+// comes with migration 20260929100000_manager_pins.sql; until it's applied
+// this reads without it, and a reset PIN just looks like their own.
+async function selectWithPinFlag(employeeId?: string): Promise<EmployeePinRow[]> {
+  const supabase = createAdminClient();
+  const run = (columns: string) => {
+    const q = supabase.from("employees").select(columns);
+    return employeeId ? q.eq("id", employeeId) : q.order("created_at");
+  };
+  const base = "id, name, role, active, auth_user_id, pin_hash";
+  const withFlag = await run(`${base}, pin_must_change`);
+  if (!withFlag.error) return (withFlag.data ?? []) as unknown as EmployeePinRow[];
+  const { data, error } = await run(base);
+  if (error) throw error;
+  return (data ?? []) as unknown as EmployeePinRow[];
+}
+
+// For the "your PIN is still 9999" banner and the My PIN page. Null when
+// it can't be read, so a hiccup never takes the back office down with it.
+export async function getPinStatus(employeeId: string): Promise<PinStatus | null> {
+  try {
+    const [row] = await selectWithPinFlag(employeeId);
+    return row ? pinStatus(row) : null;
+  } catch {
+    return null;
+  }
 }
