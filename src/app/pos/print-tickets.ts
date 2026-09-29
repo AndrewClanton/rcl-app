@@ -15,9 +15,11 @@ function posterRaster(url: string) {
 }
 
 // One ticket per admission, sent one at a time so the printer never gets a
-// huge job. Returns the first failure, if any. Used after a sale and by
-// "Reprint tickets" (Devices, Recent orders).
-export async function printTickets(printerAddress: string, orderNumber: number, sales: TicketSale[]): Promise<PrintResult> {
+// huge job. Returns the first failure, if any. Used after a sale, by
+// "Reprint tickets" (Devices, Recent orders), and for an online booking
+// scanned at the door (door-print.ts), whose number is a string like
+// "T-1A2B3C4D".
+export async function printTickets(printerAddress: string, orderNumber: number | string, sales: TicketSale[]): Promise<PrintResult> {
   const info = await getTicketPrintInfo([...new Set(sales.map((t) => t.screeningId))]).catch(() => null);
   if (!info) return { ok: false, error: "Couldn't look up the showings to print tickets. Try again from Recent orders." };
   let index = 0;

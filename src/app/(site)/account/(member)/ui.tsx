@@ -25,9 +25,11 @@ export function Empty({ children }: { children: React.ReactNode }) {
 }
 
 // A screening as a ticket stub: poster, the show, and a tear-off "admit".
+// An upcoming one opens its tickets (the QR code for the door); a past one,
+// its receipt.
 export function TicketStub({ s, past = false }: { s: MemberScreening; past?: boolean }) {
   return (
-    <Link href={`/account/purchases/ticket/${s.bookingId}`} className="sheet flex items-stretch overflow-hidden transition-transform hover:-translate-y-px">
+    <Link href={past ? `/account/purchases/ticket/${s.bookingId}` : `/account/movies/${s.bookingId}`} className="sheet flex items-stretch overflow-hidden transition-transform hover:-translate-y-px">
       <div className="w-16 shrink-0 border-r-2 border-[var(--foreground)]">
         <MoviePoster posterUrl={s.posterUrl} title={s.title} sizes="64px" />
       </div>

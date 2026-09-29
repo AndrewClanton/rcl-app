@@ -5,6 +5,7 @@ import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
+import TicketCard from "@/components/TicketCard";
 import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
@@ -21,11 +22,15 @@ export default function OverviewView({
 }: {
   member: Member;
   purchases: PurchaseRow[];
-  screenings: { upcoming: MemberScreening[]; past: MemberScreening[] };
+  screenings: { upcoming: MemberScreening[]; past: MemberScreening[]; tonight?: MemberScreening[] };
   booths?: MemberBooth[];
   googlePhoto: string | null;
   welcome: boolean;
 }) {
+  const tonight = screenings.tonight ?? [];
+  const later = screenings.upcoming.filter((s) => !tonight.some((t) => t.bookingId === s.bookingId));
+  // A show that started a few minutes ago is still tonight's ticket, not a memory yet.
+  const watched = screenings.past.filter((s) => !tonight.some((t) => t.bookingId === s.bookingId));
   const balance = Math.floor(Number(member.points));
   const rewards = Math.floor(balance / POINTS_PER_REWARD);
   const toNext = POINTS_PER_REWARD - (balance % POINTS_PER_REWARD);
@@ -101,14 +106,24 @@ export default function OverviewView({
         </section>
       )}
 
-      {screenings.upcoming.length > 0 && (
+      {(tonight.length > 0 || later.length > 0) && (
         <section>
           <SectionHead title="Your tickets" href="/account/movies" link="All movies" />
-          <div className="grid gap-5 sm:grid-cols-2">
-            {screenings.upcoming.slice(0, 4).map((s) => (
-              <TicketStub key={s.bookingId} s={s} />
-            ))}
-          </div>
+          {/* Tonight's show their code right here, for the door. */}
+          {tonight.length > 0 && (
+            <div className="mb-7 grid items-start gap-7 sm:grid-cols-2">
+              {tonight.map((s) => (
+                <TicketCard key={s.bookingId} t={s} />
+              ))}
+            </div>
+          )}
+          {later.length > 0 && (
+            <div className="grid gap-5 sm:grid-cols-2">
+              {later.slice(0, 4).map((s) => (
+                <TicketStub key={s.bookingId} s={s} />
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -125,7 +140,7 @@ export default function OverviewView({
 
       <section>
         <SectionHead title="Recently watched" href="/account/movies" link="All movies" />
-        {screenings.past.length === 0 ? (
+        {watched.length === 0 ? (
           <Empty>
             Movies you buy tickets for with this account show up here.{" "}
             <Link href="/showtimes" className="font-bold text-[var(--accent)] hover:underline">
@@ -134,7 +149,7 @@ export default function OverviewView({
           </Empty>
         ) : (
           <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
-            {screenings.past.slice(0, 6).map((s) => (
+            {watched.slice(0, 6).map((s) => (
               <div key={s.bookingId}>
                 <div className="overflow-hidden rounded-[3px] border-2 border-[var(--foreground)] shadow-[3px_3px_0_var(--foreground)]">
                   <MoviePoster posterUrl={s.posterUrl} title={s.title} sizes="150px" />
