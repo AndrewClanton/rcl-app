@@ -463,7 +463,13 @@ export async function cancelTab(id: string, pin: string): Promise<ApprovalResult
   const approval = await checkManagerPin(pin, "cancel-tab", staff.employeeId, id);
   if (!approval.ok) return approval;
   const supabase = createAdminClient();
-  await supabase.from("orders").delete().eq("id", id);
+  // Only a tab that's still open: one paid on another register meanwhile is
+  // a sale now, and deleting it would lose it. Its card on file is released
+  // first, like any discarded draft.
+  const { data: open } = await supabase.from("orders").select("id").eq("id", id).in("status", OPEN_DRAFT).maybeSingle();
+  if (!open) return { ok: false, error: "That tab isn't open anymore. It may have been paid on another register. Check Recent orders." };
+  await releaseTabCard(id);
+  await supabase.from("orders").delete().eq("id", id).in("status", OPEN_DRAFT);
   revalidate();
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
