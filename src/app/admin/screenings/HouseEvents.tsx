@@ -55,7 +55,9 @@ export default function HouseEvents({ events }: { events: HouseEvent[] }) {
               <button
                 className="text-xs text-[var(--danger-text)] hover:underline"
                 onClick={async () => {
-                  await deleteHouseEvent(e.id);
+                  setError(null);
+                  const r = await deleteHouseEvent(e.id).catch(() => ({ ok: false as const, error: "Couldn't remove that event. Try again." }));
+                  if (!r.ok) setError(r.error);
                   router.refresh();
                 }}
               >
