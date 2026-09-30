@@ -49,10 +49,12 @@ import {
   saveDraftOrder,
   updateDraftOrder,
   loadDraftOrder,
+  resumeHeldOrder,
   discardDraftOrder,
   cancelTab,
   type CheckoutPayment,
   type CheckoutTotals,
+  type DraftOrderFull,
   type DraftOrderSummary,
   type DraftFields,
 } from "./actions";
@@ -77,6 +79,13 @@ interface CartLine {
 
 // The Movies tab sits alongside the menu categories.
 const MOVIES_TAB = "__movies";
+
+// The 21+ ID check, asked once per order: when its first alcohol goes on
+// ("add"), when a tab or held order with alcohol and no check is opened
+// ("open"), or at payment if it still hasn't been done ("pay"). then: what
+// waits on it (adding the drink, taking payment); declining skips it, so
+// the drink isn't added.
+type IdCheck = { why: "add" | "open" | "pay"; item?: string; then?: () => void };
 
 type TotalsMember = { tier: MemberTier; points: number } | null;
 
@@ -195,7 +204,14 @@ export default function PosApp({
   const [payOpen, setPayOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
-  const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
+  // This order's ID check was done (saved with a held order or tab).
+  const [idChecked, setIdChecked] = useState(false);
+  const [idCheck, setIdCheck] = useState<IdCheck | null>(null);
+  // Each cart line's order_items row once it's been saved on a tab (by line
+  // key), so a save keeps the row and the kitchen and bar boards' ready
+  // mark. A ref, not cart state: learning a row id mustn't set off another
+  // autosave.
+  const lineIds = useRef(new Map<string, string>());
   const [tip, setTip] = useState(0);
   const [heldListOpen, setHeldListOpen] = useState(false);
   // ✨ Easter eggs: a surprise for the bottom of the next printed receipt.
@@ -285,7 +301,9 @@ export default function PosApp({
       monthlyMember,
       pointsRedeemed,
       station: devices.station,
+      ageVerified: idChecked,
       lines: cart.map((l) => ({
+        id: lineIds.current.get(l.key) ?? null,
         menu_item_id: l.menuItemId,
         name: l.name,
         unit_price: l.unit,
@@ -297,10 +315,15 @@ export default function PosApp({
     };
   }
 
-  function loadFields(id: string, f: Awaited<ReturnType<typeof loadDraftOrder>>) {
-    setCart(
-      f.lines.map((l) => ({
-        key: `${Date.now()}-${Math.random()}`,
+  // A held order or tab onto the screen. Its lines keep their rows, and a
+  // tab with alcohol and no ID check on file asks for one.
+  function loadFields(f: DraftOrderFull) {
+    const ids = new Map<string, string>();
+    const lines = f.lines.map((l) => {
+      const key = `${Date.now()}-${Math.random()}`;
+      if (l.id) ids.set(key, l.id);
+      return {
+        key,
         menuItemId: l.menu_item_id,
         name: l.name,
         unit: l.unit,
@@ -308,18 +331,38 @@ export default function PosApp({
         mods: l.modifiers,
         isAlcohol: l.is_alcohol,
         screeningId: l.screening_id ?? null,
-      }))
-    );
+      };
+    });
+    lineIds.current = ids;
+    setCart(lines);
     setOrderName(f.order_name ?? "");
     setMember(f.member);
     setTaxFree(f.tax_free);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
+    setIdChecked(f.age_verified);
+    if (!f.age_verified && f.lines.some((l) => l.is_alcohol)) setIdCheck({ why: "open" });
+  }
+
+  // The rows a save handed back, matched to the lines it sent (by key).
+  function adoptLineIds(keys: string[], itemIds: string[]) {
+    keys.forEach((key, i) => {
+      if (itemIds[i]) lineIds.current.set(key, itemIds[i]);
+    });
+  }
+
+  // Alcohol on an order without its ID check asks first; declined, it
+  // isn't added.
+  function withIdCheck(isAlcohol: boolean, item: string, then: () => void) {
+    if (!isAlcohol || idChecked) return then();
+    setIdCheck({ why: "add", item, then });
   }
 
   function addLine(line: BuiltLine) {
-    setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, ...line }]);
-    setBuilderItemId(null);
+    withIdCheck(line.isAlcohol, line.name, () => {
+      setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, ...line }]);
+      setBuilderItemId(null);
+    });
   }
 
   function updateQty(key: string, delta: number) {
@@ -338,15 +381,16 @@ export default function PosApp({
     if (!activeTabId) return;
     const id = activeTabId;
     const fields = currentFields();
+    const keys = cart.map((l) => l.key);
     const payload = totalsPayload(totals);
     const timer = setTimeout(() => {
-      saveTab(id, fields, payload).then((ok) => {
+      saveTab(id, fields, payload, keys).then((ok) => {
         if (ok) router.refresh();
       });
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId, idChecked]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -358,9 +402,12 @@ export default function PosApp({
   // Saves a tab. A failed save used to go unnoticed, so the tab quietly
   // lost what was added; now it shows "Tab not saved" until a save works,
   // and false tells the caller not to move on from the tab.
+  // The save is all-or-nothing (header and items together), so a failed one
+  // leaves the tab as it last saved. keys: the cart lines `fields` was made
+  // from, to match up the rows the save hands back.
   // leaving: the tab is being put away, so anything new for the kitchen
   // prints now instead of after a pause for more to be rung.
-  async function saveTab(id: string, fields: DraftFields, payload: CheckoutTotals, leaving = false): Promise<boolean> {
+  async function saveTab(id: string, fields: DraftFields, payload: CheckoutTotals, keys: string[], leaving = false): Promise<boolean> {
     let r: Awaited<ReturnType<typeof updateDraftOrder>>;
     let stale = false;
     try {
@@ -371,7 +418,10 @@ export default function PosApp({
       stale = isStaleBuildError(e);
     }
     if (r.ok || r.closed) setTabSaveIssue((cur) => (cur?.tabId === id ? null : cur));
-    if (r.ok) return true;
+    if (r.ok) {
+      adoptLineIds(keys, r.itemIds);
+      return true;
+    }
     if (r.closed) {
       // Paid or cancelled on another register: no save will ever work, so
       // don't strand staff on it (or leave its items up to be charged twice).
@@ -388,7 +438,7 @@ export default function PosApp({
   // The open tab, saved from the screen before the screen moves on. True
   // when there's no tab or it saved.
   async function saveOpenTab(): Promise<boolean> {
-    return !activeTabId || saveTab(activeTabId, currentFields(), totalsPayload(totals), true);
+    return !activeTabId || saveTab(activeTabId, currentFields(), totalsPayload(totals), cart.map((l) => l.key), true);
   }
 
   function retryTabSave() {
@@ -460,6 +510,8 @@ export default function PosApp({
     setMonthlyMember(false);
     setPointsRedeemed(false);
     setActiveTabId(null);
+    setIdChecked(false);
+    lineIds.current = new Map();
   }
 
   // False (with nothing moved) if what's on screen couldn't be saved.
@@ -515,14 +567,19 @@ export default function PosApp({
   async function doResumeHeld(id: string) {
     setBusy(true);
     try {
-      const full = await loadDraftOrder(id).catch(() => null);
-      if (!full) return setToast("That held order isn't there anymore. It may have been opened on another register.");
       // An open tab is saved and put away first. Left open, its autosave
       // wrote the held order's items over the tab.
       if (!(await saveOpenTab())) return;
+      // One claim takes the held order off the list and hands back its
+      // lines, so the other register can't open it too.
+      const r = await resumeHeldOrder(id).catch(() => null);
+      if (!r) return setToast("Couldn't open the held order. Check the connection and try again.");
+      if (!r.ok) {
+        router.refresh();
+        return setToast(r.error);
+      }
       setActiveTabId(null);
-      loadFields(id, full);
-      await discardDraftOrder(id);
+      loadFields(r.order);
       setHeldListOpen(false);
       router.refresh();
     } finally {
@@ -558,6 +615,8 @@ export default function PosApp({
         try {
           await discardDraftOrder(id);
           router.refresh();
+        } catch {
+          setToast("Couldn't discard the held order. Check the connection and try again.");
         } finally {
           setBusy(false);
         }
@@ -574,10 +633,12 @@ export default function PosApp({
       // screen keeps its own items: it's saved and the new tab starts empty.
       const fromScreen = !activeTabId;
       if (!fromScreen && !(await saveOpenTab())) return;
-      const id = fromScreen
+      const keys = cart.map((l) => l.key);
+      const { id, itemIds } = fromScreen
         ? await saveDraftOrder("tab", { ...currentFields(), orderName: name }, totalsPayload(totals))
         : await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
-      if (!fromScreen) resetOrder();
+      if (fromScreen) adoptLineIds(keys, itemIds);
+      else resetOrder();
       setActiveTabId(id);
       setOrderName(name);
       setTabCardFor({ id, name });
@@ -597,7 +658,7 @@ export default function PosApp({
       const full = await loadDraftOrder(id).catch(() => null);
       if (!full) return setToast("That tab isn't open anymore. It may have been closed on another register.");
       if (!(await stashCurrentWork())) return;
-      loadFields(id, full);
+      loadFields(full);
       setActiveTabId(id);
       setTabsListOpen(false);
       router.refresh();
@@ -608,11 +669,11 @@ export default function PosApp({
 
   async function handleCancelTab(pin: string) {
     if (!cancelTabId) return;
-    const r = await cancelTab(cancelTabId, pin);
+    const r = await cancelTab(cancelTabId, pin, employeeId || null);
     if (!r.ok) throw new Error(r.error); // shown in the PIN box
     if (activeTabId === cancelTabId) resetOrder();
     setCancelTabId(null);
-    setToast(`Tab cancelled. ${approvalText(r)}`);
+    setToast(`Tab cancelled. It stays in Recent orders. ${approvalText(r)}`);
     setTimeout(() => setToast(null), 7000);
     router.refresh();
   }
@@ -669,8 +730,9 @@ export default function PosApp({
   function continueAfterTip(tipAmount: number) {
     setTip(tipAmount);
     setTipOpen(false);
+    // Asked when the alcohol went on, so usually done already.
     const hasAlcohol = cart.some((l) => l.isAlcohol);
-    if (hasAlcohol) setAgeConfirmOpen(true);
+    if (hasAlcohol && !idChecked) setIdCheck({ why: "pay", then: () => setPayOpen(true) });
     else setPayOpen(true);
   }
 
@@ -714,7 +776,7 @@ export default function PosApp({
             ...currentFields(),
             totals: totalsPayload(totals),
             payment,
-            ageVerified: cart.some((l) => l.isAlcohol),
+            ageVerified: idChecked,
             tip: allTip,
             draftOrderId: activeTabId,
           },
@@ -1179,10 +1241,12 @@ export default function PosApp({
         {customOpen && (
           <CustomItemModal
             onCancel={() => setCustomOpen(false)}
-            onAdd={(l) => {
-              setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: [], isAlcohol: l.isAlcohol }]);
-              setCustomOpen(false);
-            }}
+            onAdd={(l) =>
+              withIdCheck(l.isAlcohol, l.name, () => {
+                setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: [], isAlcohol: l.isAlcohol }]);
+                setCustomOpen(false);
+              })
+            }
           />
         )}
 
@@ -1260,24 +1324,30 @@ export default function PosApp({
         <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={continueAfterTip} onCancel={() => setTipOpen(false)} />
       )}
 
-      {ageConfirmOpen && (
+      {idCheck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="card w-full max-w-xs text-center shadow-2xl">
             <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
-              Age verification
+              Check ID
             </h3>
             <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-              This order includes alcohol. Confirm you&apos;ve checked ID and the customer is 21 or older.
+              {idCheck.why === "add"
+                ? `${idCheck.item ?? "This item"} has alcohol. Check their ID: they must be 21 or older. You'll only be asked once for this order.`
+                : idCheck.why === "open"
+                  ? "There's alcohol on this order and no ID check on file. Check their ID: they must be 21 or older."
+                  : "This order includes alcohol. Confirm you've checked ID and the customer is 21 or older."}
             </p>
             <div className="mt-4 flex justify-center gap-2">
-              <button className="btn-secondary" onClick={() => setAgeConfirmOpen(false)}>
-                Cancel
+              <button className="btn-secondary" onClick={() => setIdCheck(null)}>
+                {idCheck.why === "add" ? "Don't add it" : idCheck.why === "open" ? "Not now" : "Cancel"}
               </button>
               <button
                 className="btn-primary"
                 onClick={() => {
-                  setAgeConfirmOpen(false);
-                  setPayOpen(true);
+                  const then = idCheck.then;
+                  setIdCheck(null);
+                  setIdChecked(true);
+                  then?.();
                 }}
               >
                 ID checked — 21+

@@ -1,9 +1,10 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import InfoTip from "@/components/help/InfoTip";
-import { shiftDate } from "@/lib/ops/time";
+import { clock, shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
+import { getCancelledTabs, getVoucherSales } from "@/lib/data/cancelled-tabs";
 import { BOOTHS_LABEL, FOOD_AND_DRINK, TICKETS_LABEL } from "@/lib/report-categories";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
@@ -159,6 +160,10 @@ export default function DayScreen({
       </Card>
 
       <Suspense fallback={null}>
+        <TabsAndVouchers date={date} />
+      </Suspense>
+
+      <Suspense fallback={null}>
         <DayDrill r={r} drill={drill} canRecord={canRecord} dayLabel={`${longDate(date)} · 4 a.m. to 4 a.m.`} />
       </Suspense>
     </div>
@@ -194,6 +199,59 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
         </Card>
         {trend}
       </div>
+    </div>
+  );
+}
+
+// Tabs cancelled this day (kept on file, never a sale) and the voucher
+// sales with the number on each voucher. Loaded on their own, so the rest
+// of the day doesn't wait; each shows only when there's something in it.
+async function TabsAndVouchers({ date }: { date: string }) {
+  const [tabs, vouchers] = await Promise.all([getCancelledTabs(date), getVoucherSales(date)]);
+  if (!tabs?.length && !vouchers?.length) return null;
+  return (
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {tabs && tabs.length > 0 && (
+        <Card title={`Cancelled tabs · ${tabs.length}`} subtitle="Cancelled on the register with a manager PIN. Never paid, so they aren't in any figure above.">
+          <ul className="divide-y divide-[var(--border)] text-sm">
+            {tabs.map((t) => (
+              <li key={t.id} className="py-2">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-semibold">#{t.orderNumber}</span>
+                  {t.name && <span className="min-w-0 truncate">{t.name}</span>}
+                  <span className="ml-auto tabular-nums text-[var(--muted)] line-through">{money(t.total)}</span>
+                </div>
+                {t.items && <p className="mt-0.5 line-clamp-2 text-[var(--muted)]">{t.items}</p>}
+                <p className="mt-0.5 text-xs text-[var(--muted)]">
+                  Opened {clock(t.openedAt)}
+                  {t.openedBy ? ` by ${t.openedBy}` : ""} · cancelled {clock(t.cancelledAt)}
+                  {t.cancelledBy ? ` by ${t.cancelledBy}` : ""} · {t.approvedBy ? `approved by ${t.approvedBy}` : "approved with a shared manager PIN"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+      {vouchers && vouchers.length > 0 && (
+        <Card title={`Vouchers taken · ${vouchers.length}`} subtitle="Paper vouchers (trivia prizes), with the number on the voucher when the cashier typed it.">
+          <Rows
+            rows={vouchers.map((v) => ({
+              key: v.id,
+              label: (
+                <>
+                  #{v.orderNumber} <span className="text-[var(--muted)]">· {clock(v.at)}</span>
+                  <div className="text-xs text-[var(--muted)]">
+                    {v.code ? `Voucher #${v.code}` : "No voucher number typed"}
+                    {v.status === "refunded" ? " · refunded" : ""}
+                  </div>
+                </>
+              ),
+              value: money(v.voucher),
+              muted: v.status === "refunded",
+            }))}
+          />
+        </Card>
+      )}
     </div>
   );
 }

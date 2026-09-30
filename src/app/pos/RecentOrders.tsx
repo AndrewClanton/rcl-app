@@ -6,7 +6,7 @@ import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import InfoTip from "@/components/help/InfoTip";
 import { approvalText } from "@/lib/pin-rules";
-import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "./actions";
+import { getRecentRegisterOrders, refundRegisterOrder, refundRegisterOrderPart, type RecentOrder } from "./actions";
 import { printTickets } from "./print-tickets";
 import { sendPrint, targetName, type PrintTarget } from "./printing";
 
@@ -41,8 +41,9 @@ function paidWith(o: RecentOrder) {
   return [o.voucher > 0 && "voucher", o.cash > 0 && "cash", o.card > 0 && "card"].filter(Boolean).join(" + ") || o.method || "—";
 }
 
-// The last 20 sales on the register: what was in them, reprint the receipt
-// or tickets, refund with a manager PIN.
+// The last 20 sales on the register, and tabs cancelled meanwhile: what was
+// in them, reprint the receipt or tickets, refund all or part with a
+// manager PIN.
 export default function RecentOrders({ target }: { target: PrintTarget | null }) {
   const [open, setOpen] = useState(false);
   const [orders, setOrders] = useState<RecentOrder[] | null>(null);
@@ -51,6 +52,9 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ tone: "ok" | "error"; text: string; certUrl?: string } | null>(null);
   const [refunding, setRefunding] = useState(false);
+  // Refund part: how much and why, then the manager PIN.
+  const [partOpen, setPartOpen] = useState(false);
+  const [part, setPart] = useState<{ amount: number; reason: string } | null>(null);
 
   async function load(keep?: string | null) {
     setLoadError(null);
@@ -129,7 +133,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                           <span className={`font-semibold tabular-nums ${o.status !== "completed" ? "line-through opacity-60" : ""}`}>{money(o.total)}</span>
                           {o.status !== "completed" && (
                             <span className="block text-[10px] font-bold uppercase" style={{ color: "var(--danger-text)" }}>
-                              {o.status}
+                              {o.status === "cancelled" ? "tab cancelled" : o.status}
                             </span>
                           )}
                         </span>
@@ -147,10 +151,23 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       </span>
                     </div>
                     <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-                      {[selected.name && `For ${selected.name}`, selected.cashier && `Rung up by ${selected.cashier}`, selected.member && `Member: ${selected.member}`, `Paid ${paidWith(selected)}`].filter(Boolean).join(" · ")}
+                      {[
+                        selected.name && `For ${selected.name}`,
+                        selected.cashier && `Rung up by ${selected.cashier}`,
+                        selected.member && `Member: ${selected.member}`,
+                        selected.status === "cancelled" ? "Not paid" : `Paid ${paidWith(selected)}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </p>
-                    {selected.status !== "completed" && (
-                      <p className="notice notice-warn mt-2 !p-2 text-sm">This order was {selected.status}.</p>
+                    {selected.status === "cancelled" ? (
+                      <p className="notice notice-warn mt-2 !p-2 text-sm">
+                        Tab cancelled{selected.cancelledBy ? ` by ${selected.cancelledBy}` : ""}
+                        {selected.cancelApprovedBy ? `, approved with ${selected.cancelApprovedBy}'s PIN` : ", approved with a manager PIN"}. Nothing was charged, and
+                        it isn&apos;t counted as a sale.
+                      </p>
+                    ) : (
+                      selected.status !== "completed" && <p className="notice notice-warn mt-2 !p-2 text-sm">This order was {selected.status}.</p>
                     )}
 
                     <table className="mt-4 w-full text-sm tabular-nums">
@@ -179,22 +196,25 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       <Row label="Tax" value={money(selected.tax)} />
                       {selected.tip > 0 && <Row label="Tip" value={money(selected.tip)} />}
                       <Row label="Total" value={money(selected.total)} strong />
-                      {selected.voucher > 0 && <Row label="Voucher" value={money(selected.voucher)} muted />}
+                      {selected.voucher > 0 && <Row label={selected.voucherCode ? `Voucher #${selected.voucherCode}` : "Voucher"} value={money(selected.voucher)} muted />}
                       {selected.cash > 0 && <Row label="Cash" value={money(selected.cash)} muted />}
                       {selected.card > 0 && <Row label="Card" value={money(selected.card)} muted />}
+                      {selected.refunded > 0 && <Row label="Refunded in part" value={`−${money(selected.refunded)}`} muted />}
                     </div>
 
                     <div className="mt-5 flex flex-wrap gap-2">
-                      <button
-                        className="btn-primary !px-4"
-                        disabled={!target || !!busy}
-                        onClick={() =>
-                          target &&
-                          print("receipt", () => sendPrint(target, "receipt", receiptXml(asReceipt(selected)), `Receipt #${selected.orderNumber} (reprint)`), `Receipt for #${selected.orderNumber} sent to ${targetName(target)}.`)
-                        }
-                      >
-                        {busy === "receipt" ? "Printing…" : "Reprint receipt"}
-                      </button>
+                      {selected.status !== "cancelled" && (
+                        <button
+                          className="btn-primary !px-4"
+                          disabled={!target || !!busy}
+                          onClick={() =>
+                            target &&
+                            print("receipt", () => sendPrint(target, "receipt", receiptXml(asReceipt(selected)), `Receipt #${selected.orderNumber} (reprint)`), `Receipt for #${selected.orderNumber} sent to ${targetName(target)}.`)
+                          }
+                        >
+                          {busy === "receipt" ? "Printing…" : "Reprint receipt"}
+                        </button>
+                      )}
                       {tickets.length > 0 && (
                         <button
                           className="btn-secondary !px-4"
@@ -205,15 +225,28 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                         </button>
                       )}
                       {selected.status === "completed" && (
-                        <span className="inline-flex items-center">
+                        <span className="inline-flex items-center gap-2">
                           <button className="btn-secondary !px-4" style={{ color: "var(--danger-text)" }} disabled={!!busy} onClick={() => setRefunding(true)}>
-                            Refund…
+                            Refund all…
                           </button>
+                          {selected.refundable !== 0 && (
+                            <button
+                              className="btn-secondary !px-4"
+                              style={{ color: "var(--danger-text)" }}
+                              disabled={!!busy}
+                              onClick={() => {
+                                setNote(null);
+                                setPartOpen(true);
+                              }}
+                            >
+                              Refund part…
+                            </button>
+                          )}
                           <InfoTip topic="refunds" />
                         </span>
                       )}
                     </div>
-                    {!target && (
+                    {!target && selected.status !== "cancelled" && (
                       <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
                         No printer is set up on this register. Add it under Devices.
                       </p>
@@ -242,7 +275,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
 
       {refunding && selected && (
         <ManagerPinModal
-          description={`Refund order #${selected.orderNumber} (${money(selected.total)})? ${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
+          description={`Refund order #${selected.orderNumber} (${money(selected.total)}${selected.refunded > 0 ? `, less the ${money(selected.refunded)} already refunded` : ""})? ${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
           onCancel={() => setRefunding(false)}
           onSubmit={async (pin) => {
             const r = await refundRegisterOrder(selected.id, pin);
@@ -253,7 +286,93 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
           }}
         />
       )}
+
+      {partOpen && selected && (
+        <RefundPart
+          order={selected}
+          onCancel={() => setPartOpen(false)}
+          onNext={(amount, reason) => {
+            setPartOpen(false);
+            setPart({ amount, reason });
+          }}
+        />
+      )}
+
+      {part && selected && (
+        <ManagerPinModal
+          description={`Give back ${money(part.amount)} of order #${selected.orderNumber}? ${selected.card > 0 ? "Card money goes back to the card first; " : ""}any cash part comes from the drawer.`}
+          onCancel={() => setPart(null)}
+          onSubmit={async (pin) => {
+            const r = await refundRegisterOrderPart(selected.id, part.amount, part.reason, pin);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            setPart(null);
+            setNote({ tone: "ok", text: `${r.message} ${approvalText(r)}` });
+            await load(selected.id);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// Refund part: how much the customer gets back (tax included) and why.
+// The most shown is what the server allows; it checks again either way.
+function RefundPart({ order, onCancel, onNext }: { order: RecentOrder; onCancel: () => void; onNext: (amount: number, reason: string) => void }) {
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const value = Math.round(parseFloat(amount) * 100) / 100;
+  const tooMuch = order.refundable !== null && value > order.refundable;
+  const ok = value > 0 && !tooMuch;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <form
+        className="card w-full max-w-xs space-y-3 shadow-2xl"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ok) onNext(value, reason.trim());
+        }}
+      >
+        <h3 className="text-center text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          Refund part of #{order.orderNumber}
+        </h3>
+        <p className="text-center text-sm" style={{ color: "var(--muted)" }}>
+          {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
+          {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
+        </p>
+        <label className="block">
+          <div className="label-xs">Give back (tax included)</div>
+          <input
+            className="input"
+            inputMode="decimal"
+            placeholder="0.00"
+            autoFocus
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+          />
+          {order.refundable !== null && (
+            <div className="mt-1 text-xs" style={{ color: tooMuch ? "var(--danger-text)" : "var(--muted)" }}>
+              Up to {money(order.refundable)}.{tooMuch ? " For more, refund all of it." : ""}
+            </div>
+          )}
+        </label>
+        <label className="block">
+          <div className="label-xs">Why (optional)</div>
+          <input className="input" placeholder="e.g. wrong drink" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        <p className="text-xs" style={{ color: "var(--muted)" }}>
+          Tips and vouchers only come back with a full refund.
+        </p>
+        <div className="flex justify-center gap-2 pt-1">
+          <button type="button" className="btn-secondary" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="btn-primary" disabled={!ok}>
+            Give back {ok ? money(value) : "part"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

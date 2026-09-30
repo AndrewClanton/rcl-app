@@ -225,7 +225,9 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
 
 // ---------- flags ----------
 
-export type SaleFlagKind = "card_refused" | "card_unchecked" | "totals_mismatch" | "totals_refused" | "points_short";
+// items_not_saved: a paid sale saved, but its items didn't (twice), so it
+// shows in Reports with nothing on it; details has the lines rung.
+export type SaleFlagKind = "card_refused" | "card_unchecked" | "totals_mismatch" | "totals_refused" | "points_short" | "items_not_saved";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

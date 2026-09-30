@@ -182,13 +182,13 @@ export const HELP_TOPICS = {
     title: "Refunding a sale",
     area: "Register: payments",
     body:
-      "Refund from Recent orders on the register, or from a member's Purchase history in the back office. A manager enters their PIN to approve it. The card part goes back to the card through Stripe on its own; you hand back any cash part from the drawer. A refunded sale's tickets stop counting in the box office report.",
+      "Refund from Recent orders on the register, or from a member's Purchase history in the back office: all of a sale, or part of it (a wrong drink, a dish sent back). A manager enters their PIN to approve it. The card part goes back to the card through Stripe on its own; you hand back any cash part from the drawer. A refunded sale's tickets stop counting in the box office report.",
   },
   vouchers: {
     title: "Paper vouchers",
     area: "Register: payments",
     body:
-      "Vouchers are the paper prizes, like the ones from trivia. Tap $5, $10 or $20 once for each voucher handed over, or type an odd amount. Vouchers never give change: if they cover the order it's paid, and if not, cash or card pays the rest.",
+      "Vouchers are the paper prizes, like the ones from trivia. Tap $5, $10 or $20 once for each voucher handed over, or type an odd amount. Vouchers never give change: if they cover the order it's paid, and if not, cash or card pays the rest. If the voucher has a number on it, type it in Voucher #: it's saved with the sale and shows in Recent orders and on the Day report.",
   },
 
   // ---------- register: members and the door ----------

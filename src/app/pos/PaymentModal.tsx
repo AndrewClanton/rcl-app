@@ -35,10 +35,22 @@ function tenderChoices(total: number) {
 
 // Paper vouchers ($10/$20, the trivia prizes): tap one per voucher handed
 // over, or type an odd amount. Vouchers never give change: if they cover the
-// whole order it's paid; otherwise cash or card pays the rest.
-function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: number; onBack: () => void; onPaidInFull: () => void; onPartial: (amount: number) => void }) {
+// whole order it's paid; otherwise cash or card pays the rest. The number
+// printed on the voucher is optional; it's saved with the sale.
+function VoucherTender({
+  total,
+  onBack,
+  onPaidInFull,
+  onPartial,
+}: {
+  total: number;
+  onBack: () => void;
+  onPaidInFull: (code: string) => void;
+  onPartial: (amount: number, code: string) => void;
+}) {
   const [vouchers, setVouchers] = useState<number[]>([]);
   const [typed, setTyped] = useState("");
+  const [code, setCode] = useState("");
   const sum = Math.round(vouchers.reduce((s, v) => s + v, 0) * 100) / 100;
   const covers = sum + 0.001 >= total;
   const leftOver = Math.round((sum - total) * 100) / 100;
@@ -91,10 +103,14 @@ function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: numb
             {money(leftOver)} left on the voucher isn&apos;t given back as change.
           </p>
         )}
+        <label className="mt-3 block text-left">
+          <div className="label-xs">Voucher # (optional)</div>
+          <input className="input" placeholder="Number on the voucher" maxLength={40} value={code} onChange={(e) => setCode(e.target.value)} />
+        </label>
         <button
           className="btn-primary mt-4 w-full py-3 text-base"
           disabled={sum === 0}
-          onClick={() => (covers ? onPaidInFull() : onPartial(sum))}
+          onClick={() => (covers ? onPaidInFull(code.trim()) : onPartial(sum, code.trim()))}
         >
           {sum === 0 ? "Add a voucher" : covers ? "Done · paid with vouchers" : `Use ${money(sum)} · pay the other ${money(total - sum)}`}
         </button>
@@ -275,8 +291,9 @@ export default function PaymentModal({
   const [voucherOpen, setVoucherOpen] = useState(false);
   // Paper vouchers applied so far; cash or card covers the rest (`due`).
   const [voucher, setVoucher] = useState(0);
+  const [voucherCode, setVoucherCode] = useState("");
   const due = Math.round((total - voucher) * 100) / 100;
-  const withVoucher = voucher > 0 ? { voucher } : {};
+  const withVoucher = voucher > 0 ? { voucher, voucherCode: voucherCode || null } : {};
   // Split: picking the cash part, then taking it. The card part comes after.
   const [splitStep, setSplitStep] = useState<"amount" | "cash" | null>(null);
   const [splitCash, setSplitCash] = useState(0);
@@ -586,9 +603,10 @@ export default function PaymentModal({
       <VoucherTender
         total={total}
         onBack={() => setVoucherOpen(false)}
-        onPaidInFull={() => onConfirm({ method: "voucher", cash: 0, card: 0, voucher: total })}
-        onPartial={(amount) => {
+        onPaidInFull={(code) => onConfirm({ method: "voucher", cash: 0, card: 0, voucher: total, voucherCode: code || null })}
+        onPartial={(amount, code) => {
           setVoucher(amount);
+          setVoucherCode(code);
           setVoucherOpen(false);
         }}
       />
@@ -682,8 +700,14 @@ export default function PaymentModal({
         </p>
         {voucher > 0 && (
           <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-            {money(total)} total · {money(voucher)} in vouchers ·{" "}
-            <button className="underline" onClick={() => setVoucher(0)}>
+            {money(total)} total · {money(voucher)} in vouchers{voucherCode ? ` (#${voucherCode})` : ""} ·{" "}
+            <button
+              className="underline"
+              onClick={() => {
+                setVoucher(0);
+                setVoucherCode("");
+              }}
+            >
               remove
             </button>
           </p>
