@@ -12,6 +12,7 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
   const kind = r.kind;
   const id = r.id;
   const when = new Date(r.date);
+  const status = r.status === "refunded" ? "Refunded" : r.partlyRefunded ? "Partly refunded" : "Paid";
 
   return (
     <div className="space-y-5">
@@ -38,7 +39,7 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
             <div className="text-xs opacity-70">715 E Broadway, Joplin, MO 64801</div>
           </div>
           <div className="flex items-center gap-4">
-            <ProofStamp>{r.status === "refunded" ? "Refunded" : "Paid"}</ProofStamp>
+            <ProofStamp>{status}</ProofStamp>
             <div className="text-right">
               <div className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--gold)]">Receipt</div>
               <div className="font-display text-lg">{r.number}</div>
@@ -62,7 +63,7 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
             </div>
             <div>
               <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">Status</dt>
-              <dd className={r.status === "refunded" ? "font-bold text-[var(--accent)]" : ""}>{r.status === "refunded" ? "Refunded" : "Paid"}</dd>
+              <dd className={status !== "Paid" ? "font-bold text-[var(--accent)]" : ""}>{status}</dd>
             </div>
           </dl>
 
@@ -114,6 +115,12 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
               <dt>Total</dt>
               <dd className="tabular-nums">{money(r.total)}</dd>
             </div>
+            {r.partlyRefunded && (
+              <>
+                <Row label={`Partly refunded${r.partlyRefunded.tax > 0 ? ` (${money(r.partlyRefunded.tax)} of it tax)` : ""}`} value={money(-r.partlyRefunded.amount)} muted />
+                <Row label="Paid after refund" value={money(r.total - r.partlyRefunded.amount)} />
+              </>
+            )}
           </dl>
 
           {(r.pointsEarned !== 0 || r.pointsRedeemed !== 0) && (

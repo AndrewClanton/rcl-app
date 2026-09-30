@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow, centralToIso, shiftDate } from "@/lib/ops/time";
 import { latestLines } from "@/lib/ops/par-counts";
 import { qtyLabel } from "@/lib/ops/shared";
-import { getDayReport, type DayReport } from "./reports";
+import { fetchAll, getDayReport, type DayReport } from "./reports";
 
 // The end-of-day email to the admins: how the business day went, how that
 // compares, and anything worth a look before the next day starts. Built
@@ -95,11 +95,23 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     if (held.length) watch.push(`${held.length} held order${held.length === 1 ? " is" : "s are"} still parked on the register (${money(held.reduce((s, h) => s + Number(h.total), 0))}).`);
   });
 
+  // Custom items on the day's finished orders, read through the order (a
+  // busy night's order ids used to go in one request, too long to send, and
+  // this line quietly dropped out of the email).
   await safely(undefined, async () => {
-    const ids = completed.map((o) => o.id);
-    if (!ids.length) return;
-    const { data } = await supabase.from("order_items").select("name, unit_price, quantity").in("order_id", ids).is("menu_item_id", null).is("screening_id", null);
-    if (data?.length) watch.push(`${data.length} custom item${data.length === 1 ? "" : "s"} rung up: ${data.map((i) => `${i.name} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}. The menu may be missing a button.`);
+    const data = await fetchAll<{ name: string; unit_price: number; quantity: number }>((a, b) =>
+      supabase
+        .from("order_items")
+        .select("name, unit_price, quantity, orders!inner(status, completed_at)")
+        .eq("orders.status", "completed")
+        .gte("orders.completed_at", start)
+        .lt("orders.completed_at", end)
+        .is("menu_item_id", null)
+        .is("screening_id", null)
+        .order("id")
+        .range(a, b),
+    );
+    if (data.length) watch.push(`${data.length} custom item${data.length === 1 ? "" : "s"} rung up: ${data.map((i) => `${i.name} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}. The menu may be missing a button.`);
   });
 
   const refunded = day.orders.filter((o) => o.status === "refunded");

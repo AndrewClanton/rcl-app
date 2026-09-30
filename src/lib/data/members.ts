@@ -97,8 +97,9 @@ export interface MemberPurchase {
   kind: "order" | "booking";
   id: string;
   label: string;
-  total: number;
+  total: number; // what they paid, less any partial refund
   status: string;
+  partlyRefunded: number; // given back in part so far, tax included (0: none)
   paymentMethod: string | null;
   stripePaymentIntentId: string | null;
   createdAt: string;
@@ -112,7 +113,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
   const [{ data: orders, error: ordersErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
     supabase
       .from("orders")
-      .select("id, order_number, total, status, payment_method, stripe_payment_intent_id, created_at, items:order_items(quantity)")
+      .select("id, order_number, total, status, payment_method, stripe_payment_intent_id, created_at, items:order_items(quantity), part_refunds:order_partial_refunds(amount)")
       .eq("member_id", memberId)
       .in("status", ["completed", "refunded"])
       .order("created_at", { ascending: false }),
@@ -129,12 +130,15 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
 
   const orderItems: MemberPurchase[] = (orders ?? []).map((o) => {
     const itemCount = (o.items as { quantity: number }[]).reduce((s, i) => s + i.quantity, 0);
+    // A full refund covers the whole total, partial refunds before it included.
+    const partlyRefunded = o.status === "refunded" ? 0 : Math.round((o.part_refunds as { amount: number }[]).reduce((s, r) => s + Number(r.amount), 0) * 100) / 100;
     return {
       kind: "order",
       id: o.id,
       label: `Order #${o.order_number} · ${itemCount} item${itemCount === 1 ? "" : "s"}`,
-      total: Number(o.total),
+      total: Math.round((Number(o.total) - partlyRefunded) * 100) / 100,
       status: o.status,
+      partlyRefunded,
       paymentMethod: o.payment_method,
       stripePaymentIntentId: o.stripe_payment_intent_id,
       createdAt: o.created_at,
@@ -149,6 +153,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
       label: screening ? `${b.quantity}x ticket — ${screening.movie.title}` : `${b.quantity}x ticket`,
       total: Number(b.unit_price) * b.quantity + Number(b.tax_amount),
       status: b.status,
+      partlyRefunded: 0,
       paymentMethod: null,
       stripePaymentIntentId: b.stripe_payment_intent_id,
       createdAt: b.created_at,

@@ -53,13 +53,6 @@ export type BookingRow = {
 };
 
 const OFFLINE = "Couldn't reach the database. Check the connection and try again.";
-const NEEDS_UPDATE = "Ticket scanning needs its database update first. Until then, check the confirmation on their phone.";
-
-// A column the door-ticket migration adds isn't there yet: "column does not
-// exist" from Postgres, or PostgREST not knowing it.
-function missingColumn(error: { code?: string } | null): boolean {
-  return error?.code === "42703" || error?.code === "PGRST204";
-}
 
 function refuse(kind: ScanRefused["kind"], reason: ScanRefusal, error: string, ticket?: DoorTicket): ScanRefused {
   return ticket ? { ok: false, kind, reason, error, ticket } : { ok: false, kind, reason, error };
@@ -151,7 +144,10 @@ export async function claimBooking(bookingId: string, by: string | null): Promis
     .is("order_id", null)
     .is("scanned_at", null)
     .select("id");
-  if (error) return missingColumn(error) ? refuse("ticket", "needs_update", NEEDS_UPDATE) : refuse("ticket", "offline", OFFLINE);
+  if (error) {
+    console.error("ticket claim not saved", b.id, error.message);
+    return refuse("ticket", "offline", OFFLINE);
+  }
   if (!data?.length) {
     // Lost to another scan a moment ago (or it was refunded meanwhile):
     // say what it is now.

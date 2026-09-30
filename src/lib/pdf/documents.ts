@@ -128,9 +128,10 @@ export async function renderReceiptPdf(r: Receipt): Promise<Uint8Array> {
   labelValue(ctx, page, "Date", `${dateLong(r.date)}, ${time(r.date)}`, 250, y);
   labelValue(ctx, page, "Receipt no.", r.number, 250, y - 36);
   labelValue(ctx, page, "Payment", r.payment, 420, y);
-  if (r.status === "refunded") {
-    page.drawRectangle({ x: 420, y: y - 52, width: 104, height: 24, borderColor: RED, borderWidth: 1.5 });
-    text(page, "REFUNDED", 434, y - 44, 12, ctx.bold, RED);
+  const stamp = r.status === "refunded" ? "REFUNDED" : r.partlyRefunded ? "PARTLY REFUNDED" : null;
+  if (stamp) {
+    page.drawRectangle({ x: 420, y: y - 52, width: ctx.bold.widthOfTextAtSize(stamp, 12) + 28, height: 24, borderColor: RED, borderWidth: 1.5 });
+    text(page, stamp, 434, y - 44, 12, ctx.bold, RED);
   }
   y -= 70;
 
@@ -185,7 +186,7 @@ export async function renderReceiptPdf(r: Receipt): Promise<Uint8Array> {
     rule(page, y);
     y -= 16;
   }
-  if (y < 200) continuePage();
+  if (y < (r.partlyRefunded ? 250 : 200)) continuePage();
 
   // Totals
   const label = 400;
@@ -204,6 +205,11 @@ export async function renderReceiptPdf(r: Receipt): Promise<Uint8Array> {
   page.drawLine({ start: { x: label, y: y + 10 }, end: { x: cAmt, y: y + 10 }, thickness: 1, color: INK });
   y -= 6;
   row("Total", money(r.total), ctx.bold, 14);
+  if (r.partlyRefunded) {
+    row("Partly refunded", money(-r.partlyRefunded.amount), ctx.font, 10.5, RED);
+    row("Paid after refund", money(r.total - r.partlyRefunded.amount), ctx.bold, 10.5);
+    if (r.partlyRefunded.tax > 0) row(`Includes ${money(r.partlyRefunded.tax)} sales tax refunded`, "", ctx.font, 8.5, MUTED);
+  }
 
   if (r.pointsEarned || r.pointsRedeemed) {
     y -= 10;
@@ -298,9 +304,11 @@ export async function renderStatementPdf(args: {
       tableHead(cols);
     }
     text(page, dateShort(p.date), M, y, 9.5, ctx.font);
-    const desc = wrap(`${p.label}: ${p.detail}`, ctx.font, 9.5, 470 - (M + 78) - 60)[0];
+    // Partly refunded: the amount is what they kept paying for.
+    const status = p.status === "refunded" ? "Refunded" : p.partlyRefunded > 0 ? "Partly refunded" : "Paid";
+    const desc = wrap(`${p.label}: ${p.detail}`, ctx.font, 9.5, 470 - (M + 78) - Math.max(60, ctx.font.widthOfTextAtSize(status, 9.5) + 12))[0];
     text(page, desc, M + 78, y, 9.5, ctx.font);
-    textRight(page, p.status === "refunded" ? "Refunded" : "Paid", 470, y, 9.5, ctx.font, p.status === "refunded" ? RED : MUTED);
+    textRight(page, status, 470, y, 9.5, ctx.font, status === "Paid" ? MUTED : RED);
     textRight(page, money(p.amount), W - M, y, 9.5, ctx.font);
     y -= 8;
     rule(page, y);

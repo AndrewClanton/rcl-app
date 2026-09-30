@@ -16,11 +16,6 @@ import { isSharedLogin, isTipMethod, type TipMethod } from "@/lib/tip-split";
 export type TipPayoutResult = { ok: true } | { ok: false; error: string };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MISSING = "Tip payouts need a database update first (migration 20260930041500_tip_payouts.sql). Nothing was saved.";
-
-function isMissingTable(e: { code?: string; message?: string } | null) {
-  return !!e && (e.code === "42P01" || e.code === "PGRST205" || /tip_payouts/.test(e.message ?? ""));
-}
 
 function checkDate(date: unknown): date is string {
   return typeof date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= businessDay().date;
@@ -59,10 +54,7 @@ export async function recordTipPayout(input: { date: string; method: TipMethod; 
     rows.map((r) => ({ business_date: date, method, employee_id: r.employeeId, amount: r.amount, recorded_by: staff.employeeId, recorded_at: recordedAt, note })),
     { onConflict: "business_date,employee_id" },
   );
-  if (error) {
-    if (isMissingTable(error)) return { ok: false, error: MISSING };
-    throw error;
-  }
+  if (error) throw error;
   // Anyone recorded earlier who isn't in this split any more.
   const { error: dropErr } = await supabase
     .from("tip_payouts")
@@ -81,10 +73,7 @@ export async function clearTipPayout(date: string): Promise<TipPayoutResult> {
   await assertManager();
   if (!checkDate(date)) return { ok: false, error: "That isn't a day that has happened yet." };
   const { error } = await createAdminClient().from("tip_payouts").delete().eq("business_date", date);
-  if (error) {
-    if (isMissingTable(error)) return { ok: false, error: MISSING };
-    throw error;
-  }
+  if (error) throw error;
   revalidatePath("/admin/reports");
   revalidatePath("/admin/reports/week");
   return { ok: true };

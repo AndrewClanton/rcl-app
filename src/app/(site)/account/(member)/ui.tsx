@@ -64,6 +64,7 @@ export function PurchaseRows({ rows }: { rows: PurchaseRow[] }) {
             <div className="shrink-0 text-right">
               <div className={`font-display tabular-nums ${p.status === "refunded" ? "text-[var(--muted)] line-through" : ""}`}>{money(p.amount)}</div>
               {p.status === "refunded" && <div className="spec-code !text-[var(--accent)]">Refunded</div>}
+              {p.status !== "refunded" && p.partlyRefunded > 0 && <div className="spec-code !text-[var(--accent)]">Partly refunded</div>}
             </div>
             <span className="font-display text-[var(--muted)]" aria-hidden="true">
               ›

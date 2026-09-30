@@ -581,6 +581,9 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
               )}
               <span>{p.label}</span>
               <span className="text-[var(--muted)]">{money(p.total)}</span>
+              {p.status !== "refunded" && p.partlyRefunded > 0 && (
+                <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]">Partly refunded ({money(p.partlyRefunded)} back)</span>
+              )}
               <span className="text-xs text-[var(--muted)]">
                 {new Date(p.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                 {p.paymentMethod ? ` · ${p.paymentMethod}` : ""}

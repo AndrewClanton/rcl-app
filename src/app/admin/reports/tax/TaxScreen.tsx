@@ -27,6 +27,9 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
   const taxable = t.sales - t.exemptSales;
   const expected = expectedTax(t);
   const taxHref = (period: string) => `/admin/reports/tax${period === thisMonth ? "" : `?period=${period}`}`;
+  // Without the Insiders+ bills the totals would be short, so none is shown.
+  const down = report.plusUnreachable;
+  const figure = (n: number) => (down ? "—" : money(n));
 
   return (
     <div className="space-y-5">
@@ -43,19 +46,27 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
         ))}
       </PeriodNav>
 
+      {down && (
+        <div className="notice notice-warn text-sm">
+          Couldn&apos;t reach Stripe for the Insiders+ membership bills, so there&apos;s no total: it would be short by those. Reload the page to try again.
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat hero className="col-span-2" label="Sales tax collected" value={money(t.tax)} sub={`at ${report.ratePercent}%`} />
-        <Stat label="Taxable sales" value={money(taxable)} />
+        <Stat hero className="col-span-2" label="Sales tax collected" value={figure(t.tax)} sub={down ? "Couldn't reach Stripe" : `at ${report.ratePercent}%`} />
+        <Stat label="Taxable sales" value={figure(taxable)} />
         <Stat label="Tax-free sales" value={money(t.exemptSales)} />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <Card title="Where it came from">
-          <TaxTable month={t} />
-          <p className="mt-3 text-xs text-[var(--muted)]">
-            At {report.ratePercent}%, {money(taxable)} of taxable sales comes to {money(expected)}; {money(t.tax)} was collected.
-            {Math.abs(expected - t.tax) >= 0.05 && " The gap is rounding, plus any sales that didn't carry tax (online tickets before Sept. 28 had none added)."}
-          </p>
+          <TaxTable month={t} down={down} />
+          {!down && (
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              At {report.ratePercent}%, {money(taxable)} of taxable sales comes to {money(expected)}; {money(t.tax)} was collected.
+              {Math.abs(expected - t.tax) >= 0.05 && " The gap is rounding, plus any sales that didn't carry tax (online tickets before Sept. 28 had none added)."}
+            </p>
+          )}
         </Card>
 
         {isQuarter ? (
@@ -76,8 +87,8 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
                         {m.label}
                       </Link>
                     </td>
-                    <td className="py-1.5 text-right">{money(m.sales)}</td>
-                    <td className="py-1.5 text-right font-medium">{money(m.tax)}</td>
+                    <td className="py-1.5 text-right">{figure(m.sales)}</td>
+                    <td className="py-1.5 text-right font-medium">{figure(m.tax)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -104,18 +115,17 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
             you&apos;ve filed a month changes that month here; the amount you filed stays what it was.
           </li>
           <li>
-            Not included: Insiders+ monthly and yearly memberships. Stripe bills and taxes those itself, so their tax is in Stripe&apos;s tax reports, not here. Add it to
-            these figures when you file.
+            Insiders+ monthly and yearly memberships are read from Stripe, which bills and taxes them: each bill counts in the month it was paid. A membership bill
+            refunded in Stripe is still counted here.
           </li>
-          {!report.giftsTracked && <li>Gift memberships aren&apos;t counted yet: their database update hasn&apos;t been applied.</li>}
         </ul>
       </Card>
     </div>
   );
 }
 
-function TaxTable({ month }: { month: TaxMonth }) {
-  if (month.lines.length === 0 && month.refunds.sales === 0) return <p className="text-sm text-[var(--muted)]">No sales in this period.</p>;
+function TaxTable({ month, down }: { month: TaxMonth; down: boolean }) {
+  if (month.lines.length === 0 && month.refunds.sales === 0 && !down) return <p className="text-sm text-[var(--muted)]">No sales in this period.</p>;
   return (
     <table className="w-full text-sm tabular-nums">
       <thead>
@@ -133,6 +143,14 @@ function TaxTable({ month }: { month: TaxMonth }) {
             <td className="py-1.5 text-right">{money(l.tax)}</td>
           </tr>
         ))}
+        {down && (
+          <tr className="border-t border-[var(--border)] text-[var(--muted)]">
+            <td className="py-1.5 pr-2">Insiders+ memberships</td>
+            <td colSpan={2} className="py-1.5 text-right">
+              Couldn&apos;t reach Stripe
+            </td>
+          </tr>
+        )}
         {(month.refunds.sales > 0 || month.refunds.tax > 0) && (
           <tr className="border-t border-[var(--border)] text-[var(--muted)]">
             <td className="py-1.5 pr-2">Partial refunds</td>
@@ -142,8 +160,8 @@ function TaxTable({ month }: { month: TaxMonth }) {
         )}
         <tr className="border-t-2 border-[var(--foreground)] font-semibold">
           <td className="pt-1.5 pr-2">Total</td>
-          <td className="pt-1.5 text-right">{money(month.sales)}</td>
-          <td className="pt-1.5 text-right">{money(month.tax)}</td>
+          <td className="pt-1.5 text-right">{down ? "—" : money(month.sales)}</td>
+          <td className="pt-1.5 text-right">{down ? "—" : money(month.tax)}</td>
         </tr>
       </tbody>
     </table>

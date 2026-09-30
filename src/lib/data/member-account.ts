@@ -25,9 +25,19 @@ export interface PurchaseRow {
   date: string;
   label: string;
   detail: string;
-  amount: number;
-  tax: number;
+  amount: number; // what they paid, less any partial refund
+  tax: number; // likewise
   status: "completed" | "refunded";
+  // Given back in part so far, tax included (Reports, "Refund part"). 0 when
+  // none; a full refund is status 'refunded' instead.
+  partlyRefunded: number;
+}
+
+// An order's partial refunds added up (order_partial_refunds, embedded).
+type PartRefund = { amount: number; tax_amount: number };
+function partRefunds(rows: PartRefund[] | null | undefined): { amount: number; tax: number } {
+  const sum = (key: keyof PartRefund) => Math.round((rows ?? []).reduce((s, r) => s + Number(r[key]), 0) * 100) / 100;
+  return { amount: sum("amount"), tax: sum("tax_amount") };
 }
 
 export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
@@ -35,7 +45,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
   const [orders, bookings, booths] = await Promise.all([
     supabase
       .from("orders")
-      .select("id, order_number, total, tax, status, completed_at, items:order_items(name, quantity)")
+      .select("id, order_number, total, tax, status, completed_at, items:order_items(name, quantity), part_refunds:order_partial_refunds(amount, tax_amount)")
       .eq("member_id", memberId)
       .in("status", ["completed", "refunded"])
       .not("completed_at", "is", null)
@@ -66,15 +76,20 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
   for (const o of orders.data ?? []) {
     const items = o.items as { name: string; quantity: number }[];
     const count = items.reduce((s, i) => s + i.quantity, 0);
+    // A fully refunded order counts its whole total as refunded, so its
+    // partial refunds (if it had any first) don't come off twice.
+    const refunded = o.status === "refunded";
+    const part = refunded ? { amount: 0, tax: 0 } : partRefunds(o.part_refunds as PartRefund[]);
     rows.push({
       kind: "order",
       id: o.id,
       date: o.completed_at,
       label: `Order #${o.order_number}`,
       detail: items.length ? `${items.slice(0, 3).map((i) => (i.quantity > 1 ? `${i.quantity}× ${i.name}` : i.name)).join(", ")}${items.length > 3 ? ` +${items.length - 3} more` : ""}` : `${count} items`,
-      amount: Number(o.total),
-      tax: Number(o.tax),
-      status: o.status === "refunded" ? "refunded" : "completed",
+      amount: Math.round((Number(o.total) - part.amount) * 100) / 100,
+      tax: Math.round((Number(o.tax) - part.tax) * 100) / 100,
+      status: refunded ? "refunded" : "completed",
+      partlyRefunded: part.amount,
     });
   }
   for (const b of bookings.data ?? []) {
@@ -88,6 +103,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       amount: Number(b.unit_price) * b.quantity + Number(b.tax_amount),
       tax: Number(b.tax_amount),
       status: b.status === "refunded" ? "refunded" : "completed",
+      partlyRefunded: 0,
     });
   }
   for (const r of booths.data ?? []) {
@@ -101,6 +117,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       amount: Number(r.fee_amount) + Number(r.tax_amount ?? 0),
       tax: Number(r.tax_amount ?? 0),
       status: r.status === "cancelled" ? "refunded" : "completed",
+      partlyRefunded: 0,
     });
   }
   return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -127,7 +144,8 @@ export interface Receipt {
   tax: number;
   taxFree: boolean;
   tip: number;
-  total: number;
+  total: number; // as sold, before any partial refund
+  partlyRefunded: { amount: number; tax: number } | null; // given back in part so far (orders only)
   payment: string;
   pointsEarned: number;
   pointsRedeemed: number;
@@ -157,7 +175,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     const { data: o } = await supabase
       .from("orders")
       .select(
-        "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, items:order_items(name, quantity, unit_price, modifiers)"
+        "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, items:order_items(name, quantity, unit_price, modifiers), part_refunds:order_partial_refunds(amount, tax_amount)"
       )
       .eq("id", id)
       .eq("member_id", member.id)
@@ -170,6 +188,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
       { label: "Monthly member discount", amount: Number(o.monthly_discount) },
       { label: "Points reward", amount: Number(o.redemption_discount) },
     ].filter((d) => d.amount > 0);
+    const part = partRefunds(o.part_refunds as PartRefund[]);
     return {
       kind,
       id: o.id,
@@ -188,6 +207,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
       taxFree: o.tax_free,
       tip: Number(o.tip),
       total: Number(o.total),
+      partlyRefunded: o.status !== "refunded" && part.amount > 0 ? part : null,
       payment: paymentLabel(o.payment_method, o.payment_cash_amount, o.payment_card_amount),
       pointsEarned: pts.earned,
       pointsRedeemed: pts.redeemed,
@@ -230,6 +250,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
       taxFree: false,
       tip: 0,
       total: fee + tax,
+      partlyRefunded: null,
       payment: "Card (online)",
       pointsEarned: 0,
       pointsRedeemed: 0,
@@ -264,6 +285,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     taxFree: false,
     tip: 0,
     total: subtotal + tax,
+    partlyRefunded: null,
     payment: "Card (online)",
     pointsEarned: pts.earned,
     pointsRedeemed: pts.redeemed,
@@ -447,11 +469,13 @@ export async function getYearStatement(memberId: string, year: number): Promise<
   const inYear = purchases.filter((p) => yearOf(p.date) === year);
   const yearLedger = ledger.filter((l) => yearOf(l.createdAt) === year);
   const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+  // A partly refunded purchase is in spent (and tax) for what was kept, and
+  // in refunded for what was given back.
   return {
     year,
     purchases: inYear,
     spent: sum(inYear.filter((p) => p.status === "completed").map((p) => p.amount)),
-    refunded: sum(inYear.filter((p) => p.status === "refunded").map((p) => p.amount)),
+    refunded: sum(inYear.map((p) => (p.status === "refunded" ? p.amount : p.partlyRefunded))),
     tax: sum(inYear.filter((p) => p.status === "completed").map((p) => p.tax)),
     points: {
       earned: sum(yearLedger.filter((l) => EARNED_REASONS.includes(l.reason)).map((l) => l.delta)),

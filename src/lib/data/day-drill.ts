@@ -63,7 +63,6 @@ export interface DayDrillData {
   refunds: DrillRefund[];
   showings: Record<string, DrillShowing>;
   payout: TipPayout | null;
-  payoutsReady: boolean; // false until the tip_payouts migration is applied
 }
 
 function quiet(what: string, e: unknown) {
@@ -138,33 +137,25 @@ export async function getDayDrill(r: DayReport, now = new Date()): Promise<DayDr
     shifts: ((shiftsRes.data ?? []) as { id: string; employee_id: string; started_at: string; ended_at: string | null }[]).map((s) => ({ id: s.id, employeeId: s.employee_id, startedAt: s.started_at, endedAt: s.ended_at })),
     refunds,
     showings,
-    payout: payouts.ready ? (payouts.days.get(r.date) ?? null) : null,
-    payoutsReady: payouts.ready,
+    payout: payouts.get(r.date) ?? null,
   };
 }
 
 // ---------- tip payouts ----------
 
-// Recorded payouts for the business days from..to, by day. `ready` is false
-// (and nothing is recorded) until the tip_payouts migration is applied.
-export async function getTipPayouts(from: string, to: string): Promise<{ ready: boolean; days: Map<string, TipPayout> }> {
+// Recorded payouts for the business days from..to, by day.
+export async function getTipPayouts(from: string, to: string): Promise<Map<string, TipPayout>> {
   const supabase = createAdminClient();
   type Row = { business_date: string; method: string; employee_id: string; amount: number; recorded_by: string | null; recorded_at: string; note: string | null; employee: { name: string } | null; recorder: { name: string } | null };
-  let rows: Row[];
-  try {
-    rows = await fetchAll<Row>((a, b) =>
-      supabase
-        .from("tip_payouts")
-        .select("business_date, method, employee_id, amount, recorded_by, recorded_at, note, employee:employees!tip_payouts_employee_id_fkey(name), recorder:employees!tip_payouts_recorded_by_fkey(name)")
-        .gte("business_date", from)
-        .lte("business_date", to)
-        .order("id")
-        .range(a, b),
-    );
-  } catch (e) {
-    quiet("tip_payouts (migration 20260930041500_tip_payouts.sql applied?)", e);
-    return { ready: false, days: new Map() };
-  }
+  const rows = await fetchAll<Row>((a, b) =>
+    supabase
+      .from("tip_payouts")
+      .select("business_date, method, employee_id, amount, recorded_by, recorded_at, note, employee:employees!tip_payouts_employee_id_fkey(name), recorder:employees!tip_payouts_recorded_by_fkey(name)")
+      .gte("business_date", from)
+      .lte("business_date", to)
+      .order("id")
+      .range(a, b),
+  );
   const days = new Map<string, TipPayout>();
   for (const row of rows) {
     let d = days.get(row.business_date);
@@ -182,24 +173,23 @@ export async function getTipPayouts(from: string, to: string): Promise<{ ready: 
     }
   }
   for (const d of days.values()) d.rows.sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
-  return { ready: true, days };
+  return days;
 }
 
 // Reports -> Week, "Tips this week": the recorded payouts added up per
 // person, and the days that had tips but nothing recorded yet.
 export interface TipWeek {
-  ready: boolean;
   people: { employeeId: string; name: string; amount: number; days: number }[];
   paid: number;
   tips: number; // all the week's tips (the Day report's figure, day by day)
   unrecorded: { date: string; tips: number }[];
 }
 
-export function tipWeek(days: { date: string; tips: number }[], payouts: { ready: boolean; days: Map<string, TipPayout> }): TipWeek {
+export function tipWeek(days: { date: string; tips: number }[], payouts: Map<string, TipPayout>): TipWeek {
   const people = new Map<string, TipWeek["people"][number]>();
   let paid = 0;
   for (const d of days) {
-    const p = payouts.days.get(d.date);
+    const p = payouts.get(d.date);
     if (!p) continue;
     for (const row of p.rows) {
       const e = people.get(row.employeeId) ?? { employeeId: row.employeeId, name: row.name, amount: 0, days: 0 };
@@ -210,10 +200,9 @@ export function tipWeek(days: { date: string; tips: number }[], payouts: { ready
     paid += p.total;
   }
   return {
-    ready: payouts.ready,
     people: [...people.values()].sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name)),
     paid: Math.round(paid * 100) / 100,
     tips: Math.round(days.reduce((s, d) => s + d.tips, 0) * 100) / 100,
-    unrecorded: days.filter((d) => d.tips > 0 && !payouts.days.has(d.date)),
+    unrecorded: days.filter((d) => d.tips > 0 && !payouts.has(d.date)),
   };
 }

@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import ConfirmModal from "@/components/ConfirmModal";
 import InfoTip from "@/components/help/InfoTip";
 import type { DayReport } from "@/lib/data/reports";
 import type { DayDrillData, DrillStaff } from "@/lib/data/day-drill";
@@ -374,12 +375,27 @@ function HoursNotes({ people, nameOf }: { people: Presence[]; nameOf: (id: strin
 function PaidOut({ r, drill, canRecord }: { r: DayReport; drill: DayDrillData; canRecord: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const p = drill.payout;
-  if (!drill.payoutsReady) return <p className="text-sm text-[var(--muted)]">Recording payouts needs a database update first.</p>;
   if (!p) return r.tips > 0 ? <p className="text-sm text-[var(--muted)]">Not recorded as paid out yet.</p> : null;
   const label = TIP_METHODS.find((m) => m.key === p.method)?.label ?? p.method;
   const off = Math.round((r.tips - p.total) * 100);
+
+  async function remove() {
+    setConfirming(false);
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await clearTipPayout(r.date);
+      if (!res.ok) setError(res.error);
+      else router.refresh();
+    } catch {
+      setError("Couldn't remove it. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="rounded-lg border border-[var(--success-border)] bg-[var(--success-bg)] p-3 text-sm">
@@ -396,25 +412,22 @@ function PaidOut({ r, drill, canRecord }: { r: DayReport; drill: DayDrillData; c
           type="button"
           disabled={busy}
           className="mt-2 text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--foreground)]"
-          onClick={async () => {
-            if (!window.confirm("Take this payout record off? The tips stay; only the record of who was paid is removed.")) return;
-            setBusy(true);
-            setError(null);
-            try {
-              const res = await clearTipPayout(r.date);
-              if (!res.ok) setError(res.error);
-              else router.refresh();
-            } catch {
-              setError("Couldn't remove it. Try again.");
-            } finally {
-              setBusy(false);
-            }
-          }}
+          onClick={() => setConfirming(true)}
         >
           Remove this record
         </button>
       )}
       {error && <p className="mt-1 text-xs text-[var(--danger-text)]">{error}</p>}
+      {confirming && (
+        <ConfirmModal
+          title="Take this payout record off?"
+          description="The tips stay; only the record of who was paid is removed."
+          confirmLabel="Remove record"
+          danger
+          onConfirm={remove}
+          onCancel={() => setConfirming(false)}
+        />
+      )}
     </div>
   );
 }
@@ -428,7 +441,6 @@ function RecordPayout({ r, drill, canRecord, method, chosen, unassigned }: { r: 
   const label = TIP_METHODS.find((m) => m.key === method)!.label;
   const paying = chosen.shares.filter((s) => s.total > 0);
 
-  if (!drill.payoutsReady) return null;
   if (!canRecord) return <p className="mt-3 text-xs text-[var(--muted)]">A manager records the payout.</p>;
 
   return (

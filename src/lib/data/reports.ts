@@ -5,6 +5,7 @@ import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from 
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
 import { BOOTHS_LABEL, CATEGORY_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { getInsidersPlusBills } from "./plus-bills";
 
 // Every report here works in business days: 4 a.m. to 4 a.m. Central, the
 // same day the register and shifts use, so a late sale counts tonight.
@@ -53,24 +54,18 @@ export interface PartialRefundRow {
   orders: { completed_at: string; source: string; status: string };
 }
 
-// Partial refunds on completed orders sold between start and end. Empty
-// (not an error) until the migration is applied.
+// Partial refunds on completed orders sold between start and end.
 export async function getPartialRefunds(start: string, end: string | null): Promise<PartialRefundRow[]> {
   const supabase = createAdminClient();
-  try {
-    return await fetchAll<PartialRefundRow>((from, to) => {
-      let q = supabase
-        .from("order_partial_refunds")
-        .select("order_id, amount, tax_amount, card_amount, cash_amount, created_at, orders!inner(completed_at, source, status)")
-        .eq("orders.status", "completed")
-        .gte("orders.completed_at", start);
-      if (end) q = q.lt("orders.completed_at", end);
-      return q.order("id").range(from, to);
-    });
-  } catch (e) {
-    console.warn("order_partial_refunds not read (migration 20260929213100_order_partial_refunds.sql applied?):", (e as PostgrestError).message);
-    return [];
-  }
+  return fetchAll<PartialRefundRow>((from, to) => {
+    let q = supabase
+      .from("order_partial_refunds")
+      .select("order_id, amount, tax_amount, card_amount, cash_amount, created_at, orders!inner(completed_at, source, status)")
+      .eq("orders.status", "completed")
+      .gte("orders.completed_at", start);
+    if (end) q = q.lt("orders.completed_at", end);
+    return q.order("id").range(from, to);
+  });
 }
 
 // ---------- online tickets: paid seats and free seats ----------
@@ -195,8 +190,7 @@ export interface SalesSummary {
 // his "maybe" -- confirm with him before relying on it.
 const TAX_ACCOUNT_RATE = 0.1;
 const BOX_OFFICE_PER_TICKET = 4;
-const INVENTORY_SHARE = 0.2;
-const EXPENSE_SHARE = 0.8;
+const INVENTORY_SHARE = 0.2; // Expenses gets the other 80%
 
 // menu_categories.key -> what the report calls it. Candy and anything
 // uncategorized land in "other" rather than being folded into one of these.
@@ -479,7 +473,10 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     { label: BOOTHS_LABEL, amount: boothRevenue },
   ].filter((r) => r.amount > 0 || r.detail);
   const grossSales = sold.reduce((s, r) => s + r.amount, 0);
-  const foodAndDrink = category.food + category.coffee + category.soda + category.liquor;
+  const foodAndDrink = round2(category.food + category.coffee + category.soda + category.liquor);
+  // Nathan's lines to the cent, so what's shown adds up: Expenses is the
+  // rest of food and drink after Inventory's share, not a second rounding.
+  const inventory = round2(foodAndDrink * INVENTORY_SHARE);
 
   return {
     vouchers,
@@ -511,14 +508,14 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
           .join(" · "),
       })),
     accounts: [
-      { label: "Tax account", rule: `10% of ${money(grossSales)} sold`, amount: grossSales * TAX_ACCOUNT_RATE },
+      { label: "Tax account", rule: `10% of ${money(grossSales)} sold`, amount: round2(grossSales * TAX_ACCOUNT_RATE) },
       { label: "Box office", rule: `$4 × ${paidTickets} paid ticket${paidTickets === 1 ? "" : "s"}`, amount: paidTickets * BOX_OFFICE_PER_TICKET },
-      { label: "Inventory", rule: `20% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * INVENTORY_SHARE },
-      { label: "Expenses", rule: `80% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * EXPENSE_SHARE },
+      { label: "Inventory", rule: `20% of ${money(foodAndDrink)} food & drink`, amount: inventory },
+      { label: "Expenses", rule: `80% of ${money(foodAndDrink)} food & drink`, amount: round2(foodAndDrink - inventory) },
     ],
     // Sales none of the rules above claims: ticket and booth money past the
     // $4 carve-out, and candy/other.
-    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other,
+    unassigned: round2(ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other),
   };
 }
 
@@ -875,13 +872,15 @@ export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | 
 //
 // Counted: completed register and web orders (their tax; register tickets'
 // tax is on their order), online ticket bookings (the tax Stripe added),
-// booth bookings (tax_amount), and gift memberships. Refunds: a fully
-// refunded order, booking or cancelled booth isn't counted at all; a
-// partial refund comes off, in the month of the sale. So a refund made
-// after a month was filed changes that month here.
+// booth bookings (tax_amount), gift memberships, and Insiders+ monthly and
+// yearly bills (read from Stripe, by when they were paid: ./plus-bills.ts).
+// Refunds: a fully refunded order, booking or cancelled booth isn't counted
+// at all; a partial refund comes off, in the month of the sale. So a refund
+// made after a month was filed changes that month here. An Insiders+ bill
+// refunded in Stripe stays counted.
 //
-// Not here: Insiders+ monthly and yearly memberships. Stripe bills and
-// taxes those directly; their tax is in Stripe's own tax report.
+// When Stripe can't be reached, plusUnreachable is set and the Insiders+
+// line is missing, so the totals are short: the page shows no total then.
 
 export interface TaxLine {
   label: string;
@@ -905,7 +904,7 @@ export interface SalesTaxReport {
   months: TaxMonth[];
   total: TaxMonth;
   ratePercent: number;
-  giftsTracked: boolean; // false until the gift memberships migration is applied
+  plusUnreachable: boolean; // Stripe couldn't be read, so Insiders+ is missing from the totals
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -947,6 +946,7 @@ const TAX_SOURCES = {
   tickets: "Online ticket sales",
   booths: "Booth bookings",
   gifts: "Gift memberships",
+  plus: "Insiders+ memberships",
 } as const;
 type TaxSource = keyof typeof TAX_SOURCES;
 
@@ -962,8 +962,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   type BoothRow = { fee_amount: number; tax_amount: number | null; created_at: string };
   type GiftRow = { price: number; tax_amount: number; paid_at: string };
 
-  let giftsTracked = true;
-  const [orders, bookings, booths, gifts, partials] = await Promise.all([
+  const [orders, bookings, booths, gifts, partials, plusBills] = await Promise.all([
     fetchAll<OrderRow>((from, to) =>
       supabase.from("orders").select("source, tax_free, tax, tip, total, completed_at").eq("status", "completed").gte("completed_at", start).lt("completed_at", end).order("id").range(from, to),
     ),
@@ -976,11 +975,13 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
     ),
     fetchAll<GiftRow>((from, to) =>
       supabase.from("gift_memberships").select("price, tax_amount, paid_at").eq("status", "paid").gte("paid_at", start).lt("paid_at", end).order("id").range(from, to),
-    ).catch(() => {
-      giftsTracked = false;
-      return [] as GiftRow[];
-    }),
+    ),
     getPartialRefunds(start, end),
+    // null: Stripe couldn't be read (the page says so instead of a short total).
+    getInsidersPlusBills(start, end).catch((e: unknown) => {
+      console.error("sales tax: Insiders+ bills not read from Stripe:", e instanceof Error ? e.message : e);
+      return null;
+    }),
   ]);
 
   const byMonth = new Map(months.map((m) => [m, { lines: new Map<TaxSource, TaxLine>(), refunds: { sales: 0, tax: 0 }, exempt: 0 }]));
@@ -1004,6 +1005,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   for (const b of bookings) add(b.created_at, "tickets", bookingSeats(b).paid * Number(b.unit_price), Number(b.tax_amount));
   for (const r of booths) add(r.created_at, "booths", Number(r.fee_amount), Number(r.tax_amount ?? 0));
   for (const g of gifts) add(g.paid_at, "gifts", Number(g.price), Number(g.tax_amount));
+  for (const b of plusBills ?? []) add(b.paidAt, "plus", b.sales, b.tax);
   for (const p of partials) {
     const m = monthOf(p.orders.completed_at);
     if (!m) continue;
@@ -1049,7 +1051,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   }
   total.lines = sourceOrder.map((s) => totalLines.get(TAX_SOURCES[s])).filter((l): l is TaxLine => !!l);
 
-  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked };
+  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, plusUnreachable: plusBills === null };
 }
 
 // What the tax on a period's taxable sales comes to at the Joplin rate, to

@@ -9,13 +9,6 @@ import { applyPoints, reversePurchasePoints } from "@/lib/points";
 import { assertStaff } from "@/lib/auth";
 import { planPartialRefund } from "@/lib/data/refund-plan";
 
-// A plain yes/no, kept for any caller that only needs that. Goes through
-// the same guess limit and log as the refunds below (src/lib/manager-pin.ts).
-export async function verifyManagerPin(pin: string): Promise<boolean> {
-  const staff = await assertStaff();
-  return (await checkManagerPin(pin, "approval", staff.employeeId)).ok;
-}
-
 // Actually returns the money via Stripe when the order/booking was paid by
 // card (stripe_payment_intent_id set) -- flipping the DB status alone,
 // which is all this used to do, never touched the customer's card.
@@ -77,10 +70,15 @@ export async function refundOrder(orderId: string, pin: string): Promise<Approva
   if (error) throw error;
   await recordApprover("orders", orderId, approval.approverId);
   // Movie tickets sold on this order give their seats back.
-  await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
+  const { error: seatsErr } = await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
+  if (seatsErr) console.error("refunded order's tickets not released", orderId, seatsErr.message);
   await reverseOrderPoints(orderId, staff.employeeId);
   revalidatePath("/admin/reports");
   revalidatePath("/admin/members");
+  // The money is already back by now, so this says so rather than "nothing changed".
+  if (seatsErr) {
+    return { ok: false, error: "Refunded, but the seats weren't released: this order's movie tickets still count as sold. Tell the owner so the seats can be freed up." };
+  }
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
 
@@ -119,7 +117,8 @@ export async function refundOrderPart(orderId: string, amountIn: number, reasonI
 
   const { data: prior, error: priorErr } = await supabase.from("order_partial_refunds").select("amount, tax_amount, card_amount, cash_amount").eq("order_id", orderId);
   if (priorErr) {
-    return { ok: false, error: "Partial refunds need a database update first (migration 20260929213100_order_partial_refunds.sql). Nothing was refunded. A full refund still works." };
+    console.error("partial refund: earlier refunds not read", orderId, priorErr.message);
+    return { ok: false, error: "Couldn't check this order's earlier refunds, so nothing was refunded. Try again." };
   }
   const sum = (key: "amount" | "tax_amount" | "card_amount") => round2((prior ?? []).reduce((s, r) => s + Number(r[key]), 0));
   const earlier = { amount: sum("amount"), tax: sum("tax_amount"), card: sum("card_amount") };

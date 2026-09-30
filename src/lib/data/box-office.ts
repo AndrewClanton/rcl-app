@@ -177,7 +177,8 @@ export async function getBoxOfficeReport(start: string, end: string, now = new D
     await Promise.all(
       chunks(orderIds).map(async (part) => {
         const { data, error } = await supabase.from("order_partial_refunds").select("order_id, amount").in("order_id", part);
-        return error ? [] : (data ?? []); // not there until its migration is applied
+        if (error) throw error;
+        return data ?? [];
       }),
     )
   ).flat();
