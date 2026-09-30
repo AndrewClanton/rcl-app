@@ -3,7 +3,8 @@
 import { useRef, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { removeMenuPhoto, uploadMenuPhoto, type PhotoTarget } from "./actions";
+import { removeMenuPhoto, uploadMenuPhoto } from "./actions";
+import type { PhotoTarget } from "@/lib/menu-pictures/shared";
 
 // The product photo for a register button (an item) or tab (a category):
 // its thumbnail, and for managers Take photo / Choose photo / Remove.
