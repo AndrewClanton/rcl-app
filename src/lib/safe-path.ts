@@ -12,7 +12,15 @@ export function safePath(p: string | null | undefined): string | null {
   const base = "https://this-site.invalid";
   try {
     const u = new URL(p, base);
-    return u.origin === base ? u.pathname + u.search + u.hash : null;
+    if (u.origin !== base) return null;
+    // Dot segments collapse on the way through: "/.//evil.com",
+    // "/a/..//evil.com" and "/%2e//evil.com" all come out as "//evil.com",
+    // which a browser reads as another site once it's in a Location header.
+    const out = u.pathname + u.search + u.hash;
+    if (out.startsWith("//") || out.startsWith("/\\")) return null;
+    // An encoded control character ("/%09/evil.com") is harmless as it
+    // stands, but becomes the tab trick above if anything decodes it later.
+    return /%(?:[01][0-9a-f]|7f)/i.test(u.pathname) ? null : out;
   } catch {
     return null;
   }
