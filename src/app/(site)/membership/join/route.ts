@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSignedInMember } from "@/lib/member-auth";
 import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
 import { safePath } from "@/lib/safe-path";
+import { allowFromConnection } from "@/lib/public-form-guard";
 
 // Every "Get Insiders+" button on the site points here.
 // - Signed in: straight to Stripe's payment page; we already have their
@@ -28,6 +29,9 @@ export async function GET(req: NextRequest) {
   // charge waits until the gift runs out.
   const giftEnds = giftEndsWithoutRenewal(member);
   if (plusPaidFor(member) && !giftEnds) return go("/account/billing");
+  // Each visit from here opens a Stripe checkout: the join form's
+  // per-connection cap, so a script can't open them over and over.
+  if (!(await allowFromConnection("membership"))) return go("/membership?checkout=unavailable#join");
 
   const checkoutUrl = await createPlusCheckout({
     memberId: member.id,

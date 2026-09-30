@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import PlusLink from "@/components/PlusLink";
 import Honeypot from "@/components/Honeypot";
 import { salesTaxOn } from "@/lib/sales-tax";
@@ -68,7 +69,10 @@ export default function TicketReservation({
       <div className="sheet p-5">
         <span className="ctag ctag-red">Sold out</span>
         <h2 className="font-display mt-3 text-2xl">This show is full.</h2>
-        <p className="mt-2 text-[15px]">Check the other showtimes, or ask at the box office about a cancellation.</p>
+        <p className="mt-2 text-[15px]">Pick another showtime, or ask at the box office about a cancellation.</p>
+        <Link href="/showtimes" className="btn-secondary mt-4 inline-block px-4 py-2 text-sm">
+          All showtimes
+        </Link>
       </div>
     );
   }
@@ -107,11 +111,11 @@ export default function TicketReservation({
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
             <div className="label-xs">Name</div>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
+            <input className="input" autoComplete="name" autoCapitalize="words" value={name} onChange={(e) => setName(e.target.value)} />
           </label>
           <label className="block">
             <div className="label-xs">Email</div>
-            <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <input type="email" className="input" autoComplete="email" inputMode="email" autoCapitalize="none" spellCheck={false} value={email} onChange={(e) => setEmail(e.target.value)} />
           </label>
         </div>
       ) : (

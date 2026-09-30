@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { estimateEventTotal } from "@/lib/eventPricing";
-import { allowFromConnection, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import type { Room } from "@/lib/types";
 
 // Next.js redacts a *thrown* Server Action error's message in production
@@ -26,6 +26,9 @@ export async function submitEventInquiry(fields: {
   pizzaCount: number | null;
   organizerName: string;
   organizerEmail: string;
+  // The form's bot check (lib/public-form-guard.ts).
+  formToken?: string | null;
+  honeypot?: string | null;
 }): Promise<EventInquiryResult> {
   if (!fields.roomId) return { ok: false, error: "Select a space." };
   if (!(fields.hours > 0)) return { ok: false, error: "Enter the number of hours." };
@@ -35,6 +38,9 @@ export async function submitEventInquiry(fields: {
   // Each request lands in the staff's events list, so a script mustn't be
   // able to bury it.
   if (!(await allowFromConnection("eventInquiry"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
+  // Nothing to pay here, so nothing else stops a script: the bot check.
+  const notHuman = checkHuman("eventInquiry", fields);
+  if (notHuman) return { ok: false, error: notHuman };
 
   const supabase = createAdminClient();
   const { data: room, error: roomErr } = await supabase

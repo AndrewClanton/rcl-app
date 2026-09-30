@@ -10,7 +10,8 @@ import { allowAttempt } from "@/lib/rate-limit";
 // Two layers:
 //   1. A per-connection limit on every form (allowFromConnection).
 //   2. On the free paths that skip Stripe (a free screening or an
-//      Insiders+ seat, an Insiders+ booth), a light bot check: a hidden
+//      Insiders+ seat, an Insiders+ booth, an event request, a free
+//      Insiders sign-up), a light bot check: a hidden
 //      field people never fill in, and a signed "page opened at" stamp so a
 //      form sent back in under a few seconds is refused. No third-party
 //      CAPTCHA: nothing extra loads, nothing is sent anywhere.

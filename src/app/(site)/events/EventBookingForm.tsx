@@ -5,14 +5,20 @@ import type { Room } from "@/lib/types";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import { submitEventInquiry } from "./actions";
 import { SpecFoot } from "@/components/print";
+import Honeypot from "@/components/Honeypot";
+import { useFormToken } from "@/lib/use-form-token";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
 // A booking request in four short steps, with the running estimate beside
-// it (below it on a phone) -- rather than one long column of fields.
+// it (below it on a phone) -- rather than one long column of fields. The
+// hidden field and the form's stamp go back with the request, for the bot
+// check (lib/public-form-guard.ts).
 export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
+  const formToken = useFormToken("eventInquiry");
+  const [honeypot, setHoneypot] = useState("");
   const [roomId, setRoomId] = useState("");
   const [hours, setHours] = useState(2);
   const [addonIds, setAddonIds] = useState<string[]>([]);
@@ -56,6 +62,8 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         pizzaCount: pizzas ? parseInt(pizzas, 10) : null,
         organizerName,
         organizerEmail,
+        formToken: await formToken(),
+        honeypot,
       });
       if (!inquiryResult.ok) {
         setError(inquiryResult.error);
@@ -177,6 +185,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
               <input type="email" className="input" autoComplete="email" placeholder="name@example.com" value={organizerEmail} onChange={(e) => setOrganizerEmail(e.target.value)} />
             </Field>
           </div>
+          <Honeypot value={honeypot} onChange={setHoneypot} />
         </Step>
       </div>
 

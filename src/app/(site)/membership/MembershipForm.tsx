@@ -4,16 +4,20 @@ import { useState } from "react";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { submitMembershipSignup, startMembershipCheckout } from "./actions";
 import { SpecFoot } from "@/components/print";
+import Honeypot from "@/components/Honeypot";
 
 type Plan = "free" | "plus" | "annual";
 
 // For visitors who aren't signed in. Signed-in members never see this: they
 // go straight to payment (see join/route.ts).
-export default function MembershipForm({ initialPlan = "free", returnTo = null }: { initialPlan?: Plan; returnTo?: string | null }) {
+// `formToken` (stamped when the page was built) goes back with a free
+// sign-up, with the hidden field, for the bot check (lib/public-form-guard.ts).
+export default function MembershipForm({ initialPlan = "free", returnTo = null, formToken }: { initialPlan?: Plan; returnTo?: string | null; formToken: string }) {
   const [plan, setPlan] = useState<Plan>(initialPlan);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [honeypot, setHoneypot] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -31,7 +35,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
     setError(null);
     try {
       if (plan === "free") {
-        const result = await submitMembershipSignup({ name, email, phone });
+        const result = await submitMembershipSignup({ name, email, phone, formToken, honeypot });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -121,6 +125,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null }
           <div className="label-xs">Phone (optional)</div>
           <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </label>
+        <Honeypot value={honeypot} onChange={setHoneypot} />
       </div>
 
       {error && <div className="mt-3 text-sm font-bold text-[var(--danger-text)]">{error}</div>}
