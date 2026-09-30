@@ -4,6 +4,7 @@ import { getRecipesByItem } from "./recipes";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
+import { BOOTHS_LABEL, CATEGORY_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 
 // Every report here works in business days: 4 a.m. to 4 a.m. Central, the
 // same day the register and shifts use, so a late sale counts tonight.
@@ -110,11 +111,48 @@ export interface DayOrder {
   refundable: number;
   paidByCard: boolean; // card money goes back through Stripe
   businessDate: string;
+  // The rest is for the Day report's drill-downs (./DayDrill.tsx), so each
+  // figure can list the orders behind it with the same arithmetic.
+  source: string; // pos | web
+  cashierId: string | null; // the cashier picked on the register
+  tax: number;
+  taxFree: boolean;
+  // How it was paid, as recorded (register orders), before partial refunds.
+  cash: number;
+  card: number;
+  voucher: number;
+  // What partial refunds took back, by part (their total is `refunded`).
+  refundedTax: number;
+  refundedCard: number;
+  refundedCash: number;
+  // Each line, with the Day report's category for it ("Food", "Movie tickets").
+  lines: { name: string; qty: number; amount: number; category: string }[];
+}
+
+// A ticket booking behind the Day report's ticket figures, and a booth
+// booking behind its booth sales (both in Collected, as online money,
+// except register tickets, which are inside their order).
+export interface DayTicketLine {
+  screeningId: string | null;
+  online: boolean; // false: rung up on the register (its money is in the order)
+  paid: number;
+  free: number;
+  revenue: number; // paid seats x price, before tax
+  tax: number; // the tax Stripe added (online only; a register ticket's tax is on its order)
+  at: string;
+}
+
+export interface DayBoothLine {
+  fee: number;
+  tax: number;
+  at: string;
 }
 
 export interface DayReport extends SalesSummary {
   date: string;
   orders: DayOrder[];
+  ticketLines: DayTicketLine[];
+  boothLines: DayBoothLine[];
 }
 
 // What a stretch of business days added up to: one day (Day), or a week or
@@ -173,6 +211,14 @@ const CATEGORY_BUCKET: Record<string, "food" | "coffee" | "soda" | "liquor"> = {
   spirits: "liquor",
 };
 
+// The category a line falls in ("What sold"). Tickets are counted from
+// their bookings, not as bar sales.
+type SaleLine = { menu_item_id: string | null; is_alcohol: boolean; screening_id: string | null };
+
+function lineBucket(l: SaleLine, bucketByItem: Buckets): keyof typeof CATEGORY_LABEL {
+  return l.is_alcohol ? "liquor" : (l.menu_item_id && bucketByItem.get(l.menu_item_id)) || "other";
+}
+
 type DayOrderRow = {
   id: string;
   order_number: number;
@@ -186,12 +232,14 @@ type DayOrderRow = {
   payment_card_amount: number | null;
   payment_voucher_amount: number | null;
   tax: number;
+  tax_free: boolean;
   tip: number;
   total: number;
   tier_discount: number;
   monthly_discount: number;
   redemption_discount: number;
   stripe_payment_intent_id: string | null;
+  employee_id: string | null;
   employee: { name: string } | null;
   items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; menu_item_id: string | null; is_alcohol: boolean; screening_id: string | null }[];
 };
@@ -200,11 +248,15 @@ type DayOrderRow = {
 // orders has two links to employees (who rang it up, and refund_approved_by),
 // and a bare employees(name) fails with "more than one relationship".
 const DAY_ORDER_COLUMNS =
-  "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tip, total, tier_discount, monthly_discount, redemption_discount, stripe_payment_intent_id, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
+  "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tax_free, tip, total, tier_discount, monthly_discount, redemption_discount, stripe_payment_intent_id, employee_id, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
 
-// One order as the Orders table shows it. `refunded` is what partial
-// refunds have given back so far.
-function toDayOrder(o: DayOrderRow, refunded: number): DayOrder {
+type RefundedParts = { amount: number; tax: number; card: number; cash: number };
+const NOTHING_REFUNDED: RefundedParts = { amount: 0, tax: 0, card: 0, cash: 0 };
+
+// One order as the Orders table shows it. `parts` is what partial refunds
+// have given back so far.
+function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets): DayOrder {
+  const refunded = parts.amount;
   return {
     id: o.id,
     orderNumber: Number(o.order_number),
@@ -228,24 +280,58 @@ function toDayOrder(o: DayOrderRow, refunded: number): DayOrder {
         : 0,
     paidByCard: !!o.stripe_payment_intent_id,
     businessDate: businessDay(new Date(o.completed_at)).date,
+    source: o.source,
+    cashierId: o.employee_id,
+    tax: Number(o.tax),
+    taxFree: !!o.tax_free,
+    cash: Number(o.payment_cash_amount ?? 0),
+    card: Number(o.payment_card_amount ?? 0),
+    voucher: Number(o.payment_voucher_amount ?? 0),
+    refundedTax: parts.tax,
+    refundedCard: parts.card,
+    refundedCash: parts.cash,
+    lines: o.items.map((l) => ({
+      name: l.name,
+      qty: l.quantity,
+      amount: Number(l.unit_price) * l.quantity,
+      category: l.screening_id ? TICKETS_LABEL : CATEGORY_LABEL[lineBucket(l, bucketByItem)],
+    })),
   };
+}
+
+function partsByOrder(partials: PartialRefundRow[]): Map<string, RefundedParts> {
+  const out = new Map<string, RefundedParts>();
+  for (const p of partials) {
+    const s = out.get(p.order_id) ?? { ...NOTHING_REFUNDED };
+    s.amount = round2(s.amount + Number(p.amount));
+    s.tax = round2(s.tax + Number(p.tax_amount));
+    s.card = round2(s.card + Number(p.card_amount));
+    s.cash = round2(s.cash + Number(p.cash_amount));
+    out.set(p.order_id, s);
+  }
+  return out;
 }
 
 export async function getDayReport(date: string): Promise<DayReport> {
   const { start, end } = businessDayWindow(date);
   const { rows, buckets } = await loadSales(start, end);
-  const refundedByOrder = new Map<string, number>();
-  for (const p of rows.partials) refundedByOrder.set(p.order_id, round2((refundedByOrder.get(p.order_id) ?? 0) + Number(p.amount)));
+  const refundedByOrder = partsByOrder(rows.partials);
   return {
     date,
-    orders: rows.orders.map((o) => toDayOrder(o, refundedByOrder.get(o.id) ?? 0)),
+    orders: rows.orders.map((o) => toDayOrder(o, refundedByOrder.get(o.id) ?? NOTHING_REFUNDED, buckets)),
+    // The same seats and money summarizeSales counts (bookingSeats), one per booking.
+    ticketLines: rows.bookings.map((b) => {
+      const { paid, free } = bookingSeats(b);
+      return { screeningId: b.screening_id, online: !b.order_id, paid, free, revenue: paid * Number(b.unit_price), tax: b.order_id ? 0 : Number(b.tax_amount), at: b.created_at };
+    }),
+    boothLines: rows.booths.map((r) => ({ fee: Number(r.fee_amount), tax: Number(r.tax_amount ?? 0), at: r.created_at })),
     ...summarizeSales(rows, buckets),
   };
 }
 
 // ---------- the rows behind a stretch of days ----------
 
-type SaleBooking = { quantity: number; unit_price: number; tax_amount: number; order_id: string | null; created_at: string };
+type SaleBooking = { quantity: number; unit_price: number; tax_amount: number; order_id: string | null; created_at: string; screening_id: string | null };
 type SaleBooth = { fee_amount: number; tax_amount: number | null; created_at: string };
 
 export interface SalesRows {
@@ -261,7 +347,7 @@ export type Buckets = Map<string, "food" | "coffee" | "soda" | "liquor" | undefi
 // Everything sold between two instants (business-day edges), paged.
 export async function loadSales(start: string, end: string): Promise<{ rows: SalesRows; buckets: Buckets }> {
   const supabase = createAdminClient();
-  const [orders, bookings, booths, menuRes, catRes, partials] = await Promise.all([
+  const [orders, bookings, booths, buckets, partials] = await Promise.all([
     fetchAll<DayOrderRow>((from, to) =>
       supabase
         .from("orders")
@@ -275,20 +361,24 @@ export async function loadSales(start: string, end: string): Promise<{ rows: Sal
     ),
     // Every ticket, online or at the register, has a booking.
     fetchAll<SaleBooking>((from, to) =>
-      supabase.from("bookings").select("quantity, unit_price, tax_amount, order_id, created_at").eq("status", "confirmed").gte("created_at", start).lt("created_at", end).order("id").range(from, to),
+      supabase.from("bookings").select("quantity, unit_price, tax_amount, order_id, created_at, screening_id").eq("status", "confirmed").gte("created_at", start).lt("created_at", end).order("id").range(from, to),
     ),
     fetchAll<SaleBooth>((from, to) =>
       supabase.from("booth_reservations").select("fee_amount, tax_amount, created_at").eq("status", "confirmed").gte("created_at", start).lt("created_at", end).order("id").range(from, to),
     ),
-    supabase.from("menu_items").select("id, category_id"),
-    supabase.from("menu_categories").select("id, key"),
+    loadBuckets(),
     getPartialRefunds(start, end),
   ]);
-  for (const r of [menuRes, catRes]) if (r.error) throw r.error;
-
-  const categoryKeyById = new Map((catRes.data ?? []).map((c) => [c.id, c.key]));
-  const buckets: Buckets = new Map((menuRes.data ?? []).map((m) => [m.id, CATEGORY_BUCKET[categoryKeyById.get(m.category_id) ?? ""]]));
   return { rows: { orders, bookings, booths, partials }, buckets };
+}
+
+// Each menu item's category, as the report groups them.
+async function loadBuckets(): Promise<Buckets> {
+  const supabase = createAdminClient();
+  const [menuRes, catRes] = await Promise.all([supabase.from("menu_items").select("id, category_id"), supabase.from("menu_categories").select("id, key")]);
+  for (const r of [menuRes, catRes]) if (r.error) throw r.error;
+  const categoryKeyById = new Map((catRes.data ?? []).map((c) => [c.id, c.key]));
+  return new Map((menuRes.data ?? []).map((m) => [m.id, CATEGORY_BUCKET[categoryKeyById.get(m.category_id) ?? ""]]));
 }
 
 // The rows split by the business day each belongs to: an order by when it
@@ -338,7 +428,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
       // Tickets are counted from their bookings below, not as bar sales.
-      if (!l.screening_id) category[l.is_alcohol ? "liquor" : ((l.menu_item_id && bucketByItem.get(l.menu_item_id)) || "other")] += amount;
+      if (!l.screening_id) category[lineBucket(l, bucketByItem)] += amount;
       const it = items.get(l.name) ?? { qty: 0, revenue: 0, options: new Map() };
       it.qty += l.quantity;
       it.revenue += amount;
@@ -380,13 +470,13 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds;
 
   const sold = [
-    { label: "Movie tickets", amount: ticketRevenue, detail: ticketsSold ? `${ticketsSold} sold${ticketsSold > paidTickets ? `, ${ticketsSold - paidTickets} free` : ""}` : undefined },
-    { label: "Food", amount: category.food },
-    { label: "Candy & other", amount: category.other },
-    { label: "Drinks", amount: category.soda },
-    { label: "Coffee", amount: category.coffee },
-    { label: "Alcohol", amount: category.liquor },
-    { label: "Booths", amount: boothRevenue },
+    { label: TICKETS_LABEL, amount: ticketRevenue, detail: ticketsSold ? `${ticketsSold} sold${ticketsSold > paidTickets ? `, ${ticketsSold - paidTickets} free` : ""}` : undefined },
+    { label: CATEGORY_LABEL.food, amount: category.food },
+    { label: CATEGORY_LABEL.other, amount: category.other },
+    { label: CATEGORY_LABEL.soda, amount: category.soda },
+    { label: CATEGORY_LABEL.coffee, amount: category.coffee },
+    { label: CATEGORY_LABEL.liquor, amount: category.liquor },
+    { label: BOOTHS_LABEL, amount: boothRevenue },
   ].filter((r) => r.amount > 0 || r.detail);
   const grossSales = sold.reduce((s, r) => s + r.amount, 0);
   const foodAndDrink = category.food + category.coffee + category.soda + category.liquor;
@@ -762,9 +852,8 @@ export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | 
   if (!data) return null;
   const row = data as unknown as DayOrderRow;
   const { start, end } = businessDayWindow(businessDay(new Date(row.completed_at)).date);
-  const partials = row.status === "completed" ? await getPartialRefunds(start, end) : [];
-  const refunded = partials.filter((p) => p.order_id === row.id).reduce((s, p) => s + Number(p.amount), 0);
-  return toDayOrder(row, round2(refunded));
+  const [partials, buckets] = await Promise.all([row.status === "completed" ? getPartialRefunds(start, end) : [], loadBuckets()]);
+  return toDayOrder(row, partsByOrder(partials.filter((p) => p.order_id === row.id)).get(row.id) ?? NOTHING_REFUNDED, buckets);
 }
 
 // ---------- sales tax ----------

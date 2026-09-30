@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { PeriodReport } from "@/lib/data/period-report";
+import type { TipWeek } from "@/lib/data/day-drill";
 import { datesIn, rangeLabel, shortDate, weekday } from "@/lib/report-periods";
 import { BarList, Card, Columns, Delta, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
@@ -18,7 +19,7 @@ function dayHref(date: string) {
   return `/admin/reports?date=${date}`;
 }
 
-export default function PeriodView({ report, noun, boxOfficeHref }: { report: PeriodReport; noun: "week" | "month"; boxOfficeHref: string }) {
+export default function PeriodView({ report, noun, boxOfficeHref, tips }: { report: PeriodReport; noun: "week" | "month"; boxOfficeHref: string; tips?: TipWeek }) {
   const s = report.sales;
   const b = report.previous.sales;
   const m = report.members;
@@ -120,6 +121,8 @@ export default function PeriodView({ report, noun, boxOfficeHref }: { report: Pe
           </div>
         </Card>
 
+        {tips && <TipsCard tips={tips} noun={noun} />}
+
         <Card title="Top items">{s.topItems.length === 0 ? <p className="text-sm text-[var(--muted)]">Nothing sold.</p> : <TopItems items={s.topItems} />}</Card>
 
         <Card
@@ -196,5 +199,51 @@ export default function PeriodView({ report, noun, boxOfficeHref }: { report: Pe
         </Card>
       </div>
     </div>
+  );
+}
+
+// The tip payouts recorded on the Day report (Tips -> Record tip payout),
+// per person, and the days with tips still to record.
+function TipsCard({ tips, noun }: { tips: TipWeek; noun: string }) {
+  return (
+    <Card title={`Tips this ${noun}`} subtitle={`${money(tips.tips)} in tips; ${money(tips.paid)} recorded as paid out.`}>
+      {!tips.ready ? (
+        <p className="text-sm text-[var(--muted)]">Recording payouts needs a database update first.</p>
+      ) : (
+        <>
+          {tips.people.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">No payouts recorded yet.</p>
+          ) : (
+            <Rows
+              rows={tips.people.map((p) => ({
+                key: p.employeeId,
+                label: (
+                  <>
+                    {p.name}
+                    <span className="ml-1.5 text-xs text-[var(--muted)]">
+                      {p.days} day{p.days === 1 ? "" : "s"}
+                    </span>
+                  </>
+                ),
+                value: <span className="font-semibold">{money(p.amount)}</span>,
+              }))}
+            />
+          )}
+          {tips.unrecorded.length > 0 && (
+            <div className="mt-3 text-xs text-[var(--muted)]">
+              Not recorded yet:{" "}
+              {tips.unrecorded.map((d, i) => (
+                <span key={d.date}>
+                  {i > 0 && ", "}
+                  <Link href={`/admin/reports?date=${d.date}&show=tips`} className="font-medium text-[var(--foreground)] underline-offset-2 hover:underline">
+                    {shortDate(d.date, { weekday: true })} ({money(d.tips)})
+                  </Link>
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
   );
 }

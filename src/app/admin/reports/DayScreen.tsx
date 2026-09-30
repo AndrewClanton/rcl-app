@@ -1,13 +1,17 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
+import type { DayDrillData } from "@/lib/data/day-drill";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, TICKETS_LABEL } from "@/lib/report-categories";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
 import OrderSearch from "./OrderSearch";
+import DayDrill from "./DayDrill";
 import { BarList, Card, Columns, PeriodNav, Pill, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
 // Reports -> Day, as drawn: the page (./page.tsx) checks the sign-in and
-// reads the numbers.
+// reads the numbers. Every figure opens what's behind it (./DayDrill.tsx).
 
 export const DAY_RANGES = [7, 30, 90];
 
@@ -23,6 +27,8 @@ function href(p: Keep) {
   return `/admin/reports${s ? `?${s}` : ""}`;
 }
 
+type Drill = { show: string; status?: string; pay?: string; cat?: string; item?: string };
+
 export default function DayScreen({
   r,
   before,
@@ -32,6 +38,8 @@ export default function DayScreen({
   days,
   orderNumber,
   found,
+  drill,
+  canRecord,
 }: {
   r: DayReport;
   before: DayReport; // the same weekday a week earlier
@@ -41,9 +49,19 @@ export default function DayScreen({
   days: number;
   orderNumber: number | null;
   found: DayOrder | null;
+  drill: DayDrillData;
+  canRecord: boolean; // managers and up record tip payouts
 }) {
   const keep: Keep = { date: date === today ? undefined : date, days: days === 30 ? undefined : String(days) };
   const vs = `vs ${money(before.collected)} last ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}`;
+  // This day with a drill-down open (and an order search kept, if any).
+  // Just the query: it opens over this page, wherever it is.
+  const to = (d: Drill) => {
+    const q = new URLSearchParams(Object.entries({ ...keep, order: orderNumber ? String(orderNumber) : undefined, ...d }).filter(([, v]) => v) as [string, string][]);
+    return `?${q.toString()}`;
+  };
+  const soldHref = (label: string) => (label === TICKETS_LABEL ? to({ show: "tickets" }) : label === BOOTHS_LABEL ? to({ show: "orders", pay: "online" }) : to({ show: "orders", cat: label }));
+  const fullRefunds = r.orders.filter((o) => o.status === "refunded");
 
   return (
     <div className="space-y-5">
@@ -79,23 +97,26 @@ export default function DayScreen({
         </Card>
       )}
 
-      <DayFigures r={r} before={before} vs={vs} />
+      <DayFigures r={r} before={before} vs={vs} to={to} paidOut={drill.payout !== null} />
 
       <TrendCard trend={trend} date={date} days={days} keep={keep} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Card title="What sold" subtitle="Before tax and tips.">
+        <Card title="What sold" subtitle="Before tax and tips. Tap a line for the orders behind it.">
           {r.sold.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p>
           ) : (
             <>
-              <BarList rows={r.sold.map((s) => ({ label: s.label, value: s.amount, detail: s.detail }))} />
+              <BarList rows={r.sold.map((s) => ({ label: s.label, value: s.amount, detail: s.detail, href: soldHref(s.label) }))} />
               <div className="mt-4">
                 <Rows
                   rows={[
-                    ...(r.discounts > 0 ? [{ label: "Member discounts", value: `−${money(r.discounts)}`, muted: true }] : []),
-                    ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true }] : []),
-                    { label: "Net sales", value: money(r.netSales), strong: true },
+                    ...(r.discounts > 0 ? [{ label: "Member discounts", value: `−${money(r.discounts)}`, muted: true, href: to({ show: "net" }) }] : []),
+                    ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
+                    { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
+                    ...(fullRefunds.length > 0
+                      ? [{ label: `Refunded in full · ${fullRefunds.length} (not counted)`, value: money(fullRefunds.reduce((s, o) => s + o.total, 0)), muted: true, href: to({ show: "refunds" }) }]
+                      : []),
                   ]}
                 />
               </div>
@@ -104,7 +125,7 @@ export default function DayScreen({
         </Card>
 
         <Card title="Top items">
-          {r.topItems.length === 0 ? <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p> : <TopItems items={r.topItems} />}
+          {r.topItems.length === 0 ? <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p> : <TopItems items={r.topItems.map((it) => ({ ...it, href: to({ show: "orders", item: it.name }) }))} />}
         </Card>
       </div>
 
@@ -119,6 +140,8 @@ export default function DayScreen({
               </>
             ),
             value: <span className="text-base font-semibold">{money(a.amount)}</span>,
+            // The sales each rule is worked from.
+            href: a.label === "Box office" ? to({ show: "tickets" }) : a.label === "Tax account" ? to({ show: "net" }) : to({ show: "orders", cat: FOOD_AND_DRINK }),
           }))}
         />
         <p className="mt-2 text-xs text-[var(--muted)]">
@@ -129,31 +152,35 @@ export default function DayScreen({
       <Card title={`Orders · ${r.orders.length}`}>
         <OrdersTable orders={r.orders} />
       </Card>
+
+      <Suspense fallback={null}>
+        <DayDrill r={r} drill={drill} canRecord={canRecord} dayLabel={`${longDate(date)} · 4 a.m. to 4 a.m.`} />
+      </Suspense>
     </div>
   );
 }
 
-function DayFigures({ r, before, vs }: { r: DayReport; before: DayReport; vs: string }) {
+function DayFigures({ r, before, vs, to, paidOut }: { r: DayReport; before: DayReport; vs: string; to: (d: Drill) => string; paidOut: boolean }) {
   const avg = r.orderCount ? r.orderSales / r.orderCount : 0;
   const avgBefore = before.orderCount ? before.orderSales / before.orderCount : null;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat hero className="col-span-2" label="Collected" value={money(r.collected)} now={r.collected} before={before.collected} beforeText={vs} sub="cash, card and online, with tax and tips" />
-        <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} />
-        <Stat label="Orders" value={num(r.orderCount)} now={r.orderCount} before={before.orderCount} />
-        <Stat label="Tips" value={money(r.tips)} now={r.tips} before={before.tips} />
-        <Stat label="Sales tax" value={money(r.tax)} />
-        <Stat label="Tickets" value={num(r.ticketsSold)} now={r.ticketsSold} before={before.ticketsSold} sub={r.tickets.free ? `${r.tickets.free} free` : undefined} />
-        <Stat label="Average order" value={r.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} sub="before tax and tip" />
+        <Stat hero className="col-span-2" label="Collected" value={money(r.collected)} now={r.collected} before={before.collected} beforeText={vs} sub="cash, card and online, with tax and tips" href={to({ show: "collected" })} />
+        <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} href={to({ show: "net" })} />
+        <Stat label="Orders" value={num(r.orderCount)} now={r.orderCount} before={before.orderCount} href={to({ show: "orders" })} />
+        <Stat label="Tips" value={money(r.tips)} now={r.tips} before={before.tips} sub={r.tips > 0 ? (paidOut ? "paid out" : "not paid out yet") : undefined} href={to({ show: "tips" })} />
+        <Stat label="Sales tax" value={money(r.tax)} href={to({ show: "tax" })} />
+        <Stat label="Tickets" value={num(r.ticketsSold)} now={r.ticketsSold} before={before.ticketsSold} sub={r.tickets.free ? `${r.tickets.free} free` : undefined} href={to({ show: "tickets" })} />
+        <Stat label="Average order" value={r.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} sub="before tax and tip" href={to({ show: "orders" })} />
       </div>
       <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
         <SplitBar
           parts={[
-            { label: "Card", value: r.card },
-            { label: "Cash", value: r.cash },
-            { label: "Online", value: r.online },
-            { label: "Vouchers", value: r.vouchers },
+            { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
+            { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
+            { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
+            { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
           ]}
         />
       </Card>
