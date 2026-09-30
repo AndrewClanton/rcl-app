@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { Booth, BoothReservation } from "@/lib/types";
+import { maskEmail, maskPhone, seesFullContact } from "@/lib/contact-mask";
+import type { Booth, BoothReservation, EmployeeRole } from "@/lib/types";
 
 // Locked down like events/members -- reservations carry customer contact
 // info, and the public booth page fetches everything server-side, so
@@ -36,10 +37,18 @@ export async function getBoothBusyTimes(date: string): Promise<BoothBusy[]> {
   return (data ?? []) as BoothBusy[];
 }
 
+// The admin lists below go to any staff login. A cashier gets each guest's
+// email and phone shortened (j•••@gmail.com, ••1234) before the rows leave
+// the server (lib/contact-mask.ts); managers and up see them in full.
+function reservationsForRole(rows: BoothReservation[], viewerRole: EmployeeRole): BoothReservation[] {
+  if (seesFullContact(viewerRole)) return rows;
+  return rows.map((r) => ({ ...r, customer_email: maskEmail(r.customer_email) ?? "", customer_phone: maskPhone(r.customer_phone) }));
+}
+
 // All reservations (including cancelled, so the admin calendar can show a
 // slot's history) whose date falls within [start, end) -- used by the admin
 // booth calendar, one calendar month at a time.
-export async function getBoothReservationsForMonth(start: string, end: string): Promise<BoothReservation[]> {
+export async function getBoothReservationsForMonth(start: string, end: string, viewerRole: EmployeeRole): Promise<BoothReservation[]> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("booth_reservations")
@@ -49,10 +58,10 @@ export async function getBoothReservationsForMonth(start: string, end: string): 
     .order("reservation_date")
     .order("start_time");
   if (error) throw error;
-  return (data ?? []) as unknown as BoothReservation[];
+  return reservationsForRole((data ?? []) as unknown as BoothReservation[], viewerRole);
 }
 
-export async function getUpcomingBoothReservations(): Promise<BoothReservation[]> {
+export async function getUpcomingBoothReservations(viewerRole: EmployeeRole): Promise<BoothReservation[]> {
   const supabase = createAdminClient();
   // Central time, not server-local UTC -- Vercel runs UTC, so a plain
   // toISOString() slice would drop "today's" reservations from the list
@@ -66,5 +75,5 @@ export async function getUpcomingBoothReservations(): Promise<BoothReservation[]
     .order("reservation_date")
     .order("start_time");
   if (error) throw error;
-  return (data ?? []) as unknown as BoothReservation[];
+  return reservationsForRole((data ?? []) as unknown as BoothReservation[], viewerRole);
 }
