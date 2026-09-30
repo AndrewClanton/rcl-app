@@ -5,8 +5,9 @@ import MoviePoster from "@/components/MoviePoster";
 import { getRegisterScreenings, type RegisterScreening } from "./ticket-actions";
 
 // The register's Movies tab: a tile for every showing today and tomorrow,
-// each with its seats left. Tapping one picks how many tickets; each ticket
-// goes on the order tied to that exact showing.
+// each with its seats left, and under Later the two weeks after that, by
+// day. Tapping one picks how many tickets; each ticket goes on the order
+// tied to that exact showing.
 
 export interface TicketLine {
   screeningId: string;
@@ -19,7 +20,16 @@ export interface TicketLine {
 const TZ = "America/Chicago";
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
+// A business date ("2026-10-09") as "Friday, Oct 9".
+const dateHeading = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
 const money = (n: number) => (n === 0 ? "Free" : `$${n.toFixed(2)}`);
+
+type Day = RegisterScreening["day"];
+const DAYS: { key: Day; label: string; none: string }[] = [
+  { key: "today", label: "Today", none: "No showings left today." },
+  { key: "tomorrow", label: "Tomorrow", none: "No showings tomorrow." },
+  { key: "later", label: "Later", none: "No showings in the two weeks after tomorrow." },
+];
 
 export default function MovieTickets({
   initial,
@@ -34,13 +44,13 @@ export default function MovieTickets({
 }) {
   const [shows, setShows] = useState<RegisterScreening[] | null>(initial);
   const [error, setError] = useState<string | null>(null);
-  const [day, setDay] = useState<"today" | "tomorrow">("today");
+  const [day, setDay] = useState<Day>("today");
   const [picked, setPicked] = useState<RegisterScreening | null>(null);
   const [loadedAt, setLoadedAt] = useState(0); // when the list was fetched, for "Started"
 
   const load = useCallback(async () => {
     const r = await getRegisterScreenings().catch(() => null);
-    if (!r || !r.ok) return setError(r && !r.ok ? r.error : "Couldn't load today's showings. Check the connection.");
+    if (!r || !r.ok) return setError(r && !r.ok ? r.error : "Couldn't load the showings. Check the connection.");
     setError(null);
     setShows(r.screenings);
     setLoadedAt(Date.now());
@@ -59,14 +69,22 @@ export default function MovieTickets({
 
   const left = (s: RegisterScreening) => Math.max(0, s.capacity - s.sold - (inCart.get(s.id) ?? 0));
   const list = (shows ?? []).filter((s) => s.day === day);
-  const counts = { today: (shows ?? []).filter((s) => s.day === "today").length, tomorrow: (shows ?? []).filter((s) => s.day === "tomorrow").length };
+  const count = (d: Day) => (shows ?? []).filter((s) => s.day === d).length;
+  // Later has a heading for each date; the list is already in start order.
+  const groups: { date: string | null; shows: RegisterScreening[] }[] = [];
+  for (const s of list) {
+    const date = day === "later" ? s.date : null;
+    const last = groups[groups.length - 1];
+    if (last && last.date === date) last.shows.push(s);
+    else groups.push({ date, shows: [s] });
+  }
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        {(["today", "tomorrow"] as const).map((d) => (
-          <button key={d} className={`chip !px-4 !py-2 text-sm ${day === d ? "chip-selected" : ""}`} onClick={() => setDay(d)}>
-            {d === "today" ? "Today" : "Tomorrow"} {shows ? `(${counts[d]})` : ""}
+        {DAYS.map((d) => (
+          <button key={d.key} className={`chip !px-4 !py-2 text-sm ${day === d.key ? "chip-selected" : ""}`} onClick={() => setDay(d.key)}>
+            {d.label} {shows ? `(${count(d.key)})` : ""}
           </button>
         ))}
         <button className="ml-auto text-xs hover:underline" style={{ color: "var(--muted)" }} onClick={load}>
@@ -82,48 +100,53 @@ export default function MovieTickets({
       {!shows && !error && <p className="text-sm" style={{ color: "var(--muted)" }}>Loading showings…</p>}
       {shows && list.length === 0 && (
         <p className="text-sm" style={{ color: "var(--muted)" }}>
-          No showings {day === "today" ? "left today" : "tomorrow"}. Add them in Admin → Screenings.
+          {DAYS.find((d) => d.key === day)?.none} Add them in Admin → Screenings.
         </p>
       )}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-        {list.map((s) => {
-          const seats = left(s);
-          const started = loadedAt > 0 && new Date(s.startsAt).getTime() < loadedAt;
-          return (
-            <button
-              key={s.id}
-              className="card-flat flex flex-col gap-2 p-2 text-left disabled:opacity-45"
-              disabled={seats === 0}
-              onClick={() => setPicked(s)}
-              aria-label={`${s.title}, ${time(s.startsAt)}, ${seats} seats left`}
-            >
-              <div className="flex gap-2">
-                <div className="w-14 shrink-0">
-                  <MoviePoster posterUrl={s.posterUrl} title={s.title} sizes="56px" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="line-clamp-2 text-sm font-bold leading-tight" style={{ color: "var(--foreground)" }}>
-                    {s.title}
+      {groups.map((g) => (
+        <section key={g.date ?? day} className="space-y-2">
+          {g.date && <div className="eyebrow pt-1">{dateHeading(g.date)}</div>}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+            {g.shows.map((s) => {
+              const seats = left(s);
+              const started = loadedAt > 0 && new Date(s.startsAt).getTime() < loadedAt;
+              return (
+                <button
+                  key={s.id}
+                  className="card-flat flex flex-col gap-2 p-2 text-left disabled:opacity-45"
+                  disabled={seats === 0}
+                  onClick={() => setPicked(s)}
+                  aria-label={`${s.title}, ${s.day === "today" ? "" : `${dayLabel(s.startsAt)}, `}${time(s.startsAt)}, ${seats} seats left`}
+                >
+                  <div className="flex gap-2">
+                    <div className="w-14 shrink-0">
+                      <MoviePoster posterUrl={s.posterUrl} title={s.title} sizes="56px" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="line-clamp-2 text-sm font-bold leading-tight" style={{ color: "var(--foreground)" }}>
+                        {s.title}
+                      </div>
+                      <div className="mt-1 text-lg font-bold" style={{ color: "var(--accent)" }}>
+                        {time(s.startsAt)}
+                      </div>
+                      <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
+                        {s.room}
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-1 text-lg font-bold" style={{ color: "var(--accent)" }}>
-                    {time(s.startsAt)}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold" style={{ color: "var(--foreground)" }}>{money(s.price)}</span>
+                    <span className="rounded-full px-2 py-0.5 font-bold" style={{ background: seats === 0 ? "var(--danger-bg, #fde8e8)" : seats <= 5 ? "var(--gold)" : "var(--surface-hover)", color: seats === 0 ? "var(--danger-text)" : "var(--foreground)" }}>
+                      {seats === 0 ? "Sold out" : started ? `Started · ${seats} left` : `${seats} left`}
+                    </span>
                   </div>
-                  <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
-                    {s.room}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-bold" style={{ color: "var(--foreground)" }}>{money(s.price)}</span>
-                <span className="rounded-full px-2 py-0.5 font-bold" style={{ background: seats === 0 ? "var(--danger-bg, #fde8e8)" : seats <= 5 ? "var(--gold)" : "var(--surface-hover)", color: seats === 0 ? "var(--danger-text)" : "var(--foreground)" }}>
-                  {seats === 0 ? "Sold out" : started ? `Started · ${seats} left` : `${seats} left`}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
 
       {picked && (
         <TicketPicker
@@ -204,7 +227,7 @@ function TicketPicker({
               Add Insiders+ entry (free, 1 seat)
             </button>
           )}
-          <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onCancel}>
+          <button className="btn-secondary min-h-11 w-full text-base" onClick={onCancel}>
             Cancel
           </button>
         </div>

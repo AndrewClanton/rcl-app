@@ -2,16 +2,17 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
-import { businessDay, shiftDate } from "@/lib/ops/time";
+import { businessDay, businessDayWindow, shiftDate } from "@/lib/ops/time";
 
-// Movie tickets at the register: the showings staff can sell (today's and
-// tomorrow's business days, including a show that started a few minutes
-// ago for latecomers) with seats left, and a seat check before payment.
-// The register is staff-only, so older (MPLC) titles are listed too.
+// Movie tickets at the register: the showings staff can sell (today's
+// business day through the one 14 days out, including a show that started a
+// few minutes ago for latecomers) with seats left, and a seat check before
+// payment. The register is staff-only, so older (MPLC) titles are listed too.
 
 export interface RegisterScreening {
   id: string;
-  day: "today" | "tomorrow";
+  day: "today" | "tomorrow" | "later";
+  date: string; // business date, "YYYY-MM-DD"
   startsAt: string;
   title: string;
   posterUrl: string | null;
@@ -25,12 +26,28 @@ export interface RegisterScreening {
 
 const LATE_SEATING_MIN = 45;
 
+// The Later list runs to the business date this many days after today.
+const DAYS_AHEAD = 14;
+
+// Two weeks of showings can hold more bookings than one request returns
+// (1,000 rows), so this reads a few dozen showings at a time, page by page.
 async function seatsTaken(supabase: ReturnType<typeof createAdminClient>, screeningIds: string[]) {
   const taken = new Map<string, number>();
-  if (!screeningIds.length) return taken;
-  const { data, error } = await supabase.from("bookings").select("screening_id, quantity").in("screening_id", screeningIds).in("status", ["pending", "confirmed"]);
-  if (error) throw error;
-  for (const b of data ?? []) taken.set(b.screening_id, (taken.get(b.screening_id) ?? 0) + b.quantity);
+  for (let i = 0; i < screeningIds.length; i += 50) {
+    const ids = screeningIds.slice(i, i + 50);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("screening_id, quantity")
+        .in("screening_id", ids)
+        .in("status", ["pending", "confirmed"])
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw error;
+      for (const b of data ?? []) taken.set(b.screening_id, (taken.get(b.screening_id) ?? 0) + b.quantity);
+      if (!data || data.length < 1000) break;
+    }
+  }
   return taken;
 }
 
@@ -41,13 +58,14 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
     const now = Date.now();
     const today = businessDay(new Date(now)).date;
     const tomorrow = shiftDate(today, 1); // not now + 24 hours: wrong by a day the nights the clocks change
-    // Generous window; each showing is then placed on its business day and
-    // anything past tomorrow's is dropped.
+    const last = shiftDate(today, DAYS_AHEAD);
+    // Each showing is then placed on its business day; one still on
+    // yesterday's (just after 4 AM) is dropped.
     const { data, error } = await supabase
       .from("screenings")
       .select("id, starts_at, ticket_price, capacity, movie:movies(title, poster_url, runtime_minutes, rating), room:rooms(name)")
       .gte("starts_at", new Date(now - LATE_SEATING_MIN * 60_000).toISOString())
-      .lte("starts_at", new Date(now + 3 * 86_400_000).toISOString())
+      .lt("starts_at", businessDayWindow(last).end)
       .order("starts_at");
     if (error) throw error;
     const rows = (data ?? []) as unknown as {
@@ -60,13 +78,14 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
     }[];
     const inWindow = rows
       .map((r) => ({ r, bd: businessDay(new Date(r.starts_at)).date }))
-      .filter(({ bd }) => bd === today || bd === tomorrow);
+      .filter(({ bd }) => bd >= today && bd <= last);
     const taken = await seatsTaken(supabase, inWindow.map(({ r }) => r.id));
     return {
       ok: true,
       screenings: inWindow.map(({ r, bd }) => ({
         id: r.id,
-        day: bd === today ? "today" : "tomorrow",
+        day: bd === today ? "today" : bd === tomorrow ? "tomorrow" : "later",
+        date: bd,
         startsAt: r.starts_at,
         title: r.movie?.title ?? "Untitled",
         posterUrl: r.movie?.poster_url ?? null,
@@ -79,7 +98,7 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
       })),
     };
   } catch {
-    return { ok: false, error: "Couldn't load today's showings. Check the connection and try again." };
+    return { ok: false, error: "Couldn't load the showings. Check the connection and try again." };
   }
 }
 
