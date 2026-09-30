@@ -11,8 +11,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const [openDevNotes, pinStatus] = await Promise.all([isAdmin ? getOpenDevNoteCount() : 0, getPinStatus(staff.employeeId)]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+    // w-full: the body is a flex column, where a centered box otherwise
+    // grows to its widest content (the menu on one line) instead of the
+    // screen, which made every back-office page phone-unfriendly.
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 print:max-w-none print:p-0">
+      {/* Printed pages (a box office report) leave the back-office menu off. */}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 print:hidden">
         <h1 className="text-xl font-semibold">Royale Cinema Lounge — Back office</h1>
         <nav className="flex flex-wrap items-center gap-4 text-sm">
           <Link href="/admin" className="hover:underline">
@@ -92,7 +96,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       {/* Everyone started on 9999, and it keeps working until they pick
           their own -- this nags until they do (src/app/admin/my-pin). */}
       {(pinStatus === "default" || pinStatus === "temporary") && (
-        <div className="notice notice-warn mb-6 flex flex-wrap items-center justify-between gap-2">
+        <div className="notice notice-warn mb-6 flex flex-wrap items-center justify-between gap-2 print:hidden">
           <span>
             {pinStatus === "default" ? "Your PIN is still 9999, the one everyone knows. Pick your own." : "You're on a temporary PIN the owner set. Pick your own."}
             {hasManagerAccess(staff.role) && " Until you do, anyone who knows it can approve refunds as you."}

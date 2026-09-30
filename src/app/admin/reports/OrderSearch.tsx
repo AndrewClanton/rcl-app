@@ -26,11 +26,11 @@ export default function OrderSearch({ initial }: { initial?: string }) {
         aria-label="Order number"
         inputMode="numeric"
         placeholder="Order #"
-        className="w-24 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm"
+        className="h-9 w-24 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-sm"
         value={value}
         onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))}
       />
-      <button type="submit" className="chip !px-3 !py-1 !text-sm" disabled={!value}>
+      <button type="submit" className="h-9 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 text-sm hover:border-[var(--foreground)] disabled:opacity-40" disabled={!value}>
         Find
       </button>
     </form>

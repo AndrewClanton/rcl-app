@@ -80,7 +80,7 @@ export default function DevNotesWidget() {
   if (!authorized || onDisplayScreen) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 font-sans">
+    <div className="fixed bottom-4 right-4 z-50 font-sans print:hidden">
       {open ? (
         <div className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between gap-2">
