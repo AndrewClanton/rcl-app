@@ -74,9 +74,14 @@ export default async function MyTrainingPage() {
       <header className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <span className="page-eyebrow">Royale staff training</span>
-          <Link href="/admin" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--accent)]">
-            Back office →
-          </Link>
+          <span className="flex flex-wrap gap-4">
+            <Link href="/help" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--accent)]">
+              Help &amp; FAQ →
+            </Link>
+            <Link href="/admin" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--accent)]">
+              Back office →
+            </Link>
+          </span>
         </div>
         <h1 className="font-display text-4xl leading-none">Your training, {session.name.split(" ")[0]}</h1>
         <p className="max-w-xl text-[15px] text-[var(--muted)]">

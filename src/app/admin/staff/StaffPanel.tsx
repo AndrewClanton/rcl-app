@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
+import InfoTip from "@/components/help/InfoTip";
 import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, createRecoveryLink, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
@@ -51,7 +52,10 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
             <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
               <span>Name</span>
               <span>Email</span>
-              <span>Role</span>
+              <span>
+                Role
+                <InfoTip topic="staff-roles" />
+              </span>
               <span>Status</span>
               <span>PIN</span>
               <span>Password</span>
@@ -252,7 +256,10 @@ function AddEmployeeForm() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-[var(--muted)]">Role</label>
+          <div className="mb-1 text-xs text-[var(--muted)]">
+            <label>Role</label>
+            <InfoTip topic="staff-roles" />
+          </div>
           <select className="rounded border border-[var(--border)] px-2 py-1 text-sm" value={role} onChange={(e) => setRole(e.target.value as EmployeeRole)}>
             {ASSIGNABLE.map((r) => (
               <option key={r} value={r}>

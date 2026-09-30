@@ -25,9 +25,14 @@ export default async function AdminTrainingPage() {
             Assign trainings and see who&apos;s signed off. Staff open theirs on the register after starting a shift, or at <b>/training</b> on their phone.
           </p>
         </div>
-        <Link href="/training" className="rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
-          Your own training →
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/help" className="rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
+            Help &amp; FAQ →
+          </Link>
+          <Link href="/training" className="rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
+            Your own training →
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3 text-sm">

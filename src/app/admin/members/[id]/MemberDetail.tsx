@@ -9,6 +9,8 @@ import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
 import GiftCard from "./GiftCard";
+import InfoTip from "@/components/help/InfoTip";
+import type { HelpTopicKey } from "@/lib/help/topics";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
@@ -250,7 +252,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             )}
           </div>
         </form>
-        <Field label="Tier">
+        <Field label="Tier" help="insiders-vs-plus">
           <select
             className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
             value={member.tier}
@@ -297,7 +299,7 @@ function RateField({ member }: { member: Member }) {
     rate === "adult" ? null : member.rate_set_by?.name && setAt ? `Set by ${member.rate_set_by.name}, ${setAt}` : setAt ? `Set ${setAt}` : "Carried over from the old website";
 
   return (
-    <Field label="Rate" hint="Senior and student rates need an ID checked in person. For Insiders+ members, the new price starts with their next bill.">
+    <Field label="Rate" help="senior-student-rates" hint="Senior and student rates need an ID checked in person. For Insiders+ members, the new price starts with their next bill.">
       <select
         className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
         value={rate}
@@ -326,10 +328,15 @@ function RateField({ member }: { member: Member }) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, help, children }: { label: string; hint?: string; help?: HelpTopicKey; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1 block text-xs text-[var(--muted)]">{label}</label>
+      {/* The bubble sits beside the label, not in it: a button inside a
+          <label> would become what the label clicks. */}
+      <div className="mb-1 text-xs text-[var(--muted)]">
+        <label>{label}</label>
+        {help && <InfoTip topic={help} />}
+      </div>
       {children}
       {hint && <p className="mt-1 text-xs text-[var(--muted)]">{hint}</p>}
     </div>
@@ -345,7 +352,10 @@ function FreeMembershipCard({ member, communityPrograms }: { member: Member; com
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      <h2 className="mb-3 text-lg font-semibold">Free / community membership</h2>
+      <h2 className="mb-3 text-lg font-semibold">
+        Free / community membership
+        <InfoTip topic="free-membership" />
+      </h2>
       {member.comped ? (
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -447,7 +457,10 @@ function BillingCard({ member }: { member: Member }) {
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      <h2 className="mb-3 text-lg font-semibold">Billing</h2>
+      <h2 className="mb-3 text-lg font-semibold">
+        Billing
+        <InfoTip topic="member-billing" />
+      </h2>
       {!member.comped && (!plusPaidFor(member) || giftEnds) ? (
         // No card billing them: someone set to Insiders+ by hand, or anyone
         // joining in person. Stripe's page takes the card; we never see it.

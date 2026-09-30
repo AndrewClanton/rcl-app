@@ -3,6 +3,7 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import MemberAvatar from "@/components/MemberAvatar";
+import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
 import { REWARD_LABEL, badgeList } from "@/lib/visits";
@@ -394,6 +395,7 @@ export default function RegisterCheckins({
                 <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--foreground)" }}>
                   <span className="font-display flex-1 text-xs uppercase tracking-wide">
                     {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
+                    <InfoTip topic="door-checkin" tone="ink" />
                   </span>
                   <span className="text-[11px]">{ago(Math.max(0, now - p.at))}</span>
                   <button className="text-[11px] font-bold underline" onClick={() => setCollapsed(true)}>

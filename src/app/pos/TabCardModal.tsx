@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cancelTabCard, checkTabCard, startTabCard } from "./tab-card-actions";
+import InfoTip from "@/components/help/InfoTip";
 
 // "Put a card on file?" for a bar tab: the customer taps their card on the
 // reader and it's saved, not charged. The tab is charged at close.
@@ -71,6 +72,7 @@ export default function TabCardModal({ tabId, tabName, readerId, onSaved, onClos
       <div className="card w-full max-w-sm text-center shadow-2xl">
         <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
           Card on file for {tabName}&apos;s tab
+          <InfoTip topic="tab-card-on-file" />
         </h3>
         {phase === "ask" && (
           <>

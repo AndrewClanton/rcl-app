@@ -9,6 +9,7 @@ import type { MemberStaffInfo } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCommunityProgram, addMember, setCommunityProgramActive } from "./actions";
 import StaffBadge from "./StaffBadge";
+import InfoTip from "@/components/help/InfoTip";
 
 function tierBadgeClass(tier: MemberTier) {
   return tier === "Insiders+"
@@ -168,7 +169,10 @@ function AddMemberForm() {
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      <h2 className="mb-3 text-lg font-semibold">Add member</h2>
+      <h2 className="mb-3 text-lg font-semibold">
+        Add member
+        <InfoTip topic="insiders-vs-plus" />
+      </h2>
       <div className="flex flex-wrap items-end gap-2">
         <input
           className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
@@ -218,7 +222,10 @@ function CommunityProgramsPanel({ programs }: { programs: CommunityProgram[] }) 
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      <h2 className="mb-1 text-lg font-semibold">Community programs</h2>
+      <h2 className="mb-1 text-lg font-semibold">
+        Community programs
+        <InfoTip topic="free-membership" />
+      </h2>
       <p className="mb-3 text-sm text-[var(--muted)]">
         Social/outreach programs that grant free Insiders+ membership. Grant one from a member&apos;s page -- counts show up on the Reports
         page for nonprofit reporting.

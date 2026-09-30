@@ -8,6 +8,7 @@ import type { ScreeningTicket, TicketCount } from "@/lib/data/screenings";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import type { PosterOption } from "@/lib/tmdb-posters";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import InfoTip from "@/components/help/InfoTip";
 import { approvalText } from "@/lib/pin-rules";
 import { refundBooking } from "../reports/actions";
 import {
@@ -427,7 +428,10 @@ function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] 
 
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      <h2 className="mb-3 text-lg font-semibold">Schedule a screening</h2>
+      <h2 className="mb-3 text-lg font-semibold">
+        Schedule a screening
+        <InfoTip topic="screenings-schedule" />
+      </h2>
       <div className="flex flex-wrap items-end gap-3">
         <ScreeningFieldsForm movies={movies} screeningRooms={screeningRooms} value={form} onChange={setForm} />
         <button

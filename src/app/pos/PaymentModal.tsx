@@ -6,6 +6,7 @@ import { startReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnRe
 import { chargeTabCard } from "./tab-card-actions";
 import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
+import InfoTip from "@/components/help/InfoTip";
 
 // Split is hidden: it recorded the card part as paid without ever sending it
 // to the reader. It comes back once it takes the cash here and charges the
@@ -39,6 +40,7 @@ function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: numb
       <div className="card w-full max-w-sm text-center shadow-2xl">
         <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
           Voucher · {money(total)} due
+          <InfoTip topic="vouchers" />
         </h3>
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
           Tap once for each voucher they hand you.
@@ -410,6 +412,7 @@ export default function PaymentModal({
             <>
               <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
                 {readerTip.phase === "custom" ? "Customer is typing a tip" : "Customer is picking a tip"}
+                <InfoTip topic="card-on-file-tip" />
               </h3>
               <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
                 On the card reader. Then {tabCard?.label ?? "the card on file"} is charged {money(due)} plus the tip.
@@ -532,6 +535,11 @@ export default function PaymentModal({
             <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={() => void startCardOnFile()}>
               {onFile.busy ? "Charging..." : `Charge card on file · ${tabCard.label}`}
             </button>
+            {/* The tip question: asked on the reader, since a card on file has no tap. */}
+            <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+              {readerId ? "They pick a tip on the reader first." : "You enter their tip here first."}
+              <InfoTip topic="card-on-file-tip" />
+            </p>
             {onFile.error && (
               <p className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
                 {onFile.error}

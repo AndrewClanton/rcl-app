@@ -1,5 +1,6 @@
 import { getAllBooths, getUpcomingBoothReservations, getBoothReservationsForMonth } from "@/lib/data/booths";
 import BoothsAdminPanel from "./BoothsAdminPanel";
+import InfoTip from "@/components/help/InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,10 @@ export default async function AdminBoothsPage() {
   ]);
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Booth reservations</h1>
+      <h1 className="mb-1 text-lg font-semibold">
+        Booth reservations
+        <InfoTip topic="booths" />
+      </h1>
       <p className="mb-4 max-w-2xl text-sm text-[var(--muted)]">
         Manage the 8 lounge booths (photo, capacity, reservation fee, active/inactive), see the schedule on a
         calendar, and see upcoming reservations.
