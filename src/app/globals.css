@@ -762,3 +762,85 @@ body {
     padding: 0 24px;
   }
 }
+
+/*
+ * Back office shell (src/app/admin/_nav): the sidebar, the phone menu, the
+ * Today page and Find anything. Plain and tidy, not the public site's print
+ * look. Each area of the back office has its own color, set as --area by a
+ * .bo-area-* class (the areas are listed in src/app/admin/_nav/areas.ts).
+ * Red, amber and green are kept for status: the badge tones.
+ */
+@layer components {
+  .bo-area-shows {
+    --area: #6d28d9;
+  }
+  .bo-area-guests {
+    --area: #1d4ed8;
+  }
+  .bo-area-stock {
+    --area: #0e7490;
+  }
+  .bo-area-team {
+    --area: #a21caf;
+  }
+  .bo-area-money {
+    --area: #14110c;
+  }
+  .bo-area-setup {
+    --area: #5b6472;
+  }
+
+  .bo-dot {
+    flex: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 3px;
+    background: var(--area, var(--foreground));
+  }
+  .bo-eyebrow {
+    @apply flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em];
+    color: var(--area, var(--muted));
+  }
+
+  /* A menu row, a full 44px to tap. The page you're on gets its area's
+     tint and a bar down the left. */
+  .bo-link {
+    @apply flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors;
+    color: var(--foreground);
+  }
+  .bo-link:hover {
+    background: var(--surface-hover);
+  }
+  .bo-link[aria-current="page"] {
+    background: color-mix(in srgb, var(--area, var(--foreground)) 12%, var(--surface));
+    box-shadow: inset 3px 0 0 var(--area, var(--foreground));
+    font-weight: 700;
+  }
+
+  .bo-badge {
+    @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold leading-4 tabular-nums;
+    background: var(--foreground);
+    color: var(--surface);
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .bo-badge-warn {
+    background: var(--warn-bg);
+    color: var(--warn-text);
+    box-shadow: inset 0 0 0 1px var(--warn-border);
+  }
+  .bo-badge-danger {
+    background: var(--danger-text);
+    color: #fff;
+  }
+
+  /* A card on the Today page, topped with its area's color. */
+  .bo-card {
+    @apply min-w-0 rounded-xl border p-4;
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .bo-card-area {
+    border-top: 3px solid var(--area, var(--foreground));
+  }
+}

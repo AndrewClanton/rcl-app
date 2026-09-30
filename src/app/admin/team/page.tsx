@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireManager } from "@/lib/auth";
 import { shiftDate } from "@/lib/ops/time";
 import { getSchedule, getTeam, getTimesheet, getTodos, thisWeek, weekStartOf } from "@/lib/data/team";
+import PageHeader from "@/components/admin/PageHeader";
 import ScheduleWeek from "./ScheduleWeek";
 import TodoManager from "./TodoManager";
 
@@ -17,6 +18,12 @@ const dayLabel = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateStr
 
 type Params = { view?: string; week?: string };
 
+const HEADINGS = {
+  schedule: { title: "Schedule", purpose: "Who's working when, week by week. The register's Start shift list puts the day's scheduled people first." },
+  timesheets: { title: "Hours & timesheets", purpose: "Hours worked, from Start shift and End shift on the register, next to what was scheduled." },
+  todos: { title: "To-dos", purpose: "Give someone a task. It shows on the register while they're on shift." },
+} as const;
+
 export default async function TeamPage({ searchParams }: { searchParams: Promise<Params> }) {
   await requireManager();
   const p = await searchParams;
@@ -30,30 +37,36 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="mr-2 text-lg font-semibold">Team</h1>
-        {[
-          ["schedule", "Schedule"],
-          ["todos", "To-dos"],
-          ["timesheets", "Timesheets"],
-        ].map(([v, label]) => (
-          <Link key={v} href={link({ view: v === "schedule" ? undefined : v, week: week === thisWeek() ? undefined : week })} className={`chip !px-3 !py-1 !text-sm ${view === v ? "chip-selected font-bold" : ""}`}>
-            {label}
-          </Link>
-        ))}
-      </div>
+      <PageHeader area="team" title={HEADINGS[view].title} purpose={HEADINGS[view].purpose} className="!mb-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            ["schedule", "Schedule"],
+            ["timesheets", "Hours & timesheets"],
+            ["todos", "To-dos"],
+          ].map(([v, label]) => (
+            <Link
+              key={v}
+              href={link({ view: v === "schedule" ? undefined : v, week: week === thisWeek() ? undefined : week })}
+              aria-current={view === v ? "page" : undefined}
+              className={`chip inline-flex min-h-11 items-center !px-4 !text-sm ${view === v ? "chip-selected font-bold" : ""}`}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+      </PageHeader>
 
       {view !== "todos" && (
         <div className="flex flex-wrap items-center gap-2">
-          <Link href={link({ view: view === "schedule" ? undefined : view, week: shiftDate(week, -7) })} className="chip !px-2.5 !py-1 !text-sm" aria-label="Previous week">
+          <Link href={link({ view: view === "schedule" ? undefined : view, week: shiftDate(week, -7) })} className="chip inline-flex min-h-11 min-w-11 items-center justify-center !text-sm" aria-label="Previous week">
             ◀
           </Link>
           <span className="min-w-[13rem] text-center text-sm font-semibold">{weekLabel}</span>
-          <Link href={link({ view: view === "schedule" ? undefined : view, week: shiftDate(week, 7) })} className="chip !px-2.5 !py-1 !text-sm" aria-label="Next week">
+          <Link href={link({ view: view === "schedule" ? undefined : view, week: shiftDate(week, 7) })} className="chip inline-flex min-h-11 min-w-11 items-center justify-center !text-sm" aria-label="Next week">
             ▶
           </Link>
           {week !== thisWeek() && (
-            <Link href={link({ view: view === "schedule" ? undefined : view })} className="chip !px-3 !py-1 !text-sm">
+            <Link href={link({ view: view === "schedule" ? undefined : view })} className="chip inline-flex min-h-11 items-center !px-4 !text-sm">
               This week
             </Link>
           )}

@@ -1,5 +1,6 @@
 import { getIngredientsWithLastCount, getParItemRefs } from "@/lib/data/ingredients";
 import { requireManager } from "@/lib/auth";
+import PageHeader from "@/components/admin/PageHeader";
 import IngredientManager from "./IngredientManager";
 
 export const dynamic = "force-dynamic";
@@ -11,11 +12,11 @@ export default async function AdminIngredientsPage() {
   const [ingredients, parItems] = await Promise.all([getIngredientsWithLastCount(), getParItemRefs()]);
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Ingredients & inventory</h1>
-      <p className="mb-4 text-sm text-[var(--muted)]">
-        The shared ingredient catalog used by recipes (see Menu → any item → Recipe). Log a physical count here whenever someone
-        counts the shelf -- the Reports page compares counts over time against recipe-based expected usage to flag overpour/waste.
-      </p>
+      <PageHeader
+        area="stock"
+        title="Ingredients & counts"
+        purpose="The ingredients recipes are made from (Menu → any item → Recipe), with their costs. Log a count whenever someone counts the shelf: Reports → Bar usage compares the counts with what the recipes say was poured, to catch overpouring and waste."
+      />
       <IngredientManager ingredients={ingredients} parItems={parItems} canLink />
     </div>
   );

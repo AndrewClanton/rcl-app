@@ -2,6 +2,7 @@ import { getMenuTree } from "@/lib/data/menu";
 import { getIngredients, getParItemRefs } from "@/lib/data/ingredients";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { hasManagerAccess, requireStaff } from "@/lib/auth";
+import PageHeader from "@/components/admin/PageHeader";
 import MenuManager from "./MenuManager";
 
 export const dynamic = "force-dynamic";
@@ -21,15 +22,22 @@ export default async function AdminMenuPage() {
     canEdit ? getParItemRefs() : Promise.resolve([]),
   ]);
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-      {!canEdit && <p className="notice mb-4 text-sm">You can look through the menu here. Changing it (prices, items, recipes) takes a manager.</p>}
-      <MenuManager
-        categories={categories}
-        ingredients={ingredients}
-        parItems={parItems.filter((p) => p.active)}
-        recipesByItem={recipesByItem}
-        canEdit={canEdit}
+    <>
+      <PageHeader
+        area="stock"
+        title="Menu"
+        purpose="Every item on the register: prices, recipes, choices like size or flavor, and what's hidden. Anything marked out on the register shows here too."
       />
-    </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+        {!canEdit && <p className="notice mb-4 text-sm">You can look through the menu here. Changing it (prices, items, recipes) takes a manager.</p>}
+        <MenuManager
+          categories={categories}
+          ingredients={ingredients}
+          parItems={parItems.filter((p) => p.active)}
+          recipesByItem={recipesByItem}
+          canEdit={canEdit}
+        />
+      </div>
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import { requireAdmin } from "@/lib/auth";
 import { getDevNotes } from "@/lib/data/devNotes";
+import PageHeader from "@/components/admin/PageHeader";
 import DevNotesPanel from "./DevNotesPanel";
 
 export const dynamic = "force-dynamic";
@@ -9,11 +10,16 @@ export default async function AdminDevNotesPage() {
   const notes = await getDevNotes();
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Dev Notes</h1>
-      <p className="mb-4 text-sm text-[var(--muted)]">
-        Notes admins jotted down from the Dev Notes widget, with the page they were on. Approve the ones worth
-        doing -- that&apos;s the backlog to hand to Claude.
-      </p>
+      <PageHeader
+        area="setup"
+        title="Dev notes"
+        purpose={
+          <>
+            Notes admins jotted down with the Dev note button, with the page they were on. Approve the ones worth doing: that&apos;s the backlog to hand to
+            Claude.
+          </>
+        }
+      />
       <DevNotesPanel notes={notes} />
     </div>
   );

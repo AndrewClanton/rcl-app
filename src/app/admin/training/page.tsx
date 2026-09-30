@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireManager } from "@/lib/auth";
 import { getTrainingOverview } from "@/lib/training/data";
+import PageHeader from "@/components/admin/PageHeader";
 import TrainingModuleCard from "./TrainingModuleCard";
 
 export const dynamic = "force-dynamic";
@@ -18,17 +19,20 @@ export default async function AdminTrainingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-semibold">Training</h1>
-          <p className="text-sm text-[var(--muted)]">
+      <PageHeader
+        area="team"
+        title="Training"
+        purpose={
+          <>
             Assign trainings and see who&apos;s signed off. Staff open theirs on the register after starting a shift, or at <b>/training</b> on their phone.
-          </p>
-        </div>
-        <Link href="/training" className="rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
-          Your own training →
-        </Link>
-      </div>
+          </>
+        }
+        actions={
+          <Link href="/training" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
+            Your own training →
+          </Link>
+        }
+      />
 
       <div className="flex flex-wrap gap-3 text-sm">
         <span className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1">

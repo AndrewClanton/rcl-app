@@ -1,6 +1,7 @@
 import { getUpcomingScreenings, isRestrictedRelease } from "@/lib/data/screenings";
 import { getUpcomingEvents } from "@/lib/data/events";
 import { getUpcomingCalendarNotes } from "@/lib/data/calendar-notes";
+import PageHeader from "@/components/admin/PageHeader";
 import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export default async function ScheduleGraphicPage() {
 
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Weekly flyer</h1>
+      <PageHeader area="shows" title="Weekly flyer" purpose="Make an image of the lineup for email and social posts, straight from the live showtimes." className="!mb-3" />
       <p className="mb-4 max-w-2xl text-sm text-[var(--muted)]">
         Pulls straight from the live showtimes and booked private events -- no re-typing the schedule into Canva.
         Pick a date range, choose the audience, uncheck anything you don&apos;t want on it, then download the image.

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireManager } from "@/lib/auth";
 import { businessDay } from "@/lib/ops/time";
 import MemberAvatar from "@/components/MemberAvatar";
+import PageHeader from "@/components/admin/PageHeader";
 import { currentBusinessMonth, getTopRegulars, shiftMonth, type RegularRow } from "@/lib/data/regulars";
 
 export const dynamic = "force-dynamic";
@@ -37,11 +38,13 @@ export default async function TopRegularsPage({ searchParams }: { searchParams: 
 
   return (
     <div className="space-y-4">
+      <PageHeader
+        area="guests"
+        back={{ href: "/admin/members", label: "Members" }}
+        title="Top regulars"
+        purpose="Who came in most and who spent most, month by month, for picking prize winners."
+      />
       <div className="flex flex-wrap items-center gap-2">
-        <Link href="/admin/members" className="text-sm text-[var(--muted)] hover:underline">
-          ← Members
-        </Link>
-        <h1 className="mr-2 text-lg font-semibold">Top regulars</h1>
         <Link href={href(shiftMonth(month, -1), current)} className="chip !px-2.5 !py-1 !text-sm" aria-label="Previous month">
           ◀
         </Link>
