@@ -45,13 +45,14 @@ export default async function DataDeletionPage() {
         <h2 id="deleted">What gets deleted</h2>
         <ul>
           <li>Your name, email address and phone number</li>
-          <li>Your photo and your profile quote</li>
+          <li>Your photo, your profile quote and your birthday</li>
           <li>
             Your name and contact details on ticket and booth bookings, private event requests, bar tabs, and gift memberships you bought, and on
             your customer record at Stripe
           </li>
+          <li>Any copy of your account from our old website or from Indy, our old ticketing system</li>
           <li>Your sign-in connections: password, Google and Facebook</li>
-          <li>Your points and points history</li>
+          <li>Your points, points history, badges, and any rewards you haven&apos;t used</li>
           <li>Your email preferences</li>
         </ul>
       </section>

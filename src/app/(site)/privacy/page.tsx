@@ -61,8 +61,20 @@ export default async function PrivacyPage() {
             your member record. It isn&apos;t shown on the website or to other customers.
           </li>
           <li>
+            <strong>Your birthday,</strong> if you add it: the month and day only, never the year. It&apos;s for the Birthday Visit badge when you
+            check in during your birthday week.
+          </li>
+          <li>
             <strong>If you sign in with Google or Facebook:</strong> your name, email address and profile photo from that account. We don&apos;t get
             your password, contacts, friends or posts.
+          </li>
+          <li>
+            <strong>Accounts moved over from our old systems:</strong> if you had an account on our old website, or with Indy, the ticketing system we
+            used before this one, we brought your name, email address and phone number over to your Insiders account, with your account number from
+            that system so the two stay matched. From the old website we also noted whether you paid for a membership there, and your senior or
+            student rate if you had one. From Indy we also brought your birthday (the month and day only, never the year) and your answer to
+            Indy&apos;s email questions. If you already had an account here, we only filled in what was missing. We didn&apos;t bring over addresses,
+            passwords or payment details.
           </li>
           <li>
             <strong>Purchases:</strong> what you buy at the bar, kitchen and box office when your account is attached, tickets you buy online, and the
@@ -87,11 +99,27 @@ export default async function PrivacyPage() {
             staff member confirmed it, and any points or rewards it earned.
           </li>
           <li>
+            <strong>Tickets at the door:</strong> when staff scan the code on a ticket you bought online, we record when it was scanned and which
+            staff member scanned it, and your tickets print. Each ticket prints only once. If the ticket is on your account, the scan also checks you
+            in for the day. When staff scan the QR code in your account, it checks you in the same way and brings up your tickets for that
+            day&apos;s shows.
+          </li>
+          <li>
+            <strong>Claiming your account:</strong> if your account doesn&apos;t have a website login yet (say it was made when you checked in, or
+            moved over from our old website or Indy), the customer screen can show you a QR code after you check in, and your receipt can have one.
+            The code opens a page that shows only your first name and asks for the last four digits of the phone number on your account. Then you
+            sign in with Google or an email and password, and that login is attached to your account. A code on the customer screen lasts 30
+            minutes, one on a receipt lasts two weeks, and each works once. We record when each code was made and used, which login used it, and
+            how many wrong digits were tried; after 10 wrong tries it stops working. If your account had no email address, we add the one your login
+            confirmed.
+          </li>
+          <li>
             <strong>Gift memberships:</strong> if you buy someone Insiders+ as a gift, your name and email address (for your receipt), and any note you
             add. The person you give it to sees your name and your note. If someone gives you a gift, we record who it came from.
           </li>
           <li>
-            <strong>Points:</strong> every point you earn or use, and any adjustment, with the reason.
+            <strong>Points and badges:</strong> every point you earn or use, and any adjustment, with the reason, and the badges you earn when you
+            check in.
           </li>
           <li>
             <strong>Membership:</strong> whether you&apos;re an Insider or Insider+, your rate, and your billing status. If staff give you the senior
@@ -107,7 +135,9 @@ export default async function PrivacyPage() {
           </li>
           <li>
             <strong>Page visits:</strong> which pages of this site are opened and how long they stay on screen, counted anonymously with a random number kept
-            in your browser (not a cookie, and not tied to your name or account), and not at all if your browser asks sites not to track it.
+            in your browser (not a cookie, and not tied to your name or account), and not at all if your browser asks sites not to track it. We also
+            note the kind of device (phone, tablet or computer) and the website that sent you here, if any. We don&apos;t record your name or IP
+            address with these counts.
           </li>
           <li>
             <strong>Technical information:</strong> cookies that keep you signed in, and standard server logs (such as IP address and browser type)
@@ -166,7 +196,7 @@ export default async function PrivacyPage() {
             .
           </li>
           <li>
-            <strong>Our email service provider</strong> sends the emails you&apos;ve signed up for.
+            <strong>Resend</strong> delivers the emails we send you, such as booth confirmations and gift membership receipts.
           </li>
           <li>
             <strong>Google or Facebook,</strong> only if you choose to sign in with them.
@@ -186,11 +216,19 @@ export default async function PrivacyPage() {
         <p>
           Ticket bookings, booth reservations, private event requests and gift memberships are kept with our sales records, for the same reason.
         </p>
+        <p>Anonymous page-visit counts are deleted after 13 months.</p>
+        {/* DRAFT PLACEHOLDER for Andrew: replace [DATE] in the last sentence below with the date the unused old-website and Indy records will
+            be deleted, before this merges. */}
         <p>
-          If you ask us to delete your account, we delete your profile, photo, profile quote, contact details, points and sign-in connections. We
-          also remove your name and contact details from the records we&apos;re required to keep: your purchases, bar tabs, ticket and booth
-          bookings, private event requests, gift memberships you bought, and your customer details at Stripe (Stripe keeps its own payment records
-          for tax purposes). The days you checked in stay only as anonymous counts. See{" "}
+          The records from our old website and from Indy that we didn&apos;t bring over are kept apart from member accounts, where only the
+          Royale&apos;s owners and admins can see them, and are deleted after the move. We&apos;ll delete them by [DATE].
+        </p>
+        <p>
+          If you ask us to delete your account, we delete your profile, photo, profile quote, birthday, contact details, points, badges and sign-in
+          connections, and any copy of your account from our old website or Indy. We also remove your name and contact details from the records
+          we&apos;re required to keep: your purchases, bar tabs, ticket and booth bookings, private event requests, gift memberships you bought, and
+          your customer details at Stripe (Stripe keeps its own payment records for tax purposes). The days you checked in stay only as anonymous
+          counts. See{" "}
           <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">
             Deleting your data
           </Link>
