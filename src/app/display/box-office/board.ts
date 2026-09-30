@@ -2,6 +2,8 @@
 // fetching, no server imports) so the page and the client component share
 // one definition. Every date and time is Central.
 
+import { businessDay, shiftDate } from "@/lib/ops/time";
+
 export const CENTRAL_TZ = "America/Chicago";
 
 // A showing stays in the hero, tagged NOW SHOWING, this long after it
@@ -11,8 +13,8 @@ export const NOW_SHOWING_MINUTES = 20;
 // Rows under the hero -- as many as stay big enough to read across the lobby.
 export const MAX_ROWS = 4;
 
-// The business day rolls over at 4 AM Central (as in lib/ops/time.ts), so a
-// show at 12:30 AM still reads as "Tonight".
+// The business day rolls over at 4 AM Central (lib/ops/time.ts), so a show
+// at 12:30 AM still reads as "Tonight".
 const DAY_STARTS_AT_HOUR = 4;
 
 // Only what the screen shows -- no ticket counts, revenue or notes, since
@@ -46,23 +48,21 @@ export function shortRoom(name: string) {
   return name.split(" — ")[0].replace(/\s*\(.*\)\s*$/, "").trim() || name;
 }
 
-function businessDateKey(ms: number) {
-  return new Date(ms - DAY_STARTS_AT_HOUR * 3_600_000).toLocaleDateString("en-CA", { timeZone: CENTRAL_TZ });
-}
-
 function centralHour(ms: number) {
   return Number(new Date(ms).toLocaleString("en-US", { hour: "numeric", hourCycle: "h23", timeZone: CENTRAL_TZ }));
 }
 
 // "Tonight" / "Today" / "Tomorrow", else the day: "Fri 10/2" (short) or
-// "Friday, Oct 2" (long).
+// "Friday, Oct 2" (long). By business date, so the nights the clocks change
+// still turn over at 4 AM, and "Tomorrow" is the next date, not now + 24 hours.
 export function dayLabel(ms: number, now: number, long = false) {
-  const key = businessDateKey(ms);
-  if (key === businessDateKey(now)) {
+  const key = businessDay(new Date(ms)).date;
+  const today = businessDay(new Date(now)).date;
+  if (key === today) {
     const h = centralHour(ms);
     return h >= 17 || h < DAY_STARTS_AT_HOUR ? "Tonight" : "Today";
   }
-  if (key === businessDateKey(now + 86_400_000)) return "Tomorrow";
+  if (key === shiftDate(today, 1)) return "Tomorrow";
   const noon = new Date(`${key}T12:00:00Z`);
   if (long) return noon.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
   const wd = noon.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });

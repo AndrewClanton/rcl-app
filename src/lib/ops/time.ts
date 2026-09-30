@@ -1,4 +1,6 @@
-import "server-only";
+// Plain date math with no server imports, so the lobby TV's board can use
+// it in the browser too. Called there, pass the server's clock as `now`: a
+// TV stick's own clock can be off.
 
 const TZ = "America/Chicago";
 
