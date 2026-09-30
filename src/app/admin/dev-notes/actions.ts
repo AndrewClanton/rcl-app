@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertAdmin, getStaffSession, hasAdminAccess } from "@/lib/auth";
+import { canLeaveDevNotes } from "@/lib/dev-notes-access";
 import type { DevNoteStatus } from "@/lib/types";
 
 function revalidate() {
@@ -10,11 +11,12 @@ function revalidate() {
 }
 
 // Called from the global Dev Notes widget, which only renders for admins
-// in the first place (see src/app/layout.tsx) -- this check is defense in
-// depth against the action being invoked directly, not the primary gate.
+// and the register's shared login in the first place (see
+// src/app/api/dev-notes/session) -- this check is defense in depth against
+// the action being invoked directly, not the primary gate.
 export async function submitDevNote(input: { pagePath: string; pageTitle: string; message: string }) {
   const staff = await getStaffSession();
-  if (!staff || !hasAdminAccess(staff.role)) throw new Error("Not authorized");
+  if (!staff || !canLeaveDevNotes(staff)) throw new Error("Not authorized");
 
   const message = input.message.trim();
   if (!message) return;

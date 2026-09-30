@@ -21,7 +21,12 @@ export function isTipMethod(v: unknown): v is TipMethod {
 // credit, so "by who rang it" leaves their tips unassigned; the other two
 // ways just put them in the pool.
 export function isSharedLogin(e: { name: string; role: string }): boolean {
-  return e.role === "display" || /^royale cinema lounge$/i.test(e.name.trim());
+  return e.role === "display" || isRegisterLogin(e);
+}
+
+// Just the register iPad's shared login, whatever its role.
+export function isRegisterLogin(e: { name: string }): boolean {
+  return /^royale cinema lounge$/i.test(e.name.trim());
 }
 
 export function cents(n: number): number {
