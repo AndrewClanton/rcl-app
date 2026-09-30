@@ -162,18 +162,46 @@ export async function claimBooking(bookingId: string, by: string | null): Promis
     return refuse("ticket", "offline", OFFLINE);
   }
 
-  const ticket: DoorTicket = { ...toDoorTicket(b), scannedAt: at, printable: false };
+  const freeSeats = await claimFreeSeats(b.id, at, by);
+  const ticket: DoorTicket = { ...toDoorTicket(b), quantity: b.quantity + freeSeats, scannedAt: at, printable: false };
   return { ok: true, ticket, print: printJobFor(ticket), memberId: b.member_id };
+}
+
+// An Insiders+ member's free seat bought along with paid seats is a $0
+// booking of its own (bookings.paid_booking_id = the paid one), but it was
+// one checkout with one ticket code on the confirmation page: claiming the
+// paid booking claims the free seat too, so that code prints every seat.
+// How many seats it added. Best effort: if this fails, the paid seats still
+// print, and the free seat prints from its own code or the member's card.
+async function claimFreeSeats(paidBookingId: string, at: string, by: string | null): Promise<number> {
+  const { data, error } = await createAdminClient()
+    .from("bookings")
+    .update({ scanned_at: at, scanned_by: by })
+    .eq("paid_booking_id", paidBookingId)
+    .eq("status", "confirmed")
+    .is("order_id", null)
+    .is("scanned_at", null)
+    .select("quantity");
+  if (error) return 0;
+  return (data ?? []).reduce((s, r) => s + Number(r.quantity), 0);
 }
 
 // Gives a claim back when its tickets didn't print (printer off, out of
 // paper), so scanning again works. Only undoes that exact claim: if it was
-// released and claimed again since, this changes nothing.
+// released and claimed again since, this changes nothing. A free seat
+// claimed with it (claimFreeSeats) is given back too.
 export async function releaseBooking(bookingId: string, scannedAt: string, by: string | null): Promise<boolean> {
-  let q = createAdminClient().from("bookings").update({ scanned_at: null, scanned_by: null }).eq("id", bookingId).eq("scanned_at", scannedAt);
+  const supabase = createAdminClient();
+  let q = supabase.from("bookings").update({ scanned_at: null, scanned_by: null }).eq("id", bookingId).eq("scanned_at", scannedAt);
   q = by ? q.eq("scanned_by", by) : q.is("scanned_by", null);
   const { data, error } = await q.select("id");
-  return !error && !!data?.length;
+  const released = !error && !!data?.length;
+  if (released) {
+    let free = supabase.from("bookings").update({ scanned_at: null, scanned_by: null }).eq("paid_booking_id", bookingId).eq("scanned_at", scannedAt);
+    free = by ? free.eq("scanned_by", by) : free.is("scanned_by", null);
+    await free;
+  }
+  return released;
 }
 
 // A member's confirmed tickets for today's showings (the business day, plus

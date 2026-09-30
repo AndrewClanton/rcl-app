@@ -6,7 +6,7 @@ import { getStripe } from "@/lib/stripe";
 import { getBoothBusyTimes, type BoothBusy } from "@/lib/data/booths";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
-import { exactEmail, sameEmail } from "@/lib/email-match";
+import { sameEmail } from "@/lib/email-match";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 
@@ -24,16 +24,9 @@ function todayCentral() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 }
 
-// [start, end) bounds for the calendar month that `dateStr` (YYYY-MM-DD)
-// falls in -- used to cap Insiders+ free reservations at 2 per month, by
-// the month the reservation is FOR (not the month it was booked in).
-function monthBounds(dateStr: string) {
-  const [y, m] = dateStr.split("-").map(Number);
-  const start = `${y}-${String(m).padStart(2, "0")}-01`;
-  const end = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-  return { start, end };
-}
-
+// Insiders+ free reservations per calendar month, by the month the
+// reservation is FOR (not the month it was booked in). Counted by
+// claim_free_booth in the database.
 const FREE_RESERVATIONS_PER_MONTH = 2;
 
 export interface StartBoothCheckoutFields {
@@ -108,54 +101,42 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     return { ok: false, error: `${booth.label} is already reserved for part of that window. Pick another time or booth.` };
   }
 
-  // The perk goes to the signed-in member booking for themselves -- never to
-  // whoever types a member's email. Anyone else's booking still lands in
-  // that email's history, but is always paid.
+  // Only the signed-in member booking under their own email is "them": the
+  // reservation goes in their history, and the perk is theirs -- never
+  // whoever types a member's email. Anyone else's is saved with no member,
+  // and joins the history of the member with that email once it's paid
+  // (the Stripe webhook).
   const me = await getSignedInMember();
-  const perkMember = me && hasPlusPerks(me) && sameEmail(me.email, email) ? me : null;
-  const { data: byEmail } = perkMember ? { data: null } : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
-  const member = perkMember ?? byEmail;
+  const self = me && sameEmail(me.email, email) ? me : null;
+  const perkMember = self && hasPlusPerks(self) ? self : null;
   const origin = await siteOrigin();
 
   // Insiders+ perk: 2 free booth reservations per calendar month (counted
   // by the month the reservation is FOR), same "skip Stripe, confirm
-  // immediately" pattern as Insiders+ free screening entry.
+  // immediately" pattern as Insiders+ free screening entry. claim_free_booth
+  // counts and books in one step with the member locked, so two taps at the
+  // same moment can't both get a free one past the limit.
   if (perkMember) {
-    const { start, end } = monthBounds(fields.reservationDate);
-    const { count, error: countErr } = await supabase
-      .from("booth_reservations")
-      .select("id", { count: "exact", head: true })
-      .eq("member_id", perkMember.id)
-      .eq("fee_amount", 0)
-      .eq("status", "confirmed")
-      .gte("reservation_date", start)
-      .lt("reservation_date", end);
-    if (countErr) throw countErr;
-
-    if ((count ?? 0) < FREE_RESERVATIONS_PER_MONTH) {
-      // No card in the way on this path, so it gets the bot check.
-      const notHuman = checkHuman("booths", fields);
-      if (notHuman) return { ok: false, error: notHuman };
-      const { data: freeReservation, error: freeErr } = await supabase
-        .from("booth_reservations")
-        .insert({
-          booth_id: fields.boothId,
-          member_id: perkMember.id,
-          customer_name: name,
-          customer_email: email,
-          customer_phone: phone || null,
-          party_size: fields.partySize,
-          reservation_date: fields.reservationDate,
-          start_time: fields.startTime,
-          hours,
-          fee_amount: 0,
-          status: "confirmed",
-        })
-        .select("id")
-        .single();
-      if (freeErr) throw freeErr;
-      await notifyBoothConfirmed(freeReservation.id);
-      return { ok: true, url: `${origin}/booths?checkout=free&reservation_id=${freeReservation.id}` };
+    // No card in the way on the free path, so it gets the bot check.
+    const notHuman = checkHuman("booths", fields);
+    if (notHuman) return { ok: false, error: notHuman };
+    const { data: freeId, error: freeErr } = await supabase.rpc("claim_free_booth", {
+      p_member_id: perkMember.id,
+      p_per_month: FREE_RESERVATIONS_PER_MONTH,
+      p_booth_id: fields.boothId,
+      p_customer_name: name,
+      p_customer_email: email,
+      p_customer_phone: phone || null,
+      p_party_size: fields.partySize,
+      p_reservation_date: fields.reservationDate,
+      p_start_time: fields.startTime,
+      p_hours: hours,
+    });
+    if (freeErr) throw freeErr;
+    // Null: both free ones this month are used, so this one is paid.
+    if (freeId) {
+      await notifyBoothConfirmed(freeId as string);
+      return { ok: true, url: `${origin}/booths?checkout=free&reservation_id=${freeId}` };
     }
   }
 
@@ -163,7 +144,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     .from("booth_reservations")
     .insert({
       booth_id: fields.boothId,
-      member_id: member?.id ?? null,
+      member_id: self?.id ?? null,
       customer_name: name,
       customer_email: email,
       customer_phone: phone || null,

@@ -7,6 +7,7 @@ import { applyPoints } from "@/lib/points";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
+import { exactEmail } from "@/lib/email-match";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -44,7 +45,8 @@ export async function POST(request: NextRequest) {
     if (session.mode === "subscription") {
       // Insiders+ signup. customer.subscription.updated/deleted below keep
       // the member in step with the subscription after this.
-      await activatePlusFromCheckout(session);
+      const plus = await activatePlusFromCheckout(session);
+      if (!plus.ok) failed.push("membership signup");
     } else {
       const bookingId = session.metadata?.booking_id;
       if (bookingId) {
@@ -59,12 +61,33 @@ export async function POST(request: NextRequest) {
           .eq("id", bookingId)
           .eq("status", "pending")
           .then(check("booking"));
+        // The Insiders+ member's own free seat, a $0 booking of its own
+        // that came with these paid seats. No payment on it, so a refund
+        // is always made from the paid booking.
+        await supabase.from("bookings").update({ status: "confirmed" }).eq("paid_booking_id", bookingId).eq("status", "pending").then(check("free seat"));
+
+        const { data: booking, error: bookingErr } = await supabase
+          .from("bookings")
+          .select("member_id, customer_email, quantity, unit_price, status")
+          .eq("id", bookingId)
+          .maybeSingle();
+        if (bookingErr) failed.push("booking points");
+        let memberId: string | null = booking?.member_id ?? null;
+        // Bought signed out: it goes to the member with that email now that
+        // it's paid (so they earn the points), never before.
+        if (booking?.status === "confirmed" && !memberId && booking.customer_email) {
+          const found = await memberForEmail(supabase, booking.customer_email);
+          if (!found.ok) failed.push("booking member");
+          else if (found.id) {
+            memberId = found.id;
+            await supabase.from("bookings").update({ member_id: found.id }).eq("id", bookingId).is("member_id", null).then(check("booking member"));
+          }
+        }
         // 1 point per $1, like the register. The ledger's unique index keeps
         // a re-delivered webhook from paying out twice.
-        const { data: booking } = await supabase.from("bookings").select("member_id, quantity, unit_price, status").eq("id", bookingId).maybeSingle();
-        if (booking?.member_id && booking.status === "confirmed") {
+        if (memberId && booking?.status === "confirmed") {
           await applyPoints({
-            memberId: booking.member_id,
+            memberId,
             delta: Number(booking.unit_price) * booking.quantity,
             reason: "purchase",
             bookingId,
@@ -86,6 +109,26 @@ export async function POST(request: NextRequest) {
           .eq("id", boothReservationId)
           .eq("status", "pending")
           .then(check("booth reservation"));
+        // Reserved signed out: into the history of the member with that
+        // email, now that it's paid.
+        const { data: reservation, error: reservationErr } = await supabase
+          .from("booth_reservations")
+          .select("member_id, customer_email, status")
+          .eq("id", boothReservationId)
+          .maybeSingle();
+        if (reservationErr) failed.push("booth reservation member");
+        if (reservation?.status === "confirmed" && !reservation.member_id && reservation.customer_email) {
+          const found = await memberForEmail(supabase, reservation.customer_email);
+          if (!found.ok) failed.push("booth reservation member");
+          else if (found.id) {
+            await supabase
+              .from("booth_reservations")
+              .update({ member_id: found.id })
+              .eq("id", boothReservationId)
+              .is("member_id", null)
+              .then(check("booth reservation member"));
+          }
+        }
         // Guest confirmation and staff alert, each sent once.
         await notifyBoothConfirmed(boothReservationId);
       }
@@ -103,18 +146,20 @@ export async function POST(request: NextRequest) {
     const bookingId = session.metadata?.booking_id;
     if (bookingId) {
       // Only cancel if it never got confirmed -- don't clobber a booking
-      // that completed via a race with this expiry event.
-      await supabase.from("bookings").update({ status: "cancelled" }).eq("id", bookingId).eq("status", "pending");
+      // that completed via a race with this expiry event. Its free
+      // Insiders+ seat, if it had one, is let go with it.
+      await supabase.from("bookings").update({ status: "cancelled" }).eq("id", bookingId).eq("status", "pending").then(check("booking"));
+      await supabase.from("bookings").update({ status: "cancelled" }).eq("paid_booking_id", bookingId).eq("status", "pending").then(check("free seat"));
     }
 
     const boothReservationId = session.metadata?.booth_reservation_id;
     if (boothReservationId) {
-      await supabase.from("booth_reservations").update({ status: "cancelled" }).eq("id", boothReservationId).eq("status", "pending");
+      await supabase.from("booth_reservations").update({ status: "cancelled" }).eq("id", boothReservationId).eq("status", "pending").then(check("booth reservation"));
     }
 
     const giftId = session.metadata?.gift_membership_id;
     if (giftId) {
-      await supabase.from("gift_memberships").update({ status: "cancelled" }).eq("id", giftId).eq("status", "pending");
+      await supabase.from("gift_memberships").update({ status: "cancelled" }).eq("id", giftId).eq("status", "pending").then(check("gift membership"));
     }
   }
 
@@ -159,4 +204,12 @@ export async function POST(request: NextRequest) {
 
   if (failed.length) return NextResponse.json({ error: `Couldn't save: ${failed.join(", ")}` }, { status: 500 });
   return NextResponse.json({ received: true });
+}
+
+// The member account with this email, if there is one. ok: false when the
+// lookup itself failed (so Stripe should try again).
+async function memberForEmail(supabase: ReturnType<typeof createAdminClient>, email: string): Promise<{ ok: boolean; id: string | null }> {
+  const { data, error } = await supabase.from("members").select("id").ilike("email", exactEmail(email)).is("erased_at", null).maybeSingle();
+  if (error) return { ok: false, id: null };
+  return { ok: true, id: (data?.id as string | undefined) ?? null };
 }

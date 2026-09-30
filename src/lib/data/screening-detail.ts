@@ -25,6 +25,8 @@ export async function getScreeningById(id: string): Promise<ScreeningDetail | nu
 
 // Whether this member already holds (or is paying for) seats at this
 // screening -- their one free Insiders+ seat went on the first of them.
+// hold_online_seats in the database applies the same rule when it books,
+// under a lock (this is for showing the offer and choosing the path).
 export async function memberHasBookingFor(screeningId: string, memberId: string): Promise<boolean> {
   const { count } = await createAdminClient()
     .from("bookings")

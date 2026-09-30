@@ -6,7 +6,7 @@ import { getStripe } from "@/lib/stripe";
 import { salesTaxRateId } from "@/lib/stripe-tax";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
-import { exactEmail, sameEmail } from "@/lib/email-match";
+import { sameEmail } from "@/lib/email-match";
 import { memberHasBookingFor } from "@/lib/data/screening-detail";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 
@@ -53,97 +53,62 @@ export async function startCheckout(fields: {
   if (screeningErr || !screening) return { ok: false, error: "Screening not found." };
   const movie = screening.movie as unknown as { title: string };
 
-  const { data: existingBookings, error: bookingsErr } = await supabase
-    .from("bookings")
-    .select("quantity")
-    .eq("screening_id", fields.screeningId)
-    .in("status", ["pending", "confirmed"]);
-  if (bookingsErr) throw bookingsErr;
-
-  const booked = (existingBookings ?? []).reduce((s, b) => s + b.quantity, 0);
-  if (booked + fields.quantity > screening.capacity) {
-    return { ok: false, error: `Only ${Math.max(0, screening.capacity - booked)} seat(s) left for this screening.` };
-  }
-
   const origin = await siteOrigin();
 
-  // Bookings land in the history of the member with that email. Only the
-  // signed-in member booking under their own email is "them" for perks.
+  // Only the signed-in member booking under their own email is "them": the
+  // booking goes in their history, and the Insiders+ free seat is theirs.
+  // Anyone else's booking is saved with no member, so a stranger can't put
+  // bookings in a member's history by typing their email. A paid one joins
+  // the history of the member with that email once it's paid (the Stripe
+  // webhook), so a member who checks out signed out still earns points.
   const me = await getSignedInMember();
   const signedInSelf = me && sameEmail(me.email, email) ? me : null;
-  const { data: byEmail } = signedInSelf ? { data: null } : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
-  const member = signedInSelf ?? byEmail;
-
-  // Free screenings (the outdoor cinema, sponsored by the Royale Cinema
-  // Project) skip Stripe entirely -- there's no reason to send someone to a
-  // payment processor to pay nothing. With no card in the way, these get
-  // the bot check.
-  if (screening.ticket_price === 0) {
-    const notHuman = checkHuman("tickets", fields);
-    if (notHuman) return { ok: false, error: notHuman };
-    const { data: booking, error: insertErr } = await supabase
-      .from("bookings")
-      .insert({
-        screening_id: fields.screeningId,
-        member_id: member?.id ?? null,
-        customer_name: name,
-        customer_email: email,
-        quantity: fields.quantity,
-        unit_price: 0,
-        status: "confirmed",
-      })
-      .select("id")
-      .single();
-    if (insertErr) throw insertErr;
-    return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
-  }
 
   // Insiders+ members get free entry to every screening (their own ticket)
   // -- matching the old site's booking flow, which separated "free tickets"
   // (covered by membership) from "additional passes" (always charged).
   // Only for the signed-in member, never for whoever types their email, and
   // one free seat per screening: a second booking for the same show is paid.
-  const freeQuantity = signedInSelf && hasPlusPerks(signedInSelf) && !(await memberHasBookingFor(fields.screeningId, signedInSelf.id)) ? Math.min(1, fields.quantity) : 0;
-  const paidQuantity = fields.quantity - freeQuantity;
+  // The free seat is saved as its own $0 booking, so reports never count it
+  // as paid. hold_online_seats makes the final call under a lock; this
+  // check only says which way the order is likely to go.
+  const free = screening.ticket_price === 0;
+  const wantsFreeSeat = !free && !!signedInSelf && hasPlusPerks(signedInSelf) && !(await memberHasBookingFor(fields.screeningId, signedInSelf.id));
 
-  if (paidQuantity === 0) {
-    // Fully covered by membership -- no payment needed, confirm immediately.
+  // Free screenings (the outdoor cinema, sponsored by the Royale Cinema
+  // Project) and an order the membership covers whole skip Stripe entirely
+  // -- there's no reason to send someone to a payment processor to pay
+  // nothing. With no card in the way, these get the bot check.
+  if (free || (wantsFreeSeat && fields.quantity === 1)) {
     const notHuman = checkHuman("tickets", fields);
     if (notHuman) return { ok: false, error: notHuman };
-    const { data: booking, error: insertErr } = await supabase
-      .from("bookings")
-      .insert({
-        screening_id: fields.screeningId,
-        member_id: member?.id ?? null,
-        customer_name: name,
-        customer_email: email,
-        quantity: fields.quantity,
-        unit_price: 0,
-        status: "confirmed",
-      })
-      .select("id")
-      .single();
-    if (insertErr) throw insertErr;
-    return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${booking.id}` };
   }
 
-  // Missouri sales tax goes on top of the ticket price (Stripe adds it).
-  const taxRate = await salesTaxRateId();
+  // Counts the seats and saves the booking in one step, with the screening
+  // locked, so two checkouts at the same moment can't both take the last
+  // seat (or both get the free one).
+  const { data: hold, error: holdErr } = await supabase.rpc("hold_online_seats", {
+    p_screening_id: fields.screeningId,
+    p_quantity: fields.quantity,
+    p_unit_price: screening.ticket_price,
+    p_customer_name: name,
+    p_customer_email: email,
+    p_member_id: signedInSelf?.id ?? null,
+    p_plus_seat: wantsFreeSeat,
+  });
+  if (holdErr) throw holdErr;
+  if (!hold) return { ok: false, error: "Screening not found." };
+  const { booking_id: paidBookingId, free_booking_id: freeBookingId, seats_left: seatsLeft } = hold as SeatHold;
+  if (!paidBookingId && !freeBookingId) return { ok: false, error: `Only ${seatsLeft} seat(s) left for this screening.` };
 
-  const { data: booking, error: insertErr } = await supabase
-    .from("bookings")
-    .insert({
-      screening_id: fields.screeningId,
-      member_id: member?.id ?? null,
-      customer_name: name,
-      customer_email: email,
-      quantity: fields.quantity,
-      unit_price: screening.ticket_price,
-      status: "pending",
-    })
-    .select("id")
-    .single();
-  if (insertErr) throw insertErr;
+  // Nothing to pay (a free screening, or just their free seat): already
+  // confirmed.
+  if (free || !paidBookingId) {
+    return { ok: true, url: `${origin}/showtimes/${fields.screeningId}?checkout=free&booking_id=${paidBookingId ?? freeBookingId}` };
+  }
+  const freeQuantity = freeBookingId ? 1 : 0;
+  const paidQuantity = fields.quantity - freeQuantity;
+  const holdIds = freeBookingId ? [paidBookingId, freeBookingId] : [paidBookingId];
 
   const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
     weekday: "short",
@@ -154,48 +119,56 @@ export async function startCheckout(fields: {
     timeZone: "America/Chicago",
   });
 
-  const lineItems = [
-    {
-      price_data: {
-        currency: "usd",
-        unit_amount: Math.round(screening.ticket_price * 100),
-        product_data: { name: `${movie.title} — ${showtime}` },
-      },
-      quantity: paidQuantity,
-      tax_rates: [taxRate],
-    },
-  ];
-  if (freeQuantity > 0) {
-    lineItems.push({
-      price_data: {
-        currency: "usd",
-        unit_amount: 0,
-        product_data: { name: `${movie.title} — ${showtime} (Insiders+ free entry)` },
-      },
-      quantity: freeQuantity,
-      tax_rates: [taxRate],
-    });
-  }
-
   const stripe = getStripe();
   let session;
   try {
+    // Missouri sales tax goes on top of the ticket price (Stripe adds it).
+    const taxRate = await salesTaxRateId();
+    const lineItems = [
+      {
+        price_data: {
+          currency: "usd",
+          unit_amount: Math.round(screening.ticket_price * 100),
+          product_data: { name: `${movie.title} — ${showtime}` },
+        },
+        quantity: paidQuantity,
+        tax_rates: [taxRate],
+      },
+    ];
+    if (freeQuantity > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "usd",
+          unit_amount: 0,
+          product_data: { name: `${movie.title} — ${showtime} (Insiders+ free entry)` },
+        },
+        quantity: freeQuantity,
+        tax_rates: [taxRate],
+      });
+    }
     session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
       line_items: lineItems,
-      metadata: { booking_id: booking.id, screening_id: fields.screeningId },
+      // The webhook confirms (or cancels) the free seat with the paid
+      // booking: it finds it by bookings.paid_booking_id.
+      metadata: { booking_id: paidBookingId, screening_id: fields.screeningId, ...(freeBookingId ? { free_booking_id: freeBookingId } : {}) },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
       success_url: `${origin}/showtimes/${fields.screeningId}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/showtimes/${fields.screeningId}?checkout=cancelled`,
     });
   } catch (e) {
     // Release the seat hold if Stripe session creation failed.
-    await supabase.from("bookings").delete().eq("id", booking.id);
+    await supabase.from("bookings").delete().in("id", holdIds);
     throw e;
   }
 
-  await supabase.from("bookings").update({ stripe_checkout_session_id: session.id }).eq("id", booking.id);
+  await supabase.from("bookings").update({ stripe_checkout_session_id: session.id }).in("id", holdIds);
 
   return { ok: true, url: session.url! };
 }
+
+// What hold_online_seats (supabase/migrations/20261001130000_booking_guards.sql)
+// returns: the paid seats' booking and the free seat's, or neither when the
+// seats ran out.
+type SeatHold = { booking_id: string | null; free_booking_id: string | null; seats_left: number };
