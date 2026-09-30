@@ -47,6 +47,7 @@ const MEMBERSHIP_NOUN: Record<MembershipLineKey, [string, string]> = {
   new_year: ["new yearly", "new yearly"],
   renewal: ["renewal", "renewals"],
   switch: ["switch to yearly", "switches to yearly"],
+  change: ["plan change", "plan changes"],
   gift: ["gift membership", "gift memberships"],
   refund: ["refund", "refunds"],
 };

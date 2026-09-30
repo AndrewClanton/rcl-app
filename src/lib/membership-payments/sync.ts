@@ -1,9 +1,8 @@
 import "server-only";
 import { cache } from "react";
 import { after } from "next/server";
-import type Stripe from "stripe";
+import Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getStripe } from "@/lib/stripe";
 import { insidersPlusPriceId } from "@/lib/member-rate";
 import type { GiftLike, InvoiceLike, PlusContext, SubscriptionLike } from "./rows";
 import { FRESH_SECONDS, errorMessage, loadPlusContext, lockedSync, recordEnd, recordGift, recordInvoice, supabaseStore, syncRunning, type Engine, type SyncMode, type SyncResult } from "./engine";
@@ -26,15 +25,29 @@ export type { SyncMode, SyncResult } from "./engine";
 //
 // Only with the live Stripe key (./mode.ts): .env.local on a laptop has a
 // test key but the real database, and test payments must never land in the
-// real reports.
+// real reports. (With MEMBER_PAYMENTS_ALLOW_TEST=1 and the test key, reads
+// run but leave the shared "last read" row alone, and Reports pages don't
+// start them: see lockedSync's `shared`.)
 
 const PAGE_WAIT_MS = 2500; // a Reports page waits this long for a read, then goes on
 
-// The Insiders+ product and its prices, read once an hour per server.
+// The sync's own Stripe client: a request that hangs gives up after 10 s
+// and is tried once more (the library's default is 80 s, tried 3 times),
+// so a read can't hold up the daily email or outlive its claim.
+let stripeClient: { key: string; stripe: Stripe } | null = null;
+function syncStripe(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY is not set.");
+  if (stripeClient?.key !== key) stripeClient = { key, stripe: new Stripe(key, { timeout: 10_000, maxNetworkRetries: 1 }) };
+  return stripeClient.stripe;
+}
+
+// The Insiders+ product and its prices, read once an hour per server (a
+// price met since is looked up then: engine.ts learnPrices).
 let ctxCache: { at: number; ctx: PlusContext } | null = null;
 
 async function engine(): Promise<Engine> {
-  const stripe = getStripe();
+  const stripe = syncStripe();
   if (!ctxCache || Date.now() - ctxCache.at > 3_600_000) {
     const ctx = await loadPlusContext(stripe, { adult: insidersPlusPriceId("adult"), senior: insidersPlusPriceId("senior"), student: insidersPlusPriceId("student") });
     ctxCache = { at: Date.now(), ctx };
@@ -44,12 +57,15 @@ async function engine(): Promise<Engine> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function syncMemberPayments(opts: { mode: SyncMode; since?: string; force?: boolean }): Promise<SyncResult> {
+// `deadline` (epoch ms): start no Stripe call after this (the cron passes
+// its own, so a read still going after the email has gone out stops before
+// the function is ended).
+export async function syncMemberPayments(opts: { mode: SyncMode; since?: string; force?: boolean; deadline?: number }): Promise<SyncResult> {
   if (!paymentsSyncAllowed()) {
     return { ok: true, mode: opts.mode, ms: 0, skipped: stripeKeyMode() === "none" ? "no Stripe key" : "test Stripe key (live payments are only read with the live key)" };
   }
   try {
-    return await lockedSync(createAdminClient(), engine, opts);
+    return await lockedSync(createAdminClient(), engine, { ...opts, shared: stripeKeyMode() === "live" });
   } catch (e) {
     // lockedSync doesn't throw; this is only if the database client can't be made.
     return { ok: false, mode: opts.mode, ms: 0, error: errorMessage(e) };
@@ -60,8 +76,10 @@ export async function syncMemberPayments(opts: { mode: SyncMode; since?: string;
 // over 10 minutes ago, read it again, waiting up to 2.5 seconds; a longer
 // read finishes after the page has gone out (after(), so the server keeps
 // running it), and the next load has it. Once per request, never throws.
+// Live key only (a test-key read never marks when it ran, so it would run
+// on every page load).
 export const ensureMemberPaymentsFresh = cache(async (): Promise<void> => {
-  if (!paymentsSyncAllowed()) return;
+  if (stripeKeyMode() !== "live") return;
   try {
     const { data, error } = await createAdminClient().from("member_payment_sync").select("started_at, finished_at").maybeSingle();
     if (error || !data) return; // not set up yet

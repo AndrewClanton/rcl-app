@@ -14,7 +14,8 @@
 -- Money is in cents. A refund is its own row with negative amounts, counted
 -- on the day of the payment it gives back (like register partial refunds),
 -- so Reports add up every row as it is: never filter on status.
---   kind      plus_new | plus_renewal | plus_switch | gift | refund
+--   kind      plus_new | plus_renewal | plus_switch (monthly to yearly) |
+--             plus_change (another plan change Stripe charged for) | gift | refund
 --   product   plus | gift (a refund row: what was refunded)
 --   amount    money in, tax included (invoice amount_paid; gift price + tax)
 --   sales     before tax (invoice total_excluding_tax; gift price)
@@ -30,7 +31,7 @@ create table if not exists member_payments (
   id uuid primary key default gen_random_uuid(),
   -- 'in_...' (an Insiders+ invoice), 'gift:<gift_memberships.id>', 're_...' (a refund)
   source_id text not null unique,
-  kind text not null check (kind in ('plus_new', 'plus_renewal', 'plus_switch', 'gift', 'refund')),
+  kind text not null,
   product text not null check (product in ('plus', 'gift')),
   member_id uuid references members(id) on delete set null,
   tier text check (tier in ('adult', 'senior', 'student')),
@@ -60,6 +61,11 @@ create table if not exists member_payments (
   synced_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+-- The kinds, as a named check, so running this again brings it up to date.
+alter table member_payments drop constraint if exists member_payments_kind_check;
+alter table member_payments
+  add constraint member_payments_kind_check check (kind in ('plus_new', 'plus_renewal', 'plus_switch', 'plus_change', 'gift', 'refund'));
 
 create index if not exists member_payments_counted_at on member_payments (counted_at);
 create index if not exists member_payments_business_date on member_payments (business_date);
@@ -98,12 +104,14 @@ alter table member_subscription_ends enable row level security;
 -- One row: when the sync last read Stripe, so Reports know whether to read
 -- again, and a run in progress isn't started twice.
 --   started_at      a run in progress since then (claimed below)
+--   run_id          the run holding the claim: only it writes the row afterwards
 --   finished_at     the last run ended, well or not (Reports wait 10 minutes after it)
 --   succeeded_at    the last run that worked ("Last read from Stripe")
 --   invoices_through / refunds_through   what the last good run read up to
 create table if not exists member_payment_sync (
   id boolean primary key default true check (id),
   started_at timestamptz,
+  run_id uuid,
   finished_at timestamptz,
   succeeded_at timestamptz,
   invoices_through timestamptz,
@@ -112,27 +120,33 @@ create table if not exists member_payment_sync (
   last_result jsonb
 );
 
+alter table member_payment_sync add column if not exists run_id uuid;
+
 insert into member_payment_sync (id) values (true) on conflict do nothing;
 
 alter table member_payment_sync enable row level security;
 
--- Claims the next sync run. True (and started_at set to now) only when the
--- last run ended more than p_fresh_seconds ago and none is in progress (or
--- the one in progress started over p_lock_seconds ago and is taken to have
--- died). The row lock makes two callers at the same moment take turns, so
--- only one of them gets true.
+-- Claims the next sync run. Returns a new run id (and sets started_at to
+-- now) only when the last run ended more than p_fresh_seconds ago and none
+-- is in progress (or the one in progress started over p_lock_seconds ago
+-- and is taken to have died); otherwise null. The row lock makes two
+-- callers at the same moment take turns, so only one of them gets an id.
+-- The run then writes the row only where run_id is still its own, so a run
+-- that was taken over can't release or overwrite the newer run's claim.
+drop function if exists public.claim_member_payment_sync(int, int);
 create or replace function public.claim_member_payment_sync(p_fresh_seconds int, p_lock_seconds int)
-returns boolean
+returns uuid
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  claimed boolean;
+  claimed uuid;
 begin
   insert into member_payment_sync (id) values (true) on conflict do nothing;
   update member_payment_sync
-     set started_at = now()
+     set started_at = now(),
+         run_id = gen_random_uuid()
    where id
      and (finished_at is null or finished_at <= now() - make_interval(secs => p_fresh_seconds))
      and (
@@ -140,8 +154,8 @@ begin
        or (finished_at is not null and started_at <= finished_at)
        or started_at < now() - make_interval(secs => p_lock_seconds)
      )
-  returning true into claimed;
-  return coalesce(claimed, false);
+  returning run_id into claimed;
+  return claimed;
 end;
 $$;
 

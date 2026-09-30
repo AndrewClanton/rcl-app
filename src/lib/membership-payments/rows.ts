@@ -10,7 +10,9 @@
 // payment it gives back (like a register partial refund), so adding up
 // every row in a stretch of days gives what that stretch really brought in.
 
-export type PaymentKind = "plus_new" | "plus_renewal" | "plus_switch" | "gift" | "refund";
+// plus_switch: monthly to yearly. plus_change: any other mid-period plan
+// change Stripe charged a difference for (say, made in the Stripe dashboard).
+export type PaymentKind = "plus_new" | "plus_renewal" | "plus_switch" | "plus_change" | "gift" | "refund";
 export type PaymentProduct = "plus" | "gift";
 export type Tier = "adult" | "senior" | "student";
 export type Interval = "month" | "year";
@@ -88,6 +90,10 @@ export interface PriceInfo {
 export interface PlusContext {
   productId: string | null; // the "Royale Insiders+" product
   prices: Map<string, PriceInfo>; // every price on it, old ones too
+  // The monthly price ids the site is set up with (for priceInfo on a price
+  // met later: a senior or student yearly price is made the first time
+  // someone picks it).
+  monthlyIds?: Partial<Record<Tier, string>>;
 }
 
 // What a price is: yearly ones by their lookup key (insiders_plus_adult_yearly),
@@ -143,6 +149,18 @@ export type InvoiceSkip = "not_plus" | "unpaid" | "nothing_charged";
 
 const linePrice = (l: InvoiceLineLike) => idOf(l.pricing?.price_details?.price ?? null);
 
+// Insiders+ prices on an invoice that the context doesn't know yet (a
+// yearly price made since the prices were read). The sync looks them up
+// before reading the invoice, so its plan comes out right.
+export function unknownPlusPrices(inv: InvoiceLike, ctx: PlusContext): string[] {
+  const out = new Set<string>();
+  for (const l of inv.lines?.data ?? []) {
+    const price = linePrice(l);
+    if (price && !ctx.prices.has(price) && !!ctx.productId && l.pricing?.price_details?.product === ctx.productId) out.add(price);
+  }
+  return [...out];
+}
+
 export function isPlusInvoice(inv: InvoiceLike, ctx: PlusContext): boolean {
   if (inv.parent?.type !== "subscription_details") return false;
   return (inv.lines?.data ?? []).some((l) => {
@@ -170,13 +188,21 @@ export function readPlusInvoice(inv: InvoiceLike, ctx: PlusContext): { row: Paym
     lines.find((l) => l.amount > 0 && !l.parent?.subscription_item_details?.proration) ?? lines.find((l) => l.amount > 0) ?? lines[0] ?? null;
   const price = plan ? linePrice(plan) : null;
   const info = (price && ctx.prices.get(price)) || { tier: null, interval: null };
+  // Monthly to yearly: the plan is a year, and another line is on a monthly
+  // price (the credit for the unused month).
+  const toYearly =
+    info.interval === "year" &&
+    lines.some((l) => {
+      const p = l === plan ? null : linePrice(l);
+      return !!p && ctx.prices.get(p)?.interval === "month";
+    });
   const paidAt = iso(inv.status_transitions?.paid_at ?? inv.created);
   const payment = (inv.payments?.data ?? []).find((p) => p.status === "paid") ?? inv.payments?.data?.[0];
 
   return {
     row: {
       source_id: inv.id ?? "",
-      kind: plusKind(inv.billing_reason ?? null, true),
+      kind: plusKind(inv.billing_reason ?? null, true, toYearly),
       product: "plus",
       member_id: null,
       tier: info.tier,
@@ -204,13 +230,16 @@ export function readPlusInvoice(inv: InvoiceLike, ctx: PlusContext): { row: Paym
   };
 }
 
-// New, a renewal, or a switch. The subscription's first charge is new: at
-// sign-up (subscription_create), or later when a card was saved for a
-// later first charge or a gift ran first (then Stripe calls it a cycle).
-// `earlierPaid`: the subscription had a charge before this one.
-export function plusKind(billingReason: string | null, earlierPaid: boolean): PaymentKind {
+// New, a renewal, a switch to yearly or another plan change. The
+// subscription's first charge is new: at sign-up (subscription_create), or
+// later when a card was saved for a later first charge or a gift ran first
+// (then Stripe calls it a cycle). `earlierPaid`: the subscription had a
+// charge before this one. `toYearly`: the charge moved a monthly plan to a
+// yearly one (a plan change Stripe billed that didn't is plus_change).
+export function plusKind(billingReason: string | null, earlierPaid: boolean, toYearly = false): PaymentKind {
   if (billingReason === "subscription_create" || !earlierPaid) return "plus_new";
-  return billingReason === "subscription_update" ? "plus_switch" : "plus_renewal";
+  if (billingReason === "subscription_update") return toYearly ? "plus_switch" : "plus_change";
+  return "plus_renewal";
 }
 
 // ---------- a gift membership ----------
@@ -280,10 +309,17 @@ export function refundPaymentIntent(re: RefundLike): string | null {
   return idOf(re.payment_intent ?? null);
 }
 
-// The tax in a refund, when no credit note says: the payment's share.
-export function refundTaxCents(refundCents: number, payment: Pick<PaymentRow, "amount_cents" | "tax_cents">): number {
-  if (payment.amount_cents <= 0) return 0;
-  return Math.round((refundCents * payment.tax_cents) / payment.amount_cents);
+// The tax in a refund, when no credit note says: the payment's share of
+// everything refunded so far, less the tax earlier refunds of it already
+// gave back (`before`: their cents and tax, as positive numbers). Worked out
+// on the running total, not refund by refund, so refunds that add up to the
+// whole charge give back exactly its tax (no cent left over from rounding
+// each one).
+export function refundTaxCents(refundCents: number, payment: Pick<PaymentRow, "amount_cents" | "tax_cents">, before: { amount: number; tax: number } = { amount: 0, tax: 0 }): number {
+  if (payment.amount_cents <= 0 || refundCents <= 0) return 0;
+  const through = before.amount + refundCents;
+  const due = through >= payment.amount_cents ? payment.tax_cents : Math.round((through * payment.tax_cents) / payment.amount_cents);
+  return Math.min(refundCents, Math.max(0, due - before.tax));
 }
 
 // A refund as its own row: negative, and counted on its payment's day, so
@@ -348,7 +384,17 @@ export interface SubscriptionLike {
   ended_at?: number | null;
   canceled_at?: number | null;
   cancellation_details?: { reason?: string | null } | null;
-  items?: { data: { price?: { id: string; product?: string | { id: string } | null } | null }[] } | null;
+  items?: {
+    data: {
+      price?: {
+        id: string;
+        product?: string | { id: string } | null;
+        lookup_key?: string | null;
+        unit_amount?: number | null;
+        recurring?: { interval?: string | null } | null;
+      } | null;
+    }[];
+  } | null;
 }
 
 export function endRow(sub: SubscriptionLike, ctx: PlusContext): EndRow | null {
@@ -357,7 +403,8 @@ export function endRow(sub: SubscriptionLike, ctx: PlusContext): EndRow | null {
   if (!price || !(ctx.prices.has(price.id) || (!!ctx.productId && product === ctx.productId))) return null;
   const at = sub.ended_at ?? sub.canceled_at;
   if (!at) return null;
-  const info = ctx.prices.get(price.id) ?? { tier: null, interval: null };
+  // A price newer than the context: the subscription carries the whole price.
+  const info = ctx.prices.get(price.id) ?? priceInfo(price, ctx.monthlyIds ?? {});
   return {
     stripe_subscription_id: sub.id,
     stripe_customer_id: idOf(sub.customer ?? null),
@@ -375,7 +422,7 @@ export function endRow(sub: SubscriptionLike, ctx: PlusContext): EndRow | null {
 
 export type SummaryRow = Pick<PaymentRow, "kind" | "billing_interval" | "amount_cents" | "sales_cents" | "tax_cents">;
 
-export type MembershipLineKey = "new_month" | "new_year" | "renewal" | "switch" | "gift" | "refund";
+export type MembershipLineKey = "new_month" | "new_year" | "renewal" | "switch" | "change" | "gift" | "refund";
 
 export interface MembershipLine {
   key: MembershipLineKey;
@@ -398,7 +445,8 @@ export interface MembershipTotals {
   newMonthly: number;
   newYearly: number;
   renewals: number;
-  switches: number;
+  switches: number; // monthly to yearly
+  changes: number; // other plan changes Stripe charged a difference for
   gifts: number;
   refunds: number;
   lines: MembershipLine[]; // the kinds there were, in LINE_ORDER
@@ -409,15 +457,17 @@ const LINE_LABEL: Record<MembershipLineKey, string> = {
   new_year: "New yearly",
   renewal: "Renewals",
   switch: "Switched to yearly",
+  change: "Plan changes",
   gift: "Gift memberships",
   refund: "Refunds",
 };
-const LINE_ORDER: MembershipLineKey[] = ["new_month", "new_year", "renewal", "switch", "gift", "refund"];
+const LINE_ORDER: MembershipLineKey[] = ["new_month", "new_year", "renewal", "switch", "change", "gift", "refund"];
 
 export function lineKey(r: Pick<PaymentRow, "kind" | "billing_interval">): MembershipLineKey {
   if (r.kind === "plus_new") return r.billing_interval === "year" ? "new_year" : "new_month";
   if (r.kind === "plus_renewal") return "renewal";
   if (r.kind === "plus_switch") return "switch";
+  if (r.kind === "plus_change") return "change";
   return r.kind;
 }
 
@@ -452,6 +502,7 @@ export function summarizeMemberships(rows: SummaryRow[], tracked = true): Member
     newYearly: count("new_year"),
     renewals: count("renewal"),
     switches: count("switch"),
+    changes: count("change"),
     gifts: count("gift"),
     refunds: count("refund"),
     lines: LINE_ORDER.filter((k) => by.has(k)).map((k) => {
@@ -474,6 +525,7 @@ export function membershipsDetail(t: MembershipTotals): string {
     t.newYearly ? `${t.newYearly} new yearly` : "",
     t.renewals ? plural(t.renewals, "renewal", "renewals") : "",
     t.switches ? plural(t.switches, "switch to yearly", "switches to yearly") : "",
+    t.changes ? plural(t.changes, "plan change", "plan changes") : "",
     t.gifts ? plural(t.gifts, "gift", "gifts") : "",
     t.refunds ? plural(t.refunds, "refund", "refunds") : "",
   ]
@@ -498,6 +550,8 @@ export function paymentLabel(r: Pick<PaymentRow, "kind" | "tier" | "billing_inte
       return `Renewal · ${planLabel(r.tier, r.billing_interval)}`;
     case "plus_switch":
       return `Switched to yearly · ${planLabel(r.tier, null)}`;
+    case "plus_change":
+      return `Plan change · ${planLabel(r.tier, r.billing_interval)}`;
     case "gift":
       return "Gift · a year of Insiders+";
     default:

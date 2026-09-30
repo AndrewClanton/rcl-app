@@ -5,12 +5,12 @@ import {
   endRow,
   giftRow,
   paymentStatus,
-  plusKind,
   priceInfo,
   readPlusInvoice,
   refundPaymentIntent,
   refundRow,
   refundTaxCents,
+  unknownPlusPrices,
   type EndRow,
   type GiftLike,
   type InvoiceLike,
@@ -56,8 +56,16 @@ export interface PaymentStore {
   update(id: string, patch: Partial<PaymentRow>): Promise<void>;
   // Refund rows only. Returns how many went.
   removeRefunds(sourceIds: string[]): Promise<number>;
-  refundsOf(paymentIds: string[]): Promise<{ refund_of: string; amount_cents: number }[]>;
+  // Saved refund rows of these payments (amounts negative, as saved).
+  refundsOf(paymentIds: string[]): Promise<SavedRefund[]>;
   saveEnds(rows: EndRow[]): Promise<number>;
+}
+
+export interface SavedRefund {
+  refund_of: string;
+  source_id: string;
+  amount_cents: number;
+  tax_cents: number;
 }
 
 export interface Engine {
@@ -66,10 +74,19 @@ export interface Engine {
   ctx: PlusContext;
   // Keep test-mode payments too (normally only live ones are saved).
   allowTest: boolean;
+  // Epoch ms: no Stripe call starts after this (the run stops with an
+  // error and the next one picks up), so a run never outlives its claim.
+  deadline?: number;
+}
+
+// Stops a run that's out of time before it asks Stripe for more.
+function inTime(e: Engine) {
+  if (e.deadline !== undefined && Date.now() > e.deadline) throw new Error("out of time reading Stripe; the next read picks up the rest");
 }
 
 export interface SyncCounts {
   invoices: number; // paid invoices looked at
+  latePaid: number; // of them, made before the read's window but paid in it (found by their invoice.paid event)
   plus: Tally;
   gifts: Tally;
   refunds: Tally & { removed: number };
@@ -84,7 +101,7 @@ interface Tally {
 }
 
 export function emptyCounts(): SyncCounts {
-  return { invoices: 0, plus: { added: 0, updated: 0 }, gifts: { added: 0, updated: 0 }, refunds: { added: 0, updated: 0, removed: 0 }, ends: 0, skipped: { nothingCharged: 0, testMode: 0 }, warnings: [] };
+  return { invoices: 0, latePaid: 0, plus: { added: 0, updated: 0 }, gifts: { added: 0, updated: 0 }, refunds: { added: 0, updated: 0, removed: 0 }, ends: 0, skipped: { nothingCharged: 0, testMode: 0 }, warnings: [] };
 }
 
 const unixOf = (isoString: string) => Math.floor(new Date(isoString).getTime() / 1000);
@@ -108,44 +125,71 @@ export async function loadPlusContext(stripe: Stripe, monthlyIds: Partial<Record
   if (productId) {
     for await (const p of stripe.prices.list({ product: productId, limit: 100 })) prices.set(p.id, priceInfo(p, monthlyIds));
   }
-  return { productId, prices };
+  return { productId, prices, monthlyIds };
 }
 
 // ---------- one run ----------
 
+const warn = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
 // Everything from `fromIso` on: paid Insiders+ invoices, paid gifts,
-// refunds of either, and subscriptions that ended.
-export async function runPaymentSync(e: Engine, fromIso: string): Promise<SyncCounts> {
+// refunds of either, and subscriptions that ended. `latePaid`: also the
+// invoices made before `fromIso` but paid since (a renewal whose card was
+// declined and went through days later), found by their invoice.paid events.
+export async function runPaymentSync(e: Engine, fromIso: string, opts: { latePaid?: boolean } = {}): Promise<SyncCounts> {
   const counts = emptyCounts();
   const from = unixOf(fromIso < LAUNCH ? LAUNCH : fromIso);
 
-  // Everything is read at once (a Reports page waits on this), then saved in order.
-  const [invoices, refunds, ended, gifts] = await Promise.all([
-    listAll(e.stripe.invoices.list({ status: "paid", created: { gte: from }, limit: 100, expand: ["data.payments"] })),
+  // Stripe is read all at once (a Reports page waits on this) while the
+  // gifts are saved: they're in the database already, so a Stripe failure
+  // never holds them back.
+  const reads = Promise.all([
+    listAll(e, e.stripe.invoices.list({ status: "paid", created: { gte: from }, limit: 100, expand: ["data.payments"] })),
     // Every refund on the account (tickets and the register too); only the
     // ones on a membership payment are kept.
-    listAll(e.stripe.refunds.list({ created: { gte: from }, limit: 100 })),
+    listAll(e, e.stripe.refunds.list({ created: { gte: from }, limit: 100 })),
     // Stripe keeps events for 30 days; the daily run reads every day. Best
     // effort: the payments stand without it.
-    listAll(e.stripe.events.list({ type: "customer.subscription.deleted", created: { gte: from }, limit: 100 })).catch((err: unknown) => {
-      counts.warnings.push(`ended subscriptions not read: ${err instanceof Error ? err.message : String(err)}`);
+    listAll(e, e.stripe.events.list({ type: "customer.subscription.deleted", created: { gte: from }, limit: 100 })).catch((err: unknown) => {
+      counts.warnings.push(`ended subscriptions not read: ${warn(err)}`);
       return [] as Stripe.Event[];
     }),
-    e.store.paidGifts(isoOf(from)),
+    opts.latePaid
+      ? listAll(e, e.stripe.events.list({ type: "invoice.paid", created: { gte: from }, limit: 100 })).catch((err: unknown) => {
+          counts.warnings.push(`invoices paid late not looked for: ${warn(err)}`);
+          return [] as Stripe.Event[];
+        })
+      : Promise.resolve([] as Stripe.Event[]),
   ]);
+  // Awaited below; this only stops Node calling a failure "unhandled" while
+  // the gifts are being saved.
+  reads.catch(() => undefined);
 
-  // 1. Insiders+ charges.
-  counts.invoices = invoices.length;
-  const plusRows = await saveInvoices(e, invoices as unknown as InvoiceLike[], counts);
-
-  // 2. Gift memberships (the database already has them).
+  // 1. Gift memberships (the database already has them).
   const giftRows: PaymentRow[] = [];
-  for (const g of gifts) {
+  for (const g of await e.store.paidGifts(isoOf(from))) {
     const row = giftRow(g);
     if (!row.livemode && !e.allowTest) counts.skipped.testMode++;
     else giftRows.push(row);
   }
   await saveRows(e, giftRows, counts.gifts);
+
+  const [listed, refunds, ended, paidEvents] = await reads;
+
+  // 2. Insiders+ charges: the invoices made in the window, and any made
+  // before it that were paid in it.
+  const invoices = listed as unknown as InvoiceLike[];
+  const known = new Set(invoices.map((i) => i.id));
+  for (const ev of paidEvents) {
+    const obj = ev.data.object as { id?: string; created?: number };
+    if (!obj.id || known.has(obj.id) || (obj.created ?? 0) >= from) continue;
+    known.add(obj.id);
+    inTime(e);
+    invoices.push((await e.stripe.invoices.retrieve(obj.id, { expand: ["payments"] })) as unknown as InvoiceLike);
+    counts.latePaid++;
+  }
+  counts.invoices = invoices.length;
+  const plusRows = await saveInvoices(e, invoices, counts);
 
   // 3. Refunds of any of them.
   await saveRefunds(e, refunds, [...plusRows, ...giftRows], counts);
@@ -160,16 +204,35 @@ export async function runPaymentSync(e: Engine, fromIso: string): Promise<SyncCo
   return counts;
 }
 
-async function listAll<T>(list: AsyncIterable<T>): Promise<T[]> {
+async function listAll<T>(e: Engine, list: AsyncIterable<T>): Promise<T[]> {
   const out: T[] = [];
-  for await (const x of list) out.push(x);
+  for await (const x of list) {
+    out.push(x);
+    if (out.length % 100 === 0) inTime(e); // before the next page
+  }
   return out;
+}
+
+// Insiders+ prices on these invoices that the context doesn't know (a
+// yearly price made since the prices were read), looked up and added, so
+// the plan is right on the first read. Best effort.
+async function learnPrices(e: Engine, invoices: InvoiceLike[], counts: SyncCounts) {
+  const ids = unique(invoices.flatMap((inv) => unknownPlusPrices(inv, e.ctx)));
+  for (const id of ids) {
+    inTime(e);
+    try {
+      e.ctx.prices.set(id, priceInfo(await e.stripe.prices.retrieve(id), e.ctx.monthlyIds ?? {}));
+    } catch (err) {
+      counts.warnings.push(`price ${id} not read: ${warn(err)}`);
+    }
+  }
 }
 
 // Paid invoices -> saved Insiders+ rows (the ones that are Insiders+ and
 // charged something). Returns the rows, new and already saved.
 export async function saveInvoices(e: Engine, invoices: InvoiceLike[], counts: SyncCounts): Promise<PaymentRow[]> {
   const rows: PaymentRow[] = [];
+  await learnPrices(e, invoices, counts);
   for (const inv of invoices) {
     const r = readPlusInvoice(inv, e.ctx);
     if ("skip" in r) {
@@ -186,14 +249,16 @@ export async function saveInvoices(e: Engine, invoices: InvoiceLike[], counts: S
   return rows;
 }
 
-// New or a renewal: was there a charge on the same subscription before
-// this one? This run's own rows first, then the saved ones, then Stripe.
+// New, or what readPlusInvoice made it (a renewal, a switch, a plan
+// change): was there a charge on the same subscription before this one?
+// This run's own rows first, then the saved ones, then Stripe.
 async function classify(e: Engine, row: PaymentRow, all: PaymentRow[]) {
-  if (row.product !== "plus" || row.billing_reason === "subscription_create") return;
+  if (row.product !== "plus" || row.kind === "plus_new") return;
   const sub = row.stripe_subscription_id;
   let earlier = !!sub && all.some((o) => o !== row && o.product === "plus" && o.stripe_subscription_id === sub && o.paid_at < row.paid_at);
   if (!earlier && sub) earlier = await e.store.hasEarlierPlus(sub, row.paid_at);
   if (!earlier && sub) {
+    inTime(e);
     const before = unixOf(row.paid_at);
     for await (const inv of e.stripe.invoices.list({ subscription: sub, status: "paid", limit: 100 })) {
       const paidAt = inv.status_transitions?.paid_at ?? inv.created;
@@ -203,7 +268,7 @@ async function classify(e: Engine, row: PaymentRow, all: PaymentRow[]) {
       }
     }
   }
-  row.kind = plusKind(row.billing_reason, earlier);
+  if (!earlier) row.kind = "plus_new";
 }
 
 // What an already-saved row takes from a fresh read. Its kind stays.
@@ -268,21 +333,47 @@ async function saveRefunds(e: Engine, refunds: Stripe.Refund[], justRead: Paymen
   for (const r of justRead) if (r.stripe_payment_intent_id) payments.set(r.stripe_payment_intent_id, r);
   for (const s of await e.store.byPaymentIntent(intents)) if (s.stripe_payment_intent_id) payments.set(s.stripe_payment_intent_id, s);
 
+  // Ours only (on a membership payment), oldest first: each one's tax is
+  // worked out on the running total of what its payment has had back.
+  const ours = refunds
+    .filter((re) => {
+      const pi = refundPaymentIntent(re);
+      return !!pi && payments.has(pi);
+    })
+    .sort((a, b) => a.created - b.created || a.id.localeCompare(b.id));
+  if (!ours.length) return;
+
+  // What each payment already had back from refunds before this read's
+  // window (saved, and not read again now), as positive cents.
+  const listed = new Set(ours.map((re) => re.id));
+  const piOfPayment = new Map<string, string>();
+  for (const [pi, p] of payments) if (p.id) piOfPayment.set(p.id, pi);
+  const given = new Map<string, { amount: number; tax: number }>(); // payment intent -> back so far
+  for (const s of piOfPayment.size ? await e.store.refundsOf([...piOfPayment.keys()]) : []) {
+    const pi = piOfPayment.get(s.refund_of);
+    if (!pi || listed.has(s.source_id)) continue;
+    const g = given.get(pi) ?? { amount: 0, tax: 0 };
+    given.set(pi, { amount: g.amount - s.amount_cents, tax: g.tax - s.tax_cents });
+  }
+
   const rows: PaymentRow[] = [];
   const gone: string[] = [];
   const touched = new Map<string, PaymentRow & { id?: string }>();
-  for (const re of refunds) {
-    const pi = refundPaymentIntent(re);
-    const payment = pi ? payments.get(pi) : undefined;
-    if (!payment) continue;
+  for (const re of ours) {
+    const pi = refundPaymentIntent(re) as string;
+    const payment = payments.get(pi) as PaymentRow & { id?: string };
     if (payment.id) touched.set(payment.id, payment);
     if (re.status === "failed" || re.status === "canceled") {
       gone.push(re.id);
       continue;
     }
     if (re.status !== "succeeded") continue; // pending: counted once it goes through
+    inTime(e);
+    const before = given.get(pi) ?? { amount: 0, tax: 0 };
     const note = payment.stripe_invoice_id ? await creditNoteTax(e.stripe, payment.stripe_invoice_id, re) : null;
-    rows.push(refundRow(re, payment, note?.tax ?? refundTaxCents(re.amount, payment), note?.id ?? null));
+    const tax = note?.tax ?? refundTaxCents(re.amount, payment, before);
+    rows.push(refundRow(re, payment, tax, note?.id ?? null));
+    given.set(pi, { amount: before.amount + re.amount, tax: before.tax + tax });
   }
   await saveRows(e, rows, counts.refunds);
   if (gone.length) counts.refunds.removed += await e.store.removeRefunds(gone);
@@ -342,7 +433,9 @@ export async function recordEnd(e: Engine, sub: SubscriptionLike): Promise<numbe
 // The sync's state is one row (member_payment_sync): a run claims it first
 // (claim_member_payment_sync), so two page loads at the same moment start
 // one read, not two, and a Reports page doesn't read again within 10
-// minutes of the last read.
+// minutes of the last read. The claim hands back a run id; only the run
+// holding it writes the row afterwards, so a run that was taken to have died
+// (and was taken over) can't release or overwrite the newer one's claim.
 
 export type SyncMode = "quick" | "daily" | "backfill";
 
@@ -358,8 +451,13 @@ export interface SyncResult {
 
 export const FRESH_SECONDS = 10 * 60; // Reports read Stripe again after this long
 export const LOCK_SECONDS = 120; // a run that started this long ago is taken to have died
+// A run starts no Stripe call after this long, so with the app's Stripe
+// client (10 s timeout, 1 retry) it's done well inside LOCK_SECONDS.
+export const RUN_SECONDS = LOCK_SECONDS - 30;
 const QUICK_OVERLAP_DAYS = 3; // quick: from this long before the last read
 const DAILY_DAYS = 45; // daily: a renewal that failed and was paid weeks later is still caught
+const DAILY_WAIT_TRIES = 4; // daily: waits up to 4 x 2.5 s behind a read already going
+const DAILY_WAIT_MS = 2500;
 const DAY_MS = 86_400_000;
 
 const msOf = (at: string | null | undefined) => (at ? new Date(at).getTime() : 0);
@@ -392,51 +490,90 @@ export function syncFrom(mode: SyncMode, through: string | null, now: number, si
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+export interface LockedSyncOptions {
+  mode: SyncMode;
+  since?: string;
+  // Read even if the last read was just now (still not while another run is
+  // going; the daily one waits its turn, up to about 10 s).
+  force?: boolean;
+  // Epoch ms: start no Stripe call after this (the caller's own time limit;
+  // the run's is RUN_SECONDS from its claim either way).
+  deadline?: number;
+  // False: leave member_payment_sync alone (no claim, no marks). For a run
+  // with Stripe's test key: the real site's reads go by that row, and a
+  // test run on a laptop pointed at the real database mustn't move it.
+  shared?: boolean;
+}
+
 // One run: claim it, read Stripe, save, and mark when. Never throws: a
 // failure is recorded (so the next try waits the usual 10 minutes, not
-// forever) and returned. `force`: read even if the last read was just now
-// (still not while another run is going; the daily one waits its turn).
-export async function lockedSync(db: SupabaseClient, getEngine: () => Promise<Engine>, opts: { mode: SyncMode; since?: string; force?: boolean }): Promise<SyncResult> {
+// forever) and returned.
+export async function lockedSync(db: SupabaseClient, getEngine: () => Promise<Engine>, opts: LockedSyncOptions): Promise<SyncResult> {
   const t0 = Date.now();
   const done = (r: Omit<SyncResult, "mode" | "ms">): SyncResult => ({ mode: opts.mode, ms: Date.now() - t0, ...r });
-  let claimed = false;
+  const deadline = (claimedAt: number) => Math.min(opts.deadline ?? Infinity, claimedAt + RUN_SECONDS * 1000);
+
+  if (opts.shared === false) {
+    try {
+      const from = opts.since && new Date(opts.since).toISOString() > LAUNCH ? new Date(opts.since).toISOString() : LAUNCH;
+      const counts = await runPaymentSync({ ...(await getEngine()), deadline: deadline(t0) }, from);
+      return done({ ok: true, from, counts });
+    } catch (e) {
+      const error = errorMessage(e);
+      console.error(`member payments: ${opts.mode} read from Stripe failed:`, error);
+      return done({ ok: false, error });
+    }
+  }
+
+  let runId: string | null = null;
+  const state = () => db.from("member_payment_sync");
   try {
     for (let attempt = 0; ; attempt++) {
       const { data, error } = await db.rpc("claim_member_payment_sync", { p_fresh_seconds: opts.force ? 0 : FRESH_SECONDS, p_lock_seconds: LOCK_SECONDS });
       if (error) return done({ ok: false, skipped: "not set up (is migration 20261001110000_member_payments.sql applied?)", error: error.message });
-      if (data === true) break;
-      // Only the daily run waits (up to ~36 s) behind a run already going,
-      // then counts on it if it finished meanwhile.
-      if (opts.mode !== "daily" || attempt >= 12) return done({ ok: true, skipped: "read recently, or a read is already going" });
-      await sleep(3000);
-      const { data: s } = await db.from("member_payment_sync").select("started_at, finished_at").maybeSingle();
+      if (typeof data === "string" && data) {
+        runId = data;
+        break;
+      }
+      // Only the daily run waits (up to about 10 s) behind a run already
+      // going, then counts on it if it finished meanwhile.
+      if (opts.mode !== "daily" || attempt >= DAILY_WAIT_TRIES || (opts.deadline !== undefined && Date.now() + DAILY_WAIT_MS > opts.deadline)) {
+        return done({ ok: true, skipped: "read recently, or a read is already going" });
+      }
+      await sleep(DAILY_WAIT_MS);
+      const { data: s } = await state().select("started_at, finished_at").maybeSingle();
       if (s && msOf(s.finished_at) >= t0 && !syncRunning(s)) return done({ ok: true, skipped: "another read just finished" });
     }
-    claimed = true;
+    const claimedAt = Date.now();
 
-    const { data: state, error: stateErr } = await db.from("member_payment_sync").select("invoices_through").maybeSingle();
+    const { data: saved, error: stateErr } = await state().select("invoices_through").maybeSingle();
     if (stateErr) throw stateErr;
-    const through = (state?.invoices_through as string | null | undefined) ?? null;
+    const through = (saved?.invoices_through as string | null | undefined) ?? null;
     const from = syncFrom(opts.mode, through, t0, opts.since);
 
-    const counts = await runPaymentSync(await getEngine(), from);
+    // A quick read goes back 3 days by when invoices were made; one made
+    // earlier and paid since is found by its invoice.paid event.
+    const counts = await runPaymentSync({ ...(await getEngine()), deadline: deadline(claimedAt) }, from, { latePaid: opts.mode === "quick" });
     const now = new Date().toISOString();
     // Reads overlap; the mark never moves back.
     const mark = new Date(Math.max(t0, msOf(through))).toISOString();
-    const { error: saveErr } = await db
-      .from("member_payment_sync")
+    const { data: marked, error: saveErr } = await state()
       .update({ finished_at: now, succeeded_at: now, invoices_through: mark, refunds_through: mark, last_error: null, last_result: { mode: opts.mode, from, ms: Date.now() - t0, ...counts } })
-      .eq("id", true);
+      .eq("id", true)
+      .eq("run_id", runId)
+      .select("id");
     if (saveErr) console.warn("member payments: read saved, but not when:", saveErr.message);
+    else if (!marked?.length) console.warn("member payments: read saved; a newer read had taken over, so its marks stand");
     return done({ ok: true, from, counts });
   } catch (e) {
     const error = errorMessage(e);
     console.error(`member payments: ${opts.mode} read from Stripe failed:`, error);
-    if (claimed) {
-      await db
-        .from("member_payment_sync")
+    if (runId) {
+      // Only this run's own claim is released (a newer run's is left alone).
+      await state()
         .update({ finished_at: new Date().toISOString(), started_at: null, last_error: error.slice(0, 500) })
         .eq("id", true)
+        .eq("run_id", runId)
         .then(
           () => undefined,
           () => undefined,
@@ -516,8 +653,8 @@ export function supabaseStore(db: SupabaseClient): PaymentStore {
       return removed;
     },
     async refundsOf(ids) {
-      const out: { refund_of: string; amount_cents: number }[] = [];
-      for (const c of chunks(ids)) out.push(...must(await table().select("refund_of, amount_cents").in("refund_of", c)) as { refund_of: string; amount_cents: number }[]);
+      const out: SavedRefund[] = [];
+      for (const c of chunks(ids)) out.push(...(must(await table().select("refund_of, source_id, amount_cents, tax_cents").in("refund_of", c)) as SavedRefund[]));
       return out;
     },
     async saveEnds(rows) {

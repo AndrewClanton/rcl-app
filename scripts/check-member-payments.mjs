@@ -15,6 +15,12 @@
 //     never counts a payment twice, a saved row keeps its kind, refunds
 //     come off their payment's day, a failed refund goes away, test-mode
 //     payments are left out.
+//  7. Round 2: partial refunds give back exactly the charge's tax, a plan
+//     change isn't a switch to yearly, a price newer than the cached list
+//     is looked up, an invoice paid days after it was made is found by a
+//     quick read, gifts are saved even when Stripe can't be read, a run
+//     out of time stops, and the claim: only the run holding it writes the
+//     state row, and a test-key run never touches it.
 //
 // Usage: node scripts/check-member-payments.mjs   (Node 23.6+ runs the .ts directly)
 
@@ -40,7 +46,7 @@ registerHooks({
 const rows = await import("../src/lib/membership-payments/rows.ts");
 const engine = await import("../src/lib/membership-payments/engine.ts");
 const { businessDateOf, priceInfo, readPlusInvoice, plusKind, giftRow, refundRow, refundTaxCents, paymentStatus, summarizeMemberships, membershipsDetail, paymentLabel, lineKey } = rows;
-const { runPaymentSync, syncFrom, syncRunning, LOCK_SECONDS } = engine;
+const { runPaymentSync, lockedSync, syncFrom, syncRunning, LOCK_SECONDS, RUN_SECONDS } = engine;
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -153,8 +159,28 @@ eq("part paid from a customer balance: money in is what was charged", [balance.r
 eq("kind: sign-up is new", plusKind("subscription_create", true), "plus_new");
 eq("kind: a cycle after a paid charge is a renewal", plusKind("subscription_cycle", true), "plus_renewal");
 eq("kind: a cycle with nothing paid before is new (first charge after a free start or a gift)", plusKind("subscription_cycle", false), "plus_new");
-eq("kind: a switch after a paid charge", plusKind("subscription_update", true), "plus_switch");
-eq("kind: a switch before any charge is new", plusKind("subscription_update", false), "plus_new");
+eq("kind: a switch to yearly after a paid charge", plusKind("subscription_update", true, true), "plus_switch");
+eq("kind: another plan change after a paid charge", plusKind("subscription_update", true, false), "plus_change");
+eq("kind: a switch before any charge is new", plusKind("subscription_update", false, true), "plus_new");
+
+// Adult monthly to senior monthly, prorated (say, from the Stripe dashboard): not a switch to yearly.
+const changeAt = cdt("2026-10-10", "12:00");
+const planChange = invoice({
+  id: "in_change",
+  reason: "subscription_update",
+  paidAt: changeAt,
+  amount: 100,
+  tax: 8,
+  excl: 92,
+  lines: [line("price_m_adult", -900, changeAt, monthEnd, true), line("price_m_senior", 992, changeAt, monthEnd, true)],
+});
+r = readPlusInvoice(planChange, ctx);
+eq("a prorated monthly-to-monthly plan change: plus_change, the new plan", [r.row?.kind, r.row?.tier, r.row?.billing_interval], ["plus_change", "senior", "month"]);
+eq("...its label", paymentLabel(r.row), "Plan change · Senior monthly");
+// A yearly charge on subscription_update with no monthly line (a trialing
+// monthly moved to yearly before its first charge): not a switch.
+r = readPlusInvoice(invoice({ id: "in_y", reason: "subscription_update", paidAt: yearStart, amount: 16635, tax: 1335, lines: [line("price_y_adult", 15300, yearStart, yearEnd)] }), ctx);
+eq("a yearly charge with no monthly credit isn't a switch", r.row?.kind, "plus_change");
 
 // ---------- 4. gifts, refunds ----------
 const gift = { id: "g1", recipient_member_id: "m2", price: "153.00", tax_amount: "13.35", paid_at: "2026-09-30T03:10:00.000Z", starts_at: null, ends_at: null, stripe_payment_intent_id: "pi_gift", stripe_checkout_session_id: "cs_live_abc" };
@@ -166,6 +192,15 @@ eq("a gift's live or test from its payment page", [g.livemode, giftRow({ ...gift
 const paid = { ...readPlusInvoice(create, ctx).row, id: "row_new" };
 eq("refund tax, no credit note: the payment's share", refundTaxCents(800, paid), 64);
 eq("refund tax of a whole payment", refundTaxCents(1631, paid), 131);
+{
+  // $16.31 ($1.31 tax) refunded as $5.43 + $5.44 + $5.44: each alone rounds
+  // to 44 (132 in all); on the running total it's 44 + 43 + 44 = 131.
+  const a = refundTaxCents(543, paid);
+  const b = refundTaxCents(544, paid, { amount: 543, tax: a });
+  const c = refundTaxCents(544, paid, { amount: 1087, tax: a + b });
+  eq("three partial refunds give back exactly the charge's tax", [a, b, c, a + b + c], [44, 43, 44, 131]);
+  eq("refund tax never more than the refund, never below zero", [refundTaxCents(1, paid, { amount: 0, tax: 0 }), refundTaxCents(100, paid, { amount: 1631, tax: 131 })], [0, 0]);
+}
 const refundAt = cdt("2026-10-03", "15:00");
 const re = refundRow({ id: "re_1", amount: 800, created: unix(refundAt), status: "succeeded", payment_intent: "pi_in_new" }, paid, refundTaxCents(800, paid));
 eq("a refund: negative", [re.kind, re.amount_cents, re.sales_cents, re.tax_cents], ["refund", -800, -736, -64]);
@@ -250,7 +285,7 @@ function memoryStore(gifts = []) {
       return gone;
     },
     async refundsOf(ids) {
-      return [...saved.values()].filter((x) => ids.includes(x.refund_of)).map((x) => ({ refund_of: x.refund_of, amount_cents: x.amount_cents }));
+      return [...saved.values()].filter((x) => ids.includes(x.refund_of)).map((x) => ({ refund_of: x.refund_of, source_id: x.source_id, amount_cents: x.amount_cents, tax_cents: x.tax_cents }));
     },
     async saveEnds(list) {
       for (const x of list) ends.set(x.stripe_subscription_id, x);
@@ -358,6 +393,182 @@ eq("a fully refunded payment nets to zero", summarizeMemberships([store.saved.ge
 const testStore = memoryStore();
 await runPaymentSync({ stripe: fakeStripe(world), store: testStore, ctx, allowTest: true }, since);
 eq("with test payments allowed, the test one is saved", testStore.saved.has("in_test"), true);
+
+// ---------- 7. round 2 ----------
+
+// Partial refunds across two reads: the second read's window starts after
+// the first refund, which is saved; the later two are worked out on top of
+// it, so the three give back exactly the charge's tax.
+{
+  const st = memoryStore();
+  const r1 = { id: "re_p1", amount: 543, created: unix(cdt("2026-10-01", "12:00")), status: "succeeded", payment_intent: "pi_in_new" };
+  const r2 = { id: "re_p2", amount: 544, created: unix(cdt("2026-10-02", "12:00")), status: "succeeded", payment_intent: "pi_in_new" };
+  const r3 = { id: "re_p3", amount: 544, created: unix(cdt("2026-10-03", "12:00")), status: "succeeded", payment_intent: "pi_in_new" };
+  const w = { invoices: [create], refunds: [r1], events: [] };
+  await runPaymentSync({ stripe: fakeStripe(w), store: st, ctx, allowTest: false }, since);
+  w.refunds = [r1, r2, r3];
+  await runPaymentSync({ stripe: fakeStripe(w), store: st, ctx, allowTest: false }, cdt("2026-10-01", "13:00").toISOString());
+  const taxes = ["re_p1", "re_p2", "re_p3"].map((id) => st.saved.get(id)?.tax_cents);
+  eq("three partial refunds over two reads: tax back is exactly the charge's", [taxes, taxes.reduce((s, x) => s + x, 0), st.saved.get("in_new").status], [[-44, -43, -44], -131, "refunded"]);
+  eq("...and the payment nets to zero", summarizeMemberships([...st.saved.values()]).collected, 0);
+  // Read again from launch: the same three, same tax (nothing moves).
+  const c = await runPaymentSync({ stripe: fakeStripe(w), store: st, ctx, allowTest: false }, since);
+  eq("...and reading them all again changes nothing", [c.refunds.added, c.refunds.updated, ["re_p1", "re_p2", "re_p3"].map((id) => st.saved.get(id)?.tax_cents)], [0, 0, [-44, -43, -44]]);
+}
+
+// A senior yearly price made after the prices were read (not in ctx): looked
+// up, so the first charge on it is "New yearly · Senior", not "New monthly".
+{
+  const st = memoryStore();
+  const fresh = { productId: PROD, prices: new Map(ctx.prices), monthlyIds };
+  const s = fakeStripe({ invoices: [invoice({ id: "in_sy", sub: "sub_sy", customer: "cus_sy", paidAt: cdt("2026-10-04", "15:00"), amount: 13308, tax: 1068, lines: [line("price_y_senior_new", 12240, cdt("2026-10-04", "15:00"), cdt("2027-10-04", "15:00"))] })], refunds: [], events: [] });
+  s.prices = { retrieve: async (id) => ({ id, product: PROD, lookup_key: "insiders_plus_senior_yearly", unit_amount: 12240, recurring: { interval: "year" } }) };
+  await runPaymentSync({ stripe: s, store: st, ctx: fresh, allowTest: false }, since);
+  const row = st.saved.get("in_sy");
+  eq("a price newer than the cached list is looked up", [row?.kind, row?.tier, row?.billing_interval, lineKey(row), fresh.prices.get("price_y_senior_new")?.tier], ["plus_new", "senior", "year", "new_year", "senior"]);
+}
+
+// A renewal made 10/28 whose card was declined, paid 11/3: a quick read on
+// 11/3 goes back 3 days by when invoices were made (to 10/31), so it isn't
+// listed; its invoice.paid event finds it.
+{
+  const madeAt = cdt("2026-10-28", "19:05");
+  const paidLate = cdt("2026-11-03", "10:00");
+  const late = invoice({ id: "in_late", reason: "subscription_cycle", paidAt: paidLate, created: unix(madeAt), amount: 1631, tax: 131, lines: [line("price_m_adult", 1500, monthEnd, cdt("2026-11-28", "18:05"))] });
+  const w = { invoices: [create, late], refunds: [], events: [{ type: "invoice.paid", created: unix(paidLate), data: { object: { id: "in_late", created: unix(madeAt) } } }] };
+  const s = fakeStripe(w);
+  s.invoices.retrieve = async (id) => w.invoices.find((i) => i.id === id);
+  const quickFrom = cdt("2026-10-31", "10:00").toISOString();
+  const without = memoryStore();
+  await runPaymentSync({ stripe: s, store: without, ctx, allowTest: false }, quickFrom);
+  const withEvents = memoryStore();
+  const c = await runPaymentSync({ stripe: s, store: withEvents, ctx, allowTest: false }, quickFrom, { latePaid: true });
+  eq("an invoice paid days after it was made: missed by the created window alone", without.saved.has("in_late"), false);
+  eq("...found by its invoice.paid event, a renewal on the day it was paid", [c.latePaid, withEvents.saved.get("in_late")?.kind, withEvents.saved.get("in_late")?.business_date], [1, "plus_renewal", "2026-11-03"]);
+}
+
+// Stripe can't be read: the gifts (already in the database) are saved anyway.
+const failing = () => ({
+  async *[Symbol.asyncIterator]() {
+    await tick();
+    throw new Error("Stripe is down");
+  },
+});
+{
+  const st = memoryStore([gift]);
+  const s = { ...fakeStripe(world), invoices: { list: failing } };
+  let threw = null;
+  await runPaymentSync({ stripe: s, store: st, ctx, allowTest: false }, since).catch((err) => (threw = err.message));
+  eq("Stripe down: the read fails, but the gift is saved", [threw, st.saved.has("gift:g1")], ["Stripe is down", true]);
+}
+
+// Out of time: no Stripe call starts after the deadline.
+{
+  const w = { invoices: [], refunds: [], events: [{ type: "invoice.paid", created: unix(cdt("2026-11-03", "10:00")), data: { object: { id: "in_old", created: unix(cdt("2026-10-01", "10:00")) } } }] };
+  const s = fakeStripe(w);
+  let retrieved = false;
+  s.invoices.retrieve = async () => ((retrieved = true), null);
+  let threw = null;
+  await runPaymentSync({ stripe: s, store: memoryStore(), ctx, allowTest: false, deadline: Date.now() - 1 }, cdt("2026-10-31", "10:00").toISOString(), { latePaid: true }).catch((err) => (threw = err.message));
+  eq("a run past its deadline stops before its next Stripe call", [!!threw && threw.startsWith("out of time"), retrieved], [true, false]);
+  eq("a run's time is well inside its claim", RUN_SECONDS < LOCK_SECONDS, true);
+}
+
+// The claim: a fake member_payment_sync row and claim_member_payment_sync.
+function fakeDb(state) {
+  const log = [];
+  let n = 0;
+  const from = () => {
+    const filters = [];
+    let patch = null;
+    const b = {
+      select: () => b,
+      update: (p) => ((patch = p), b),
+      eq: (col, val) => (filters.push([col, val]), b),
+      maybeSingle: async () => ({ data: { ...state }, error: null }),
+      then(ok, bad) {
+        let data = [];
+        if (patch) {
+          const match = filters.every(([c, v]) => c === "id" || state[c] === v);
+          if (match) {
+            Object.assign(state, patch);
+            data = [{ id: true }];
+          }
+          log.push({ update: Object.keys(patch), match });
+        }
+        return Promise.resolve({ data, error: null }).then(ok, bad);
+      },
+    };
+    return b;
+  };
+  return {
+    state,
+    log,
+    from,
+    async rpc(name, args) {
+      log.push({ rpc: name, args });
+      if (state.busy) return { data: null, error: null };
+      state.run_id = `run_${++n}`;
+      state.started_at = new Date().toISOString();
+      return { data: state.run_id, error: null };
+    },
+  };
+}
+const quietly = async (fn) => {
+  const [w, er] = [console.warn, console.error];
+  console.warn = console.error = () => undefined;
+  try {
+    return await fn();
+  } finally {
+    console.warn = w;
+    console.error = er;
+  }
+};
+{
+  // A normal run: claimed, then its marks written.
+  const db = fakeDb({ run_id: null, started_at: null, finished_at: null, invoices_through: null });
+  const r = await lockedSync(db, async () => ({ stripe: fakeStripe(world), store: memoryStore([gift]), ctx, allowTest: false }), { mode: "quick" });
+  eq("a run claims, reads, and marks when", [r.ok, !!db.state.succeeded_at, !!db.state.invoices_through, db.log.filter((x) => x.update).map((x) => x.match)], [true, true, true, [true]]);
+
+  // Taken over mid-run (it was thought to have died): its marks aren't written.
+  const db2 = fakeDb({ run_id: null, started_at: null, finished_at: null, invoices_through: null });
+  const st = memoryStore([gift]);
+  st.paidGifts = async (sinceIso) => {
+    db2.state.run_id = "run_newer";
+    db2.state.started_at = "newer";
+    return [gift].filter((x) => x.paid_at >= sinceIso);
+  };
+  const r2 = await quietly(() => lockedSync(db2, async () => ({ stripe: fakeStripe(world), store: st, ctx, allowTest: false }), { mode: "quick" }));
+  eq("a run taken over saves its payments but leaves the newer run's claim and marks", [r2.ok, db2.state.run_id, db2.state.started_at, db2.state.succeeded_at ?? null], [true, "run_newer", "newer", null]);
+
+  // Taken over, then fails: the newer run's claim isn't released.
+  const db3 = fakeDb({ run_id: null, started_at: null, finished_at: null, invoices_through: null });
+  const st3 = memoryStore();
+  st3.paidGifts = async () => {
+    db3.state.run_id = "run_newer";
+    db3.state.started_at = "newer";
+    return [];
+  };
+  const r3 = await quietly(() => lockedSync(db3, async () => ({ stripe: { ...fakeStripe(world), invoices: { list: failing } }, store: st3, ctx, allowTest: false }), { mode: "quick" }));
+  eq("a failed run that was taken over doesn't release the newer claim", [r3.ok, db3.state.started_at, db3.state.last_error ?? null], [false, "newer", null]);
+
+  // Fails while it still holds the claim: released, and the error kept.
+  const db4 = fakeDb({ run_id: null, started_at: null, finished_at: null, invoices_through: null });
+  const r4 = await quietly(() => lockedSync(db4, async () => ({ stripe: { ...fakeStripe(world), invoices: { list: failing } }, store: memoryStore(), ctx, allowTest: false }), { mode: "quick" }));
+  eq("a failed run releases its own claim", [r4.ok, db4.state.started_at, db4.state.last_error], [false, null, "Stripe is down"]);
+
+  // A test-key run (shared: false): no claim, no marks.
+  const db5 = fakeDb({ run_id: null, started_at: null, finished_at: null, invoices_through: null });
+  const st5 = memoryStore();
+  const r5 = await lockedSync(db5, async () => ({ stripe: fakeStripe(world), store: st5, ctx, allowTest: true }), { mode: "backfill", force: true, shared: false });
+  eq("a test-key run saves but never claims or marks the shared row", [r5.ok, st5.saved.has("in_test"), db5.log.length, db5.state.invoices_through], [true, true, 0, null]);
+
+  // The daily run behind a read already going, with too little time left to wait.
+  const db6 = fakeDb({ busy: true, run_id: "run_x", started_at: new Date().toISOString(), finished_at: null, invoices_through: null });
+  const t0 = Date.now();
+  const r6 = await lockedSync(db6, async () => ({ stripe: fakeStripe(world), store: memoryStore(), ctx, allowTest: false }), { mode: "daily", force: true, deadline: Date.now() + 1000 });
+  eq("the daily run doesn't wait past its deadline behind another read", [r6.ok, !!r6.skipped, Date.now() - t0 < 1000], [true, true, true]);
+}
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll checks passed.");
 process.exit(failures ? 1 : 0);

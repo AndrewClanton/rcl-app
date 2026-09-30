@@ -493,7 +493,7 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
 
       <Section
         title={`Rung up tax-free · ${taxFree.length}`}
-        subtitle="Register orders marked tax-free (a nonprofit, say). Online tickets, booths and memberships without tax were sold before tax was added to them (memberships: before the evening of Sept. 28)."
+        subtitle="Register orders marked tax-free (a nonprofit, say). Online tickets and booths without tax were sold before tax was added to them. Insiders+ subscriptions started before the evening of Sept. 28 are billed without tax, renewals included, until tax is added to them."
       >
         <OrderList orders={taxFree} of={goods} orderHref={orderHref} />
       </Section>

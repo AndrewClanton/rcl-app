@@ -4,7 +4,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { subscriptionLive } from "@/lib/plus-status";
 import { countedModes, paymentsSyncAllowed, stripeKeyMode } from "./mode";
-import { TIERS, paymentLabel, planLabel, summarizeMemberships, type Interval, type MembershipTotals, type PaymentKind, type PaymentProduct, type PaymentStatus, type Tier } from "./rows";
+import {
+  TIERS,
+  giftRow,
+  paymentLabel,
+  planLabel,
+  summarizeMemberships,
+  type GiftLike,
+  type Interval,
+  type MembershipTotals,
+  type PaymentKind,
+  type PaymentProduct,
+  type PaymentStatus,
+  type Tier,
+} from "./rows";
 
 // Member payments as Reports read them (member_payments, filled from Stripe
 // by ./sync.ts). Every reader copes with the table not being there yet:
@@ -73,7 +86,8 @@ function quiet(what: string, e: unknown) {
 const modes = countedModes;
 
 // Payments counted between two instants (business-day edges; end null: up
-// to now), by id. Refunds are counted with their payment, on its day.
+// to now), by id. Refunds are counted with their payment, on its day. Paid
+// gift memberships the sync hasn't saved yet are counted too (unsavedGifts).
 export async function getMemberPaymentsBetween(start: string, end: string | null): Promise<{ tracked: boolean; rows: MemberPaymentRecord[] }> {
   const supabase = createAdminClient();
   const rows: MemberPaymentRecord[] = [];
@@ -86,11 +100,74 @@ export async function getMemberPaymentsBetween(start: string, end: string | null
       rows.push(...((data ?? []) as unknown as MemberPaymentRecord[]));
       if (!data || data.length < 1000) break;
     }
-    return { tracked: true, rows };
   } catch (e) {
     quiet("payments", e);
     return { tracked: false, rows: [] };
   }
+  try {
+    rows.push(...(await unsavedGifts(start, end)));
+  } catch (e) {
+    console.warn("member payments: gifts not yet read from Stripe weren't looked for:", (e as PostgrestError)?.message ?? e);
+  }
+  return { tracked: true, rows };
+}
+
+const GIFT_COLUMNS = "id, recipient_member_id, price, tax_amount, paid_at, starts_at, ends_at, stripe_payment_intent_id, stripe_checkout_session_id, member:members(name)";
+
+// Paid gift memberships (by when paid) that have no member_payments row
+// yet, as the row the sync will save. A gift is in gift_memberships the
+// moment it's paid; the sync copies it over at its next read (or the
+// webhook does right away), and it's read along with Stripe, so without
+// this a gift would drop out of Reports (the Sales tax tab read gifts
+// straight from gift_memberships before) whenever Stripe can't be read.
+async function unsavedGifts(start: string, end: string | null): Promise<MemberPaymentRecord[]> {
+  const supabase = createAdminClient();
+  type Gift = GiftLike & { member: { name: string } | null };
+  const gifts: Gift[] = [];
+  for (let from = 0; ; from += 1000) {
+    let q = supabase.from("gift_memberships").select(GIFT_COLUMNS).eq("status", "paid").gte("paid_at", start);
+    if (end) q = q.lt("paid_at", end);
+    const { data, error } = await q.order("id").range(from, from + 999);
+    if (error) throw error;
+    gifts.push(...((data ?? []) as unknown as Gift[]));
+    if (!data || data.length < 1000) break;
+  }
+  if (!gifts.length) return [];
+
+  // Saved already, whatever day it was counted on (never counted twice).
+  const saved = new Set<string>();
+  const ids = gifts.map((g) => `gift:${g.id}`);
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await supabase.from("member_payments").select("source_id").in("source_id", ids.slice(i, i + 100));
+    if (error) throw error;
+    for (const r of (data ?? []) as { source_id: string }[]) saved.add(r.source_id);
+  }
+
+  const counted = modes();
+  const out: MemberPaymentRecord[] = [];
+  for (const g of gifts) {
+    const row = giftRow(g);
+    if (saved.has(row.source_id) || !counted.includes(row.livemode)) continue;
+    out.push({
+      id: row.source_id,
+      kind: row.kind,
+      product: row.product,
+      member_id: row.member_id,
+      tier: row.tier,
+      billing_interval: row.billing_interval,
+      amount_cents: row.amount_cents,
+      sales_cents: row.sales_cents,
+      tax_cents: row.tax_cents,
+      paid_at: row.paid_at,
+      counted_at: row.counted_at,
+      business_date: row.business_date,
+      status: row.status,
+      period_end: row.period_end,
+      refund_of: null,
+      member: g.member,
+    });
+  }
+  return out;
 }
 
 // Refunds given back between two instants (by when they were made, not the

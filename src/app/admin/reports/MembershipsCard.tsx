@@ -58,6 +58,7 @@ export default function MembershipsCard({
     { key: "new_year", label: "New yearly", n: m.newYearly, was: before?.newYearly },
     { key: "renewal", label: "Renewals", n: m.renewals, was: before?.renewals },
     ...(m.switches || before?.switches ? [{ key: "switch", label: "Switched monthly to yearly", n: m.switches, was: before?.switches }] : []),
+    ...(m.changes || before?.changes ? [{ key: "change", label: "Other plan changes", n: m.changes, was: before?.changes }] : []),
     { key: "gift", label: "Gift memberships", n: m.gifts, was: before?.gifts },
     // No up/down arrow on refunds and cancellations: green there would read as good news.
     { key: "refund", label: "Refunds", n: m.refunds, was: undefined },

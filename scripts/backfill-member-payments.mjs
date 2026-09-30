@@ -95,7 +95,8 @@ if (apply && keyMode === "test" && !allowTestFlag) {
   process.exit(1);
 }
 const allowTest = allowTestFlag || (!apply && keyMode === "test");
-const stripe = new Stripe(key);
+// Like the site's sync: a call that hangs gives up after 10 s, tried once more.
+const stripe = new Stripe(key, { timeout: 10_000, maxNetworkRetries: 1 });
 const monthlyIds = {
   adult: process.env.STRIPE_PRICE_INSIDERS_PLUS_ADULT,
   senior: process.env.STRIPE_PRICE_INSIDERS_PLUS_SENIOR,
@@ -130,8 +131,12 @@ if (apply) {
     process.exit(1);
   }
   const db = createClient(url, service, { auth: { persistSession: false } });
-  console.log(`Saving everything from ${since}...`);
-  const r = await lockedSync(db, async () => ({ stripe, store: supabaseStore(db), ctx, allowTest }), { mode: "backfill", since, force: true });
+  // With the test key, the shared "last read" row (member_payment_sync) is
+  // left alone: the real site's reads go by it, and .env.local points at the
+  // real database. Only a live-key run claims it and moves its marks.
+  const shared = keyMode === "live";
+  console.log(`Saving everything from ${since}...${shared ? "" : " (test key: the site's last-read marks are left alone)"}`);
+  const r = await lockedSync(db, async () => ({ stripe, store: supabaseStore(db), ctx, allowTest }), { mode: "backfill", since, force: true, shared });
   console.log(JSON.stringify(r, null, 2));
   process.exit(r.ok && !r.skipped ? 0 : 1);
 }
@@ -144,7 +149,7 @@ const counts = await withRetry(() => runPaymentSync({ stripe, store, ctx, allowT
 const rows = store.rows;
 
 const money = (cents) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-const KIND = { plus_new: "New", plus_renewal: "Renewal", plus_switch: "Switch to yearly", gift: "Gift", refund: "Refund" };
+const KIND = { plus_new: "New", plus_renewal: "Renewal", plus_switch: "Switch to yearly", plus_change: "Plan change", gift: "Gift", refund: "Refund" };
 const pad = (s, n) => String(s).padEnd(n);
 const lpad = (s, n) => String(s).padStart(n);
 

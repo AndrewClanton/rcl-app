@@ -947,6 +947,9 @@ export interface SalesTaxReport {
   ratePercent: number;
   giftsTracked: boolean; // false until the gift memberships migration is applied
   membershipsTracked: boolean; // false until the member payments migration is applied
+  // Insiders+ charges in the period that carried no tax (subscriptions
+  // started before tax was added keep renewing without it), and their sales.
+  untaxedMemberships: { count: number; sales: number };
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -1053,7 +1056,12 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   for (const r of booths) add(r.created_at, "booths", Number(r.fee_amount), Number(r.tax_amount ?? 0));
   for (const g of gifts) add(g.paid_at, "gifts", Number(g.price), Number(g.tax_amount));
   // A membership on its business day; a refund of one on its payment's day.
+  const untaxedMemberships = { count: 0, sales: 0 };
   for (const r of memberships.rows) {
+    if (r.product === "plus" && r.kind !== "refund" && r.tax_cents === 0 && r.sales_cents > 0) {
+      untaxedMemberships.count++;
+      untaxedMemberships.sales = round2(untaxedMemberships.sales + r.sales_cents / 100);
+    }
     const m = byMonth.get(r.business_date.slice(0, 7));
     if (!m) continue;
     const source: TaxSource = r.product === "gift" ? "gifts" : "memberships";
@@ -1107,7 +1115,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   }
   total.lines = sourceOrder.map((s) => totalLines.get(TAX_SOURCES[s])).filter((l): l is TaxLine => !!l);
 
-  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked, membershipsTracked: memberships.tracked };
+  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked, membershipsTracked: memberships.tracked, untaxedMemberships };
 }
 
 // What the tax on a period's taxable sales comes to at the Joplin rate, to
