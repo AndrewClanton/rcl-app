@@ -85,7 +85,9 @@ export interface ShiftStatus {
   booths: { today: BoothHold[]; tomorrow: BoothHold[] };
   // Today's staff schedule, by person: "4:00 PM–10:00 PM".
   scheduled: Record<string, string>;
-  lastCount: { id: string; at: string; byName: string | null; below: number } | null;
+  // The latest par count save and how many lines are under par across the
+  // day's counts (what the Shopping tab lists).
+  lastCount: { at: string; byName: string | null; today: boolean; below: number } | null;
   // Menu items 86'd right now, and how many "Ran out" reports are open.
   outs: RegisterOut[];
   ranOut: number;
@@ -153,6 +155,10 @@ export interface ParItem {
   name: string;
   par_qty: number | null;
   unit: string | null;
+  // The size one unit comes in: "750 ml", "12.5 lb". Optional.
+  unit_size: string | null;
+  // What − and + move by: 0.25, 0.5 or 1. Null = automatic (stepFor).
+  count_step: number | null;
   source: string | null;
   sort_order: number;
   active: boolean;
@@ -188,14 +194,50 @@ export interface ShoppingLine {
   have: number;
   par: number;
   unit: string | null;
-  need: number;
+  unitSize: string | null;
+  need: number; // par − have, exactly (can be ¾ of a bottle)
+  buy: number; // whole units to get (you can't buy ¾ of a bottle)
+  countedAt: string;
 }
 
-export interface ShoppingList {
-  countId: string;
+// One save of the par count.
+export interface CountRef {
+  id: string;
   at: string;
   byName: string | null;
+}
+
+// Under par, merged from every count saved today: each item's latest line
+// today. When nothing's been counted today, each item's latest line ever.
+export interface ShoppingList {
+  today: boolean;
+  counts: CountRef[]; // the saves the numbers came from, oldest first
   bySource: { source: string; lines: ShoppingLine[] }[];
+  // Active par lines with no count in that set: not counted today (or, with
+  // no count today, never counted), so nothing drops off silently.
+  notCounted: { itemId: string; name: string; area: string; section: string | null; lastAt: string | null }[];
+}
+
+// "Since the last count": each line counted on a day against its count
+// before that day.
+export interface CountChange {
+  itemId: string;
+  name: string;
+  area: string;
+  section: string | null;
+  unit: string | null;
+  unitSize: string | null;
+  par: number | null;
+  now: { qty: number; at: string; byName: string | null };
+  prev: { qty: number; at: string; byName: string | null } | null;
+  diff: number | null; // now − prev; negative = used
+}
+
+export interface CountComparison {
+  date: string; // the business date of the counts compared
+  today: boolean; // counted today, or the latest day with a count
+  counts: CountRef[];
+  rows: CountChange[]; // biggest drop first
 }
 
 export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -210,14 +252,86 @@ export function qtyLabel(n: number | null): string {
   return whole ? `${whole}${f}` : f;
 }
 
-export function parLabel(item: Pick<ParItem, "par_qty" | "unit">): string {
-  if (item.par_qty === null) return item.unit ? item.unit : "No par set";
-  return `${qtyLabel(item.par_qty)}${item.unit ? ` ${item.unit}` : ""}`;
+// "bottles" → "bottle", "boxes" → "box", "spray bottles" → "spray bottle".
+export function singularUnit(unit: string): string {
+  if (/(x|ch|sh|ss)es$/i.test(unit)) return unit.slice(0, -2);
+  if (/[^s]s$/i.test(unit)) return unit.slice(0, -1);
+  return unit;
 }
 
-// Items with a fractional par (½ shaker, ¼ bag) count in quarters.
-export function stepFor(item: Pick<ParItem, "par_qty">): number {
-  return item.par_qty !== null && !Number.isInteger(item.par_qty) ? 0.25 : 1;
+// The unit as it reads next to a number: "1 bottle", "¾ bottle", "2 bottles".
+export function unitFor(unit: string | null, n: number | null): string {
+  if (!unit) return "";
+  return n !== null && n > 0 && n <= 1 ? singularUnit(unit) : unit;
+}
+
+// "1¼ bottles", "3 boxes", "¾ bottle".
+export function qtyUnit(n: number, unit: string | null): string {
+  const u = unitFor(unit, n);
+  return u ? `${qtyLabel(n)} ${u}` : qtyLabel(n);
+}
+
+export function parLabel(item: Pick<ParItem, "par_qty" | "unit">): string {
+  if (item.par_qty === null) return item.unit ? `not set (${item.unit})` : "not set";
+  return qtyUnit(item.par_qty, item.unit);
+}
+
+// What you'd actually buy: a whole unit for any part of one.
+export function buyQty(need: number): number {
+  return need > 0 ? Math.ceil(Math.round(need * 100) / 100) : 0;
+}
+
+// ---------- counting in quarters ----------
+
+export const COUNT_STEPS = [1, 0.5, 0.25] as const;
+export const COUNT_STEP_LABEL: Record<string, string> = { "1": "Whole", "0.5": "Halves", "0.25": "Quarters" };
+
+// Units that are opened and used a bit at a time. Spray bottles are counted
+// whole. (Same rule as the 20260930041000 migration's backfill.)
+const QUARTER_UNITS = /\b(bottles?|kegs?|jugs?|gallons?|quarts?|cartons?)\b/i;
+const WHOLE_UNITS = /\bspray\s+bottles?\b/i;
+
+// The automatic step: quarters for bottles, kegs, jugs, gallons, quarts and
+// cartons, and for anything with a fractional par (½ shaker, ¼ bag);
+// whole units for everything else.
+export function autoStep(unit: string | null, par: number | null): number {
+  if (par !== null && !Number.isInteger(par)) return 0.25;
+  if (unit && WHOLE_UNITS.test(unit)) return 1;
+  if (unit && QUARTER_UNITS.test(unit)) return 0.25;
+  return 1;
+}
+
+export function stepFor(item: Pick<ParItem, "par_qty" | "unit"> & { count_step?: number | null }): number {
+  const s = item.count_step;
+  return s === 0.25 || s === 0.5 || s === 1 ? s : autoStep(item.unit, item.par_qty);
+}
+
+// The units the par sheet is counted in, for the item form's suggestions.
+export const PAR_UNITS = [
+  "bottles",
+  "boxes",
+  "bags",
+  "cans",
+  "cartons",
+  "cases",
+  "gallons",
+  "jugs",
+  "kegs",
+  "packs",
+  "quarts",
+  "shakers",
+  "sheets",
+  "sleeves",
+  "spray bottles",
+  "24-packs",
+];
+export const PAR_SIZES = ["750 ml", "1 L", "1.75 L", "1/2 barrel", "1/6 barrel", "1 gal", "half gallon", "#10", "1 lb", "2 lb", "5 lb", "12.5 lb", "10 ct"];
+
+// "Used 1¼ bottles", "Restocked 2 boxes", "No change".
+export function changeLabel(diff: number, unit: string | null): string {
+  const d = Math.round(diff * 100) / 100;
+  if (d === 0) return "No change";
+  return `${d < 0 ? "Used" : "Restocked"} ${qtyUnit(Math.abs(d), unit)}`;
 }
 
 export function daysLabel(days: number[] | null): string {

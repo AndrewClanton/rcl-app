@@ -8,21 +8,26 @@ import { evaluateReminders } from "@/lib/ops/reminders";
 import { boothWindow } from "@/lib/booth-time";
 import { logOpsChange } from "@/lib/ops/changes";
 import { currentOuts } from "@/lib/ops/outages";
-import type {
-  BoothHold,
-  DueReminder,
-  OnShift,
-  ParItem,
-  ReminderKind,
-  ReminderRow,
-  Result,
-  ShiftStatus,
-  ShiftTodo,
-  ShoppingList,
-  Frequency,
-  TaskRow,
-  Timing,
-  TodayTask,
+import { countsOf, currentLines, latestLines } from "@/lib/ops/par-counts";
+import {
+  buyQty,
+  type BoothHold,
+  type CountChange,
+  type CountComparison,
+  type DueReminder,
+  type OnShift,
+  type ParItem,
+  type ReminderKind,
+  type ReminderRow,
+  type Result,
+  type ShiftStatus,
+  type ShiftTodo,
+  type ShoppingLine,
+  type ShoppingList,
+  type Frequency,
+  type TaskRow,
+  type Timing,
+  type TodayTask,
 } from "@/lib/ops/shared";
 
 // Server side of the register's shift tools. Every action checks the staff
@@ -93,11 +98,15 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
   const names = await employeeNames();
 
   const window = businessDayWindow(today.date);
-  const [shiftsRes, tasksRes, doneRes, countRes, todosRes, schedRes] = await Promise.all([
+  const [shiftsRes, tasksRes, doneRes, shopping, todosRes, schedRes] = await Promise.all([
     supabase.from("shifts").select("id, employee_id, started_at").is("ended_at", null).order("started_at"),
     supabase.from("shift_tasks").select("id, title, details, timing, frequency, days, assignee_id, sort_order").eq("active", true).order("sort_order"),
     supabase.from("task_completions").select("task_id, work_date, completed_by, completed_at").gte("work_date", periodStart(today.date, "weekly") < periodStart(today.date, "monthly") ? periodStart(today.date, "weekly") : periodStart(today.date, "monthly")).order("completed_at", { ascending: false }),
-    supabase.from("par_counts").select("id, completed_at, counted_by").order("completed_at", { ascending: false }).limit(1),
+    // The Shopping button's count: the same list the Shopping tab shows.
+    buildShoppingList(names, false).catch((e) => {
+      console.error("ops: shopping list for the status poll", e);
+      return null;
+    }),
     supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by").is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
     supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
   ]);
@@ -141,13 +150,10 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
       };
     });
 
-  let lastCount: ShiftStatus["lastCount"] = null;
-  const c = countRes.data?.[0];
-  if (c) {
-    const { data: lines } = await supabase.from("par_count_lines").select("qty, par_qty").eq("count_id", c.id);
-    const below = (lines ?? []).filter((l) => l.par_qty !== null && Number(l.qty) < Number(l.par_qty)).length;
-    lastCount = { id: c.id, at: c.completed_at, byName: c.counted_by ? names.get(c.counted_by) ?? null : null, below };
-  }
+  const latest = shopping?.counts.at(-1);
+  const lastCount: ShiftStatus["lastCount"] = latest
+    ? { at: latest.at, byName: latest.byName, today: shopping!.today, below: shopping!.bySource.reduce((n, g) => n + g.lines.length, 0) }
+    : null;
 
   const training = (await trainingDueFor(onShift.map((o) => o.employeeId)).catch(() => [])).map((t) => ({
     employeeId: t.employeeId,
@@ -370,28 +376,41 @@ export async function setReminderActive(id: string, active: boolean, employeeId:
 
 // ---------- par sheet ----------
 
-export async function getParSheet(): Promise<{ items: ParItem[]; last: Record<string, number>; lastAt: string | null; outs: Record<string, string> }> {
+const PAR_ITEM_COLUMNS = "id, area, section, name, par_qty, unit, unit_size, count_step, source, sort_order, active";
+
+function toParItem(i: Record<string, unknown>): ParItem {
+  return {
+    ...(i as unknown as ParItem),
+    par_qty: i.par_qty === null ? null : Number(i.par_qty),
+    count_step: i.count_step === null || i.count_step === undefined ? null : Number(i.count_step),
+    unit_size: (i.unit_size as string | null) ?? null,
+  };
+}
+
+// In par sheet order: sheets in the order the count shows them (by their
+// first line), then each sheet's own order.
+async function parItems(): Promise<ParItem[]> {
+  const { data, error } = await db().from("par_items").select(PAR_ITEM_COLUMNS).order("sort_order");
+  if (error) throw new Error(`Couldn't read the par sheet: ${error.message}`);
+  const items = (data ?? []).map(toParItem);
+  const sheets = [...new Set(items.map((i) => i.area))];
+  return items.sort((a, b) => sheets.indexOf(a.area) - sheets.indexOf(b.area) || a.sort_order - b.sort_order);
+}
+
+// `last`: each item's latest count, whichever save it was in.
+export async function getParSheet(): Promise<{ items: ParItem[]; last: Record<string, { qty: number; at: string }>; outs: Record<string, string> }> {
   await assertStaff();
-  const supabase = db();
-  const [{ data: items }, { data: lastCount }, { data: open }] = await Promise.all([
-    supabase.from("par_items").select("id, area, section, name, par_qty, unit, source, sort_order, active").order("sort_order"),
-    supabase.from("par_counts").select("id, completed_at").order("completed_at", { ascending: false }).limit(1),
+  const [items, latest, { data: open }] = await Promise.all([
+    parItems(),
+    latestLines(),
     // Lines reported out ("Ran out"), shown as a hint while counting.
-    supabase.from("stock_outages").select("par_item_id, reported_at").is("resolved_at", null).not("par_item_id", "is", null),
+    db().from("stock_outages").select("par_item_id, reported_at").is("resolved_at", null).not("par_item_id", "is", null),
   ]);
-  const last: Record<string, number> = {};
-  if (lastCount?.[0]) {
-    const { data: lines } = await supabase.from("par_count_lines").select("item_id, qty").eq("count_id", lastCount[0].id);
-    for (const l of lines ?? []) last[l.item_id] = Number(l.qty);
-  }
+  const last: Record<string, { qty: number; at: string }> = {};
+  for (const l of latest.values()) last[l.itemId] = { qty: l.qty, at: l.at };
   const outs: Record<string, string> = {};
   for (const o of open ?? []) outs[o.par_item_id as string] = o.reported_at as string;
-  return {
-    items: (items ?? []).map((i) => ({ ...i, par_qty: i.par_qty === null ? null : Number(i.par_qty) })) as ParItem[],
-    last,
-    lastAt: lastCount?.[0]?.completed_at ?? null,
-    outs,
-  };
+  return { items, last, outs };
 }
 
 export async function submitParCount(lines: { itemId: string; qty: number }[], employeeId: string | null, shiftId: string | null): Promise<Result<{ countId: string }>> {
@@ -414,59 +433,124 @@ export async function submitParCount(lines: { itemId: string; qty: number }[], e
   return { ok: true, countId: count.id };
 }
 
-export async function getShoppingList(countId?: string): Promise<ShoppingList | null> {
+// Everything under par, merged across every count saved this business day
+// (each item's latest line today; with nothing counted today, each item's
+// latest line ever), grouped by where it's bought.
+export async function getShoppingList(): Promise<ShoppingList | null> {
   await assertStaff();
+  return buildShoppingList(await employeeNames(), true);
+}
+
+const NO_STORE = "No store listed";
+
+async function buildShoppingList(names: Map<string, string>, withLastAt: boolean): Promise<ShoppingList | null> {
   const supabase = db();
-  let id = countId;
-  if (!id) {
-    const { data } = await supabase.from("par_counts").select("id").order("completed_at", { ascending: false }).limit(1);
-    id = data?.[0]?.id;
-  }
-  if (!id) return null;
-  const [{ data: count }, { data: lines }, names] = await Promise.all([
-    supabase.from("par_counts").select("id, completed_at, counted_by").eq("id", id).single(),
-    supabase.from("par_count_lines").select("qty, par_qty, item:par_items(id, name, area, unit, source, sort_order)").eq("count_id", id),
-    employeeNames(),
-  ]);
-  if (!count) return null;
+  const cur = await currentLines();
+  if (!cur.lines.size) return null;
+  const earliest = new Date(Math.min(...[...cur.lines.values()].map((l) => Date.parse(l.at)))).toISOString();
   // Lines reported "Ran out" are listed on their own above this list while
-  // open, and once bought (or found) after the count they're stocked again.
-  const [{ data: open }, { data: restocked }] = await Promise.all([
+  // open, and once bought (or found) after they were counted they're
+  // stocked again.
+  const [items, { data: open }, { data: restocked }, before] = await Promise.all([
+    parItems(),
     supabase.from("stock_outages").select("par_item_id").is("resolved_at", null).not("par_item_id", "is", null),
-    supabase.from("stock_outages").select("par_item_id").gte("resolved_at", count.completed_at).in("resolution", ["bought", "found"]).not("par_item_id", "is", null),
+    supabase.from("stock_outages").select("par_item_id, resolved_at").gte("resolved_at", earliest).in("resolution", ["bought", "found"]).not("par_item_id", "is", null),
+    // For "Not counted today": when each of those was last counted.
+    withLastAt && cur.today ? latestLines({ before: cur.start }) : Promise.resolve(null),
   ]);
-  const handled = new Set([...(open ?? []), ...(restocked ?? [])].map((o) => o.par_item_id as string));
-  const groups = new Map<string, ShoppingList["bySource"][number]["lines"]>();
-  type Line = { qty: number; par_qty: number | null; item: { id: string; name: string; area: string; unit: string | null; source: string | null; sort_order: number } };
-  const below = ((lines ?? []) as unknown as Line[])
-    .filter((l) => l.item && !handled.has(l.item.id) && l.par_qty !== null && Number(l.qty) < Number(l.par_qty))
-    .sort((a, b) => a.item.sort_order - b.item.sort_order);
-  for (const l of below) {
-    const source = l.item.source || "No store listed";
-    const list = groups.get(source) ?? [];
-    list.push({
-      itemId: l.item.id,
-      name: l.item.name,
-      area: l.item.area,
-      have: Number(l.qty),
-      par: Number(l.par_qty),
-      unit: l.item.unit,
-      need: Math.round((Number(l.par_qty) - Number(l.qty)) * 100) / 100,
-    });
-    groups.set(source, list);
+  const openIds = new Set((open ?? []).map((o) => o.par_item_id as string));
+  const restockedAt = new Map<string, number>();
+  for (const r of restocked ?? []) {
+    const t = Date.parse(r.resolved_at as string);
+    restockedAt.set(r.par_item_id as string, Math.max(t, restockedAt.get(r.par_item_id as string) ?? 0));
+  }
+
+  const groups = new Map<string, ShoppingLine[]>();
+  const notCounted: ShoppingList["notCounted"] = [];
+  for (const item of items) {
+    const l = cur.lines.get(item.id);
+    if (!l) {
+      if (item.active) notCounted.push({ itemId: item.id, name: item.name, area: item.area, section: item.section, lastAt: before?.get(item.id)?.at ?? null });
+      continue;
+    }
+    // Taken off the sheet since: not something to buy.
+    if (!item.active || l.par === null || l.qty >= l.par) continue;
+    if (openIds.has(item.id) || (restockedAt.get(item.id) ?? 0) >= Date.parse(l.at)) continue;
+    const need = Math.round((l.par - l.qty) * 100) / 100;
+    const source = item.source || NO_STORE;
+    groups.set(source, [
+      ...(groups.get(source) ?? []),
+      { itemId: item.id, name: item.name, area: item.area, have: l.qty, par: l.par, unit: item.unit, unitSize: item.unit_size, need, buy: buyQty(need), countedAt: l.at },
+    ]);
   }
   return {
-    countId: count.id,
-    at: count.completed_at,
-    byName: count.counted_by ? names.get(count.counted_by) ?? null : null,
+    today: cur.today,
+    counts: countsOf(cur.lines.values(), names),
     bySource: [...groups.entries()]
-      .sort((a, b) => (a[0] === "No store listed" ? 1 : b[0] === "No store listed" ? -1 : a[0].localeCompare(b[0])))
+      .sort((a, b) => (a[0] === NO_STORE ? 1 : b[0] === NO_STORE ? -1 : a[0].localeCompare(b[0])))
       .map(([source, lines]) => ({ source, lines })),
+    notCounted,
   };
 }
 
+// "Since the last count": everything counted today (or, before anyone's
+// counted today, on the latest day with a count) against each line's latest
+// count before that day. Biggest drop first, for spotting heavy use, waste
+// or theft.
+export async function getCountComparison(): Promise<CountComparison | null> {
+  await assertStaff();
+  const today = businessDay().date;
+  let date = today;
+  let win = businessDayWindow(date);
+  let now = await latestLines({ since: win.start, before: win.end });
+  if (!now.size) {
+    const { data } = await db().from("par_counts").select("completed_at").order("completed_at", { ascending: false }).limit(1);
+    const at = data?.[0]?.completed_at as string | undefined;
+    if (!at) return null;
+    date = businessDay(new Date(at)).date;
+    win = businessDayWindow(date);
+    now = await latestLines({ since: win.start, before: win.end });
+  }
+  const [prev, items, names] = await Promise.all([latestLines({ before: win.start }), parItems(), employeeNames()]);
+  const who = (id: string | null) => (id ? (names.get(id) ?? null) : null);
+  const order = new Map(items.map((i, idx) => [i.id, idx]));
+  const rows: CountChange[] = [];
+  for (const item of items) {
+    const l = now.get(item.id);
+    if (!l) continue;
+    const p = prev.get(item.id);
+    rows.push({
+      itemId: item.id,
+      name: item.name,
+      area: item.area,
+      section: item.section,
+      unit: item.unit,
+      unitSize: item.unit_size,
+      par: item.par_qty,
+      now: { qty: l.qty, at: l.at, byName: who(l.by) },
+      prev: p ? { qty: p.qty, at: p.at, byName: who(p.by) } : null,
+      diff: p ? Math.round((l.qty - p.qty) * 100) / 100 : null,
+    });
+  }
+  // Drops (biggest first), then restocks (biggest first), then no change,
+  // then first counts; ties in par sheet order.
+  const rank = (r: CountChange) => (r.diff === null ? 3 : r.diff < 0 ? 0 : r.diff > 0 ? 1 : 2);
+  rows.sort((a, b) => rank(a) - rank(b) || Math.abs(b.diff ?? 0) - Math.abs(a.diff ?? 0) || (order.get(a.itemId) ?? 0) - (order.get(b.itemId) ?? 0));
+  return { date, today: date === today, counts: countsOf(now.values(), names), rows };
+}
+
 export async function saveParItem(
-  input: { id?: string; area: string; section: string | null; name: string; par_qty: number | null; unit: string | null; source: string | null },
+  input: {
+    id?: string;
+    area: string;
+    section: string | null;
+    name: string;
+    par_qty: number | null;
+    unit: string | null;
+    unit_size?: string | null;
+    count_step?: number | null;
+    source: string | null;
+  },
   employeeId: string | null
 ): Promise<Result<{ id: string }>> {
   await assertStaff();
@@ -475,6 +559,10 @@ export async function saveParItem(
   if (!name) return { ok: false, error: "Give the item a name." };
   if (!area) return { ok: false, error: "Pick which sheet it goes on." };
   if (input.par_qty !== null && !(input.par_qty >= 0 && input.par_qty < 100000)) return { ok: false, error: "Par should be a number, like 1 or 0.5." };
+  const step = input.count_step ?? null;
+  if (step !== null && step !== 0.25 && step !== 0.5 && step !== 1) return { ok: false, error: "Pick how it's counted: whole, halves, quarters or automatic." };
+  const unitSize = typeof input.unit_size === "string" ? input.unit_size.replace(/\s+/g, " ").trim() : "";
+  if (unitSize.length > 40) return { ok: false, error: "Keep the size short, like 750 ml or 12.5 lb." };
   const by = await validEmployee(employeeId);
   const fields = {
     area,
@@ -482,6 +570,8 @@ export async function saveParItem(
     name,
     par_qty: input.par_qty,
     unit: input.unit?.trim() || null,
+    unit_size: unitSize || null,
+    count_step: step,
     source: input.source?.trim() || null,
     updated_by: by,
     updated_at: new Date().toISOString(),

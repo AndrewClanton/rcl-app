@@ -1,6 +1,8 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow, centralToIso, shiftDate } from "@/lib/ops/time";
+import { latestLines } from "@/lib/ops/par-counts";
+import { qtyLabel } from "@/lib/ops/shared";
 import { getDayReport, type DayReport } from "./reports";
 
 // The end-of-day email to the admins: how the business day went, how that
@@ -118,11 +120,14 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
   });
 
   await safely(undefined, async () => {
-    const { data: count } = await supabase.from("par_counts").select("id").not("completed_at", "is", null).gte("completed_at", start).lt("completed_at", end).order("completed_at", { ascending: false }).limit(1).maybeSingle();
-    if (!count) return;
-    const { data: lines } = await supabase.from("par_count_lines").select("qty, par_qty, item:par_items(name)").eq("count_id", count.id);
-    const low = ((lines ?? []) as unknown as { qty: number; par_qty: number; item: { name: string } | null }[]).filter((l) => Number(l.qty) < Number(l.par_qty));
-    if (low.length) watch.push(`Below par at the closing count: ${low.slice(0, 8).map((l) => `${l.item?.name ?? "item"} (${l.qty}/${l.par_qty})`).join(", ")}${low.length > 8 ? ` and ${low.length - 8} more` : ""}. It's on the shopping list.`);
+    // Every par count saved that day, merged: each item's latest line.
+    const lines = await latestLines({ since: start, before: end });
+    if (!lines.size) return;
+    const { data: items } = await supabase.from("par_items").select("id, name").order("area").order("sort_order");
+    const low = (items ?? [])
+      .map((i) => ({ name: i.name as string, l: lines.get(i.id as string) }))
+      .filter((x): x is { name: string; l: NonNullable<typeof x.l> } => !!x.l && x.l.par !== null && x.l.qty < x.l.par);
+    if (low.length) watch.push(`Below par on the day's par count: ${low.slice(0, 8).map((x) => `${x.name} (${qtyLabel(x.l.qty)}/${qtyLabel(x.l.par)})`).join(", ")}${low.length > 8 ? ` and ${low.length - 8} more` : ""}. It's on the shopping list.`);
   });
 
   await safely(undefined, async () => {

@@ -3,11 +3,26 @@
 import { useEffect, useMemo, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
 import { useOpsApi } from "./api";
-import { parLabel, qtyLabel, stepFor, type OnShift, type ParItem } from "@/lib/ops/shared";
+import {
+  COUNT_STEP_LABEL,
+  PAR_SIZES,
+  PAR_UNITS,
+  autoStep,
+  buyQty,
+  parLabel,
+  qtyLabel,
+  qtyUnit,
+  singularUnit,
+  stepFor,
+  unitFor,
+  type OnShift,
+  type ParItem,
+} from "@/lib/ops/shared";
 
 // The par sheet: count what's on hand in each item's own unit. Anything
 // under par lands on the shopping list. A count in progress is kept on this
-// tablet, so stepping away (or a reload) doesn't lose it.
+// tablet, so stepping away (or a reload) doesn't lose it. Bottles, kegs,
+// jugs and the like count in quarters (an open bottle ¾ full is ¾).
 
 const DRAFT_KEY = "rcl.par.draft";
 const readDraft = (): Record<string, number> => {
@@ -30,10 +45,27 @@ const outTime = (iso: string) => {
   return new Date(iso).toLocaleString("en-US", { ...opts, ...(sameDay ? {} : { weekday: "short" as const }), hour: "numeric", minute: "2-digit" });
 };
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+// + and − land on the item's step (2¾ counted by wholes goes to 3, then 4).
+const stepUp = (v: number | undefined, step: number) => (v === undefined ? step : round2((Math.floor(v / step + 1e-9) + 1) * step));
+const stepDown = (v: number | undefined, step: number) => (v === undefined ? 0 : Math.max(0, round2((Math.ceil(v / step - 1e-9) - 1) * step)));
+// The ¼ ½ ¾ buttons set the part of one that's open: 2 → 2¾. Tapping the
+// lit one takes it off again (2¾ → 2).
+const withPart = (v: number | undefined, part: number) => {
+  const whole = v === undefined ? 0 : Math.floor(v + 1e-9);
+  const current = v === undefined ? null : round2(v - whole);
+  return current === part ? whole : whole + part;
+};
+const PARTS = [
+  { v: 0.25, label: "¼" },
+  { v: 0.5, label: "½" },
+  { v: 0.75, label: "¾" },
+];
+
 export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift | null; closing: boolean; onSubmitted: () => void }) {
   const api = useOpsApi();
   const [items, setItems] = useState<ParItem[] | null>(null);
-  const [last, setLast] = useState<Record<string, number>>({});
+  const [last, setLast] = useState<Record<string, { qty: number; at: string }>>({});
   // Par lines reported "Ran out" and not bought yet, with when.
   const [outs, setOuts] = useState<Record<string, string>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -111,7 +143,8 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
         <div>
           <h2 className="font-display text-2xl">{closing ? "Closing par count" : "Par count"}</h2>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
-            Count what&apos;s on hand, in the unit shown. Tap <strong>= par</strong> when it&apos;s fully stocked.
+            Count what&apos;s on hand, in the unit shown. Tap <strong>= par</strong> when it&apos;s fully stocked. Bottles, kegs and jugs count to the quarter: tap{" "}
+            <strong>¼ ½ ¾</strong> for the open one.
           </p>
         </div>
         <button className="btn-secondary !px-4 !py-2 text-sm" onClick={() => setEditing(true)}>
@@ -148,20 +181,29 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
               .map((i, idx) => {
                 const v = counts[i.id];
                 const low = v !== undefined && i.par_qty !== null && v < i.par_qty;
+                const need = low ? round2(i.par_qty! - v!) : 0;
                 const step = stepFor(i);
+                const lit = v === undefined ? null : round2(v - Math.floor(v + 1e-9));
+                const prev = last[i.id];
+                const one = i.unit ? singularUnit(i.unit) : "one";
                 return (
                   <div
                     key={i.id}
-                    className={`flex flex-wrap items-center gap-3 px-4 py-3 ${idx ? "border-t" : ""}`}
+                    className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 ${idx ? "border-t" : ""}`}
                     style={{ borderColor: "var(--border)", background: low ? "var(--warn-bg)" : undefined }}
                   >
                     <div className="min-w-[10rem] flex-1">
                       <div className="font-bold">{i.name}</div>
                       <div className="text-xs" style={{ color: "var(--muted)" }}>
                         Par {parLabel(i)}
+                        {i.unit_size ? ` · ${i.unit_size}` : ""}
                         {i.source ? ` · ${i.source}` : ""}
-                        {last[i.id] !== undefined ? ` · last count ${qtyLabel(last[i.id])}` : ""}
                       </div>
+                      {prev && (
+                        <div className="text-xs" style={{ color: "var(--muted)" }}>
+                          Last count {qtyUnit(prev.qty, i.unit)}, {outTime(prev.at)}
+                        </div>
+                      )}
                       {outs[i.id] && (
                         <div className="text-xs font-bold" style={{ color: "var(--danger-text)" }}>
                           Reported out at {outTime(outs[i.id])}
@@ -169,33 +211,57 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
                       )}
                       {low && (
                         <div className="text-xs font-bold" style={{ color: "var(--warn-text)" }}>
-                          Below par: get {qtyLabel(Math.round((i.par_qty! - v!) * 100) / 100)}
-                          {i.unit ? ` ${i.unit}` : ""}
+                          {Number.isInteger(need) ? `Below par: get ${qtyUnit(need, i.unit)}` : `Below par by ${qtyUnit(need, i.unit)}: get ${qtyUnit(buyQty(need), i.unit)}`}
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="ml-auto flex items-center gap-2">
                       {i.par_qty !== null && (
-                        <button className="chip !px-3 !py-2 !text-sm" onClick={() => set(i.id, i.par_qty!)}>
+                        <button className="chip h-12 !px-3 !text-sm" onClick={() => set(i.id, i.par_qty!)} aria-label={`${i.name}: at par, ${parLabel(i)}`}>
                           = par
                         </button>
+                      )}
+                      {step === 0.25 && (
+                        <div className="flex overflow-hidden rounded-xl border-2" style={{ borderColor: "var(--border)" }} role="group" aria-label={`${i.name}: part of an open ${one}`}>
+                          {PARTS.map((p, n) => (
+                            <button
+                              key={p.v}
+                              className={`h-11 w-11 text-lg font-bold ${n ? "border-l-2" : ""}`}
+                              style={{
+                                borderColor: "var(--border)",
+                                background: lit === p.v ? "var(--foreground)" : "var(--surface)",
+                                color: lit === p.v ? "var(--background)" : undefined,
+                              }}
+                              aria-pressed={lit === p.v}
+                              aria-label={`${p.label} of a ${one}`}
+                              onClick={() => set(i.id, withPart(v, p.v))}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
                       )}
                       <button
                         className="h-12 w-12 rounded-xl border-2 text-2xl font-bold"
                         style={{ borderColor: "var(--foreground)" }}
-                        onClick={() => set(i.id, v === undefined ? 0 : v - step)}
-                        aria-label={`Fewer ${i.name}`}
+                        onClick={() => set(i.id, stepDown(v, step))}
+                        aria-label={`${qtyLabel(step)} fewer: ${i.name}`}
                       >
                         −
                       </button>
-                      <div className="w-14 text-center font-display text-2xl tabular-nums" aria-live="polite">
-                        {v === undefined ? <span style={{ color: "var(--muted)" }}>—</span> : qtyLabel(v)}
+                      <div className="w-20 text-center" aria-live="polite">
+                        <div className="font-display text-2xl leading-none tabular-nums">{v === undefined ? <span style={{ color: "var(--muted)" }}>—</span> : qtyLabel(v)}</div>
+                        {i.unit && (
+                          <div className="mt-1 truncate text-xs leading-tight" style={{ color: "var(--muted)" }}>
+                            {unitFor(i.unit, v ?? null)}
+                          </div>
+                        )}
                       </div>
                       <button
                         className="h-12 w-12 rounded-xl border-2 text-2xl font-bold"
                         style={{ borderColor: "var(--foreground)" }}
-                        onClick={() => set(i.id, v === undefined ? step : v + step)}
-                        aria-label={`More ${i.name}`}
+                        onClick={() => set(i.id, stepUp(v, step))}
+                        aria-label={`${qtyLabel(step)} more: ${i.name}`}
                       >
                         +
                       </button>
@@ -238,7 +304,7 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
       {confirming && (
         <ConfirmModal
           title={`${active.length - counted} items not counted`}
-          description="Save anyway? Items you skipped won't be on the shopping list."
+          description="Save anyway? It adds to anything else counted today. Items nobody has counted today stay off the shopping list, under Not counted today."
           confirmLabel="Save count"
           onConfirm={submit}
           onCancel={() => setConfirming(false)}
@@ -314,7 +380,8 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
             <div className="min-w-0 flex-1">
               <div className="font-bold">{i.name}</div>
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                {i.section ?? "No section"} · Par {parLabel(i)} · {i.source ?? "No store"}
+                {i.section ?? "No section"} · Par {parLabel(i)}
+                {i.unit_size ? ` · ${i.unit_size}` : ""} · {stepLabel(i)} · {i.source ?? "No store"}
               </div>
             </div>
             <button className="chip !px-3 !py-1.5" onClick={() => setForm(i)}>
@@ -364,6 +431,32 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
   );
 }
 
+// "Counts in quarters", or "Counts in quarters (automatic)".
+function stepLabel(i: Pick<ParItem, "par_qty" | "unit" | "count_step">): string {
+  const s = stepFor(i);
+  const what = s === 0.25 ? "quarters" : s === 0.5 ? "halves" : "whole units";
+  return `Counts in ${what}${i.count_step === null ? " (automatic)" : ""}`;
+}
+
+type SaveInput = {
+  id?: string;
+  area: string;
+  section: string | null;
+  name: string;
+  par_qty: number | null;
+  unit: string | null;
+  unit_size: string | null;
+  count_step: number | null;
+  source: string | null;
+};
+
+const STEP_CHOICES: { v: number | null; label: string }[] = [
+  { v: 1, label: COUNT_STEP_LABEL["1"] },
+  { v: 0.5, label: COUNT_STEP_LABEL["0.5"] },
+  { v: 0.25, label: COUNT_STEP_LABEL["0.25"] },
+  { v: null, label: "Automatic" },
+];
+
 function ItemForm({
   initial,
   all,
@@ -372,7 +465,7 @@ function ItemForm({
 }: {
   initial: Partial<ParItem>;
   all: ParItem[];
-  onSave: (v: { id?: string; area: string; section: string | null; name: string; par_qty: number | null; unit: string | null; source: string | null }) => Promise<string | null>;
+  onSave: (v: SaveInput) => Promise<string | null>;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initial.name ?? "");
@@ -380,22 +473,40 @@ function ItemForm({
   const [section, setSection] = useState(initial.section ?? "");
   const [par, setPar] = useState(initial.par_qty === null || initial.par_qty === undefined ? "" : String(initial.par_qty));
   const [unit, setUnit] = useState(initial.unit ?? "");
+  const [size, setSize] = useState(initial.unit_size ?? "");
+  const [step, setStep] = useState<number | null>(initial.count_step ?? null);
   const [source, setSource] = useState(initial.source ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const uniq = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort();
+  const uniq = (xs: (string | null | undefined)[]) => [...new Set(xs.filter((x): x is string => !!x))].sort();
+  const parNumber = (s: string) => (s.trim() === "" ? null : Number(s.replace("½", ".5").replace("¼", ".25").replace("¾", ".75")));
+  // What Automatic works out to for this unit and par, shown on the button.
+  const parNow = parNumber(par);
+  const auto = autoStep(unit.trim() || null, parNow !== null && Number.isFinite(parNow) ? parNow : null);
+  const autoWhat = auto === 0.25 ? "quarters" : "whole";
+  // Suggested units: the tidy ones, plus any in use without a size in brackets.
+  const units = uniq([...PAR_UNITS, ...all.map((i) => (i.unit && !/[()]/.test(i.unit) ? i.unit : null))]);
+  const sizes = uniq([...PAR_SIZES, ...all.map((i) => i.unit_size)]);
 
   return (
     <form
       className="card grid gap-4 sm:grid-cols-2"
       onSubmit={async (e) => {
         e.preventDefault();
-        const parQty = par.trim() === "" ? null : Number(par.replace("½", ".5").replace("¼", ".25").replace("¾", ".75"));
+        const parQty = parNumber(par);
         if (parQty !== null && !Number.isFinite(parQty)) return setError("Par should be a number, like 1 or 0.5.");
+        // A size typed into the unit ("bags (12.5 lb)") goes in Size.
+        let u = unit.trim();
+        let sz = size.trim();
+        const m = /^(.*\S)\s*\(([^()]+)\)$/.exec(u);
+        if (m && !sz) {
+          u = m[1];
+          sz = m[2].trim();
+        }
         // A count means nothing without what it's counted in ("2" of cheese?).
-        if (!unit.trim() || /^\s*(reserve|units?)\s*$/i.test(unit)) return setError("Give it a unit it's counted in, like bags (5 lb), bottles, gallons or boxes.");
+        if (!u || /^\s*(reserve|units?)\s*$/i.test(u)) return setError("Give it a unit it's counted in, like bottles, bags, gallons or boxes.");
         setBusy(true);
-        const err = await onSave({ id: initial.id, name, area, section: section || null, par_qty: parQty, unit: unit || null, source: source || null });
+        const err = await onSave({ id: initial.id, name, area, section: section || null, par_qty: parQty, unit: u, unit_size: sz || null, count_step: step, source: source || null });
         setBusy(false);
         setError(err);
       }}
@@ -420,9 +531,44 @@ function ItemForm({
       </label>
       <label className="block">
         <div className="label-xs">Unit it&apos;s counted in (required)</div>
-        <input id="par-unit" className="input" list="par-units" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. bags (5 lb), bottles, gallons" />
-        <datalist id="par-units">{uniq(all.map((i) => i.unit)).map((u) => <option key={u} value={u} />)}</datalist>
+        <input id="par-unit" className="input" list="par-units" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="e.g. bottles, bags, gallons" />
+        <datalist id="par-units">
+          {units.map((u) => (
+            <option key={u} value={u} />
+          ))}
+        </datalist>
       </label>
+      <label className="block">
+        <div className="label-xs">Size of one (optional)</div>
+        <input id="par-size" className="input" list="par-sizes" value={size} onChange={(e) => setSize(e.target.value)} placeholder="e.g. 750 ml, 1.75 L, 12.5 lb" maxLength={40} />
+        <datalist id="par-sizes">
+          {sizes.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      </label>
+      <div className="block">
+        <div className="label-xs" id="par-step-label">
+          Count by
+        </div>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="par-step-label">
+          {STEP_CHOICES.map((c) => (
+            <button
+              key={String(c.v)}
+              type="button"
+              role="radio"
+              aria-checked={step === c.v}
+              className={`chip min-h-11 !px-4 !text-sm ${step === c.v ? "chip-selected font-bold" : ""}`}
+              onClick={() => setStep(c.v)}
+            >
+              {c.v === null ? `${c.label} (${autoWhat})` : c.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+          What − and + move by. Quarters suit bottles, kegs and jugs that get opened.
+        </div>
+      </div>
       <label className="block sm:col-span-2">
         <div className="label-xs">Where it&apos;s bought</div>
         <input id="par-source" className="input" list="par-sources" value={source} onChange={(e) => setSource(e.target.value)} placeholder="e.g. Walmart" />
