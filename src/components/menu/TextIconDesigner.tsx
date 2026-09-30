@@ -70,11 +70,15 @@ export default function TextIconDesigner({
     }
   }
 
+  // In place of the icon while there isn't one to show, saying why (on the
+  // big button; the small one has no room for words).
+  const tooLong = count > TEXT_ICON_MAX;
   const empty = (
-    <span className="flex h-full w-full items-center justify-center p-2 text-center text-xs" style={{ background: "#0b0b0e", color: "#9a9aa5" }}>
-      Type what it should say
+    <span className="flex h-full w-full items-center justify-center p-2 text-center text-xs" style={{ background: "#0b0b0e", color: tooLong ? "#ff8a8a" : "#9a9aa5" }}>
+      {tooLong ? `Too long: ${TEXT_ICON_MAX} characters at most` : "Type what it should say"}
     </span>
   );
+  const emptySmall = <span className="block h-full w-full" style={{ background: "#0b0b0e" }} />;
 
   return (
     <form
@@ -91,7 +95,7 @@ export default function TextIconDesigner({
         </div>
         <div className="flex flex-col items-center gap-1 pb-1" inert>
           <div className="h-14 w-14 overflow-hidden rounded-md border" style={{ borderColor: "var(--border)" }}>
-            {icon ? <TextIcon icon={icon} still /> : empty}
+            {icon ? <TextIcon icon={icon} still /> : emptySmall}
           </div>
           <span className="text-[10px]" style={{ color: "var(--muted)" }}>
             Small
@@ -113,6 +117,14 @@ export default function TextIconDesigner({
           autoComplete="off"
           spellCheck={false}
           placeholder="$5"
+          // Return only puts the keyboard away (the color and style come
+          // next); "Use this icon" is the one way to save.
+          enterKeyHint="done"
+          onKeyDown={(e) => {
+            if (e.key !== "Enter") return;
+            e.preventDefault();
+            e.currentTarget.blur();
+          }}
           onChange={(e) => {
             setText(e.target.value);
             setError(null);

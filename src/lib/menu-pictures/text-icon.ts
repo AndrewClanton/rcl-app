@@ -82,29 +82,46 @@ export function textIconOf(value: unknown): TextIcon | null {
   return icon;
 }
 
-// What a text icon for an item might say, best first: a price in its name
-// ("$5 Special" → "$5"), else its first word.
+// An item's name for a text icon: capitals, without sizes in brackets
+// ("Popcorn (large)" → "POPCORN").
+function wholeName(name: string): string {
+  return cleanIconText(name).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
+}
+
+// Its first word with letters in it ("$5 Special" → "SPECIAL", not "5"),
+// cut to 6 letters when it's longer than 8.
+function firstWord(name: string): string {
+  const words = wholeName(name).split(" ");
+  const first = words.find((w) => /\p{L}/u.test(w)) ?? words.find((w) => /\p{N}/u.test(w));
+  const chars = Array.from((first ?? "").replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""));
+  return (chars.length <= 8 ? chars : chars.slice(0, 6)).join("");
+}
+
+// What a text icon for an item says to start with: a price in its name
+// ("$5 Special" → "$5": the number is the quickest thing to spot), else the
+// whole name when it fits ("Hot Dog" → "HOT DOG", on two lines; a first
+// word alone could say something else), else its first word.
 export function suggestIconText(name: string): string {
   const clean = cleanIconText(name);
   const price = /\$\s?(\d{1,3})(?:\.(\d{2}))?/.exec(clean);
   if (price) return `$${price[1]}${price[2] && price[2] !== "00" ? `.${price[2]}` : ""}`;
-  const first = clean.split(" ").find((w) => /[\p{L}\p{N}]/u.test(w)) ?? clean;
-  const word = first.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toUpperCase();
-  const chars = Array.from(word);
-  return (chars.length <= 8 ? chars : chars.slice(0, 6)).join("") || "?";
+  const whole = wholeName(clean);
+  if (whole && iconTextLength(whole) <= TEXT_ICON_MAX) return whole;
+  return firstWord(clean) || "?";
 }
 
 // A few to tap, for the designer: the suggestion, the price, the whole
-// name when it's short, and initials.
+// name when it fits, its first word, and initials.
 export function iconTextSuggestions(name: string, price?: number | null): string[] {
   const clean = cleanIconText(name);
   const out = [suggestIconText(clean)];
   if (typeof price === "number" && Number.isInteger(price) && price > 0 && price < 1000) out.push(`$${price}`);
-  const noSizes = clean.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim().toUpperCase();
-  if (noSizes && iconTextLength(noSizes) <= 12) out.push(noSizes);
-  const words = noSizes.split(" ").filter((w) => /^\p{L}/u.test(w));
+  const whole = wholeName(clean);
+  if (whole && iconTextLength(whole) <= TEXT_ICON_MAX) out.push(whole);
+  out.push(firstWord(clean));
+  const words = whole.split(" ").filter((w) => /^\p{L}/u.test(w));
   if (words.length >= 2 && words.length <= 5) out.push(words.map((w) => Array.from(w)[0]).join(""));
-  return [...new Set(out)].filter((t) => textIconOf({ text: t, color: "red", style: "neon" })).slice(0, 4);
+  return [...new Set(out)].filter((t) => textIconOf({ text: t, color: "red", style: "neon" })).slice(0, 5);
 }
 
 // ---------- fitting the text to the button ----------
@@ -154,6 +171,10 @@ function lineWidth(line: string): number {
 const AVAIL = 0.8;
 const ONE_LINE = 0.66;
 const TWO_LINES = 0.42;
+// A single word is only split (with a hyphen) when on one line it would be
+// smaller than this: about 13px on a 150px button, 12 letters or more.
+// LEMONADE or MARGARITA read better whole, a little smaller.
+const SPLIT_WORD_BELOW = 0.09;
 
 export interface IconTextFit {
   lines: string[];
@@ -165,15 +186,17 @@ export function fitIconText(text: string): IconTextFit {
   const one = Math.min(ONE_LINE, AVAIL / Math.max(lineWidth(t), 0.01));
   let best: IconTextFit = { lines: [t], size: one };
   const chars = Array.from(t);
-  // Two lines: at a space, or anywhere in one long word that would
+  // Two lines: at a space, or (hyphenated) inside one long word that would
   // otherwise be tiny.
   const breaks: number[] = [];
   chars.forEach((ch, i) => ch === " " && breaks.push(i));
-  if (!breaks.length && one < 0.13 && chars.length >= 8) for (let i = 3; i <= chars.length - 3; i++) breaks.push(i);
+  if (!breaks.length && one < SPLIT_WORD_BELOW && chars.length >= 8) for (let i = 3; i <= chars.length - 3; i++) breaks.push(i);
   for (const i of breaks) {
-    const a = chars.slice(0, i).join("").trim();
-    const b = chars.slice(chars[i] === " " ? i + 1 : i).join("").trim();
-    if (!a || !b) continue;
+    const inWord = chars[i] !== " ";
+    const head = chars.slice(0, i).join("").trim();
+    const a = inWord && /[\p{L}\p{N}]$/u.test(head) ? `${head}-` : head;
+    const b = chars.slice(inWord ? i : i + 1).join("").trim();
+    if (!head || !b) continue;
     const size = Math.min(TWO_LINES, AVAIL / Math.max(lineWidth(a), lineWidth(b), 0.01));
     if (size > best.size * 1.1 && (best.lines.length === 1 || size > best.size)) best = { lines: [a, b], size };
   }

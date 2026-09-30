@@ -24,7 +24,7 @@ import {
 //
 // Pixabay and Pexels ask to be named wherever their pictures are shown, and
 // Pexels's photographers credited with a link: both are under the picture,
-// and the libraries a search asked are listed at the bottom.
+// and the libraries that answered a search are listed at the bottom.
 
 type Found = { query: string; candidates: CandidateView[]; sources: FoundSource[] };
 
@@ -84,9 +84,13 @@ export default function PicturePicker({
       setWords(r.query);
       setBroken(new Set());
       // Looking again at the same search starts on the next one along: the
-      // one on the button is what they want to replace.
-      const same = isFound(current.image_source) && current.image_query === r.query && current.image_index !== null;
-      setAt(same ? (current.image_index! + 1) % r.candidates.length : 0);
+      // one on the button is what they want to replace. Found by its page
+      // (a picture found on its own came from a list without Pixabay), else
+      // by its place.
+      const same = isFound(current.image_source) && current.image_query === r.query;
+      const page = current.image_credit?.page;
+      const on = same && page ? r.candidates.findIndex((c) => c.credit.page === page) : -1;
+      setAt(on >= 0 ? (on + 1) % r.candidates.length : same && current.image_index !== null ? (current.image_index + 1) % r.candidates.length : 0);
     } catch {
       setError("The picture search didn't answer. Check the connection and try again.");
     } finally {

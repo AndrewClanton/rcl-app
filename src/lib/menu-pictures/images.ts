@@ -16,7 +16,13 @@ const MAX_DOWNLOAD = 12_000_000;
 const MAX_REDIRECTS = 3;
 const IMAGE_TYPES = /^image\/(jpeg|pjpeg|png|webp|gif)$/;
 
-export class PictureError extends Error {}
+export class PictureError extends Error {
+  status: number | null; // the picture's site's answer, when it said no
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.status = status;
+  }
+}
 // Downloaded fine, but too small to look sharp on a button.
 export class TooSmall extends PictureError {}
 
@@ -38,7 +44,7 @@ export async function downloadImage(url: string): Promise<Buffer> {
       at = new URL(next, at).toString();
       continue;
     }
-    if (!res.ok || !res.body) throw new PictureError(`The picture didn't download (${res.status}).`);
+    if (!res.ok || !res.body) throw new PictureError(`The picture didn't download (${res.status}).`, res.status);
     const type = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
     if (!IMAGE_TYPES.test(type)) throw new PictureError("That link isn't a picture.");
     const length = Number(res.headers.get("content-length") ?? 0);

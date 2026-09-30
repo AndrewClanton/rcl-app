@@ -1,6 +1,7 @@
 import { getStaffSession } from "@/lib/auth";
 import { findCandidates } from "@/lib/menu-pictures/sources";
-import { downloadImage, PictureError, PREVIEW_SIZE, squareJpeg } from "@/lib/menu-pictures/images";
+import { downloadFound } from "@/lib/menu-pictures/found";
+import { PictureError, PREVIEW_SIZE, squareJpeg } from "@/lib/menu-pictures/images";
 import { cleanQuery } from "@/lib/menu-pictures/query";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
   const c = candidates[index];
   if (!c) return new Response("Not found", { status: 404 });
   try {
-    const jpeg = await squareJpeg(await downloadImage(c.thumb), PREVIEW_SIZE, c.source === "off" ? "contain" : "cover");
+    const jpeg = await squareJpeg(await downloadFound(c, query, "thumb"), PREVIEW_SIZE, c.source === "off" ? "contain" : "cover");
     return new Response(new Uint8Array(jpeg), {
       headers: {
         "Content-Type": "image/jpeg",

@@ -2,14 +2,19 @@ import "server-only";
 import { SITE_URL } from "@/lib/site";
 import { cleanQuery, isPackagedQuery } from "./query";
 import { SOURCE_NAMES, type CandidateView, type FoundSource, type PictureCredit } from "./shared";
+import { newLibrariesStorable } from "./store";
 
 // Finding free-to-use pictures for the menu:
 //   - Pixabay and Pexels: big, well-lit stock photos, free for a business to
 //     use under their own licenses. Asked first, but only when their key is
 //     set (PIXABAY_API_KEY, PEXELS_API_KEY: server only, never sent to a
-//     screen); without one that library is skipped and nothing else changes.
-//     Both allow downloading a picture to keep; we credit the photographer
-//     the way each asks.
+//     screen) and the database takes their pictures (the update
+//     20261001130000_menu_text_icons.sql; store.ts checks); otherwise that
+//     library is skipped and nothing else changes. Both allow downloading a
+//     picture to keep; we credit the photographer the way each asks.
+//     Pixabay's API is for people's own searches, not mass downloads, so
+//     finding pictures for everything (and for a new item) doesn't ask it:
+//     only a person browsing the picker does.
 //   - Open Food Facts: packaged food, by product name (candy, cereal, soda).
 //     Front-of-package photos, CC BY-SA 3.0.
 //   - Openverse: openly licensed pictures (medium and large only) from
@@ -25,9 +30,10 @@ import { SOURCE_NAMES, type CandidateView, type FoundSource, type PictureCredit 
 //
 // Polite by design: each service is asked at most every so often from a
 // server (and Pexels at most PEXELS_PER_HOUR times an hour), a service that
-// says "too many" is left alone for a while, each search's results are kept
-// in this server's memory so browsing ◀ ▶ and the previews don't ask again,
-// and every request names the app.
+// says "too many" (or turns a key down) is left alone for a while, each
+// library's answer to a search is kept in this server's memory for a day
+// (Pixabay asks for 24 hours) so browsing ◀ ▶ and the previews don't ask
+// again, and every request names the app.
 
 export const USER_AGENT = `RoyaleCinemaLounge-MenuPictures/1.0 (+${SITE_URL})`;
 
@@ -44,17 +50,17 @@ export interface Search {
   query: string;
   candidates: Candidate[];
   complete: boolean; // false when a service didn't answer
-  sources: FoundSource[]; // the libraries asked, for their credit on screen
+  sources: FoundSource[]; // the libraries that answered, for their credit on screen
 }
 
 export const MIN_SIDE = 600;
 const MAX_CANDIDATES = 40;
-const FRESH_MS = 24 * 60 * 60_000; // a finished search is kept a day
-// Pixabay's links to its pictures stop working after a day, so a search
-// with Pixabay pictures in it is asked again a little before that.
-const PIXABAY_FRESH_MS = 20 * 60 * 60_000;
-const PARTIAL_MS = 30 * 60_000; // one a service missed, half an hour
-const KEEP_MAX = 400;
+// A library's answer is kept a day (Pixabay asks for its answers to be kept
+// 24 hours). Its links to pictures can run out in that time: a picture that
+// won't download has its library asked again (forgetAnswer).
+const FRESH_MS = 24 * 60 * 60_000;
+const FAILED_MS = 30 * 60_000; // a library that didn't answer, half an hour
+const KEEP_MAX = 1500; // library answers, oldest dropped first
 
 // Time between requests to each service from one server. Pixabay allows 100
 // a minute per key, Pexels 200 an hour per key (see PEXELS_PER_HOUR),
@@ -134,10 +140,18 @@ function apiKey(name: "PIXABAY_API_KEY" | "PEXELS_API_KEY"): string | null {
 
 class ServiceError extends Error {
   status: number;
-  constructor(host: string, status: number) {
+  retryAfterMs: number | null; // how long it asked us to wait, when it said
+  constructor(host: string, status: number, retryAfterMs: number | null) {
     super(`${host} answered ${status}`);
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+// Retry-After, in seconds (the only form these services use).
+function retryAfter(headers: Headers): number | null {
+  const v = headers.get("retry-after")?.trim();
+  return v && /^\d{1,7}$/.test(v) ? Number(v) * 1000 : null;
 }
 
 async function getJson(url: string, headers: Record<string, string> = {}): Promise<{ json: unknown; headers: Headers }> {
@@ -147,8 +161,23 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
     cache: "no-store",
   });
   // Only the host and the status: Pixabay's key is in its address.
-  if (!res.ok) throw new ServiceError(new URL(url).hostname, res.status);
+  if (!res.ok) throw new ServiceError(new URL(url).hostname, res.status, retryAfter(res.headers));
   return { json: await res.json(), headers: res.headers };
+}
+
+// A free library that said "too many" (Openverse allows 200 searches a day
+// without an account) rests for as long as it asks, 10 minutes when it
+// doesn't say, a day at most. Anything else is only logged.
+function freeLibraryFailed(source: FoundSource, query: string, e: unknown) {
+  if (e instanceof ServiceError && e.status === 429) rest(source, Math.min(Math.max(e.retryAfterMs ?? 10 * 60_000, 60_000), 24 * 60 * 60_000), "too many requests");
+  else console.warn(`menu pictures: ${SOURCE_NAMES[source]} search failed`, query, why(e));
+}
+
+// A keyed library that turned its key down (Pixabay answers 400 to a bad
+// key, Pexels 401 or 403) rests an hour, said once in the log, instead of
+// being asked with it again for every search.
+function keyTurnedDown(e: unknown): boolean {
+  return e instanceof ServiceError && (e.status === 400 || e.status === 401 || e.status === 403);
 }
 
 // Why a search failed, for the server's log. Never the request itself.
@@ -166,8 +195,10 @@ function headerNumber(headers: Headers, name: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-// What one library's search came to: its results, or that it failed, is
-// resting after a "too many", or has no key (skipped, as if it weren't there).
+// What one library's search came to: its results (every usable one, best
+// first; the plan takes as many as it wants), or that it failed, is resting
+// (after a "too many" or a key it turned down), or has no key (skipped, as
+// if it weren't there).
 type Outcome = Candidate[] | "failed" | "resting" | "no key";
 
 // ---------- scoring ----------
@@ -275,7 +306,7 @@ function pixabayLarge(h: PixabayHit): { width: number; height: number } {
   return { width: Math.round(w * scale), height: Math.round(ht * scale) };
 }
 
-async function searchPixabay(query: string, limit: number): Promise<Outcome> {
+async function searchPixabay(query: string): Promise<Outcome> {
   const key = apiKey("PIXABAY_API_KEY");
   if (!key) return "no key";
   if (resting("pixabay")) return "resting";
@@ -293,8 +324,12 @@ async function searchPixabay(query: string, limit: number): Promise<Outcome> {
     hits = hitList;
   } catch (e) {
     if (e instanceof ServiceError && e.status === 429) rest("pixabay", 61_000, "too many requests");
-    else console.warn("menu pictures: Pixabay search failed", query, why(e), e instanceof ServiceError && e.status < 500 ? "(check PIXABAY_API_KEY)" : "");
-    return "failed";
+    else if (keyTurnedDown(e)) rest("pixabay", 60 * 60_000, `${why(e)}: check PIXABAY_API_KEY`);
+    else {
+      console.warn("menu pictures: Pixabay search failed", query, why(e));
+      return "failed";
+    }
+    return "resting";
   }
   const out: Candidate[] = [];
   const usable = hits.filter((h) => typeof h.largeImageURL === "string" && isAllowedImageUrl(h.largeImageURL) && Math.min(pixabayLarge(h).width, pixabayLarge(h).height) >= MIN_SIDE);
@@ -330,7 +365,6 @@ async function searchPixabay(query: string, limit: number): Promise<Outcome> {
         provider: null,
       },
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
@@ -359,7 +393,7 @@ function pexelsLarge2x(p: PexelsPhoto): { width: number; height: number } {
   return { width: Math.round(w * scale), height: Math.round(h * scale) };
 }
 
-async function searchPexels(query: string, limit: number): Promise<Outcome> {
+async function searchPexels(query: string): Promise<Outcome> {
   const key = apiKey("PEXELS_API_KEY");
   if (!key) return "no key";
   if (resting("pexels") || !pexelsTurnThisHour()) return "resting";
@@ -381,8 +415,12 @@ async function searchPexels(query: string, limit: number): Promise<Outcome> {
   } catch (e) {
     // "Too many" comes without saying for how long: an hour, quietly.
     if (e instanceof ServiceError && e.status === 429) rest("pexels", 60 * 60_000, "too many requests");
-    else console.warn("menu pictures: Pexels search failed", query, why(e), e instanceof ServiceError && e.status < 500 ? "(check PEXELS_API_KEY)" : "");
-    return "failed";
+    else if (keyTurnedDown(e)) rest("pexels", 60 * 60_000, `${why(e)}: check PEXELS_API_KEY`);
+    else {
+      console.warn("menu pictures: Pexels search failed", query, why(e));
+      return "failed";
+    }
+    return "resting";
   }
   const out: Candidate[] = [];
   const usable = photos.filter(
@@ -411,7 +449,6 @@ async function searchPexels(query: string, limit: number): Promise<Outcome> {
         provider: null,
       },
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
@@ -420,7 +457,8 @@ async function searchPexels(query: string, limit: number): Promise<Outcome> {
 
 type OffHit = { code?: string; product_name?: string; brands?: string[] | string; image_front_url?: string; countries_tags?: string[] };
 
-async function searchOff(query: string, limit: number): Promise<Outcome> {
+async function searchOff(query: string): Promise<Outcome> {
+  if (resting("off")) return "resting";
   await politeTurn("off");
   const fields = "code,product_name,brands,image_front_url,countries_tags";
   let hits: OffHit[];
@@ -430,7 +468,7 @@ async function searchOff(query: string, limit: number): Promise<Outcome> {
     if (!Array.isArray(list)) return "failed";
     hits = list;
   } catch (e) {
-    console.warn("menu pictures: Open Food Facts search failed", query, why(e));
+    freeLibraryFailed("off", query, e);
     return "failed";
   }
   const seen = new Set<string>();
@@ -463,7 +501,6 @@ async function searchOff(query: string, limit: number): Promise<Outcome> {
         provider: null,
       },
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
@@ -516,7 +553,8 @@ export function openverseImage(r: OvResult): { url: string; width: number; heigh
   return null;
 }
 
-async function searchOpenverse(query: string, limit: number): Promise<Outcome> {
+async function searchOpenverse(query: string): Promise<Outcome> {
+  if (resting("openverse")) return "resting";
   await politeTurn("openverse");
   let results: OvResult[];
   try {
@@ -532,7 +570,7 @@ async function searchOpenverse(query: string, limit: number): Promise<Outcome> {
     if (!Array.isArray(list)) return "failed";
     results = list;
   } catch (e) {
-    console.warn("menu pictures: Openverse search failed", query, why(e));
+    freeLibraryFailed("openverse", query, e);
     return "failed";
   }
   const out: Candidate[] = [];
@@ -570,7 +608,6 @@ async function searchOpenverse(query: string, limit: number): Promise<Outcome> {
         provider: PROVIDERS[provider] ?? (provider ? provider.charAt(0).toUpperCase() + provider.slice(1) : null),
       },
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
@@ -612,7 +649,8 @@ function commonsSize(ii: NonNullable<CommonsPage["imageinfo"]>[number]): { width
   return { width: numberOr0(ii.thumbwidth) || numberOr0(ii.width), height: numberOr0(ii.thumbheight) || numberOr0(ii.height) };
 }
 
-async function searchCommons(query: string, limit: number): Promise<Outcome> {
+async function searchCommons(query: string): Promise<Outcome> {
+  if (resting("commons")) return "resting";
   await politeTurn("commons");
   const params = new URLSearchParams({
     action: "query",
@@ -632,7 +670,7 @@ async function searchCommons(query: string, limit: number): Promise<Outcome> {
     const { json } = await getJson(`https://commons.wikimedia.org/w/api.php?${params}`);
     pages = (json as { query?: { pages?: CommonsPage[] } })?.query?.pages ?? [];
   } catch (e) {
-    console.warn("menu pictures: Commons search failed", query, why(e));
+    freeLibraryFailed("commons", query, e);
     return "failed";
   }
   const out: Candidate[] = [];
@@ -670,14 +708,13 @@ async function searchCommons(query: string, limit: number): Promise<Outcome> {
         provider: null,
       },
     });
-    if (out.length >= limit) break;
   }
   return out;
 }
 
 // ---------- the search, kept ----------
 
-const SEARCHES: Record<FoundSource, (query: string, limit: number) => Promise<Outcome>> = {
+const SEARCHES: Record<FoundSource, (query: string) => Promise<Outcome>> = {
   pixabay: searchPixabay,
   pexels: searchPexels,
   off: searchOff,
@@ -719,46 +756,86 @@ export function searchPlan(query: string, keys: { pixabay: boolean; pexels: bool
   return plan.filter(([s]) => (s !== "pixabay" && s !== "pexels") || keys[s]);
 }
 
-const kept = new Map<string, { until: number; search: Search }>();
+// Each library's answer to a search, kept on its own: a day for an answer
+// (even an empty one), half an hour for "didn't answer". So one library
+// failing or resting never makes the others be asked again sooner, and a
+// search asked twice at once asks each library once.
+type Kept = { until: number; got: Candidate[] | "failed" };
+const kept = new Map<string, Kept>();
+const asking = new Map<string, Promise<Outcome>>();
+const keptKey = (source: FoundSource, query: string) => `${source}\u0000${query}`;
 
-function keptSearch(query: string): Search | null {
-  const k = kept.get(query);
-  if (!k) return null;
-  if (Date.now() < k.until) return k.search;
-  kept.delete(query);
-  return null;
+function keep(key: string, got: Kept["got"], ms: number) {
+  kept.delete(key); // re-added last, so the oldest go first
+  kept.set(key, { until: Date.now() + ms, got });
+  while (kept.size > KEEP_MAX) kept.delete(kept.keys().next().value!);
 }
+
+async function answer(source: FoundSource, query: string): Promise<Outcome> {
+  const key = keptKey(source, query);
+  const had = kept.get(key);
+  if (had && Date.now() < had.until) return had.got;
+  const already = asking.get(key);
+  if (already) return already;
+  const pending = SEARCHES[source](query)
+    .catch((): Outcome => "failed")
+    .then((got) => {
+      if (Array.isArray(got)) keep(key, got, FRESH_MS);
+      else if (got === "failed") keep(key, got, FAILED_MS);
+      else if (had) kept.delete(key); // resting or no key: nothing new to keep
+      return got;
+    })
+    .finally(() => asking.delete(key));
+  asking.set(key, pending);
+  return pending;
+}
+
+// A picture from this library's answer wouldn't download (a Pixabay link
+// runs out after a day): the next search asks it again.
+export function forgetAnswer(source: FoundSource, rawQuery: string) {
+  kept.delete(keptKey(source, cleanQuery(rawQuery)));
+}
+
+const KEYED = new Set<FoundSource>(["pixabay", "pexels"]);
+
+// Who the search is for: a person browsing the picker, or finding pictures
+// on its own (everything at once, or a new item). Pixabay's API is for
+// people's own searches, not systematic downloads, so it's only in the
+// person's plan.
+export type SearchFor = "person" | "auto";
 
 // Pictures for a search, best first. Every library in the plan is asked at
 // once (each waits its own turn), and the results keep the plan's order.
-// Kept, so asking again is free.
-export async function findCandidates(rawQuery: string): Promise<Search> {
+// Each library's answer is kept, so asking again is free.
+export async function findCandidates(rawQuery: string, forWhom: SearchFor = "person"): Promise<Search> {
   const query = cleanQuery(rawQuery);
   if (!query) return { query, candidates: [], complete: true, sources: [] };
-  const already = keptSearch(query);
-  if (already) return already;
 
-  const plan = searchPlan(query, { pixabay: !!apiKey("PIXABAY_API_KEY"), pexels: !!apiKey("PEXELS_API_KEY") });
-  const outcomes = await Promise.all(plan.map(([source, limit]) => SEARCHES[source](query, limit).catch((): Outcome => "failed")));
+  const keys = { pixabay: !!apiKey("PIXABAY_API_KEY"), pexels: !!apiKey("PEXELS_API_KEY") };
+  // Until the database takes their pictures (store.ts), they're left out:
+  // setting a key before the update changes nothing.
+  if ((keys.pixabay || keys.pexels) && !(await newLibrariesStorable())) keys.pixabay = keys.pexels = false;
+  if (forWhom === "auto") keys.pixabay = false;
+  const plan = searchPlan(query, keys);
+
+  const outcomes = await Promise.all(plan.map(([source]) => answer(source, query)));
   const found: Candidate[] = [];
   const sources: FoundSource[] = [];
   let complete = true;
   outcomes.forEach((got, i) => {
-    if (got === "no key") return;
-    if (got !== "resting") sources.push(plan[i][0]);
-    if (Array.isArray(got)) found.push(...got);
-    else complete = false;
+    const [source, limit] = plan[i];
+    if (Array.isArray(got)) {
+      sources.push(source);
+      found.push(...got.slice(0, limit));
+    } else if (got === "failed" || (got === "resting" && !KEYED.has(source))) {
+      // A keyed library resting (its allowance, or a key it turned down) is
+      // left out quietly, like one without a key.
+      complete = false;
+    }
   });
   const seen = new Set<string>();
   const candidates = found.filter((c) => !seen.has(c.image) && !!seen.add(c.image)).slice(0, MAX_CANDIDATES);
-  const result: Search = { query, candidates, complete, sources };
-  // A search where every service failed isn't kept at all.
-  if (complete || candidates.length) {
-    const keep = !complete ? PARTIAL_MS : candidates.some((c) => c.source === "pixabay") ? PIXABAY_FRESH_MS : FRESH_MS;
-    kept.set(query, { until: Date.now() + keep, search: result });
-    if (kept.size > KEEP_MAX) kept.delete(kept.keys().next().value!);
-  }
-  return result;
+  return { query, candidates, complete, sources };
 }
 
 export function toView(c: Candidate): CandidateView {

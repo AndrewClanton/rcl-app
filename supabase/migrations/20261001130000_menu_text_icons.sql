@@ -13,8 +13,15 @@
 --
 -- Additive and safe to run twice: a new nullable column, and the
 -- image_source checks widened (every value they allowed before is still
--- allowed). Until this runs, saving a text icon says the database needs this
--- update; nothing else is affected.
+-- allowed). Run this before setting PIXABAY_API_KEY or PEXELS_API_KEY.
+-- Until it runs:
+--   - saving a text icon says the database needs this update;
+--   - the picture finder leaves Pixabay and Pexels out even when their keys
+--     are set (it looks for the image_text column added here), because the
+--     old checks turn their pictures down. If a save is turned down anyway,
+--     the picker says why and finding pictures on its own moves on to
+--     another library's.
+-- Photos, label tiles and the other libraries work the same either way.
 
 alter table menu_items add column if not exists image_text jsonb;
 alter table menu_categories add column if not exists image_text jsonb;

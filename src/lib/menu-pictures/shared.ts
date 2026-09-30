@@ -71,7 +71,8 @@ export interface CandidateView {
 }
 
 export type PictureResult = { ok: true; picture: PictureState } | { ok: false; error: string };
-// `sources`: the libraries this search asked, so the picker can credit them.
+// `sources`: the libraries that answered this search, so the picker can
+// credit them.
 export type SearchResult = { ok: true; query: string; candidates: CandidateView[]; sources: FoundSource[] } | { ok: false; error: string };
 
 export function pictureOf(row: (Partial<Omit<PictureState, "image_text">> & { image_text?: unknown }) | null | undefined): PictureState {

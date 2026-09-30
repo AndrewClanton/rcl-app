@@ -70,7 +70,9 @@ export default function TextIcon({
   if (icon.style === "outline") {
     return (
       <span className={`@container flex h-full w-full items-center justify-center overflow-hidden ${className}`} style={{ background: TEXT_ICON_DARK }} aria-hidden>
-        <span className={face} style={{ ...type, color: "transparent", WebkitTextStroke: `0.035em ${c.glow}` }}>
+        {/* The line grows with the letters, but never thinner than 1.25px:
+            small letters (long text, a thumbnail) would turn to hairlines. */}
+        <span className={face} style={{ ...type, color: "transparent", WebkitTextStroke: `max(0.035em, 1.25px) ${c.glow}` }}>
           {text}
         </span>
       </span>
