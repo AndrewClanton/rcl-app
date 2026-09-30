@@ -11,6 +11,9 @@ import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
 import { birthdayFromInput } from "@/lib/visits";
+import { safePath } from "@/lib/safe-path";
+import { pendingClaimFor } from "@/lib/member-claim-token";
+import { PHOTO_TYPES, deleteStoredPhoto } from "@/lib/member-photo";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -25,6 +28,43 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   // Don't leave them half signed in to a login that owns nothing.
   if (result.reason === "unproven") await supabase.auth.signOut();
   return { ok: false, error: result.error };
+}
+
+// The link in a Supabase sign-up confirmation, password reset or email
+// change email, once the email templates point at /account/confirm. The
+// page only verifies when the person presses its button, so a mail scanner
+// that opens every link can't use up the one-time token first. Works in
+// any browser: nothing from the sign-up browser is needed.
+const OTP_TYPES = { email: "email", signup: "email", recovery: "recovery", email_change: "email_change", invite: "invite" } as const;
+
+export async function confirmEmailLink(tokenHash: string, type: string, next: string | null): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const otpType = Object.hasOwn(OTP_TYPES, type) ? OTP_TYPES[type as keyof typeof OTP_TYPES] : null;
+  if (!otpType || typeof tokenHash !== "string" || !tokenHash || tokenHash.length > 500) {
+    return { ok: false, error: "That link isn't complete. Copy the whole link from the email, or ask for a new one." };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: otpType });
+  // "Secure email change" sends a link to the old address and the new one;
+  // the first of the two comes back with no user yet.
+  if (!error && !data.user && otpType === "email_change") {
+    return { ok: false, error: "That's one of two links. Open the one we sent to your other email address too, to finish the change." };
+  }
+  if (error || !data.user) return { ok: false, error: "This link has expired or was already used. Sign in, or ask for a new one from the sign-in page." };
+  if (otpType === "recovery") return { ok: true, to: "/account/reset-password" };
+  const linked = await linkMemberForUser(data.user);
+  if (!linked.ok) {
+    // Don't leave them half signed in to a login that owns nothing.
+    await supabase.auth.signOut();
+    return { ok: false, error: linked.error };
+  }
+  // A login made from a "claim your account" link goes back to that link,
+  // which attaches it to their account.
+  const claim = await pendingClaimFor(data.user);
+  if (claim) return { ok: true, to: claim };
+  // Where they were headed when they signed up (e.g. Insiders+ payment);
+  // the bare site address means nowhere in particular.
+  const dest = safePath(next);
+  return { ok: true, to: dest && dest !== "/account" && dest !== "/" ? dest : linked.created ? "/account?welcome=1" : "/account" };
 }
 
 export async function signOut(): Promise<void> {
@@ -64,21 +104,9 @@ export async function uploadAvatar(formData: FormData): Promise<UploadAvatarResu
   const { data: urlData } = admin.storage.from("member-avatars").getPublicUrl(path);
   const { error } = await admin.from("members").update({ avatar_url: urlData.publicUrl }).eq("id", member.id);
   if (error) throw error;
-  await deleteStoredPhoto(member.avatar_url);
+  await deleteStoredPhoto(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
-}
-
-const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
-
-// Removing or replacing a photo deletes the stored file too, so the old
-// picture doesn't stay reachable at its address.
-async function deleteStoredPhoto(url: string | null | undefined) {
-  const marker = "/storage/v1/object/public/member-avatars/";
-  const at = url?.indexOf(marker) ?? -1;
-  if (!url || at < 0) return;
-  const path = decodeURIComponent(url.slice(at + marker.length).split("?")[0]);
-  await createAdminClient().storage.from("member-avatars").remove([path]).catch(() => {});
 }
 
 export type BillingPortalResult = { ok: true; url: string } | { ok: false; error: string };
@@ -147,25 +175,33 @@ export async function importGooglePhoto(): Promise<ProfileResult> {
   const url = user ? googlePhotoUrl(user) : null;
   if (!url) return { ok: false, error: "There's no Google photo on this account." };
   const res = await fetch(url).catch(() => null);
-  const type = res?.headers.get("content-type") ?? "";
-  if (!res?.ok || !type.startsWith("image/")) return { ok: false, error: "Couldn't get your Google photo. Try uploading one instead." };
+  // The same four photo types as an upload; the stored name and type come
+  // from that list, not from what Google's server says.
+  const type = (res?.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const ext = PHOTO_TYPES[type];
+  if (!res?.ok || !ext) return { ok: false, error: "Couldn't get your Google photo. Try uploading one instead." };
   const buffer = Buffer.from(await res.arrayBuffer());
   if (buffer.length > 5_000_000) return { ok: false, error: "That photo is too large. Try uploading one instead." };
   const admin = createAdminClient();
-  const path = `${member.id}-${Date.now()}.${type.includes("png") ? "png" : "jpg"}`;
+  const path = `${member.id}-${Date.now()}.${ext}`;
   const { error: uploadErr } = await admin.storage.from("member-avatars").upload(path, buffer, { contentType: type });
   if (uploadErr) return { ok: false, error: "Couldn't save your photo. Try again." };
   const { data } = admin.storage.from("member-avatars").getPublicUrl(path);
-  await admin.from("members").update({ avatar_url: data.publicUrl }).eq("id", member.id);
-  await deleteStoredPhoto(member.avatar_url);
+  const { error } = await admin.from("members").update({ avatar_url: data.publicUrl }).eq("id", member.id);
+  if (error) {
+    await deleteStoredPhoto(data.publicUrl, member.id);
+    return { ok: false, error: "Couldn't save your photo. Try again." };
+  }
+  await deleteStoredPhoto(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
 
 export async function removeMyPhoto(): Promise<ProfileResult> {
   const member = await requireMember();
-  await createAdminClient().from("members").update({ avatar_url: null }).eq("id", member.id);
-  await deleteStoredPhoto(member.avatar_url);
+  const { error } = await createAdminClient().from("members").update({ avatar_url: null }).eq("id", member.id);
+  if (error) return { ok: false, error: "Couldn't remove your photo. Try again." };
+  await deleteStoredPhoto(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
