@@ -1,4 +1,5 @@
 import type { DailyDigest } from "@/lib/data/daily-digest";
+import type { MembershipLineKey, MembershipTotals } from "@/lib/membership-payments/rows";
 
 // The end-of-day report as an email: plain tables and inline styles, which
 // is what Gmail and phone mail apps render reliably. Also shown as-is on
@@ -39,6 +40,20 @@ function rows(pairs: [string, string, boolean?][]) {
   </table>`;
 }
 
+// "1 new yearly ($166.35), 2 renewals ($32.62)": what Stripe charged for
+// Insiders+ and gift memberships that day.
+const MEMBERSHIP_NOUN: Record<MembershipLineKey, [string, string]> = {
+  new_month: ["new monthly", "new monthly"],
+  new_year: ["new yearly", "new yearly"],
+  renewal: ["renewal", "renewals"],
+  switch: ["switch to yearly", "switches to yearly"],
+  gift: ["gift membership", "gift memberships"],
+  refund: ["refund", "refunds"],
+};
+function membershipsSentence(m: MembershipTotals) {
+  return m.lines.map((l) => `${l.count} ${MEMBERSHIP_NOUN[l.key][l.count === 1 ? 0 : 1]} (${money(l.collected)})`).join(", ");
+}
+
 function bullets(items: string[], color = INK) {
   return `<ul style="margin:0;padding-left:18px;font:15px/1.5 Arial,Helvetica,sans-serif;color:${color}">${items.map((i) => `<li style="margin:0 0 6px">${esc(i)}</li>`).join("")}</ul>`;
 }
@@ -51,6 +66,8 @@ export function dailyDigestSubject(d: DailyDigest) {
 export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   const r = d.day;
   const orders = r.orders.filter((o) => o.status === "completed").length;
+  // Memberships are in the money in, but they aren't orders.
+  const orderMoney = r.collected - r.memberships.collected;
   const compare: string[] = [];
   if (d.lastWeek?.collected) compare.push(`${change(r.collected, d.lastWeek.collected)} last week (${money(d.lastWeek.collected)})`);
   if (d.weekdayAverage && d.weekdayAverage.weeks > 1) compare.push(`typical ${d.label.split(",")[0]}: ${money(d.weekdayAverage.collected)}`);
@@ -59,9 +76,11 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
     ["Cash", money(r.cash)],
     ["Card", money(r.card)],
     ["Online (tickets, booths)", money(r.online)],
-    ["Collected", money(r.collected), true],
   ];
-  if (r.vouchers > 0) money_in.splice(3, 0, ["Trivia vouchers (no money in)", money(r.vouchers)]);
+  // Charged by Stripe, never at the register (so not in Cash or Card).
+  if (r.membershipLines.length) money_in.push(["Insiders+ memberships (Stripe)", money(r.memberships.collected)]);
+  if (r.vouchers > 0) money_in.push(["Trivia vouchers (no money in)", money(r.vouchers)]);
+  money_in.push(["Collected", money(r.collected), true]);
 
   const sold: [string, string, boolean?][] = r.sold.map((s) => [`${esc(s.label)}${s.detail ? ` <span style="color:${MUTED}">· ${esc(s.detail)}</span>` : ""}`, money(s.amount)]);
   if (r.discounts > 0) sold.push(["Member discounts", `−${money(r.discounts)}`]);
@@ -96,7 +115,18 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
       `Coming up · ${d.next.label}`,
       d.next.items.length ? rows(d.next.items.map((i) => [esc(i.text), esc(i.time)])) : `<p style="margin:0;font:15px Arial,sans-serif;color:${MUTED}">Nothing on the schedule yet.</p>`,
     ),
-    d.newMembers ? section("Members", `<p style="margin:0;font:15px Arial,sans-serif">${d.newMembers} new member${d.newMembers === 1 ? "" : "s"} joined.</p>`) : "",
+    d.newMembers || r.membershipLines.length
+      ? section(
+          "Members",
+          [
+            d.newMembers ? `${d.newMembers} new member${d.newMembers === 1 ? "" : "s"} joined.` : "",
+            r.membershipLines.length ? `Insiders+: ${membershipsSentence(r.memberships)}.` : "",
+          ]
+            .filter(Boolean)
+            .map((line) => `<p style="margin:0 0 4px;font:15px Arial,sans-serif">${esc(line)}</p>`)
+            .join(""),
+        )
+      : "",
   ].join("");
 
   return `<!doctype html><html><body style="margin:0;padding:0;background:${CREAM}">
@@ -110,7 +140,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       <tr><td>
         <div style="font:900 40px/1 'Arial Black',Arial,sans-serif;color:${RED}">${money(r.collected)}</div>
-        <div style="font:15px/1.5 Arial,sans-serif;color:${INK};margin-top:6px">${orders} order${orders === 1 ? "" : "s"} · ${r.ticketsSold} ticket${r.ticketsSold === 1 ? "" : "s"}${orders ? ` · ${money(r.collected / Math.max(1, orders))} average` : ""}</div>
+        <div style="font:15px/1.5 Arial,sans-serif;color:${INK};margin-top:6px">${orders} order${orders === 1 ? "" : "s"} · ${r.ticketsSold} ticket${r.ticketsSold === 1 ? "" : "s"}${orders ? ` · ${money(orderMoney / Math.max(1, orders))} average` : ""}</div>
         ${compare.length ? `<div style="font:14px/1.5 Arial,sans-serif;color:${MUTED};margin-top:2px">${esc(compare.join(" · "))}</div>` : ""}
       </td></tr>
       ${body}

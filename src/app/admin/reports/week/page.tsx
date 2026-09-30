@@ -3,6 +3,8 @@ import { getPeriodReport } from "@/lib/data/period-report";
 import { getTipPayouts, tipWeek } from "@/lib/data/day-drill";
 import { businessDay } from "@/lib/ops/time";
 import { isDate, rangeLabel, shiftPeriod, shortDate, weekOf, type Period } from "@/lib/report-periods";
+import { ensureMemberPaymentsFresh } from "@/lib/membership-payments/sync";
+import { getPaymentSyncStatus } from "@/lib/membership-payments/read";
 import DateJump from "../DateJump";
 import PeriodView from "../PeriodView";
 import { PeriodNav, Pill } from "../ui";
@@ -17,7 +19,10 @@ export default async function WeekReportPage({ searchParams }: { searchParams: P
   const current = weekOf(today);
   const picked = weekOf(isDate(asked) ? asked : today);
   const period = picked.start > current.start ? current : picked;
-  const [, report, payouts] = await Promise.all([requireStaff(), getPeriodReport(period), getTipPayouts(period.start, period.end)]);
+  await requireStaff();
+  // Membership payments are read from Stripe first if it's been a while.
+  await ensureMemberPaymentsFresh();
+  const [report, payouts, sync] = await Promise.all([getPeriodReport(period), getTipPayouts(period.start, period.end), getPaymentSyncStatus()]);
 
   const link = (p: Period) => (p.start === current.start ? "/admin/reports/week" : `/admin/reports/week?date=${p.start}`);
   const next = shiftPeriod(period, 1);
@@ -39,7 +44,7 @@ export default async function WeekReportPage({ searchParams }: { searchParams: P
         </Pill>
         <DateJump date={period.start} max={today} path="/admin/reports/week" omit={today} label="Pick a day in the week" />
       </PeriodNav>
-      <PeriodView report={report} noun="week" boxOfficeHref={`/admin/reports/box-office?range=week&date=${period.start}`} tips={tipWeek(report.days, payouts)} />
+      <PeriodView report={report} noun="week" boxOfficeHref={`/admin/reports/box-office?range=week&date=${period.start}`} tips={tipWeek(report.days, payouts)} sync={sync} />
     </div>
   );
 }
