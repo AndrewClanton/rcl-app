@@ -20,12 +20,13 @@ export interface DeviceSettings {
   autoPrint: boolean; // print a receipt after every sale
   drawerOnCash: boolean; // open the cash drawer when a sale takes cash
   printTickets: boolean; // print a keepsake ticket for every movie admission sold
+  dim: boolean; // the dark screen, for the bar at night (RegisterScreen.tsx)
 }
 
 const KEY = "rcl.register-devices.v1";
 // The old way until someone switches: a register that was already set up
 // keeps printing exactly as it did.
-const DEFAULTS: DeviceSettings = { station: "bar", readerId: "", printVia: "direct", printerAddress: "", autoPrint: true, drawerOnCash: true, printTickets: true };
+const DEFAULTS: DeviceSettings = { station: "bar", readerId: "", printVia: "direct", printerAddress: "", autoPrint: true, drawerOnCash: true, printTickets: true, dim: false };
 
 let cached: DeviceSettings | null = null;
 const listeners = new Set<() => void>();
@@ -35,7 +36,7 @@ function read(): DeviceSettings {
   try {
     const raw = localStorage.getItem(KEY);
     const saved = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-    cached = { ...saved, station: saved.station === "outdoor" ? "outdoor" : "bar", printVia: saved.printVia === "station" ? "station" : "direct" };
+    cached = { ...saved, station: saved.station === "outdoor" ? "outdoor" : "bar", printVia: saved.printVia === "station" ? "station" : "direct", dim: saved.dim === true };
   } catch {
     cached = DEFAULTS;
   }

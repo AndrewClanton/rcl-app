@@ -10,20 +10,13 @@ import { printTargetOf, sendPrint } from "../printing";
 import { saveDeviceSettings, useDeviceSettings } from "./settings";
 import InfoTip from "@/components/help/InfoTip";
 
-// The "Devices" button on the register: which register this is (Bar or
-// Outdoor stand), its card reader, how it prints (through the website to
-// the station's printer, or straight to a printer's IP the old way),
-// whether receipts print on their own, and test buttons for the printer and
-// the cash drawer.
-export default function DevicesPanel({
-  onReprint,
-  onReprintTickets,
-  fallbackReaderId,
-}: {
-  onReprint: (() => Promise<PrintResult>) | null;
-  onReprintTickets: (() => Promise<PrintResult>) | null;
-  fallbackReaderId: string | null;
-}) {
+// The "Devices" button on the register: this iPad's screen (Dim), which
+// register this is (Bar or Outdoor stand), its card reader, how it prints
+// (through the website to the station's printer, or straight to a printer's
+// IP the old way), whether receipts print on their own, and test buttons for
+// the printer and the cash drawer. Reprinting the last receipt moved to the
+// order panel (LastSale) and Recent.
+export default function DevicesPanel({ fallbackReaderId }: { fallbackReaderId: string | null }) {
   const settings = useDeviceSettings();
   const [open, setOpen] = useState(false);
   const [address, setAddress] = useState(settings.printerAddress);
@@ -78,14 +71,34 @@ export default function DevicesPanel({
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>
           <div className="card max-h-full w-full max-w-md space-y-5 overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-baseline justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <h3 className="font-display text-xl">This register&apos;s devices</h3>
-              <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => setOpen(false)}>
+              <button className="btn-quiet shrink-0" onClick={() => setOpen(false)}>
                 Close
               </button>
             </div>
 
             <section className="space-y-2">
+              <div className="label-xs">Screen</div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={settings.dim}
+                className="flex min-h-12 w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm"
+                style={{ borderColor: settings.dim ? "var(--accent)" : "var(--edge, var(--border))", background: settings.dim ? "var(--accent-soft)" : undefined }}
+                onClick={() => saveDeviceSettings({ dim: !settings.dim })}
+              >
+                <span>
+                  <span className="font-bold">Dim the screen</span>
+                  <span className="block text-xs" style={{ color: "var(--muted)" }}>
+                    A dark register for the bar at night. Just this iPad.
+                  </span>
+                </span>
+                <span className="shrink-0 font-bold">{settings.dim ? "On" : "Off"}</span>
+              </button>
+            </section>
+
+            <section className="space-y-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
               <div className="label-xs flex items-center">
                 Which register is this?
                 <InfoTip topic="devices-station" />
@@ -94,7 +107,7 @@ export default function DevicesPanel({
                 {STATIONS.map((s) => (
                   <button
                     key={s}
-                    className={`chip flex-1 !px-3 !py-2 text-sm ${settings.station === s ? "chip-selected font-bold" : ""}`}
+                    className={`chip min-h-11 flex-1 !px-3 !text-sm ${settings.station === s ? "chip-selected font-bold" : ""}`}
                     onClick={() => {
                       saveDeviceSettings({ station: s });
                       setResult(null);
@@ -130,7 +143,7 @@ export default function DevicesPanel({
               ) : (
                 <div className="space-y-1.5">
                   {readers.map((r) => (
-                    <label key={r.id} className="flex items-center gap-2 text-sm">
+                    <label key={r.id} className="flex min-h-11 items-center gap-2 text-sm">
                       <input type="radio" name="register-reader" id={`reader-${r.id}`} checked={readerId === r.id} onChange={() => saveDeviceSettings({ readerId: r.id })} />
                       <span className="font-bold">{r.label}</span>
                       <span className="text-xs" style={{ color: r.online ? "var(--success-text, green)" : "var(--muted)" }}>
@@ -147,12 +160,11 @@ export default function DevicesPanel({
                 Receipt printer
                 <InfoTip topic="devices-print-via" />
               </div>
-              <label className="flex items-start gap-2 text-sm">
+              <label className="flex min-h-11 items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="print-via"
                   id="print-via-station"
-                  className="mt-1"
                   checked={viaStation}
                   onChange={() => {
                     saveDeviceSettings({ printVia: "station" });
@@ -164,12 +176,11 @@ export default function DevicesPanel({
                   <span className="font-bold">Print through the website</span> to the {stationLabel} printer
                 </span>
               </label>
-              <label className="flex items-start gap-2 text-sm">
+              <label className="flex min-h-11 items-center gap-2 text-sm">
                 <input
                   type="radio"
                   name="print-via"
                   id="print-via-direct"
-                  className="mt-1"
                   checked={!viaStation}
                   onChange={() => {
                     saveDeviceSettings({ printVia: "direct" });
@@ -242,17 +253,11 @@ export default function DevicesPanel({
                 <button className="btn-secondary" disabled={!target || !!busy} onClick={() => target && run("drawer", () => sendPrint(target, "drawer", drawerXml(), "Drawer (Devices)"), "Drawer opened.")}>
                   {busy === "drawer" ? "Opening…" : "Open cash drawer"}
                 </button>
-                {onReprint && (
-                  <button className="btn-secondary" disabled={!target || !!busy} onClick={() => run("reprint", onReprint, "Last receipt printed.")}>
-                    {busy === "reprint" ? "Printing…" : "Reprint last receipt"}
-                  </button>
-                )}
-                {onReprintTickets && (
-                  <button className="btn-secondary" disabled={!target || !!busy} onClick={() => run("tickets", onReprintTickets, "Last sale's tickets printed.")}>
-                    {busy === "tickets" ? "Printing…" : "Reprint last tickets"}
-                  </button>
-                )}
               </div>
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Reprinting a receipt or tickets: <strong>Reprint receipt</strong> shows on the order panel after a sale, and <strong>Recent</strong> (under the order) has
+                every sale.
+              </p>
 
               {result && (
                 <div className={`notice ${result.tone === "ok" ? "notice-success" : "notice-warn"} text-sm`}>
@@ -269,15 +274,15 @@ export default function DevicesPanel({
                 </div>
               )}
 
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex min-h-11 items-center gap-2 text-sm">
                 <input id="printer-autoprint" type="checkbox" checked={settings.autoPrint} onChange={(e) => saveDeviceSettings({ autoPrint: e.target.checked })} />
                 Print a receipt after every sale
               </label>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex min-h-11 items-center gap-2 text-sm">
                 <input id="printer-tickets" type="checkbox" checked={settings.printTickets} onChange={(e) => saveDeviceSettings({ printTickets: e.target.checked })} />
                 Print a movie ticket for every admission sold
               </label>
-              <label className="flex items-center gap-2 text-sm">
+              <label className="flex min-h-11 items-center gap-2 text-sm">
                 <input id="printer-drawer" type="checkbox" checked={settings.drawerOnCash} onChange={(e) => saveDeviceSettings({ drawerOnCash: e.target.checked })} />
                 Open the cash drawer when a sale takes cash
               </label>

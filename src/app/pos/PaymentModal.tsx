@@ -98,7 +98,7 @@ function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: numb
         >
           {sum === 0 ? "Add a voucher" : covers ? "Done · paid with vouchers" : `Use ${money(sum)} · pay the other ${money(total - sum)}`}
         </button>
-        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+        <button className="btn-quiet mt-3" onClick={onBack}>
           Back
         </button>
       </div>
@@ -165,7 +165,7 @@ function CashTender({ total, then, onBack, onDone }: { total: number; then?: num
         <button className="btn-primary mt-4 w-full py-3 text-base" disabled={change === null} onClick={() => change !== null && tendered !== null && onDone(tendered)}>
           {then === undefined || change === null ? done : `Next · ${money(then)} on the card`}
         </button>
-        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+        <button className="btn-quiet mt-3" onClick={onBack}>
           Back
         </button>
       </div>
@@ -227,7 +227,7 @@ function SplitAmount({ due, initial, onBack, onNext }: { due: number; initial: n
         <button className="btn-primary mt-4 w-full py-3 text-base" disabled={!ready} onClick={() => onNext(cash)}>
           {ready ? `Take the ${money(cash)} cash first` : "Enter the cash part"}
         </button>
-        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+        <button className="btn-quiet mt-3" onClick={onBack}>
           Back
         </button>
       </div>
@@ -511,7 +511,7 @@ export default function PaymentModal({
                 <button className="btn-secondary" onClick={() => void cancelReaderTip(true)}>
                   Enter the tip here
                 </button>
-                <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => void cancelReaderTip(false)}>
+                <button className="btn-quiet" onClick={() => void cancelReaderTip(false)}>
                   Back
                 </button>
               </div>
@@ -534,7 +534,7 @@ export default function PaymentModal({
                 <button className="btn-secondary" onClick={() => void cancelReaderTip(true)}>
                   Enter the tip here instead
                 </button>
-                <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => void cancelReaderTip(false)}>
+                <button className="btn-quiet" onClick={() => void cancelReaderTip(false)}>
                   Cancel
                 </button>
               </div>
@@ -636,7 +636,7 @@ export default function PaymentModal({
                   {reader.message}
                 </p>
               )}
-              <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} disabled={cancelling} onClick={handleCancelReader}>
+              <button className="btn-quiet mt-4" disabled={cancelling} onClick={handleCancelReader}>
                 {cancelling ? "Cancelling..." : "Cancel"}
               </button>
             </>
@@ -709,19 +709,19 @@ export default function PaymentModal({
         )}
 
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          <button className="btn-secondary px-4 py-2" onClick={() => setCashOpen(true)}>
+          <button className="btn-secondary min-h-12 px-4 py-2" onClick={() => setCashOpen(true)}>
             Cash
           </button>
           {/* Cards only go through the reader: a "Card" button without one
               recorded a card sale that was never charged. */}
           {readerId && (
-            <button className="btn-secondary px-4 py-2" onClick={() => handleReaderCharge()}>
+            <button className="btn-secondary min-h-12 px-4 py-2" onClick={() => handleReaderCharge()}>
               Card (reader)
             </button>
           )}
           {readerId && SPLIT_ENABLED && due > MIN_CARD && (
             <button
-              className="btn-secondary px-4 py-2"
+              className="btn-secondary min-h-12 px-4 py-2"
               onClick={() => {
                 setSplitNote(null);
                 setSplitStep("amount");
@@ -731,7 +731,7 @@ export default function PaymentModal({
             </button>
           )}
           {voucher === 0 && (
-            <button className="btn-secondary px-4 py-2" onClick={() => setVoucherOpen(true)}>
+            <button className="btn-secondary min-h-12 px-4 py-2" onClick={() => setVoucherOpen(true)}>
               Voucher
             </button>
           )}
@@ -742,7 +742,7 @@ export default function PaymentModal({
           </p>
         )}
 
-        <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onCancel}>
+        <button className="btn-quiet mt-4" onClick={onCancel}>
           Cancel
         </button>
       </div>

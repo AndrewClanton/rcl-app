@@ -39,7 +39,11 @@
   --warn-bg: #fdf1d6;
   --warn-border: #e8c266;
   --warn-text: #8a5a0a;
-  --danger-text: #ed1c24;
+  /* The brand red is too light for small text on the cream (about 4:1).
+     Small red text (errors, prices, links) uses this deeper red, about
+     6.4:1 on the cream and 7:1 on white; fills keep --accent. */
+  --accent-text: #b3121a;
+  --danger-text: #b3121a;
 }
 
 @theme inline {
@@ -57,10 +61,11 @@ body {
 }
 
 @layer components {
+  /* --edge: the register's firmer outline for things you tap (.pos-root). */
   .input {
     @apply w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors;
     background: var(--surface);
-    border-color: var(--border);
+    border-color: var(--edge, var(--border));
     color: var(--foreground);
   }
   .input:focus {
@@ -90,11 +95,15 @@ body {
   .card-flat {
     @apply rounded-lg border p-4 transition-colors;
     background: var(--surface);
-    border-color: var(--border);
+    border-color: var(--edge, var(--border));
   }
-  .card-flat:hover {
-    border-color: var(--accent);
-    background: var(--surface-hover);
+  /* Hover looks only where there's a mouse: on an iPad a tapped button
+     kept its hover look until the next tap somewhere else. */
+  @media (hover: hover) {
+    .card-flat:hover {
+      border-color: var(--accent);
+      background: var(--surface-hover);
+    }
   }
 
   .btn-primary {
@@ -102,8 +111,10 @@ body {
     background: var(--accent);
     color: var(--accent-foreground);
   }
-  .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover);
+  @media (hover: hover) {
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
   }
 
   .btn-secondary {
@@ -111,18 +122,22 @@ body {
     border-color: var(--foreground);
     color: var(--foreground);
   }
-  .btn-secondary:hover:not(:disabled) {
-    background: var(--foreground);
-    color: var(--background);
+  @media (hover: hover) {
+    .btn-secondary:hover:not(:disabled) {
+      background: var(--foreground);
+      color: var(--background);
+    }
   }
 
   .chip {
     @apply rounded-full border px-3 py-1 text-xs transition-colors;
-    border-color: var(--border);
+    border-color: var(--edge, var(--border));
     color: var(--foreground);
   }
-  .chip:hover {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .chip:hover {
+      border-color: var(--accent);
+    }
   }
   .chip-selected {
     border-color: var(--accent);
@@ -239,6 +254,105 @@ body {
   body {
     background: #fff;
     color: #000;
+  }
+}
+
+/*
+ * The register (src/app/pos; its root is RegisterScreen.tsx). Firmer lines
+ * than the rest of the site, so buttons and fields read at a glance across a
+ * dim bar, and the deeper red for small red text. Dim is a per-iPad setting
+ * (Devices): the same tokens on a dark ground for the bar at night. It's set
+ * on <body> too, so help bubbles and the page edges go dark with it.
+ */
+@layer components {
+  .pos-root {
+    /* Dividers a notch firmer than the site's; --edge, firmer again, is the
+       outline of anything tapped (chips, menu buttons, fields, the quiet
+       buttons): 3:1 or better on the white and the cream. */
+    --border: #cdc4a9;
+    --edge: #948b75;
+    /* Ran out is a stock job, not an alarm: the stock area's teal (the back
+       office's .bo-area-stock) rather than the status red. */
+    --ran-out: #0e7490;
+    /* A red count badge ("2 out") under white text; the same when dimmed. */
+    --danger-fill: #b3121a;
+    color: var(--foreground);
+  }
+  .pos-root[data-register-dim],
+  body[data-register-dim] {
+    color-scheme: dark;
+    --background: #12100c;
+    --surface: #1d1a14;
+    --surface-hover: #29251d;
+    --border: #4d4638;
+    --edge: #7a7058;
+    --foreground: #f2ecdc;
+    --muted: #b0a791;
+    --accent-soft: rgba(237, 28, 36, 0.2);
+    --accent-text: #ff7a7f;
+    --danger-text: #ff7a7f;
+    --success-bg: #12301c;
+    --success-border: #2e6b42;
+    --success-text: #8fdca7;
+    --warn-bg: #36290b;
+    --warn-border: #7d6320;
+    --warn-text: #f5cf73;
+    --ran-out: #57c7dc;
+  }
+
+  .pos-root .eyebrow,
+  .pos-root .chip-selected {
+    color: var(--accent-text);
+  }
+
+  /* A tap shows, since there's no hover on the iPad. */
+  .pos-root .card-flat:active:not(:disabled),
+  .pos-root .chip:active:not(:disabled) {
+    background: var(--surface-hover);
+  }
+
+  /* The quiet button: Cancel, Close and Back in the register's windows. A
+     full 44px to tap, and plainly less loud than the choices above it. */
+  .btn-quiet {
+    @apply inline-flex min-h-11 items-center justify-center rounded-lg border px-4 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    border-color: var(--edge, var(--border));
+    color: var(--muted);
+  }
+  .btn-quiet:active:not(:disabled) {
+    background: var(--surface-hover);
+  }
+  @media (hover: hover) {
+    .btn-quiet:hover:not(:disabled) {
+      border-color: var(--foreground);
+      color: var(--foreground);
+    }
+  }
+
+  /* Ran out on the shift bar: outlined in the stock teal. */
+  .btn-ran-out {
+    border-color: var(--ran-out);
+    color: var(--ran-out);
+  }
+  @media (hover: hover) {
+    .btn-ran-out:hover:not(:disabled) {
+      background: var(--ran-out);
+      color: var(--surface);
+    }
+  }
+
+  /* A line just rung flashes, so a one-tap add is seen. */
+  .pos-line-added {
+    animation: pos-line-added 0.9s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pos-line-added {
+      animation: none;
+    }
+  }
+}
+@keyframes pos-line-added {
+  from {
+    background: color-mix(in srgb, var(--gold) 55%, var(--surface));
   }
 }
 
@@ -497,23 +611,6 @@ body {
     mask-image: linear-gradient(135deg, transparent 20%, black);
   }
 
-  /* Pre-press markup: a registration mark with a technical note, kept to a
-     corner of a Panel Pop piece, small, grey and monospace -- never inline
-     with the headline or copy. */
-  .reg-note {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: rgba(20, 17, 12, 0.62);
-    font-family: var(--font-mono), "Courier New", monospace;
-    font-size: 8.5px;
-    letter-spacing: 0.03em;
-    line-height: 1.4;
-    text-transform: uppercase;
-    z-index: 2;
-  }
-
   /* The proof stamp, for a spec panel's header. */
   .proof-stamp {
     font-family: var(--font-mono), "Courier New", monospace;
@@ -660,34 +757,6 @@ body {
     background-image: repeating-linear-gradient(90deg, var(--foreground) 0 12px, transparent 12px 18px);
     border-radius: 2px;
     opacity: 0.85;
-  }
-
-  /* Spec callout: a dot, a leader line, a technical note. */
-  .callout {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    white-space: nowrap;
-    color: rgba(20, 17, 12, 0.62);
-    font-family: var(--font-mono), "Courier New", monospace;
-    font-size: 9.5px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .callout::before {
-    content: "";
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: currentColor;
-    flex: none;
-  }
-  .callout > i {
-    display: block;
-    width: 26px;
-    height: 1px;
-    background: currentColor;
-    flex: none;
   }
 
   /* Color bar chips with their plate codes under them. */

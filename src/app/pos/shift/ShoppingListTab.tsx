@@ -186,9 +186,9 @@ export default function ShoppingListTab({
       {top}
 
       {(ranOut > 0 || done || outError) && (
-        <section className="rounded-xl border-2 p-4" style={{ borderColor: "var(--accent)", background: "var(--surface)" }}>
+        <section className="rounded-xl border-2 p-4" style={{ borderColor: "var(--ran-out)", background: "var(--surface)" }}>
           <div className="flex flex-wrap items-baseline justify-between gap-3">
-            <h3 className="font-display text-xl" style={{ color: "var(--accent)" }}>
+            <h3 className="font-display text-xl" style={{ color: "var(--ran-out)" }}>
               Ran out
             </h3>
             <span className="text-sm" style={{ color: "var(--muted)" }}>
@@ -289,7 +289,7 @@ export default function ShoppingListTab({
       <div>
         {ranOut > 0 && <h3 className="font-display text-xl">Under par</h3>}
         <p className="text-sm" style={{ color: "var(--muted)" }}>
-          {list ? `${sourceLine(list)} ${total} item${total === 1 ? "" : "s"} under par.` : "No par count yet. Do one from the Par count tab."}
+          {list ? `${sourceLine(list)} ${total} item${total === 1 ? "" : "s"} below par.` : "No par count yet. Do one from the Par count tab."}
         </p>
       </div>
       {list && total === 0 && <p className="text-lg">Everything counted is at or above par. Nothing to buy.</p>}

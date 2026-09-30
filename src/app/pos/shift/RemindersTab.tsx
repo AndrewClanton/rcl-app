@@ -17,7 +17,25 @@ function describe(r: ReminderRow) {
   return `${new Date(2000, 0, 1, h, m).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })} · ${daysLabel(r.days)}`;
 }
 
-export default function RemindersTab({ me, staff, onChanged }: { me: OnShift | null; staff: { id: string; name: string }[]; onChanged: () => void }) {
+// A reminder that popped up and was put off with "Remind me later" on this
+// iPad: `until` is when it pops up again.
+export type SnoozedReminder = { key: string; message: string; detail: string; until: number };
+
+const clock = (ms: number) => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+
+export default function RemindersTab({
+  me,
+  staff,
+  snoozed,
+  onUnsnooze,
+  onChanged,
+}: {
+  me: OnShift | null;
+  staff: { id: string; name: string }[];
+  snoozed: SnoozedReminder[];
+  onUnsnooze: (key: string) => void;
+  onChanged: () => void;
+}) {
   const api = useOpsApi();
   const [rows, setRows] = useState<ReminderRow[] | null>(null);
   const [form, setForm] = useState<Partial<ReminderRow> | null>(null);
@@ -48,10 +66,28 @@ export default function RemindersTab({ me, staff, onChanged }: { me: OnShift | n
             They pop up in a bar above the register until someone taps Done.
           </p>
         </div>
-        <button className="btn-primary !px-4 !py-2 text-sm" onClick={() => setForm({ kind: "before_screening", minutes: 5, message: "", assignee_id: null })}>
+        <button className="btn-primary min-h-11 !px-4 !py-2 text-sm" onClick={() => setForm({ kind: "before_screening", minutes: 5, message: "", assignee_id: null })}>
           Add a reminder
         </button>
       </div>
+      {snoozed.length > 0 && (
+        <section className="notice notice-warn space-y-2">
+          <div className="font-bold">Put off for now</div>
+          {snoozed.map((r) => (
+            <div key={r.key} className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="font-bold">{r.message}</div>
+                <div className="text-xs">
+                  {r.detail} · pops up again at {clock(r.until)}
+                </div>
+              </div>
+              <button className="btn-secondary min-h-11 !px-4 !py-2 text-sm" onClick={() => onUnsnooze(r.key)}>
+                Show it now
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
       {error && <p className="text-sm" style={{ color: "var(--danger-text)" }}>{error}</p>}
       {form && (
         <ReminderForm
@@ -85,12 +121,12 @@ export default function RemindersTab({ me, staff, onChanged }: { me: OnShift | n
                 </div>
               </div>
               {r.active && (
-                <button className="chip !px-3 !py-1.5" onClick={() => setForm(r)}>
+                <button className="chip min-h-11 !px-4 !text-sm" onClick={() => setForm(r)}>
                   Edit
                 </button>
               )}
               <button
-                className="chip !px-3 !py-1.5"
+                className="chip min-h-11 !px-4 !text-sm"
                 onClick={async () => {
                   await api.setReminderActive(r.id, !r.active, me?.employeeId ?? null).catch(() => null);
                   reload();
@@ -152,7 +188,7 @@ function ReminderForm({
             <button
               type="button"
               key={k}
-              className={`chip !px-4 !py-2 !text-sm ${kind === k ? "chip-selected" : ""}`}
+              className={`chip min-h-11 !px-4 !text-sm ${kind === k ? "chip-selected" : ""}`}
               onClick={() => {
                 setKind(k);
                 if (k === "schedule_low" && !initial.id) setMinutes("7");
@@ -205,7 +241,7 @@ function ReminderForm({
                 <button
                   type="button"
                   key={i}
-                  className={`chip h-10 w-10 !p-0 !text-sm ${days.includes(i) ? "chip-selected" : ""}`}
+                  className={`chip h-11 w-11 !p-0 !text-sm ${days.includes(i) ? "chip-selected" : ""}`}
                   onClick={() => setDays((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i]))}
                   aria-pressed={days.includes(i)}
                 >

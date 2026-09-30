@@ -53,10 +53,10 @@ export default function ParCountAndShoppingList() {
         out mid-shift? Tap <b>Ran out</b> so the register stops selling it and it goes to the top of the list.
       </Need>
 
-      <Step n={1} title="Open the par sheet from the register">
+      <Step n={1} title="Open the par count from the register">
         <p>
-          On the register, the shift bar along the top has <b>Par sheet</b>, <b>Shopping</b> and <b>Ran out</b>. Tap <b>Par sheet</b>. Pick the sheet you&apos;re counting
-          (the bar, the kitchen, the stand); each button says how many are counted so far.
+          On the register, the shift bar along the top has <b>Par count</b>, <b>Shopping</b> and <b>Ran out</b> (on an iPad held upright, Par count and Shopping list are under{" "}
+          <b>More</b>). Tap <b>Par count</b>. Pick the sheet you&apos;re counting (the bar, the kitchen, the stand); each button says how many are counted so far.
         </p>
       </Step>
 
@@ -65,7 +65,7 @@ export default function ParCountAndShoppingList() {
           Every line says what it&apos;s counted in: <b>bottles</b>, <b>bags</b>, <b>boxes</b>, <b>gallons</b>. Count those, not drinks or scoops. Fully stocked? Tap{" "}
           <b>= par</b> and move on. Otherwise use <b>−</b> and <b>+</b>.
         </p>
-        <Screen url={`${HOST}/pos`} caption="Register → Par sheet" label="Par sheet lines with counts; one is below par">
+        <Screen url={`${HOST}/pos`} caption="Register → Par count" label="Par sheet lines with counts; one is below par">
           <div className={`${s.card} ${s.cardFlush}`}>
             <Line name="Popcorn kernels" par="2 bags" last="3 bags" value="2" unit="bags" />
             <Line name="Nacho cheese" par="4 cans" last="4 cans" value="1" unit="cans" low="Below par: get 3 cans" />
@@ -83,7 +83,7 @@ export default function ParCountAndShoppingList() {
           Bottles, kegs, jugs and other things that get opened count in quarters. Count the full ones with <b>+</b>, then tap <b>¼</b>, <b>½</b> or <b>¾</b> for the open
           one. Two full bottles and one three-quarters full is <b>2¾</b>. Tap the lit one again to take it off.
         </p>
-        <Screen url={`${HOST}/pos`} caption="Register → Par sheet" label="A bottle line with the three-quarters button highlighted, counting 2 and three quarters">
+        <Screen url={`${HOST}/pos`} caption="Register → Par count" label="A bottle line with the three-quarters button highlighted, counting 2 and three quarters">
           <div className={`${s.card} ${s.cardFlush}`}>
             <Line name="Well vodka" par="3 bottles" last="3 bottles" value="2¾" unit="bottles" quarters="¾" ring="quarters" low="Below par by ¼ bottle: get 1 bottle" />
           </div>

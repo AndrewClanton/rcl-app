@@ -11,6 +11,7 @@ import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
 import UpdateBanner from "./UpdateBanner";
+import RegisterScreen from "./RegisterScreen";
 import { deploymentId } from "@/lib/deployment";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +52,8 @@ export default async function PosPage() {
   return (
     // On a tablet or bigger the register is locked to the screen: this fills
     // exactly one screen height and the panels inside scroll on their own.
-    <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-3 md:h-dvh md:overflow-hidden md:overscroll-none md:py-2">
+    // RegisterScreen: the register's own look, and Dim from Devices.
+    <RegisterScreen className="mx-auto flex w-full max-w-6xl flex-col px-4 py-3 md:h-dvh md:overflow-hidden md:overscroll-none md:py-2">
       {/* The iPad already shows the date; its height goes to the order instead. */}
       <div className="mb-2 flex shrink-0 items-baseline justify-between md:hidden">
         <h1 className="font-display text-xl" style={{ color: "var(--foreground)" }}>
@@ -80,6 +82,6 @@ export default async function PosPage() {
           registerTopic={registerTopic()}
         />
       </ItemSettingsProvider>
-    </div>
+    </RegisterScreen>
   );
 }

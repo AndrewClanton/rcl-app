@@ -71,7 +71,7 @@ export default function ChecklistTab({
                 >
                   <span
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 text-lg font-bold"
-                    style={{ borderColor: t.done ? "var(--success-text)" : "var(--foreground)", background: t.done ? "var(--success-text)" : "transparent", color: "#fff" }}
+                    style={{ borderColor: t.done ? "var(--success-text)" : "var(--foreground)", background: t.done ? "var(--success-text)" : "transparent", color: "var(--success-bg)" }}
                     aria-hidden="true"
                   >
                     {t.done ? "✓" : ""}

@@ -99,7 +99,7 @@ export default function TabCardModal({ tabId, tabName, readerId, onSaved, onClos
                 {message}
               </p>
             )}
-            <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={cancel}>
+            <button className="btn-quiet mt-4" onClick={cancel}>
               Cancel
             </button>
           </>

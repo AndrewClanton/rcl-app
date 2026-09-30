@@ -73,6 +73,7 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
   const [area, setArea] = useState<string>("");
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -152,7 +153,7 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
             <InfoTip topic="par-quarters" />
           </p>
         </div>
-        <button className="btn-secondary !px-4 !py-2 text-sm" onClick={() => setEditing(true)}>
+        <button className="btn-secondary min-h-11 !px-4 !py-2 text-sm" onClick={() => setEditing(true)}>
           Edit the list
         </button>
       </div>
@@ -287,24 +288,33 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
             counted · <strong style={{ color: below ? "var(--warn-text)" : undefined }}>{below}</strong> below par
             {error && <div style={{ color: "var(--danger-text)" }}>{error}</div>}
           </div>
-          <div className="ml-auto flex gap-2">
-            {counted > 0 && (
-              <button
-                className="btn-secondary !px-4 !py-3"
-                onClick={() => {
-                  writeDraft({});
-                  setCounts({});
-                }}
-              >
-                Clear
-              </button>
-            )}
-            <button className="btn-primary !px-6 !py-3" disabled={busy || counted === 0} onClick={() => (counted < active.length ? setConfirming(true) : submit())}>
-              {busy ? "Saving…" : "Save count"}
+          {/* Clear sits over here, well away from Save count, and asks first:
+              one stray tap could wipe a whole count. */}
+          {counted > 0 && (
+            <button className="btn-quiet" onClick={() => setClearing(true)}>
+              Clear counts
             </button>
-          </div>
+          )}
+          <button className="btn-primary ml-auto !px-6 !py-3" disabled={busy || counted === 0} onClick={() => (counted < active.length ? setConfirming(true) : submit())}>
+            {busy ? "Saving…" : "Save count"}
+          </button>
         </div>
       </div>
+
+      {clearing && (
+        <ConfirmModal
+          title={`Clear all ${counted} count${counted === 1 ? "" : "s"}?`}
+          description="The numbers on this iPad that haven't been saved go back to blank. Counts already saved stay saved."
+          danger
+          confirmLabel="Clear counts"
+          onConfirm={() => {
+            setClearing(false);
+            writeDraft({});
+            setCounts({});
+          }}
+          onCancel={() => setClearing(false)}
+        />
+      )}
 
       {confirming && (
         <ConfirmModal
@@ -347,10 +357,10 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-primary !px-4 !py-2 text-sm" onClick={() => setForm({ area: sheet, name: "", par_qty: 1 })}>
+          <button className="btn-primary min-h-11 !px-4 !py-2 text-sm" onClick={() => setForm({ area: sheet, name: "", par_qty: 1 })}>
             Add an item
           </button>
-          <button className="btn-secondary !px-4 !py-2 text-sm" onClick={onDone}>
+          <button className="btn-secondary min-h-11 !px-4 !py-2 text-sm" onClick={onDone}>
             Done editing
           </button>
         </div>
@@ -373,7 +383,7 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
 
       <div className="flex flex-wrap gap-2">
         {areas.map((a) => (
-          <button key={a} className={`chip !px-4 !py-2 !text-sm ${a === sheet ? "chip-selected" : ""}`} onClick={() => setSheet(a)}>
+          <button key={a} className={`chip min-h-11 !px-4 !text-sm ${a === sheet ? "chip-selected" : ""}`} onClick={() => setSheet(a)}>
             {a}
           </button>
         ))}
@@ -389,11 +399,11 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
                 {i.unit_size ? ` · ${i.unit_size}` : ""} · {stepLabel(i)} · {i.source ?? "No store"}
               </div>
             </div>
-            <button className="chip !px-3 !py-1.5" onClick={() => setForm(i)}>
+            <button className="chip min-h-11 !px-4 !text-sm" onClick={() => setForm(i)}>
               Edit
             </button>
             <button
-              className="chip !px-3 !py-1.5"
+              className="chip min-h-11 !px-4 !text-sm"
               onClick={async () => {
                 await api.setParItemActive(i.id, false, me?.employeeId ?? null).catch(() => null);
                 refresh();
@@ -407,7 +417,7 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
 
       {removed.length > 0 && (
         <div>
-          <button className="text-sm font-bold underline" onClick={() => setShowRemoved((s) => !s)}>
+          <button className="min-h-11 text-sm font-bold underline" onClick={() => setShowRemoved((s) => !s)}>
             {showRemoved ? "Hide" : "Show"} removed items ({removed.length})
           </button>
           {showRemoved && (
@@ -418,7 +428,7 @@ function EditParItems({ items, me, area, onDone }: { items: ParItem[]; me: OnShi
                     {i.name} <span className="text-xs">· {i.area}</span>
                   </div>
                   <button
-                    className="chip !px-3 !py-1.5"
+                    className="chip min-h-11 !px-4 !text-sm"
                     onClick={async () => {
                       await api.setParItemActive(i.id, true, me?.employeeId ?? null).catch(() => null);
                       refresh();

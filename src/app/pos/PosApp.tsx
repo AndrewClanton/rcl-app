@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
+import type { MenuCategory, MenuItem, Employee, MemberTier, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
-import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
+import ItemBuilder, { needsRecipeCard, type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
@@ -33,6 +33,7 @@ import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
 import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
+import LastSale from "./LastSale";
 import EasterEggs from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
@@ -317,9 +318,58 @@ export default function PosApp({
     setPointsRedeemed(f.points_redeemed);
   }
 
+  // The line just rung: scrolled into sight in the order and flashed, so a
+  // one-tap add (or a line that went up by one) is seen.
+  const [lastAdded, setLastAdded] = useState<{ key: string; at: number } | null>(null);
+  const lineRefs = useRef(new Map<string, HTMLDivElement>());
+  const orderBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = lastAdded ? lineRefs.current.get(lastAdded.key) : null;
+    if (!el) return;
+    // Scrolled inside the order's own box only (the nearest edge, like
+    // scrollIntoView's "nearest"). On a phone the box doesn't scroll, and
+    // the page mustn't jump away from the menu.
+    const box = orderBoxRef.current;
+    if (box && box.scrollHeight > box.clientHeight) {
+      const r = el.getBoundingClientRect();
+      const b = box.getBoundingClientRect();
+      if (r.bottom > b.bottom) box.scrollTop += r.bottom - b.bottom + 8;
+      else if (r.top < b.top) box.scrollTop -= b.top - r.top + 8;
+    }
+    // Restarted every time, so a second tap on the same line flashes again.
+    el.classList.remove("pos-line-added");
+    void el.offsetWidth;
+    el.classList.add("pos-line-added");
+    const timer = setTimeout(() => el.classList.remove("pos-line-added"), 900);
+    return () => clearTimeout(timer);
+  }, [lastAdded]);
+
+  // A second of the same thing (same item, price and choices, in any order)
+  // adds to the line already on the order instead of starting a new one.
+  // Movie tickets keep their own lines. The kitchen matches items the same
+  // way (name and choices, lib/print/order-lines.ts), so a tab's add-on
+  // tickets still come out right.
   function addLine(line: BuiltLine) {
-    setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, ...line }]);
+    const mods = [...line.mods].sort().join("\n");
+    const same = cart.find(
+      (l) => !l.screeningId && l.menuItemId === line.menuItemId && l.name === line.name && l.unit === line.unit && [...l.mods].sort().join("\n") === mods,
+    );
+    const key = same?.key ?? `${Date.now()}-${Math.random()}`;
+    setCart((prev) =>
+      same && prev.some((l) => l.key === same.key) ? prev.map((l) => (l.key === same.key ? { ...l, qty: l.qty + line.qty } : l)) : [...prev, { key, ...line }],
+    );
+    setLastAdded({ key, at: Date.now() });
     setBuilderItemId(null);
+  }
+
+  // A menu button: straight onto the order when there's nothing to choose,
+  // else its builder (its choices, or a made drink's recipe card).
+  function pickItem(item: MenuItem) {
+    if (item.modifier_groups.length === 0 && !needsRecipeCard(item, recipesByItem[item.id] ?? null)) {
+      addLine({ menuItemId: item.id, name: item.name, unit: item.price, qty: 1, mods: [], isAlcohol: item.is_alcohol });
+    } else {
+      setBuilderItemId(item.id);
+    }
   }
 
   function updateQty(key: string, delta: number) {
@@ -885,11 +935,7 @@ export default function PosApp({
             <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
               Tabs {openTabs.length}
             </button>
-            <DevicesPanel
-              fallbackReaderId={defaultReaderId}
-              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
-              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
-            />
+            <DevicesPanel fallbackReaderId={defaultReaderId} />
           </div>
 
           <div className="mb-2 flex items-center gap-2">
@@ -918,7 +964,7 @@ export default function PosApp({
           )}
         </div>
 
-        <div className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
+        <div ref={orderBoxRef} className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
           {heldListOpen && (
             <div className="card-flat p-3" style={{ background: "var(--surface-hover)" }}>
               <div className="eyebrow mb-2">Held orders</div>
@@ -981,19 +1027,18 @@ export default function PosApp({
               {toast}
             </div>
           )}
-          {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
-            <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
-              <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
-              <button
-                className="chip !px-3 !py-1"
-                onClick={async () => {
-                  const r = await sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber}`);
-                  setPrintNote(r.ok ? null : r.error);
-                }}
-              >
-                {printNote ? "Try printing again" : "Print receipt"}
-              </button>
-            </div>
+          {/* The last sale's receipt and tickets: between sales, or while a
+              print after the sale needs trying again. */}
+          {lastReceipt && printTarget && (printNote || !devices.autoPrint || (cart.length === 0 && !activeTabId)) && (
+            <LastSale
+              key={lastReceipt.orderNumber}
+              receipt={lastReceipt}
+              tickets={lastTickets?.orderNumber === lastReceipt.orderNumber ? lastTickets.lines : null}
+              target={printTarget}
+              autoPrint={devices.autoPrint}
+              note={printNote}
+              onNote={setPrintNote}
+            />
           )}
 
           {cart.length === 0 ? (
@@ -1003,29 +1048,39 @@ export default function PosApp({
           ) : (
             cart.map((line) => (
               // One compact row per line (quantity, name, price, remove) so a
-              // longer order still fits the iPad without scrolling much.
-              <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, -1)}
-                  aria-label={`One less ${line.name}`}
-                >
-                  −
-                </button>
-                <span className="w-5 shrink-0 text-center text-sm font-bold" style={{ color: "var(--foreground)" }}>
-                  {line.qty}
-                </span>
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, 1)}
-                  aria-label={`One more ${line.name}`}
-                >
-                  +
-                </button>
+              // longer order still fits the iPad without scrolling much. The
+              // buttons are a full 44px; a long name takes a second line.
+              <div
+                key={line.key}
+                ref={(el) => {
+                  if (el) lineRefs.current.set(line.key, el);
+                  else lineRefs.current.delete(line.key);
+                }}
+                className="card-flat flex items-center gap-2 px-1.5 py-1"
+              >
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    className="h-11 w-11 rounded-md border text-lg"
+                    style={{ borderColor: "var(--edge, var(--border))", color: "var(--foreground)" }}
+                    onClick={() => updateQty(line.key, -1)}
+                    aria-label={`One less ${line.name}`}
+                  >
+                    −
+                  </button>
+                  <span className="w-6 text-center text-sm font-bold tabular-nums" style={{ color: "var(--foreground)" }}>
+                    {line.qty}
+                  </span>
+                  <button
+                    className="h-11 w-11 rounded-md border text-lg"
+                    style={{ borderColor: "var(--edge, var(--border))", color: "var(--foreground)" }}
+                    onClick={() => updateQty(line.key, 1)}
+                    aria-label={`One more ${line.name}`}
+                  >
+                    +
+                  </button>
+                </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium" style={{ color: "var(--foreground)" }}>
+                  <div className="line-clamp-2 text-sm font-medium leading-tight" style={{ color: "var(--foreground)" }}>
                     {line.name}
                   </div>
                   {line.mods.length > 0 && (
@@ -1034,11 +1089,11 @@ export default function PosApp({
                     </div>
                   )}
                 </div>
-                <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
+                <span className="shrink-0 text-sm tabular-nums" style={{ color: "var(--foreground)" }}>
                   {money(line.unit * line.qty)}
                 </span>
                 <button
-                  className="h-9 w-9 shrink-0 rounded-md text-lg"
+                  className="h-11 w-11 shrink-0 rounded-md text-xl"
                   style={{ color: "var(--danger-text)" }}
                   onClick={() => removeLine(line.key)}
                   aria-label={`Remove ${line.name}`}
@@ -1057,21 +1112,18 @@ export default function PosApp({
           />
           <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
 
-          <div className="space-y-1 pt-1">
-          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
-            Monthly member (10% off)
-          </label>
-          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
-            Tax exempt
-          </label>
-          {totals.canRedeem && (
-            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-              <input type="checkbox" checked={pointsRedeemed} onChange={(e) => setPointsRedeemed(e.target.checked)} />
-              Redeem {POINTS_PER_REWARD} pts for {money(REWARD_VALUE)} off
-            </label>
-          )}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <ToggleRow on={monthlyMember} onChange={setMonthlyMember} label="Monthly member" note="10% off" />
+            <ToggleRow on={taxFree} onChange={setTaxFree} label="Tax exempt" />
+            {totals.canRedeem && (
+              <ToggleRow
+                className="col-span-2"
+                on={pointsRedeemed}
+                onChange={setPointsRedeemed}
+                label={`Redeem ${POINTS_PER_REWARD} points`}
+                note={`${money(REWARD_VALUE)} off this order`}
+              />
+            )}
           </div>
         </div>
 
@@ -1219,7 +1271,9 @@ export default function PosApp({
                         {...tileExtras(item, category, section.label, out)}
                         out={out}
                         // An 86'd item asks first: sell anyway, or it's back.
-                        onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}
+                        // Otherwise one tap rings it, unless there's a choice
+                        // to make or a recipe card to see.
+                        onClick={() => (out ? setOutPromptId(item.id) : pickItem(item))}
                       />
                     );
                   })}
@@ -1250,7 +1304,7 @@ export default function PosApp({
           employeeId={employeeId || null}
           onSell={() => {
             setOutPromptId(null);
-            setBuilderItemId(outPromptItem.id);
+            pickItem(outPromptItem);
           }}
           onClose={() => setOutPromptId(null)}
         />
@@ -1341,5 +1395,36 @@ export default function PosApp({
         />
       )}
     </div>
+  );
+}
+
+// An on/off for the order (Monthly member, Tax exempt, Redeem points): a
+// full 44px row to tap, where a checkbox was a small square.
+function ToggleRow({ on, onChange, label, note, className = "" }: { on: boolean; onChange: (on: boolean) => void; label: string; note?: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      className={`flex min-h-11 items-center gap-2.5 rounded-lg border px-3 py-1.5 text-left text-sm ${className}`}
+      style={{ borderColor: on ? "var(--accent)" : "var(--edge, var(--border))", background: on ? "var(--accent-soft)" : "var(--surface)", color: "var(--foreground)" }}
+      onClick={() => onChange(!on)}
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 text-xs font-black leading-none"
+        style={{ borderColor: on ? "var(--accent)" : "var(--edge, var(--border))", background: on ? "var(--accent)" : "transparent", color: "#fff" }}
+      >
+        {on ? "✓" : ""}
+      </span>
+      <span className="min-w-0 leading-tight">
+        <span className={on ? "font-bold" : undefined}>{label}</span>
+        {note && (
+          <span className="block text-xs" style={{ color: "var(--muted)" }}>
+            {note}
+          </span>
+        )}
+      </span>
+    </button>
   );
 }

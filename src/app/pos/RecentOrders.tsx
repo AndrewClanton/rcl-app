@@ -89,7 +89,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
           <div className="card flex h-[85vh] w-full max-w-4xl flex-col !p-0 shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: "var(--border)" }}>
               <h3 className="font-display text-xl">Recent orders</h3>
-              <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => setOpen(false)}>
+              <button className="btn-quiet" onClick={() => setOpen(false)}>
                 Close
               </button>
             </div>

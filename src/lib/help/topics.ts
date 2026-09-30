@@ -242,7 +242,7 @@ export const HELP_TOPICS = {
     title: "The par count",
     area: "Register: shift tools",
     body:
-      "Par is how much of each thing we keep on hand. On the register's Par sheet, count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
+      "Par is how much of each thing we keep on hand. On the register, tap Par count and count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-quarters": {
@@ -256,7 +256,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. Bought it (here, or on the manager's to-do) clears a Ran out report and puts its menu items back on sale; Found some or False alarm clears it without buying anything.",
+      "The shopping list builds itself from the latest counts: everything below par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. Bought it (here, or on the manager's to-do) clears a Ran out report and puts its menu items back on sale; Found some or False alarm clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {

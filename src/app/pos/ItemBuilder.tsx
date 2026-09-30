@@ -11,6 +11,14 @@ function unitLabel(unit: string) {
   return unit === "count" ? "ct" : unit;
 }
 
+// A drink made to a recipe (more than one thing in it, or steps to follow)
+// opens here even with nothing to choose, so the bartender sees its recipe
+// card. Anything else with nothing to choose goes straight on the order
+// with one tap (PosApp), a beer or a single pour included.
+export function needsRecipeCard(item: MenuItem, recipe: Recipe | null): boolean {
+  return item.is_alcohol && !!recipe && (recipe.ingredients.length > 1 || !!recipe.instructions?.trim());
+}
+
 export interface BuiltLine {
   menuItemId: string;
   name: string;
@@ -114,14 +122,19 @@ export default function ItemBuilder({
 
       {item.modifier_groups.map((g) => (
         <div key={g.id} className="mb-3">
-          <div className="label-xs mb-1.5" style={g.must_choose && !(sel[g.key] ?? []).length ? { color: "var(--accent)" } : undefined}>
+          <div className="label-xs mb-1.5" style={g.must_choose && !(sel[g.key] ?? []).length ? { color: "var(--accent-text)" } : undefined}>
             {g.label} {g.type === "single" ? (g.must_choose ? "(pick one)" : "(choose 1)") : "(optional)"}
           </div>
           <div className="flex flex-wrap gap-2">
             {g.options.map((o) => {
               const picked = (sel[g.key] ?? []).includes(o.name);
               return (
-                <button key={o.id} className={picked ? "chip chip-selected" : "chip"} onClick={() => toggleOption(g.key, g.type, o.name)}>
+                <button
+                  key={o.id}
+                  className={`chip min-h-11 !px-4 !text-sm ${picked ? "chip-selected font-bold" : ""}`}
+                  aria-pressed={picked}
+                  onClick={() => toggleOption(g.key, g.type, o.name)}
+                >
                   {o.name}
                   {o.price_delta ? ` (+${money(o.price_delta).slice(1)})` : ""}
                 </button>
@@ -131,28 +144,35 @@ export default function ItemBuilder({
         </div>
       ))}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-        <div className="flex items-center gap-3">
+      {/* Pinned to the bottom of the menu panel, so Add to order is always
+          on screen however many choices the item has. */}
+      <div
+        className="sticky bottom-0 -mx-4 -mb-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-b-lg border-t px-4 py-3"
+        style={{ borderColor: "var(--border)", background: "var(--surface-hover)" }}
+      >
+        <div className="flex items-center gap-2">
           <button
-            className="h-9 w-9 rounded-lg border text-base"
-            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            className="h-11 w-11 rounded-lg border text-lg"
+            style={{ borderColor: "var(--edge, var(--border))", color: "var(--foreground)" }}
             disabled={qty <= 1}
             onClick={() => setQty((q) => q - 1)}
+            aria-label="One fewer"
           >
             −
           </button>
-          <span className="min-w-[1.5rem] text-center font-medium" style={{ color: "var(--foreground)" }}>
+          <span className="min-w-[1.5rem] text-center font-medium tabular-nums" style={{ color: "var(--foreground)" }}>
             {qty}
           </span>
           <button
-            className="h-9 w-9 rounded-lg border text-base"
-            style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
+            className="h-11 w-11 rounded-lg border text-lg"
+            style={{ borderColor: "var(--edge, var(--border))", color: "var(--foreground)" }}
             onClick={() => setQty((q) => q + 1)}
+            aria-label="One more"
           >
             +
           </button>
         </div>
-        <div className="text-xl font-semibold" style={{ color: "var(--accent)" }}>
+        <div className="text-xl font-semibold tabular-nums" style={{ color: "var(--accent-text)" }}>
           {money(unitPrice() * qty)}
         </div>
         <div className="flex gap-2">

@@ -12,8 +12,8 @@ import { publishOuts, setOutsRefresher, useRanOut } from "./ran-out-store";
 import MyHours from "./MyHours";
 
 // The register's shift tools: who's working, reminders, and the buttons that
-// open the checklist, par count, shopping list and history. Sits above the
-// register and refreshes every minute.
+// open the checklist, par count, shopping list, reminders and history. Sits
+// above the register and refreshes every minute.
 
 const ME_KEY = "rcl.shift.me";
 const readMe = () => {
@@ -162,16 +162,26 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
     refresh();
   }
 
+  // Reminders tapped "Remind me later": they come back on their own, and
+  // Reminders (under More) lists them in the meantime.
+  const snoozedDue = (status?.reminders ?? [])
+    .map((r) => ({ ...r, key: `${r.reminderId}:${r.occurrence}`, until: snoozed[`${r.reminderId}:${r.occurrence}`] }))
+    .filter((r) => !!r.until);
+  const belowPar = status?.lastCount?.below ?? 0;
+  const outCount = managerHere ? (status?.ranOut ?? 0) : 0;
+
   return (
     <>
-      {/* One slim row on the iPad: who's on (scrolls sideways if it's a
-          crowd) on the left, shift tools on the right. An iPad held
-          upright is too narrow for both, so the tools drop to a second row
-          there rather than squeezing who's on out of sight. */}
+      {/* One slim row on the iPad, held either way: who's on (scrolls
+          sideways if it's a crowd) on the left, shift tools on the right.
+          Upright, Par count and Shopping list move under More so the row
+          still fits; a phone lets it wrap. */}
       <div className="card mb-2 !px-3 !py-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 md:min-w-[18rem] md:flex-1 md:flex-nowrap md:overflow-x-auto">
-            <span className="eyebrow shrink-0">On shift</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:flex-nowrap">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 md:flex-1 md:flex-nowrap md:overflow-x-auto">
+            {/* Upright, the label, start times and hint step aside so the names
+                and Start shift fit beside the tools. */}
+            <span className={`eyebrow shrink-0 ${status?.onShift.length ? "md:max-lg:hidden" : ""}`}>On shift</span>
             {status && status.onShift.length === 0 && (
               <span className="shrink-0 text-sm" style={{ color: "var(--muted)" }}>
                 Nobody yet
@@ -185,13 +195,16 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                   writeMe(o.shiftId);
                   setMeShift(o.shiftId);
                 }}
-                title="Tap to say this is you"
+                title={`Started ${time(o.startedAt)}. Tap to say this is you.`}
               >
-                {o.name} <span style={{ color: "var(--muted)" }}>· {time(o.startedAt)}</span>
+                {o.name}{" "}
+                <span className="md:max-lg:hidden" style={{ color: "var(--muted)" }}>
+                  · {time(o.startedAt)}
+                </span>
               </button>
             ))}
             {status && status.onShift.length > 1 && (
-              <span className="shrink-0 text-xs" style={{ color: "var(--muted)" }}>
+              <span className="shrink-0 text-xs md:max-lg:hidden" style={{ color: "var(--muted)" }}>
                 Tap your name if it&apos;s you
               </span>
             )}
@@ -201,8 +214,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
             <button
-              className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm"
-              style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+              className="btn-secondary btn-ran-out min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm"
               onClick={() => {
                 setRanOutSaved(null);
                 setRanOutOpen(true);
@@ -210,25 +222,39 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
             >
               Ran out
             </button>
-            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
+            <button className={BAR_BUTTON} onClick={() => setPanel({ tab: "checklist" })}>
               Checklist
-              {tasksLeft > 0 && <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>{tasksLeft}</span>}
+              {tasksLeft > 0 && <CountBadge>{tasksLeft}</CountBadge>}
             </button>
-            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "par" })}>
-              Par sheet
+            {/* On the bar when there's room (an iPad on its side), else under More. */}
+            <button className={`${BAR_BUTTON} hidden lg:inline-block`} onClick={() => setPanel({ tab: "par" })}>
+              Par count
             </button>
-            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
+            <button className={`${BAR_BUTTON} hidden lg:inline-block`} onClick={() => setPanel({ tab: "shopping" })}>
               Shopping
-              {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
-              {managerHere && !!status?.ranOut && (
-                <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>
-                  {status.ranOut} out
-                </span>
-              )}
+              {belowPar > 0 && <span className="ml-1.5 text-xs">({belowPar})</span>}
+              {outCount > 0 && <OutBadge n={outCount} />}
             </button>
-            <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "history" })}>
-              History
-            </button>
+            <MoreMenu
+              badge={outCount > 0 ? <OutBadge n={outCount} className="lg:hidden" /> : null}
+              items={[
+                { tab: "par", label: "Par count", onBar: true },
+                {
+                  tab: "shopping",
+                  label: "Shopping list",
+                  onBar: true,
+                  note: (belowPar > 0 || outCount > 0) && (
+                    <>
+                      {belowPar > 0 && <span className="text-xs font-normal">{belowPar} below par</span>}
+                      {outCount > 0 && <OutBadge n={outCount} />}
+                    </>
+                  ),
+                },
+                { tab: "reminders", label: "Reminders", note: snoozedDue.length > 0 && <span className="text-xs font-normal">{snoozedDue.length} snoozed</span> },
+                { tab: "history", label: "History" },
+              ]}
+              onPick={(tab) => setPanel({ tab })}
+            />
             {me && (
               <button className="btn-primary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setEndOpen(true)}>
                 End shift
@@ -287,7 +313,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                 <div className="text-sm opacity-90">{r.detail}</div>
               </div>
               <button
-                className="rounded-lg px-3 py-2 text-sm font-bold underline"
+                className="min-h-11 rounded-lg px-3 py-2 text-sm font-bold underline"
                 onClick={() => {
                   const next = { ...readSnoozed(), [`${r.reminderId}:${r.occurrence}`]: Date.now() + SNOOZE_MS };
                   writeSnoozed(next);
@@ -297,7 +323,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                 Remind me later
               </button>
               <button
-                className="rounded-lg border-2 px-4 py-2 text-sm font-bold"
+                className="min-h-11 rounded-lg border-2 px-4 py-2 text-sm font-bold"
                 style={{ borderColor: "currentColor" }}
                 onClick={async () => {
                   await api.dismissReminder(r.reminderId, r.occurrence, me?.employeeId ?? null).catch(() => null);
@@ -405,7 +431,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                 <div className="font-bold">
                   {t.name}: {t.title}
                 </div>
-                <div className="text-sm" style={{ color: t.overdue ? "var(--accent)" : "var(--muted)" }}>
+                <div className="text-sm" style={{ color: t.overdue ? "var(--danger-text)" : "var(--muted)" }}>
                   {[
                     t.updated && "Updated, sign again",
                     t.overdue ? "Overdue" : t.dueDate && `Due ${new Date(`${t.dueDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`,
@@ -497,6 +523,13 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
           me={me}
           status={status}
           staff={staff}
+          snoozed={snoozedDue.map((r) => ({ key: r.key, message: r.assigneeName ? `${r.assigneeName}: ${r.message}` : r.message, detail: r.detail, until: r.until }))}
+          onUnsnooze={(key) => {
+            const next = readSnoozed();
+            delete next[key];
+            writeSnoozed(next);
+            setSnoozed(next);
+          }}
           onTab={(tab) => setPanel({ tab, closing: panel.closing })}
           onChanged={refresh}
           onClose={() => setPanel(null)}
@@ -535,12 +568,12 @@ function EndShiftDialog({
             {closingLeft.length} closing task{closingLeft.length === 1 ? " isn't" : "s aren't"} ticked off
           </div>
           <div className="mt-1">{closingLeft.map((t) => t.title).join(" · ")}</div>
-          <button className="mt-2 font-bold underline" onClick={onOpenChecklist}>
+          <button className="mt-1 min-h-11 font-bold underline" onClick={onOpenChecklist}>
             Open the checklist
           </button>
         </div>
       )}
-      <label className="flex cursor-pointer items-start gap-3 text-sm">
+      <label className="flex min-h-11 cursor-pointer items-start gap-3 text-sm">
         <input id="closing-for-night" type="checkbox" className="mt-0.5 h-5 w-5" checked={closing} onChange={(e) => setClosing(e.target.checked)} />
         <span>
           <strong>I&apos;m closing for the night</strong>
@@ -582,12 +615,95 @@ export function Dialog({ title, onClose, closeLabel = "Close", children }: { tit
       <div className="card w-full max-w-lg shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="font-display text-xl">{title}</h2>
-          <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onClose}>
+          <button className="btn-quiet shrink-0" onClick={onClose}>
             {closeLabel}
           </button>
         </div>
         {children}
       </div>
+    </div>
+  );
+}
+
+// The shift bar's buttons, a full 44px to tap.
+const BAR_BUTTON = "btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm";
+
+// A count on a bar button: how many are left to do. Not a warning, so ink,
+// not red.
+function CountBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="ml-1.5 inline-block rounded-full px-1.5 text-xs tabular-nums" style={{ background: "var(--foreground)", color: "var(--surface)" }}>
+      {children}
+    </span>
+  );
+}
+
+// "2 out": menu items stopped by Ran out, for a manager. That is a problem
+// to fix, so it's the status red.
+function OutBadge({ n, className = "" }: { n: number; className?: string }) {
+  return (
+    <span className={`ml-1.5 inline-block rounded-full px-1.5 text-xs tabular-nums text-white ${className}`} style={{ background: "var(--danger-fill)" }}>
+      {n} out
+    </span>
+  );
+}
+
+// More: the shift tools that don't need to be on the bar all shift. Reminders
+// and History always live here; Par count and Shopping list (onBar) join
+// them when the bar is too narrow for their own buttons (an iPad held
+// upright, a phone). Each opens its tab in the shift tools. `badge` shows on
+// the button what's hidden inside.
+function MoreMenu({
+  items,
+  badge,
+  onPick,
+}: {
+  items: { tab: OpsTab; label: string; onBar?: boolean; note?: React.ReactNode }[];
+  badge: React.ReactNode;
+  onPick: (tab: OpsTab) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative">
+      <button className={BAR_BUTTON} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        More <span aria-hidden="true">▾</span>
+        {badge}
+      </button>
+      {open && (
+        <>
+          {/* A tap anywhere else closes it. On a phone it opens along the
+              bottom of the screen, under the thumb. */}
+          <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            aria-label="More shift tools"
+            className="card fixed inset-x-3 bottom-3 z-40 !p-1.5 shadow-2xl md:absolute md:inset-x-auto md:bottom-auto md:right-0 md:top-full md:mt-2 md:w-64"
+          >
+            {items.map((i) => (
+              <button
+                key={i.tab}
+                role="menuitem"
+                className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-lg px-3 text-left text-sm font-bold active:bg-[var(--surface-hover)] ${i.onBar ? "lg:hidden" : ""}`}
+                onClick={() => {
+                  setOpen(false);
+                  onPick(i.tab);
+                }}
+              >
+                <span>{i.label}</span>
+                {i.note && <span className="flex items-center gap-1.5" style={{ color: "var(--muted)" }}>{i.note}</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -148,7 +148,7 @@ export default function PosMemberPanel({
               {source && <span style={{ color: "var(--muted)" }}> · {source}</span>}
               <InfoTip topic="senior-student-rates" />
             </span>
-            <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => setRateOpen((o) => !o)} disabled={busy}>
+            <button className="btn-quiet shrink-0 !px-3" onClick={() => setRateOpen((o) => !o)} disabled={busy}>
               {rateOpen ? "Close" : "Change rate"}
             </button>
           </div>
@@ -162,7 +162,7 @@ export default function PosMemberPanel({
                 {RATE_ORDER.map((t) => (
                   <button
                     key={t}
-                    className={`chip justify-center !px-1 py-2 text-xs ${t === rate ? "chip-selected" : ""}`}
+                    className={`chip min-h-11 justify-center !px-1 py-2 text-xs ${t === rate ? "chip-selected" : ""}`}
                     disabled={t === rate || busy}
                     onClick={() => setConfirmTier(t)}
                   >
@@ -190,7 +190,7 @@ export default function PosMemberPanel({
               Loyalty points: {Math.round(member.points)}
               <InfoTip topic="points-and-badges" />
             </span>
-            <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => attach(null)} disabled={busy}>
+            <button className="btn-quiet shrink-0 !px-3" onClick={() => attach(null)} disabled={busy}>
               Remove member
             </button>
           </div>
@@ -332,7 +332,7 @@ function MemberRewards({ memberId, onRewardLine }: { memberId: string; onRewardL
           <span className="min-w-0 flex-1">
             🎁 <strong>{r.label}</strong> · {r.reason}
           </span>
-          <button className="btn-primary shrink-0 !px-2.5 !py-1 !text-xs" disabled={working} onClick={() => redeem(r)}>
+          <button className="btn-primary min-h-11 shrink-0 !px-3 !py-1 !text-sm" disabled={working} onClick={() => redeem(r)}>
             Redeem
           </button>
         </div>
@@ -342,7 +342,7 @@ function MemberRewards({ memberId, onRewardLine }: { memberId: string; onRewardL
           <span className="min-w-0 flex-1">
             ✓ {r.label} added to the order at $0.
           </span>
-          <button className="shrink-0 hover:underline" disabled={working} onClick={() => undo(r)}>
+          <button className="btn-quiet shrink-0 !px-3" disabled={working} onClick={() => undo(r)}>
             Undo (then remove the line)
           </button>
         </div>

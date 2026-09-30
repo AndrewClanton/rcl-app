@@ -356,7 +356,6 @@ export function buyQty(need: number): number {
 
 // ---------- counting in quarters ----------
 
-export const COUNT_STEPS = [1, 0.5, 0.25] as const;
 export const COUNT_STEP_LABEL: Record<string, string> = { "1": "Whole", "0.5": "Halves", "0.25": "Quarters" };
 
 // Units that are opened and used a bit at a time. Spray bottles are counted

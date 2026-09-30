@@ -6,7 +6,7 @@ import ChecklistTab from "./ChecklistTab";
 import ParCountTab from "./ParCountTab";
 import ShoppingListTab from "./ShoppingListTab";
 import HistoryTab from "./HistoryTab";
-import RemindersTab from "./RemindersTab";
+import RemindersTab, { type SnoozedReminder } from "./RemindersTab";
 
 export type OpsTab = "checklist" | "par" | "shopping" | "history" | "reminders";
 
@@ -26,6 +26,8 @@ export default function OpsPanel({
   me,
   status,
   staff,
+  snoozed,
+  onUnsnooze,
   onTab,
   onChanged,
   onClose,
@@ -38,6 +40,10 @@ export default function OpsPanel({
   me: OnShift | null;
   status: ShiftStatus | null;
   staff: { id: string; name: string }[];
+  // Reminders put off with "Remind me later" on this iPad, listed on the
+  // Reminders tab until they come back.
+  snoozed: SnoozedReminder[];
+  onUnsnooze: (key: string) => void;
   onTab: (t: OpsTab) => void;
   onChanged: () => void;
   onClose: () => void;
@@ -60,7 +66,7 @@ export default function OpsPanel({
           {TABS.map((t) => (
             <button
               key={t.id}
-              className={`rounded-full border-2 px-4 py-2 text-sm font-bold transition-colors ${t.id === tab ? "text-[var(--background)]" : ""}`}
+              className={`min-h-11 rounded-full border-2 px-4 py-2 text-sm font-bold transition-colors ${t.id === tab ? "text-[var(--background)]" : ""}`}
               style={{ borderColor: "var(--foreground)", background: t.id === tab ? "var(--foreground)" : "transparent" }}
               aria-current={t.id === tab ? "page" : undefined}
               onClick={() => {
@@ -74,7 +80,7 @@ export default function OpsPanel({
         </nav>
         <div className="ml-auto flex items-center gap-3 text-sm">
           <span style={{ color: "var(--muted)" }}>{me ? `You: ${me.name}` : "Nobody on shift at this register"}</span>
-          <button className="btn-secondary !px-4 !py-2" onClick={onClose}>
+          <button className="btn-secondary min-h-11 !px-4 !py-2" onClick={onClose}>
             Back to register
           </button>
         </div>
@@ -97,7 +103,7 @@ export default function OpsPanel({
             <ShoppingListTab me={me} manager={manager} closing={closing} justCounted={justCounted} onFinishClosing={onFinishClosing} onChanged={onChanged} />
           )}
           {tab === "history" && <HistoryTab />}
-          {tab === "reminders" && <RemindersTab me={me} staff={staff} onChanged={onChanged} />}
+          {tab === "reminders" && <RemindersTab me={me} staff={staff} snoozed={snoozed} onUnsnooze={onUnsnooze} onChanged={onChanged} />}
         </div>
       </div>
     </div>

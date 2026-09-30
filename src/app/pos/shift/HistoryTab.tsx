@@ -109,7 +109,7 @@ export default function HistoryTab() {
                   {c.byName ? ` · ${c.byName}` : ""}
                 </span>
                 <span style={{ color: "var(--muted)" }}>
-                  {c.items} counted · <strong style={{ color: c.below ? "var(--warn-text)" : undefined }}>{c.below} under par</strong>
+                  {c.items} counted · <strong style={{ color: c.below ? "var(--warn-text)" : undefined }}>{c.below} below par</strong>
                 </span>
               </li>
             ))}
@@ -133,7 +133,7 @@ export default function HistoryTab() {
                 return (
                   <li key={i}>
                     <span style={{ color: "var(--muted)" }}>{when(c.at)}</span> ·{" "}
-                    <strong style={c.action === "reported" ? { color: "var(--accent)" } : undefined}>{head}</strong> ({c.byName ?? "someone"})
+                    <strong style={c.action === "reported" ? { color: "var(--ran-out)" } : undefined}>{head}</strong> ({c.byName ?? "someone"})
                     {rest.length > 0 && <span style={{ color: "var(--muted)" }}> · {rest.join(" · ")}</span>}
                   </li>
                 );

@@ -309,7 +309,7 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
                     >
                       Take the picture off
                     </button>
-                    <button className="min-h-12 px-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => setConfirmLabel(false)}>
+                    <button className="btn-quiet min-h-12" onClick={() => setConfirmLabel(false)}>
                       Keep
                     </button>
                   </div>

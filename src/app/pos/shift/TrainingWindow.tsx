@@ -22,7 +22,7 @@ export default function TrainingWindow({ slug, employeeId, name, onClose }: { sl
     <div className="fixed inset-0 z-50 flex flex-col bg-black/70 p-2 sm:p-6" role="dialog" aria-modal="true" aria-label={`Training for ${name}`}>
       <div className="flex items-center justify-between gap-3 rounded-t-lg px-4 py-2" style={{ background: "var(--foreground)", color: "var(--background)" }}>
         <span className="font-bold">Training · {name}</span>
-        <button className="min-h-10 rounded-md border-2 px-4 text-sm font-bold" style={{ borderColor: "currentColor" }} onClick={() => onClose(false)}>
+        <button className="min-h-11 rounded-md border-2 px-4 text-sm font-bold" style={{ borderColor: "currentColor" }} onClick={() => onClose(false)}>
           Close
         </button>
       </div>

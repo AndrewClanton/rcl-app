@@ -48,7 +48,7 @@ export default function EasterEggs({
               Just for fun
               <InfoTip topic="easter-eggs" />
             </span>
-            <button className="text-xs hover:underline" style={{ color: "var(--muted)" }} onClick={() => setOpen(false)}>
+            <button className="btn-quiet" onClick={() => setOpen(false)}>
               Close
             </button>
           </div>
@@ -67,7 +67,7 @@ export default function EasterEggs({
               {FLOURISHES.map((f) => (
                 <button
                   key={f.key}
-                  className={`chip justify-start !px-2 py-2 text-xs ${next === f.key ? "chip-selected font-bold" : ""}`}
+                  className={`chip min-h-11 justify-start !px-2 py-2 text-xs ${next === f.key ? "chip-selected font-bold" : ""}`}
                   onClick={() => onPick(next === f.key ? null : f.key)}
                   aria-pressed={next === f.key}
                 >

@@ -75,9 +75,11 @@ export default function DevNotesWidget() {
 
   // Full-screen display screens (TVs, the kitchen/bar boards) are often
   // logged in as an admin but have no one at them to leave a note -- a
-  // floating button would just sit on top of the signage.
+  // floating button would just sit on top of the signage. The register
+  // too: there it sat on top of the menu's buttons.
   const onDisplayScreen = pathname.startsWith("/display/");
-  if (!authorized || onDisplayScreen) return null;
+  const onRegister = pathname === "/pos" || pathname.startsWith("/pos/");
+  if (!authorized || onDisplayScreen || onRegister) return null;
 
   return (
     <div className="fixed bottom-4 right-4 z-50 font-sans print:hidden">

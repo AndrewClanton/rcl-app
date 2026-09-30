@@ -143,7 +143,7 @@ export function RanOutSheet({
               The menu buttons that need it show OUT, and the managers get a to-do to buy more.
             </p>
           </div>
-          <button className="min-h-11 px-2 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onClose}>
+          <button className="btn-quiet shrink-0" onClick={onClose}>
             Cancel
           </button>
         </div>
@@ -359,7 +359,7 @@ export function MenuTile({
               {out.reason}
             </span>
           ) : (
-            <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+            <span className="text-sm font-semibold" style={{ color: "var(--accent-text)" }}>
               {price}
             </span>
           )}
@@ -387,7 +387,7 @@ export function MenuTile({
           {out.reason}
         </span>
       ) : (
-        <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+        <span className="text-sm font-semibold" style={{ color: "var(--accent-text)" }}>
           {price}
         </span>
       )}
@@ -480,7 +480,7 @@ export function ItemOutDialog({
             {error}
           </p>
         )}
-        <button className="mt-3 min-h-11 w-full text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onClose}>
+        <button className="btn-quiet mt-3 w-full" onClick={onClose}>
           Cancel
         </button>
       </div>

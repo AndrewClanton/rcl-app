@@ -27,15 +27,15 @@ export default function TipModal({ subtotal, tabName, onConfirm: confirm, onCanc
           <>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               {[15, 18, 20].map((pct) => (
-                <button key={pct} className="btn-secondary px-4 py-2" onClick={() => onConfirm(subtotal * (pct / 100))}>
+                <button key={pct} className="btn-secondary min-h-11 px-4 py-2" onClick={() => onConfirm(subtotal * (pct / 100))}>
                   {pct}%
                 </button>
               ))}
-              <button className="btn-secondary px-4 py-2" onClick={() => onConfirm(0)}>
+              <button className="btn-secondary min-h-11 px-4 py-2" onClick={() => onConfirm(0)}>
                 No tip
               </button>
             </div>
-            <button className="mt-3 text-sm hover:underline" style={{ color: "var(--accent)" }} onClick={() => setCustomOpen(true)}>
+            <button className="btn-quiet mt-3" onClick={() => setCustomOpen(true)}>
               Custom amount
             </button>
           </>
@@ -49,7 +49,7 @@ export default function TipModal({ subtotal, tabName, onConfirm: confirm, onCanc
           </div>
         )}
 
-        <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onCancel}>
+        <button className="btn-quiet mt-4" onClick={onCancel}>
           Cancel
         </button>
       </div>
