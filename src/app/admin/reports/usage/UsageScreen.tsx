@@ -98,7 +98,7 @@ const PAGE_NAMES: Record<string, string> = {
   "/pos": "Register",
   "/pos/shift": "Register · Shift",
   "/training": "Training",
-  "/display": "Displays",
+  "/display": "Screens & TVs",
   "/display/bar": "Bar board",
   "/display/box-office": "Box office screen",
   "/display/customer": "Customer screen",
