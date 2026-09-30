@@ -43,6 +43,9 @@ export interface ModifierGroup {
   key: string;
   label: string;
   type: ModifierType;
+  // A "choose one" group with no default: the register asks every time
+  // (which soda comes with the $5 Special).
+  must_choose?: boolean;
   sort_order: number;
   options: ModifierOption[];
 }

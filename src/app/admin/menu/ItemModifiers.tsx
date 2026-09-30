@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { MenuItem } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { addModifierGroup, deleteModifierGroup, addModifierOption, updateModifierOption, deleteModifierOption } from "./actions";
+import { addModifierGroup, deleteModifierGroup, addModifierOption, updateModifierOption, deleteModifierOption, setModifierGroupMustChoose } from "./actions";
 
 function signedMoney(n: number) {
   return n ? `${n > 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}` : "";
@@ -20,7 +20,8 @@ export default function ItemModifiers({ item, canEdit }: { item: MenuItem; canEd
         <div key={group.id} className="mb-3 border-b border-[var(--border)] pb-3 last:mb-0 last:border-0 last:pb-0 ">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-sm font-medium">
-              {group.label} <span className="text-[var(--muted)]">({group.type === "single" ? "choose one" : "choose any"})</span>
+              {group.label}{" "}
+              <span className="text-[var(--muted)]">({group.type === "single" ? (group.must_choose ? "choose one, staff must pick" : "choose one") : "choose any"})</span>
             </span>
             {canEdit && (
               <button className="text-xs text-[var(--danger-text)] hover:underline" disabled={pending} onClick={() => run(() => deleteModifierGroup(group.id))}>
@@ -28,6 +29,17 @@ export default function ItemModifiers({ item, canEdit }: { item: MenuItem; canEd
               </button>
             )}
           </div>
+          {canEdit && group.type === "single" && (
+            <label className="mb-1.5 flex items-center gap-2 text-xs text-[var(--muted)]">
+              <input
+                type="checkbox"
+                checked={!!group.must_choose}
+                disabled={pending}
+                onChange={(e) => run(() => setModifierGroupMustChoose(group.id, e.target.checked))}
+              />
+              Staff must pick (nothing chosen until they tap one)
+            </label>
+          )}
           {canEdit ? (
             <>
               {group.options.map((opt) => (

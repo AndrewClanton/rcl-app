@@ -35,7 +35,8 @@ export default function ItemBuilder({
   const [sel, setSel] = useState<Record<string, string[]>>(() => {
     const initial: Record<string, string[]> = {};
     for (const g of item.modifier_groups) {
-      initial[g.key] = g.type === "single" && g.options[0] ? [g.options[0].name] : [];
+      // A "must pick" group starts empty so nobody skips the question.
+      initial[g.key] = g.type === "single" && !g.must_choose && g.options[0] ? [g.options[0].name] : [];
     }
     return initial;
   });
@@ -69,6 +70,8 @@ export default function ItemBuilder({
     }
     onAdd({ menuItemId: item.id, name: item.name, unit: unitPrice(), qty, mods, isAlcohol: item.is_alcohol });
   }
+
+  const unanswered = item.modifier_groups.filter((g) => g.type === "single" && g.must_choose && !(sel[g.key] ?? []).length);
 
   return (
     <div className="card-flat" style={{ background: "var(--surface-hover)" }}>
@@ -111,8 +114,8 @@ export default function ItemBuilder({
 
       {item.modifier_groups.map((g) => (
         <div key={g.id} className="mb-3">
-          <div className="label-xs mb-1.5">
-            {g.label} {g.type === "single" ? "(choose 1)" : "(optional)"}
+          <div className="label-xs mb-1.5" style={g.must_choose && !(sel[g.key] ?? []).length ? { color: "var(--accent)" } : undefined}>
+            {g.label} {g.type === "single" ? (g.must_choose ? "(pick one)" : "(choose 1)") : "(optional)"}
           </div>
           <div className="flex flex-wrap gap-2">
             {g.options.map((o) => {
@@ -156,8 +159,8 @@ export default function ItemBuilder({
           <button className="btn-secondary" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn-primary" onClick={handleAdd}>
-            Add to order
+          <button className="btn-primary" disabled={unanswered.length > 0} onClick={handleAdd}>
+            {unanswered.length > 0 ? `Pick a ${unanswered[0].label.toLowerCase()}` : "Add to order"}
           </button>
         </div>
       </div>

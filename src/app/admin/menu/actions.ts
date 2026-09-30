@@ -230,6 +230,18 @@ export async function addModifierGroup(itemId: string, label: string, type: Modi
   return { ok: true };
 }
 
+// "Staff must pick": the group starts with nothing chosen and the register
+// won't add the item until one is. Only for choose-one groups.
+export async function setModifierGroupMustChoose(id: string, mustChoose: boolean): Promise<Result> {
+  const no = await denied();
+  if (no) return no;
+  const { error } = await createAdminClient().from("menu_modifier_groups").update({ must_choose: !!mustChoose }).eq("id", id).eq("type", "single");
+  const f = failed(error, "save that setting");
+  if (f) return f;
+  revalidate();
+  return { ok: true };
+}
+
 export async function deleteModifierGroup(id: string): Promise<Result> {
   const no = await denied();
   if (no) return no;
