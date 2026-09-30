@@ -2,6 +2,7 @@ import "server-only";
 import { timingSafeEqual } from "node:crypto";
 import type { User } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { awardClaimBonus } from "@/lib/claim-bonus";
 import { emailIsProven } from "@/lib/member-link";
 import { firstNameOf, last10 } from "@/lib/checkin";
 import { allowAttempt } from "@/lib/rate-limit";
@@ -214,6 +215,8 @@ export async function claimMemberForUser(user: User, token: string, digitsProof:
     p_email: emailIsProven(user) ? user.email : null,
   });
   if (error) return { ok: false, reason: "failed", error: "Something went wrong on our end, so nothing was changed. Try again in a minute." };
+  // Just attached (not a repeat): an imported member's one-time bonus.
+  if (data === "linked" || data === "linked_email") await awardClaimBonus(t.memberId);
 
   switch (data as string) {
     case "linked":
