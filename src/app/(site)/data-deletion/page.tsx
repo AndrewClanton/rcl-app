@@ -45,7 +45,11 @@ export default async function DataDeletionPage() {
         <h2 id="deleted">What gets deleted</h2>
         <ul>
           <li>Your name, email address and phone number</li>
-          <li>Your photo</li>
+          <li>Your photo and your profile quote</li>
+          <li>
+            Your name and contact details on ticket and booth bookings, private event requests, bar tabs, and gift memberships you bought, and on
+            your customer record at Stripe
+          </li>
           <li>Your sign-in connections: password, Google and Facebook</li>
           <li>Your points and points history</li>
           <li>Your email preferences</li>
@@ -56,7 +60,7 @@ export default async function DataDeletionPage() {
         <h2 id="kept">What we keep</h2>
         <p>
           Records of purchases and payments that we&apos;re required to keep for tax and accounting, with your name and contact details removed.
-          Stripe keeps its own records of card payments under its own{" "}
+          The days you checked in stay only as anonymous counts. Stripe keeps its own records of card payments under its own{" "}
           <a href="https://stripe.com/privacy" className="font-bold text-[var(--accent)] hover:underline">
             privacy policy
           </a>
