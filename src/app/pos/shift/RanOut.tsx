@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { searchMenu, searchPar, suggestMenuItems } from "@/lib/ops/ran-out-search";
+import InfoTip from "@/components/help/InfoTip";
+import { searchMenu, searchPar, strongMenuMatches, suggestMenuItems } from "@/lib/ops/ran-out-search";
 import { OUT_LABEL_MAX, OUT_NOTE_MAX, midSentence, parLabel, type RanOutOptions, type RegisterOut } from "@/lib/ops/shared";
 import { useOpsApi } from "./api";
 import { dropOut, refreshOuts } from "./ran-out-store";
@@ -71,8 +72,12 @@ export function RanOutSheet({
   function pick(p: Picked) {
     setPicked(p);
     setError(null);
-    // Menu items whose recipe uses this par line start ticked.
-    setTicked(new Set(p.kind === "par" ? (opts?.recipeUses[p.item.id] ?? []) : []));
+    // Start ticked: menu items whose recipe uses this par line, and ones
+    // that plainly are it or are made around it by name (Hot dog buns →
+    // Hot dog), so their buttons say OUT without anyone hunting for them.
+    const byRecipe = p.kind === "par" ? (opts?.recipeUses[p.item.id] ?? []) : [];
+    const byName = opts ? strongMenuMatches(p.kind === "par" ? p.item.name : p.label, p.kind === "par" ? p.item.section : null, opts.menu).map((m) => m.id) : [];
+    setTicked(new Set([...byRecipe, ...byName]));
   }
 
   function toggle(id: string) {
@@ -102,7 +107,8 @@ export function RanOutSheet({
       .catch(() => null);
     setBusy(false);
     if (!r || !r.ok) return setError(r && !r.ok ? r.error : "Couldn't save that. Check the connection and try again.");
-    onSaved(`${r.name} is on the shopping list.${r.stopped.length ? ` Stopped selling ${r.stopped.join(", ")}.` : ""}`);
+    const stopped = r.stopped.length ? `${r.stopped.join(", ")} now show${r.stopped.length === 1 ? "s" : ""} OUT. ` : "";
+    onSaved(`${stopped}${r.todo ? `The managers have a to-do to buy more ${midSentence(r.name)}.` : `${r.name} is on the managers' shopping list.`}`);
   }
 
   const tickedItems = [...ticked].map((id) => menuById.get(id)).filter((m): m is MenuOpt => !!m);
@@ -128,9 +134,12 @@ export function RanOutSheet({
       <div className="card w-full max-w-2xl shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h2 className="font-display text-2xl">Ran out</h2>
+            <h2 className="font-display text-2xl">
+              Ran out
+              <InfoTip topic="ran-out" />
+            </h2>
             <p className="text-sm" style={{ color: "var(--muted)" }}>
-              It goes to the top of the shopping list, and the register can stop selling what needs it.
+              The menu buttons that need it show OUT, and the managers get a to-do to buy more.
             </p>
           </div>
           <button className="min-h-11 px-2 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onClose}>
@@ -222,7 +231,7 @@ export function RanOutSheet({
             <section>
               <h3 className="font-display text-lg">Stop selling these?</h3>
               <p className="mb-2 text-xs" style={{ color: "var(--muted)" }}>
-                Ticked items show as OUT on the register until it&apos;s bought or someone taps It&apos;s back.
+                Ticked items show OUT on their buttons until it&apos;s bought or someone taps It&apos;s back. The ones that need it start ticked.
               </p>
               <div className="flex flex-wrap gap-2">
                 {tickedItems.map(chip)}
@@ -451,7 +460,7 @@ export function ItemOutDialog({
           <>
             <h3 className="font-display text-xl leading-snug">Did someone get more {midSentence(out.what ?? "")}?</h3>
             <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-              So the shopping list knows whether to buy it.
+              So the managers know whether they still need to buy it.
             </p>
             <div className="mt-4 grid gap-2">
               <button className={`btn-primary ${big}`} disabled={busy} onClick={() => back("bought")}>
@@ -461,7 +470,7 @@ export function ItemOutDialog({
                 Found some in the back
               </button>
               <button className={`btn-secondary ${big}`} disabled={busy} onClick={() => back(null)}>
-                Keep it on the shopping list
+                No, it still needs buying
               </button>
             </div>
           </>

@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import InfoTip from "@/components/help/InfoTip";
 import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
@@ -66,7 +67,12 @@ export default function DayScreen({
   return (
     <div className="space-y-5">
       <PeriodNav
-        title={date === today ? "Today" : longDate(date)}
+        title={
+          <>
+            {date === today ? "Today" : longDate(date)}
+            <InfoTip topic="business-day" />
+          </>
+        }
         subtitle={date === today ? longDate(date) : "4 a.m. to 4 a.m."}
         prev={href({ ...keep, date: shiftDate(date, -1) })}
         next={date < today ? href({ ...keep, date: shiftDate(date, 1) === today ? undefined : shiftDate(date, 1) }) : null}

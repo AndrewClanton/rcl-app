@@ -4,12 +4,13 @@ import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { logOpsChange } from "@/lib/ops/changes";
-import { closeOutage, putBackOnSale } from "@/lib/ops/outages";
+import { closeOutage, ensureRestockTodo, getOftenOut, putBackOnSale } from "@/lib/ops/outages";
 import {
   OUT_ITEMS_MAX,
   OUT_LABEL_MAX,
   OUT_NOTE_MAX,
   outReason,
+  type OftenOut,
   type OpenOutage,
   type OutageResolution,
   type RanOutOptions,
@@ -17,10 +18,11 @@ import {
 } from "@/lib/ops/shared";
 
 // "Ran out" (86 it) on the register: report that something ran out
-// mid-shift, stop selling the menu items that need it, and put it at the
-// top of the shopping list until someone buys it. Staff-only, like the rest
-// of the shift tools; `employeeId` is whoever's using the register (same
-// trust model as orders), checked against the staff list.
+// mid-shift, stop selling the menu items that need it (their buttons show
+// OUT), and give the managers a to-do to buy more; it's also at the top of
+// their shopping list until someone buys it. Staff-only, like the rest of
+// the shift tools; `employeeId` is whoever's using the register (same trust
+// model as orders), checked against the staff list.
 
 const db = () => createAdminClient();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -123,13 +125,14 @@ export interface ReportOutageInput {
   menuItemIds: string[]; // stop selling these
 }
 
-// "We're out of X." Stops the ticked menu items and lands on the shopping
-// list. Reporting a par line that's already out adds to that report.
+// "We're out of X." Stops the ticked menu items, makes the managers' restock
+// to-do, and lands on the shopping list. Reporting a par line that's already
+// out adds to that report (and its one to-do).
 export async function reportOutage(
   input: ReportOutageInput,
   employeeId: string | null,
   shiftId: string | null,
-): Promise<Result<{ outageId: string; name: string; stopped: string[]; added: boolean }>> {
+): Promise<Result<{ outageId: string; name: string; stopped: string[]; added: boolean; todo: boolean }>> {
   const staff = await assertStaff();
   if (!(await allowAttempt(`ran-out:${staff.employeeId}`, 20, 300))) return { ok: false, error: BUSY };
   if (!input || typeof input !== "object") return { ok: false, error: "Say what ran out." };
@@ -221,7 +224,16 @@ export async function reportOutage(
   const stopped = newlyStopped.length ? `stopped ${newlyStopped.join(", ")}` : "";
   if (!existing) await logOpsChange("outage", outageId, "reported", [`Ran out of ${label}`, stopped].filter(Boolean).join(" · "), by);
   else if (stopped) await logOpsChange("outage", outageId, "changed", [`Still out of ${label}`, stopped].join(" · "), by);
-  return { ok: true, outageId, name: label, stopped: stoppedNames, added: !existing };
+  // Made once per report: a second report of the same line finds it.
+  const todo = await ensureRestockTodo(outageId);
+  return { ok: true, outageId, name: label, stopped: stoppedNames, added: !existing, todo };
+}
+
+// Par lines that keep running out, for the managers' "Raise par?" on the
+// shopping list.
+export async function getRaiseParHints(): Promise<OftenOut[]> {
+  await assertStaff();
+  return getOftenOut();
 }
 
 // Open reports, oldest first, for the top of the shopping list.

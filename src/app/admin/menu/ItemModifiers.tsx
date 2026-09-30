@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import InfoTip from "@/components/help/InfoTip";
 import type { MenuItem } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addModifierGroup, deleteModifierGroup, addModifierOption, updateModifierOption, deleteModifierOption, setModifierGroupMustChoose } from "./actions";
@@ -30,15 +31,19 @@ export default function ItemModifiers({ item, canEdit }: { item: MenuItem; canEd
             )}
           </div>
           {canEdit && group.type === "single" && (
-            <label className="mb-1.5 flex items-center gap-2 text-xs text-[var(--muted)]">
-              <input
-                type="checkbox"
-                checked={!!group.must_choose}
-                disabled={pending}
-                onChange={(e) => run(() => setModifierGroupMustChoose(group.id, e.target.checked))}
-              />
-              Staff must pick (nothing chosen until they tap one)
-            </label>
+            <div className="mb-1.5 flex items-center">
+              <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={!!group.must_choose}
+                  disabled={pending}
+                  onChange={(e) => run(() => setModifierGroupMustChoose(group.id, e.target.checked))}
+                />
+                Staff must pick (nothing chosen until they tap one)
+              </label>
+              {/* Outside the label, so tapping it never ticks the box. */}
+              <InfoTip topic="menu-must-pick" />
+            </div>
           )}
           {canEdit ? (
             <>

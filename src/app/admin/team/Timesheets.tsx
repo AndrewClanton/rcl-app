@@ -1,4 +1,5 @@
 import Link from "next/link";
+import InfoTip from "@/components/help/InfoTip";
 import { formatHours } from "@/lib/hours";
 import type { TimesheetPerson, TimesheetShift } from "@/lib/data/team";
 import ShiftTimesEditor from "./ShiftTimesEditor";
@@ -17,8 +18,13 @@ export function ForgottenList({ forgotten }: { forgotten: (TimesheetShift & { na
   if (!forgotten.length) return null;
   return (
     <section className="notice notice-warn">
-      <h2 className="mb-1 text-sm font-bold">{forgotten.length === 1 ? "1 shift was never clocked out" : `${forgotten.length} shifts were never clocked out`}</h2>
-      <p className="mb-2 text-xs">Those count as 0 hours until you set when they left. The register also still shows them as on shift.</p>
+      <h2 className="mb-1 text-sm font-bold">
+        {forgotten.length === 1 ? "1 shift was never clocked out" : `${forgotten.length} shifts were never clocked out`}
+        <InfoTip topic="fix-clock-out" />
+      </h2>
+      <p className="mb-2 text-xs">
+        Those count as 0 hours until you set when they left. The register doesn&apos;t count them as on shift, and their next Start shift begins a new one instead of carrying on.
+      </p>
       <ul className="divide-y divide-[var(--warn-border)]">
         {forgotten.map((s) => (
           <li key={s.shiftId} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5 text-sm">

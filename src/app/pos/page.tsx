@@ -30,7 +30,7 @@ export const viewport: Viewport = {
 };
 
 export default async function PosPage() {
-  await requireStaff();
+  const session = await requireStaff();
 
   const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
@@ -61,7 +61,9 @@ export default async function PosPage() {
       </div>
       <div className="shrink-0">
         <UpdateBanner current={deploymentId()} />
-        <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name }))} />
+        {/* Roles, so the managers' to-dos and Ran out details show only
+            while a manager is signed in or on shift at this iPad. */}
+        <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
       </div>
       <PosApp
         categories={orderableCategories}

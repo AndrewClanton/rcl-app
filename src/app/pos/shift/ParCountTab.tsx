@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
+import InfoTip from "@/components/help/InfoTip";
 import { useOpsApi } from "./api";
 import {
   COUNT_STEP_LABEL,
@@ -141,10 +142,14 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
     <div className="space-y-5 pb-28">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-2xl">{closing ? "Closing par count" : "Par count"}</h2>
+          <h2 className="font-display text-2xl">
+            {closing ? "Closing par count" : "Par count"}
+            <InfoTip topic="par-count" />
+          </h2>
           <p className="text-sm" style={{ color: "var(--muted)" }}>
             Count what&apos;s on hand, in the unit shown. Tap <strong>= par</strong> when it&apos;s fully stocked. Bottles, kegs and jugs count to the quarter: tap{" "}
             <strong>¼ ½ ¾</strong> for the open one.
+            <InfoTip topic="par-quarters" />
           </p>
         </div>
         <button className="btn-secondary !px-4 !py-2 text-sm" onClick={() => setEditing(true)}>

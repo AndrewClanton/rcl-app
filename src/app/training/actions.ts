@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { getTraining, gradeQuiz } from "@/lib/training/catalog";
 
 // Who a training action is for. On a phone it's whoever is signed in. On
@@ -16,7 +17,8 @@ async function trainee(forEmployeeId: string | null): Promise<{ employeeId: stri
   const supabase = createAdminClient();
   const [{ data: person }, { data: shift }] = await Promise.all([
     supabase.from("employees").select("id").eq("id", forEmployeeId).eq("active", true).neq("role", "display").maybeSingle(),
-    supabase.from("shifts").select("id").eq("employee_id", forEmployeeId).is("ended_at", null).limit(1).maybeSingle(),
+    // On shift today: one left open from an earlier day is a forgotten clock-out.
+    supabase.from("shifts").select("id").eq("employee_id", forEmployeeId).is("ended_at", null).gte("started_at", businessDayWindow(businessDay().date).start).limit(1).maybeSingle(),
   ]);
   return person && (shift || forEmployeeId === session.employeeId) ? { employeeId: person.id as string, recordedBy: session.employeeId, via: "register" } : null;
 }

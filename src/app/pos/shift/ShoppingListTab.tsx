@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import InfoTip from "@/components/help/InfoTip";
 import { useOpsApi } from "./api";
 import { useRanOut } from "./ran-out-store";
 import CountChanges, { countsLine } from "./CountChanges";
-import { buyQty, qtyLabel, qtyUnit, type OnShift, type OpenOutage, type OutageResolution, type ShoppingList } from "@/lib/ops/shared";
+import { buyQty, qtyLabel, qtyUnit, raiseParText, type OftenOut, type OnShift, type OpenOutage, type OutageResolution, type ShoppingList } from "@/lib/ops/shared";
 
 const TZ = "America/Chicago";
 const dayTime = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: TZ });
@@ -28,17 +29,23 @@ const storeOrder = (a: string, b: string) => {
 
 const DONE_TEXT: Record<OutageResolution, string> = { bought: "Bought", found: "Found more", mistake: "False alarm:" };
 
-// What ran out mid-shift, then everything under par across today's counts,
-// grouped by where it's bought. "Since the last count" compares today's
-// counts with the ones before (shown first right after a count is saved).
+// What ran out mid-shift (for a manager), then everything under par across
+// today's counts, grouped by where it's bought. "Since the last count"
+// compares today's counts with the ones before (shown first right after a
+// count is saved).
 export default function ShoppingListTab({
   me,
+  manager,
   closing,
   justCounted = false,
   onFinishClosing,
   onChanged,
 }: {
   me: OnShift | null;
+  // A manager's using the register. Only they see what ran out (and the
+  // "Raise par?" hints): they're the ones who buy it, and each report is
+  // already a to-do for them. A cashier sees OUT on the menu buttons.
+  manager: boolean;
   closing: boolean;
   justCounted?: boolean;
   onFinishClosing: () => void;
@@ -49,26 +56,39 @@ export default function ShoppingListTab({
   const [list, setList] = useState<ShoppingList | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
-  const [outages, setOutages] = useState<OpenOutage[] | null>(null);
+  const [loadedOutages, setOutages] = useState<OpenOutage[] | null>(null);
+  const [raisePar, setRaisePar] = useState<OftenOut[]>([]);
   const [outError, setOutError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   // Who's marking it: the register's cashier, else whoever's using this iPad.
   const { cashierId } = useRanOut();
   const actingId = cashierId ?? me?.employeeId ?? null;
+  const outages = manager ? loadedOutages : [];
 
   useEffect(() => {
     let alive = true;
     api.getShoppingList()
       .then((l) => alive && setList(l))
       .catch(() => alive && setError("Couldn't load the shopping list. Check the connection."));
-    api.getOpenOutages()
-      .then((o) => alive && setOutages(o))
-      .catch(() => alive && setOutError("Couldn't load what ran out. Check the connection."));
     return () => {
       alive = false;
     };
   }, [api]);
+
+  useEffect(() => {
+    if (!manager) return;
+    let alive = true;
+    api.getOpenOutages()
+      .then((o) => alive && setOutages(o))
+      .catch(() => alive && setOutError("Couldn't load what ran out. Check the connection."));
+    api.getRaiseParHints()
+      .then((h) => alive && setRaisePar(h))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api, manager]);
 
   async function resolve(o: OpenOutage, resolution: OutageResolution) {
     setBusyId(o.id);
@@ -117,7 +137,10 @@ export default function ShoppingListTab({
         )
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-display text-2xl">{view === "buy" ? "Shopping list" : "Since the last count"}</h2>
+        <h2 className="font-display text-2xl">
+          {view === "buy" ? "Shopping list" : "Since the last count"}
+          <InfoTip topic="shopping-list" />
+        </h2>
         <div className="flex overflow-hidden rounded-xl border-2" style={{ borderColor: "var(--foreground)" }} role="tablist" aria-label="Shopping list views">
           {(
             [
@@ -244,6 +267,22 @@ export default function ShoppingListTab({
                 </ul>
               </div>
             ))}
+        </section>
+      )}
+
+      {/* Managers: par lines that keep running out. A nudge only; the par
+          changes only when someone edits the par sheet. */}
+      {manager && raisePar.length > 0 && (
+        <section className="notice notice-warn !p-4">
+          <h3 className="font-display text-lg">Raise par?</h3>
+          <ul className="mt-1 space-y-1 text-sm">
+            {raisePar.map((o) => (
+              <li key={o.parItemId}>
+                {raiseParText(o)} <span style={{ color: "var(--muted)" }}>({o.area})</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs">To change a par: Par count → Edit the list. Nothing changes by itself.</p>
         </section>
       )}
 

@@ -3,6 +3,7 @@
 import { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import InfoTip from "@/components/help/InfoTip";
 import type { DayReport } from "@/lib/data/reports";
 import type { DayDrillData, DrillStaff } from "@/lib/data/day-drill";
 import { TIP_METHODS, cents, isSharedLogin, isTipMethod, presence, splitTips, tipKind, type Kinds, type Presence, type SplitResult, type TipMethod } from "@/lib/tip-split";
@@ -140,7 +141,15 @@ export default function TipsDrill({
       </Section>
 
       {poolTotal > 0 && (
-        <Section title="Split the tips" subtitle="Tick who's in. Your ticks are remembered on this device.">
+        <Section
+          title={
+            <>
+              Split the tips
+              <InfoTip topic="tip-split" />
+            </>
+          }
+          subtitle="Tick who's in. Your ticks are remembered on this device."
+        >
           <div role="radiogroup" aria-label="How to split" className="mb-2 flex max-w-full overflow-x-auto rounded-full border border-[var(--border)] bg-[var(--surface)] p-1 [scrollbar-width:none]">
             {TIP_METHODS.map((m) => (
               <button

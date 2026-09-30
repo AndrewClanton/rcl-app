@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Signals, TodayBoard, NavBadges } from "@/lib/data/backoffice";
+import { raiseParText } from "@/lib/ops/shared";
 import { shiftDate } from "@/lib/ops/time";
 import PageHeader from "@/components/admin/PageHeader";
 import Badge from "./_nav/Badge";
@@ -17,6 +18,8 @@ function money(n: number) {
 }
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
+// "Tue 7:45 PM"
+const dayTime = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "short", hour: "numeric", minute: "2-digit", timeZone: TZ });
 
 // "19:30:00" -> "7:30 PM"
 function wallClock(time: string) {
@@ -37,9 +40,18 @@ function attention(s: Signals, board: TodayBoard): Attention[] {
     out.push({ tone: "danger", text: `Printer not connected: ${s.printers.offline.join(", ")}`, href: "/admin/printers", go: "Printers" });
   }
   if (s.tabs?.fromBefore) out.push({ tone: "warn", text: `${plural(s.tabs.fromBefore, "tab")} left open from before today`, href: "/pos", go: "Register" });
+  // Managers: restock to-dos from Ran out ("Buy Hot dog buns at Walmart").
+  for (const t of board.managerTodos ?? []) {
+    out.push({ tone: "warn", text: `${t.title} · ran out ${dayTime(t.createdAt)}`, href: "/admin/team?view=todos", go: "To-dos" });
+  }
   if (s.itemsOut?.length) {
     const names = s.itemsOut.length > 4 ? `${s.itemsOut.slice(0, 4).join(", ")} and ${s.itemsOut.length - 4} more` : s.itemsOut.join(", ");
     out.push({ tone: "warn", text: `Marked out on the register: ${names}`, href: "/admin/menu", go: "Menu" });
+  }
+  // Managers: par lines that keep running out. Only a nudge: nothing changes the par by itself.
+  for (const o of board.oftenOut ?? []) {
+    // The par sheet is edited on the register (Par sheet → Edit the list).
+    out.push({ tone: "info", text: raiseParText(o), href: "/pos", go: "Par sheet" });
   }
   if (board.trainingOverdue) out.push({ tone: "warn", text: `${plural(board.trainingOverdue, "training")} overdue`, href: "/admin/training", go: "Training" });
   for (const e of board.events ?? []) {

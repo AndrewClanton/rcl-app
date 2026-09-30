@@ -15,6 +15,10 @@
 //    its seconds, the hours right on the timesheet.
 //  - Pay periods, hour formatting, and that the daily email's shift lookup
 //    (shifts → employees) still works with the new columns.
+//  - Start shift after a forgotten End shift: a new shift on a new business
+//    day (4 AM Central), the old one left open and flagged; the same shift
+//    again the same business day, and for two taps at once; the register's
+//    on-shift list leaves out a shift from an earlier day.
 //
 // Usage: node scripts/check-shift-edits-db.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
@@ -87,6 +91,8 @@ const actions = await import("../src/app/admin/team/actions.ts");
 const hoursActions = await import("../src/app/pos/hours-actions.ts");
 const { formatHours, centralLocal } = await import("../src/lib/hours.ts");
 const { createAdminClient } = await import("../src/lib/supabase/admin.ts");
+const shifts = await import("../src/lib/ops/shifts.ts");
+const ops = await import("../src/app/pos/ops-actions.ts");
 
 const WEEK = "2020-01-06"; // a Monday
 const ms = (iso) => new Date(iso).getTime();
@@ -204,6 +210,30 @@ try {
   // The daily email looks up shifts → employees; the new columns mustn't make that ambiguous.
   const { error } = await createAdminClient().from("shifts").select("started_at, ended_at, employee:employees(name)").limit(1);
   check("daily email's shift lookup still works", !error, error?.message);
+
+  // ---------- Start shift after a forgotten End shift ----------
+  // The second throwaway person forgot to End shift on Tue Jan 14, 2020
+  // (4 PM Central), then starts again on later days.
+  const openFor = async () => q("select id from shifts where employee_id = $1 and ended_at is null order by started_at", [e2.id]);
+  const [old] = await q("insert into shifts (employee_id, started_at) values ($1, '2020-01-14T22:00:00Z') returning id", [e2.id]);
+  const at = (iso) => shifts.startShiftFor(e2.id, new Date(iso));
+  const s1 = await at("2020-01-15T21:00:00Z"); // Wed 3 PM
+  check("start shift, next day: a new shift", s1.ok && !s1.reused && s1.shiftId !== old.id, JSON.stringify(s1));
+  check("start shift, next day: the forgotten one is left open", (await shiftRow(old.id)).ended_at === null && (await openFor()).length === 2);
+  const s2 = await at("2020-01-16T01:00:00Z"); // Wed 7 PM: tapped again
+  const s3 = await at("2020-01-16T09:30:00Z"); // Thu 3:30 AM: still Wednesday's business day
+  check("start shift, same business day: the same shift (a double tap never makes two)", s2.ok && s2.reused && s2.shiftId === s1.shiftId && s3.ok && s3.reused && s3.shiftId === s1.shiftId && (await openFor()).length === 2);
+  const s4 = await at("2020-01-16T10:30:00Z"); // Thu 4:30 AM: a new business day
+  check("start shift, after 4 AM: a new shift again", s4.ok && !s4.reused && s4.shiftId !== s1.shiftId && (await openFor()).length === 3);
+  const [pa, pb] = await Promise.all([at("2020-01-17T22:00:00Z"), at("2020-01-17T22:00:00Z")]); // Fri, two taps at once
+  const friday = await q("select id from shifts where employee_id = $1 and ended_at is null and started_at >= '2020-01-17T10:00:00Z' and started_at < '2020-01-18T10:00:00Z'", [e2.id]);
+  check("start shift, two taps at once: one shift", pa.ok && pb.ok && pa.shiftId === pb.shiftId && friday.length === 1, `${friday.length} open that day`);
+  const flagged = (await team.getForgottenClockOuts(e2.id)).map((s) => s.shiftId);
+  check("Timesheets flags each one left open as a forgotten clock-out", [old.id, s1.shiftId, s4.shiftId, pa.shiftId].every((id) => flagged.includes(id)), `${flagged.length} flagged`);
+  const status = await ops.getShiftStatus();
+  check("the register doesn't count a shift from an earlier day as on shift now", !status.onShift.some((o) => o.employeeId === e2.id || o.employeeId === e1.id));
+  const refusedStart = await ops.startShift(e2.id);
+  check("the register's Start shift refuses someone switched off", refusedStart.ok === false && (await openFor()).length === 4, refusedStart.ok ? "started!" : refusedStart.error);
 } finally {
   await q("delete from shifts where employee_id = any($1)", [[e1.id, e2.id]]);
   await q("delete from employees where id = any($1)", [[e1.id, e2.id]]);

@@ -7,7 +7,8 @@ import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDa
 import { evaluateReminders } from "@/lib/ops/reminders";
 import { boothWindow } from "@/lib/booth-time";
 import { logOpsChange } from "@/lib/ops/changes";
-import { currentOuts } from "@/lib/ops/outages";
+import { currentOuts, finishTodo, reopenTodo } from "@/lib/ops/outages";
+import { startShiftFor } from "@/lib/ops/shifts";
 import { countsOf, currentLines, latestLines } from "@/lib/ops/par-counts";
 import {
   buyQty,
@@ -99,7 +100,10 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
 
   const window = businessDayWindow(today.date);
   const [shiftsRes, tasksRes, doneRes, shopping, todosRes, schedRes] = await Promise.all([
-    supabase.from("shifts").select("id, employee_id, started_at").is("ended_at", null).order("started_at"),
+    // On shift now: started this business day and not ended. One left open
+    // from an earlier day is a forgotten End shift (Team → Timesheets), not
+    // someone here now.
+    supabase.from("shifts").select("id, employee_id, started_at").is("ended_at", null).gte("started_at", window.start).order("started_at"),
     supabase.from("shift_tasks").select("id, title, details, timing, frequency, days, assignee_id, sort_order").eq("active", true).order("sort_order"),
     supabase.from("task_completions").select("task_id, work_date, completed_by, completed_at").gte("work_date", periodStart(today.date, "weekly") < periodStart(today.date, "monthly") ? periodStart(today.date, "weekly") : periodStart(today.date, "monthly")).order("completed_at", { ascending: false }),
     // The Shopping button's count: the same list the Shopping tab shows.
@@ -107,7 +111,7 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
       console.error("ops: shopping list for the status poll", e);
       return null;
     }),
-    supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by").is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
+    supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by, audience, outage_id").is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
     supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
   ]);
 
@@ -119,6 +123,9 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     assigneeName: t.assignee_id ? (names.get(t.assignee_id) ?? null) : null,
     dueDate: t.due_date,
     fromName: t.created_by ? (names.get(t.created_by) ?? null) : null,
+    // The register shows these only while a manager's using it.
+    forManagers: t.audience === "managers",
+    outageId: t.outage_id ?? null,
   }));
   const scheduled: Record<string, string> = {};
   for (const s of schedRes.data ?? []) {
@@ -219,15 +226,15 @@ export async function markBoothCardPrinted(reservationId: string): Promise<Resul
 
 // ---------- shifts ----------
 
+// Reuses their open shift only if it started this business day; one left
+// open from an earlier day stays open for a manager to fix (see
+// src/lib/ops/shifts.ts).
 export async function startShift(employeeId: string): Promise<Result<{ shiftId: string }>> {
   await assertStaff();
   const emp = await validEmployee(employeeId);
   if (!emp) return { ok: false, error: "Pick someone from the staff list." };
-  const { data: open } = await db().from("shifts").select("id").eq("employee_id", emp).is("ended_at", null).maybeSingle();
-  if (open) return { ok: true, shiftId: open.id };
-  const { data, error } = await db().from("shifts").insert({ employee_id: emp }).select("id").single();
-  if (error) return { ok: false, error: "Couldn't start the shift. Try again." };
-  return { ok: true, shiftId: data.id };
+  const r = await startShiftFor(emp);
+  return r.ok ? { ok: true, shiftId: r.shiftId } : r;
 }
 
 export async function endShift(shiftId: string, closedForNight: boolean): Promise<Result> {
@@ -654,15 +661,19 @@ export async function getOpsHistory(days = 7): Promise<OpsHistory> {
 
 // ---------- to-dos from Back office → Team ----------
 
-export async function setTodoDone(todoId: string, employeeId: string | null): Promise<Result> {
+const TODO_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Done. A restock to-do from "Ran out" means it was bought: its report
+// closes as bought and what it stopped goes back on sale (`restock`).
+export async function setTodoDone(todoId: string, employeeId: string | null): Promise<Result<{ restock: { what: string; back: string[] } | null }>> {
   await assertStaff();
-  const by = await validEmployee(employeeId);
-  const { error } = await db().from("staff_todos").update({ done_at: new Date().toISOString(), done_by: by }).eq("id", todoId).is("done_at", null);
-  return error ? { ok: false, error: "Couldn't mark that done. Try again." } : { ok: true };
+  if (typeof todoId !== "string" || !TODO_ID.test(todoId)) return { ok: false, error: "That to-do didn't come through. Try again." };
+  return finishTodo(todoId.toLowerCase(), await validEmployee(employeeId));
 }
 
+// Undo, for an ordinary to-do (a restock to-do closed with its report).
 export async function undoTodoDone(todoId: string): Promise<Result> {
   await assertStaff();
-  const { error } = await db().from("staff_todos").update({ done_at: null, done_by: null }).eq("id", todoId);
-  return error ? { ok: false, error: "Couldn't undo that. Try again." } : { ok: true };
+  if (typeof todoId !== "string" || !TODO_ID.test(todoId)) return { ok: false, error: "That to-do didn't come through. Try again." };
+  return reopenTodo(todoId.toLowerCase());
 }
