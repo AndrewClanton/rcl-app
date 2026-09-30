@@ -151,13 +151,16 @@ function ShiftFlags({ s }: { s: TimesheetShift }) {
 
 export function WeekTimesheet({ people }: { people: TimesheetPerson[] }) {
   if (!people.length) return <p className="text-sm text-[var(--muted)]">Nobody clocked in or was scheduled this week.</p>;
-  const totals = people.length > 1;
+  // Totals only draws when someone has hours (it's empty otherwise), so
+  // only then does it get its column.
+  const totals = people.length > 1 && people.some((p) => p.hours > 0);
   return (
     // On a computer the totals stay in view on the left while each
-    // person's week scrolls by on the right.
+    // person's week scrolls by on the right. A long staff list scrolls
+    // inside the totals rather than running off the screen.
     <div className={`space-y-4 ${totals ? "xl:grid xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:items-start xl:gap-5 xl:space-y-0" : ""}`}>
       {totals && (
-        <div className="xl:sticky xl:top-4">
+        <div className="xl:sticky xl:top-4 xl:max-h-[calc(100dvh-2rem)] xl:overflow-y-auto">
           <Totals people={[people]} weeks={[{ label: "This week" }]} />
         </div>
       )}

@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow, shiftDate } from "@/lib/ops/time";
+import { getPartialRefunds } from "@/lib/data/reports";
 import { getForgottenClockOuts, getTimesheet, payPeriodStart, thisWeek, type TimesheetPerson, type TimesheetShift } from "@/lib/data/team";
 import { getTrainingFor, type TrainingState } from "@/lib/training/data";
 
@@ -46,7 +47,7 @@ export interface DoneItem {
 
 export interface SalesTotals {
   orders: number;
-  taken: number; // what customers paid on them, with tax and tips
+  taken: number; // what customers paid on them, with tax and tips, less partial refunds
   tips: number; // tips added on those orders
 }
 
@@ -72,9 +73,12 @@ async function quietly<T>(read: () => Promise<T>): Promise<T | null> {
 
 const dayOf = (iso: string) => businessDay(new Date(iso)).date;
 
+// Null only when there's no such person; a database error is thrown, so it
+// shows as an error rather than as "not found".
 export async function getAccount(employeeId: string): Promise<AccountData | null> {
   const db = createAdminClient();
-  const { data: emp } = await db.from("employees").select("id, name, role, active, created_at").eq("id", employeeId).maybeSingle();
+  const { data: emp, error: empError } = await db.from("employees").select("id, name, role, active, created_at").eq("id", employeeId).maybeSingle();
+  if (empError) throw empError;
   if (!emp) return null;
   const person: AccountPerson = { id: emp.id, name: emp.name, role: emp.role, active: emp.active !== false, since: (emp.created_at as string | null) ?? null };
 
@@ -86,6 +90,8 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
   const periodFrom = businessDayWindow(start).start;
   const periodTo = businessDayWindow(periodEnd).end;
   const doneSince = new Date(Date.now() - DONE_DAYS * 86_400_000).toISOString();
+  // Read once: the calendar lists the ones due, the summary counts them all.
+  const trainingRead = quietly(() => getTrainingFor(employeeId));
 
   const [sheets, forgotten, calendar, done, sales, tipsPaid, trainingList] = await Promise.all([
     quietly(() => Promise.all([getTimesheet(start, employeeId), getTimesheet(second, employeeId)]).then(([a, b]) => [a[0] ?? null, b[0] ?? null])),
@@ -96,13 +102,15 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
     quietly(async () => {
       const now = new Date().toISOString();
       const until = businessDayWindow(shiftDate(today, AHEAD_DAYS)).end;
-      const [shifts, todos, trainings] = await Promise.all([
+      const [shifts, todos, trainingsOrNull] = await Promise.all([
         db.from("staff_schedule").select("id, starts_at, ends_at, note").eq("employee_id", employeeId).is("deleted_at", null).gte("ends_at", now).lt("starts_at", until).order("starts_at"),
         db.from("staff_todos").select("id, title, details, due_date").eq("assignee_id", employeeId).is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }),
-        getTrainingFor(employeeId),
+        trainingRead,
       ]);
       if (shifts.error) throw shifts.error;
       if (todos.error) throw todos.error;
+      // Trainings that couldn't be read are left off; the shifts and to-dos still show.
+      const trainings = trainingsOrNull ?? [];
       const items: CalendarItem[] = [
         ...shifts.data.map((s) => ({
           kind: "shift" as const,
@@ -149,7 +157,7 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
       const [tasks, todos, pars, outs] = await Promise.all([
         db.from("task_completions").select("id, completed_at, work_date, task:shift_tasks(title, timing)").eq("completed_by", employeeId).gte("completed_at", doneSince).order("completed_at", { ascending: false }).limit(200),
         db.from("staff_todos").select("id, title, done_at, outage_id").eq("done_by", employeeId).gte("done_at", doneSince).order("done_at", { ascending: false }).limit(100),
-        db.from("par_counts").select("id, completed_at, lines:par_count_lines(count)").eq("counted_by", employeeId).gte("completed_at", doneSince).order("completed_at", { ascending: false }).limit(60),
+        db.from("par_counts").select("id, completed_at, lines:par_count_lines(item_id)").eq("counted_by", employeeId).gte("completed_at", doneSince).order("completed_at", { ascending: false }).limit(60),
         db.from("stock_outages").select("id, label, reported_at, resolution").eq("reported_by", employeeId).gte("reported_at", doneSince).order("reported_at", { ascending: false }).limit(60),
       ]);
       if (tasks.error) throw tasks.error;
@@ -166,12 +174,12 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
         // Par counts and Ran out may not be there on an older database; they're just left out.
         ...(pars.error
           ? []
-          : (pars.data as unknown as { id: string; completed_at: string; lines: { count: number }[] | null }[]).map((p) => ({
+          : (pars.data as unknown as { id: string; completed_at: string; lines: { item_id: string }[] | null }[]).map((p) => ({
               kind: "par" as const,
               id: p.id,
               at: p.completed_at,
               title: "Par count",
-              detail: p.lines?.[0]?.count ? `${p.lines[0].count} lines counted` : null,
+              detail: p.lines?.length ? `${p.lines.length} ${p.lines.length === 1 ? "line" : "lines"} counted` : null,
             }))),
         ...(outs.error
           ? []
@@ -186,23 +194,30 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
       return items.sort((a, b) => b.at.localeCompare(a.at));
     }),
 
-    // What they rang on the register this pay period (finished orders
-    // only; refunded ones don't count).
+    // What they rang on the register this pay period: finished orders
+    // only (refunded ones don't count), less anything given back in a
+    // partial refund, the same as the reports.
     quietly(async () => {
-      const rows: { completed_at: string; total: number; tip: number }[] = [];
+      const rows: { id: string; completed_at: string; total: number; tip: number }[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await db
           .from("orders")
-          .select("completed_at, total, tip")
+          .select("id, completed_at, total, tip")
           .eq("employee_id", employeeId)
           .eq("status", "completed")
           .gte("completed_at", periodFrom)
           .lt("completed_at", periodTo)
           .order("completed_at")
+          .order("id")
           .range(from, from + 999);
         if (error) throw error;
-        rows.push(...(data as { completed_at: string; total: number; tip: number }[]));
+        rows.push(...(data as { id: string; completed_at: string; total: number; tip: number }[]));
         if (!data || data.length < 1000) break;
+      }
+      const mine = new Set(rows.map((o) => o.id));
+      const givenBack = new Map<string, number>();
+      for (const p of await getPartialRefunds(periodFrom, periodTo)) {
+        if (mine.has(p.order_id)) givenBack.set(p.order_id, (givenBack.get(p.order_id) ?? 0) + Number(p.amount));
       }
       const empty = (): SalesTotals => ({ orders: 0, taken: 0, tips: 0 });
       const weekFrom = businessDayWindow(week).start;
@@ -212,7 +227,7 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
       for (const o of rows) {
         const add = (t: SalesTotals) => {
           t.orders += 1;
-          t.taken += Number(o.total);
+          t.taken += Number(o.total) - (givenBack.get(o.id) ?? 0);
           t.tips += Number(o.tip);
         };
         add(period);
@@ -233,7 +248,7 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
       return { period: days.reduce((s, d) => s + d.amount, 0), days };
     }),
 
-    quietly(() => getTrainingFor(employeeId)),
+    trainingRead,
   ]);
 
   const assigned = (trainingList ?? []).filter((t) => t.assigned);

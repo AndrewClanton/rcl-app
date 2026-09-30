@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Signals, TodayBoard, NavBadges } from "@/lib/data/backoffice";
-import type { HomeExtras, HomeTodo } from "@/lib/data/home";
+import type { HomeExtras, HomeTodo, WeekAheadDay } from "@/lib/data/home";
 import { raiseParText } from "@/lib/ops/shared";
 import { shiftDate } from "@/lib/ops/time";
 import PageHeader from "@/components/admin/PageHeader";
@@ -35,6 +35,16 @@ const dayTime = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday
 function wallClock(time: string) {
   const [h, m] = time.split(":").map(Number);
   return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+// Minutes into the night, Central, for putting a day's items in order: an
+// instant ("2026-10-02T00:30:00Z") or a wall-clock time ("19:30:00").
+// Before 4 a.m. counts as the end of the night before, like the business day.
+function nightMinutes(when: string) {
+  const [h, m] = /^\d{1,2}:\d{2}/.test(when)
+    ? when.split(":").map(Number)
+    : new Date(when).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: TZ }).split(":").map(Number);
+  return (h < 4 ? h + 24 : h) * 60 + m;
 }
 
 const dayName = (date: string, opts: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" }) =>
@@ -168,7 +178,7 @@ export default function TodayView({
 
       {/* At a glance */}
       <section aria-label="At a glance" className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:col-span-3 xl:row-start-3">
-        <Tile label="Sales today" href="/admin/reports" value={board.summary ? money(board.summary.todaysRevenue) : "–"} sub={board.summary ? plural(board.summary.todaysOrders, "order") : "Couldn't load"} />
+        <Tile label="Sales today" href="/admin/reports" value={board.summary ? money(board.summary.todaysRevenue) : "–"} sub={board.summary ? plural(board.summary.todaysOrders, "order") : "Couldn't load"} long />
         <Tile
           label="Tickets tonight"
           href="/admin/screenings"
@@ -304,11 +314,13 @@ export default function TodayView({
   );
 }
 
-function Tile({ label, value, sub, href }: { label: string; value: string; sub: string; href?: string }) {
+// `long`: a figure like "$12,345.67" that could outgrow half a phone's
+// width, so it's a size smaller there and may wrap rather than overflow.
+function Tile({ label, value, sub, href, long = false }: { label: string; value: string; sub: string; href?: string; long?: boolean }) {
   const body = (
     <>
       <div className="text-xs font-medium text-[var(--muted)]">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
+      <div className={`mt-1 font-bold tabular-nums ${long ? "min-w-0 break-words text-xl sm:text-2xl" : "text-2xl"}`}>{value}</div>
       <div className="mt-0.5 truncate text-xs text-[var(--muted)]">{sub}</div>
     </>
   );
@@ -388,27 +400,29 @@ function TodosCard({ todos, manager, today }: { todos: HomeExtras["todos"]; mana
 // private events (these used to be "Later this week" under Booked
 // tonight). Two or three days to a row where there's room.
 function WeekAhead({ days, events, className = "" }: { days: HomeExtras["weekAhead"]; events: TodayBoard["events"]; className?: string }) {
+  // If the showings couldn't be read, the private events (read with
+  // tonight's board) still show, day by day.
+  const list: WeekAheadDay[] = days ?? [...new Set((events ?? []).map((e) => e.date))].sort().map((date) => ({ date, shows: [], houseEvents: [] }));
   return (
     <div className={`bo-card bo-card-area bo-area-shows ${className}`}>
       <CardHead title="The week ahead" href="/admin/screenings" link="Showtimes" />
-      {!days ? (
-        <p className="text-sm text-[var(--muted)]">Couldn&apos;t load the week ahead.</p>
-      ) : (
+      {!days && <p className="mb-2 text-sm text-[var(--muted)]">Couldn&apos;t load the week&apos;s showings{list.length ? "; the private events are below." : "."}</p>}
+      {list.length > 0 && (
         <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2 2xl:grid-cols-3">
-          {days.map((d) => {
+          {list.map((d) => {
             const booked = (events ?? []).filter((e) => e.date === d.date);
             const items = [
-              ...d.shows.map((s) => ({ key: `s${s.id}`, at: clock(s.startsAt), sort: s.startsAt, title: s.title, extra: `${s.sold}/${s.capacity}`, warn: null as string | null })),
-              ...d.houseEvents.map((h) => ({ key: `h${h.id}`, at: clock(h.startsAt), sort: h.startsAt, title: h.title, extra: "house event", warn: null as string | null })),
+              ...d.shows.map((s) => ({ key: `s${s.id}`, at: clock(s.startsAt), sort: nightMinutes(s.startsAt), title: s.title, extra: `${s.sold}/${s.capacity}`, warn: null as string | null })),
+              ...d.houseEvents.map((h) => ({ key: `h${h.id}`, at: clock(h.startsAt), sort: nightMinutes(h.startsAt), title: h.title, extra: "house event", warn: null as string | null })),
               ...booked.map((e) => ({
                 key: `e${e.id}`,
                 at: wallClock(e.time),
-                sort: `${e.date}T${e.time}`,
+                sort: nightMinutes(e.time),
                 title: e.name,
                 extra: "private",
                 warn: !e.paid && e.balanceDue > 0 ? `${money(e.balanceDue)} due` : null,
               })),
-            ];
+            ].sort((a, b) => a.sort - b.sort);
             return (
               <li key={d.date} className="min-w-0 border-t border-[var(--border)] pt-2">
                 <div className="text-sm font-semibold">{dayName(d.date, { weekday: "long", month: "short", day: "numeric" })}</div>

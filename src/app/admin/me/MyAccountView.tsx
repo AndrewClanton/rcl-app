@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { signOut } from "@/app/login/actions";
 import PageHeader from "@/components/admin/PageHeader";
 import { formatHours } from "@/lib/hours";
 import { businessDay, shiftDate } from "@/lib/ops/time";
@@ -59,6 +60,12 @@ export default function MyAccountView({ data, self, canFix }: { data: AccountDat
               <Link href="/training" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
                 My training →
               </Link>
+              {/* Also under More in the menu; here too, where people look for it. */}
+              <form action={signOut}>
+                <button type="submit" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm text-[var(--muted)] hover:border-[var(--foreground)] hover:text-[var(--foreground)]">
+                  Sign out
+                </button>
+              </form>
             </span>
           ) : undefined
         }
@@ -105,11 +112,13 @@ export default function MyAccountView({ data, self, canFix }: { data: AccountDat
           label="Rang up this week"
           value={data.sales ? money(data.sales.week.taken) : "–"}
           sub={data.sales ? `${plural(data.sales.week.orders, "order")} · ${money(data.sales.week.tips)} in tips` : "Couldn't load"}
+          long
         />
         <Figure
           label="Tips paid out, pay period"
           value={data.tipsPaid ? money(data.tipsPaid.period) : "–"}
           sub={data.tipsPaid ? (data.tipsPaid.days.length ? `${plural(data.tipsPaid.days.length, "day")} recorded` : "None recorded yet") : "Couldn't load"}
+          long
         />
       </section>
 
@@ -150,23 +159,27 @@ export default function MyAccountView({ data, self, canFix }: { data: AccountDat
   );
 }
 
-function Figure({ label, value, sub, warn = null }: { label: string; value: string; sub: string; warn?: string | null }) {
+// `long`: a money figure like "$12,345.67" that could outgrow half a
+// phone's width, so it's a size smaller there and may wrap rather than
+// overflow.
+function Figure({ label, value, sub, warn = null, long = false }: { label: string; value: string; sub: string; warn?: string | null; long?: boolean }) {
   return (
     <div className="bo-card">
       <div className="text-xs font-medium text-[var(--muted)]">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums">{value}</div>
+      <div className={`mt-1 font-bold tabular-nums ${long ? "min-w-0 break-words text-xl sm:text-2xl" : "text-2xl"}`}>{value}</div>
       <div className="mt-0.5 text-xs text-[var(--muted)]">{sub}</div>
       {warn && <div className="mt-0.5 text-xs font-semibold text-[var(--danger-text)]">{warn}</div>}
     </div>
   );
 }
 
-// Grouped by day: overdue first, then today, tomorrow and on, then to-dos
-// with no date.
+// Grouped by day: overdue to-dos and trainings first, then today, tomorrow
+// and on, then to-dos with no date. A shift still running from last night
+// (it started before today's business day) goes under today, not Overdue.
 function CalendarCard({ items, today, self }: { items: CalendarItem[] | null; today: string; self: boolean }) {
   const groups = new Map<string, CalendarItem[]>();
   for (const it of items ?? []) {
-    const key = it.date === null ? "any" : it.date < today ? "overdue" : it.date;
+    const key = it.date === null ? "any" : it.kind === "shift" ? (it.date < today ? today : it.date) : it.date < today ? "overdue" : it.date;
     groups.set(key, [...(groups.get(key) ?? []), it]);
   }
   const order = [...groups.keys()].sort((a, b) => rank(a).localeCompare(rank(b)));
@@ -302,7 +315,8 @@ function RegisterCard({ data, self }: { data: AccountData; self: boolean }) {
         </p>
       )}
       <p className="mt-2 text-xs text-[var(--muted)]">
-        Finished orders rung under {self ? "your" : "their"} name, with tax and tips; refunded ones aren&apos;t counted. Orders rung under a shared register login aren&apos;t in here.
+        Finished orders rung under {self ? "your" : "their"} name, with tax and tips, less anything given back in a partial refund; fully refunded ones
+        aren&apos;t counted. Orders rung under a shared register login aren&apos;t in here.
       </p>
     </section>
   );

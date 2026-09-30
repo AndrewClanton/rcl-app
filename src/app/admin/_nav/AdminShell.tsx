@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { signOut } from "@/app/login/actions";
@@ -394,6 +394,8 @@ function SideNav({
   const [youShown, setYouShown] = useState(false);
   const youOpen = youShown || youActive;
   const pinBadge = badges.pin;
+  // The sidebar and the phone's drawer can both be on the page: one id each.
+  const youId = useId();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -450,11 +452,11 @@ function SideNav({
         ))}
       </nav>
 
-      {/* You: your name opens My account; the arrow shows your hours, PIN,
-          training and help. Pinned to the bottom. */}
+      {/* You: your name opens My account; More shows your hours, PIN,
+          training, help and Sign out. Pinned to the bottom. */}
       <div className="shrink-0 border-t border-[var(--border)] p-3 pt-2">
         {youOpen && (
-          <ul id="bo-you" className="mb-1">
+          <ul id={youId} className="mb-1">
             {youLinks.map((l) => (
               <li key={l.href}>
                 <Link href={l.href} onClick={onNavigate} aria-current={active === l.href ? "page" : undefined} className="bo-link">
@@ -489,11 +491,12 @@ function SideNav({
             type="button"
             onClick={() => setYouShown(!youOpen)}
             aria-expanded={youOpen}
-            aria-controls="bo-you"
-            aria-label={youOpen ? "Hide hours, PIN, help and sign out" : "Show hours, PIN, help and sign out"}
-            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 hover:bg-[var(--surface-hover)]"
+            aria-controls={youId}
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)]"
           >
             {!youOpen && pinBadge && <Badge badge={pinBadge} />}
+            More
+            <span className="sr-only">: hours, PIN, help and sign out</span>
             <ChevronIcon open={!youOpen} />
           </button>
         </div>
