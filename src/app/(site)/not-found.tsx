@@ -1,5 +1,6 @@
 import Link from "next/link";
 import ReelSheet from "@/components/ReelSheet";
+import UsageNotFound from "@/components/UsageNotFound";
 
 // The public site's 404, inside the normal header and footer. Shown for a
 // notFound() anywhere under (site) -- a showtime that's passed, been
@@ -21,6 +22,7 @@ export default function SiteNotFound() {
         </>
       }
     >
+      <UsageNotFound />
       <p>We couldn&apos;t find the page you were looking for.</p>
       <p className="text-[var(--muted)]">
         If it was a link to a showing, that show may have already started or come off the schedule, or it may not be posted yet. Head to Showtimes to see

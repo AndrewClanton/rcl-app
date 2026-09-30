@@ -79,6 +79,10 @@ export default async function PrivacyPage() {
             <strong>Email preferences:</strong> whether you want our weekly lineup emails.
           </li>
           <li>
+            <strong>Page visits:</strong> which pages of this site are opened and how long they stay on screen, counted anonymously with a random number kept
+            in your browser (not a cookie, and not tied to your name or account), and not at all if your browser asks sites not to track it.
+          </li>
+          <li>
             <strong>Technical information:</strong> cookies that keep you signed in, and standard server logs (such as IP address and browser type)
             that our hosting providers keep for security and troubleshooting.
           </li>

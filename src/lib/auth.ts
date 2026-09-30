@@ -35,7 +35,10 @@ export async function getStaffSession(): Promise<StaffSession | null> {
   return session && session.role !== "display" ? session : null;
 }
 
-async function getEmployeeSession(): Promise<StaffSession | null> {
+// Staff *or* a display account, with no redirect. Exported for the page-view
+// count (src/app/api/usage), which keeps only the role; gate with the
+// functions above and below instead.
+export async function getEmployeeSession(): Promise<StaffSession | null> {
   const supabase = await createClient();
   const {
     data: { user },
