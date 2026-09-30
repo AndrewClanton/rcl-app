@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, realtimeReady } from "@/lib/supabase/realtime";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
@@ -61,10 +62,10 @@ export default function CustomerDisplay({
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let cancelled = false;
 
-    supabase.auth.getSession().then(() => {
+    realtimeReady(supabase).then(() => {
       if (cancelled) return;
       channel = supabase
-        .channel(registerTopic)
+        .channel(registerTopic, PRIVATE_CHANNEL)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
         .subscribe((status) => {

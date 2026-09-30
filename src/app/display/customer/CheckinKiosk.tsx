@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, realtimeReady } from "@/lib/supabase/realtime";
 import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
@@ -201,9 +202,9 @@ export default function CheckinKiosk({
     let channel: Channel | null = null;
     let cancelled = false;
 
-    supabase.auth.getSession().then(() => {
+    realtimeReady(supabase).then(() => {
       if (cancelled) return;
-      const ch = supabase.channel(checkinTopic(registerTopic));
+      const ch = supabase.channel(checkinTopic(registerTopic), PRIVATE_CHANNEL);
       channel = ch;
       channelRef.current = ch;
       ch.on("broadcast", { event: "checkin-seen" }, (msg) => onSeen(msg.payload?.id))

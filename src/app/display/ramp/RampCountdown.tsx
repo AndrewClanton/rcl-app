@@ -4,6 +4,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, subscribePrivate } from "@/lib/supabase/realtime";
 import { rampStateAt, formatCountdown, formatClock, formatDayTime, type RampScreening, type RampState } from "./schedule";
 
 // Designed as a fixed 1080x1920 portrait stage, then scaled to whatever the
@@ -53,12 +54,12 @@ export default function RampCountdown({ screenings, serverNow, rotate }: { scree
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
-      .channel("ramp-screenings")
-      .on("postgres_changes", { event: "*", schema: "public", table: "screenings" }, () => router.refresh())
-      .subscribe();
+      .channel("ramp-screenings", PRIVATE_CHANNEL)
+      .on("postgres_changes", { event: "*", schema: "public", table: "screenings" }, () => router.refresh());
+    const leave = subscribePrivate(supabase, channel);
     const id = setInterval(() => router.refresh(), REFRESH_MS);
     return () => {
-      supabase.removeChannel(channel);
+      leave();
       clearInterval(id);
     };
   }, [router]);

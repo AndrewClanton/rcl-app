@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, subscribePrivate } from "@/lib/supabase/realtime";
 import MemberAvatar from "@/components/MemberAvatar";
 import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
@@ -254,20 +255,20 @@ export default function RegisterCheckins({
 
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase.channel(checkinTopic(registerTopic));
+    const channel = supabase.channel(checkinTopic(registerTopic), PRIVATE_CHANNEL);
     channelRef.current = channel;
     channel
       .on("broadcast", { event: "checkin-request" }, (msg) => onRequest(msg.payload))
       .on("broadcast", { event: "checkin-cancel" }, (msg) => onCancel(msg.payload?.id))
       .on("broadcast", { event: "checkin-confirmed" }, (msg) => onAnsweredElsewhere(msg.payload, "checkin-confirmed"))
-      .on("broadcast", { event: "checkin-declined" }, (msg) => onAnsweredElsewhere(msg.payload, "checkin-declined"))
-      .subscribe((status) => {
-        // Joined, or back after a dropped connection: a screen may have sent
-        // its request while this register wasn't listening.
-        if (status === "SUBSCRIBED") channel.send({ type: "broadcast", event: "checkin-sync", payload: {} });
-      });
+      .on("broadcast", { event: "checkin-declined" }, (msg) => onAnsweredElsewhere(msg.payload, "checkin-declined"));
+    const leave = subscribePrivate(supabase, channel, (status) => {
+      // Joined, or back after a dropped connection: a screen may have sent
+      // its request while this register wasn't listening.
+      if (status === "SUBSCRIBED") channel.send({ type: "broadcast", event: "checkin-sync", payload: {} });
+    });
     return () => {
-      supabase.removeChannel(channel);
+      leave();
       channelRef.current = null;
     };
   }, [registerTopic]);

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, subscribePrivate } from "@/lib/supabase/realtime";
 import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
@@ -427,15 +428,15 @@ export default function PosApp({
 
   useEffect(() => {
     const supabase = createClient();
-    const channel = supabase.channel(registerTopic);
+    const channel = supabase.channel(registerTopic, PRIVATE_CHANNEL);
     registerChannelRef.current = channel;
     channel
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
-      })
-      .subscribe();
+      });
+    const leave = subscribePrivate(supabase, channel);
     return () => {
-      supabase.removeChannel(channel);
+      leave();
       registerChannelRef.current = null;
     };
   }, [registerTopic]);

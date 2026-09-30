@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { PRIVATE_CHANNEL, realtimeReady } from "@/lib/supabase/realtime";
 import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
 import { reprintOrderTicket, setItemReady } from "./actions";
 
@@ -43,10 +44,10 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
     // Wait for the browser client's own session to hydrate before
     // subscribing -- subscribing first connects as anonymous and RLS
     // silently drops every row (channel still reports SUBSCRIBED).
-    supabase.auth.getSession().then(() => {
+    realtimeReady(supabase).then(() => {
       if (cancelled) return;
       channel = supabase
-        .channel(`prep-tickets-${station}`)
+        .channel(`prep-tickets-${station}`, PRIVATE_CHANNEL)
         .on(
           "postgres_changes",
           { event: "INSERT", schema: "public", table: "order_items" },
