@@ -3,10 +3,24 @@
 // use it too -- hashing lives in src/lib/pin.ts, the checks in
 // src/lib/manager-pin.ts.
 
-// Every staff account started with this PIN. It keeps working for anyone
-// who hasn't picked their own yet, so nothing breaks while the team
-// switches over; the back office nags them until they do.
+// Every staff account used to start with this PIN. It keeps working for
+// anyone who hasn't picked their own yet, so nothing breaks while the team
+// switches over; the back office nags them until they do. Once the owner
+// sets the cutover date (MANAGER_PIN_CUTOVER, src/lib/manager-pin.ts) it
+// stops approving anything.
 export const DEFAULT_PIN = "9999";
+
+// New accounts and owner resets get a random temporary PIN instead. After
+// the cutover, a temporary PIN approves for this many days, so it gets
+// swapped for one only that person knows.
+export const TEMP_PIN_DAYS = 3;
+
+export function tempPinExpired(row: { pin_must_change: boolean; pin_set_at: string | null }, now = Date.now()): boolean {
+  if (!row.pin_must_change) return false;
+  // No date: handed out before pin_set_at existed, so assume it's old.
+  const setAt = row.pin_set_at ? Date.parse(row.pin_set_at) : NaN;
+  return !(setAt > now - TEMP_PIN_DAYS * 86_400_000);
+}
 
 // 4 to 6 digits. Checks the type too: a Server Action's arguments come
 // from the browser and could be anything.

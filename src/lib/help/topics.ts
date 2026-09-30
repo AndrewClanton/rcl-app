@@ -175,7 +175,7 @@ export const HELP_TOPICS = {
     title: "Why this needs a manager PIN",
     area: "Register: payments",
     body:
-      "Refunds, cancelling a tab and cancelling a booth booking give money back or wipe out a sale, so a manager approves them with their own PIN, and the approval records whose PIN it was. Five wrong PINs within 10 minutes locks approvals for 10 minutes, for the whole building. Managers still on 9999 should pick their own under My PIN: until they do, anyone who knows 9999 can approve.",
+      "Refunds, cancelling a tab and cancelling a booth booking give money back or wipe out a sale, so a manager approves them with their own PIN, and the approval records whose PIN it was. Five wrong PINs within 10 minutes locks approvals for 10 minutes, for the whole building. Managers still on 9999 should pick their own under My PIN: until they do, anyone who knows 9999 can approve. Once the owners switch off the old PINs, 9999 approves nothing, and neither does a temporary PIN from the owner more than 3 days old.",
     links: [{ label: "My PIN", href: "/admin/my-pin" }],
   },
   refunds: {

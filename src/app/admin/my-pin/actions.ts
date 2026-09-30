@@ -2,10 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { assertStaff } from "@/lib/auth";
+import { assertStaff, hasManagerAccess } from "@/lib/auth";
 import { hashPin, isDefaultPin, verifyPin } from "@/lib/pin";
 import { pinProblem } from "@/lib/pin-rules";
-import { checkOwnPin } from "@/lib/manager-pin";
+import { checkOwnPin, checkPinFree } from "@/lib/manager-pin";
 
 // A signed-in staff member sets their own PIN. Their current PIN is asked
 // for unless it's still 9999 (everyone knows that one, so asking proves
@@ -26,14 +26,19 @@ export async function setMyPin(input: { current: string; next: string; confirm: 
     if (verifyPin(input.next, me.pin_hash)) return { ok: false, error: "That's the PIN you already have. Pick a new one." };
   }
 
-  // pin_must_change arrives with migration 20260929100000_manager_pins.sql;
-  // save the PIN without it until then.
-  const pin_hash = hashPin(input.next);
-  const { error: saveErr } = await supabase.from("employees").update({ pin_hash, pin_must_change: false }).eq("id", staff.employeeId);
-  if (saveErr) {
-    const { error: retryErr } = await supabase.from("employees").update({ pin_hash }).eq("id", staff.employeeId);
-    if (retryErr) return { ok: false, error: "Couldn't save your PIN. Try again." };
+  // A manager's PIN names them on every approval, so no two can share one.
+  // A cashier's approves nothing, and telling them a PIN is taken would
+  // hand them a manager's.
+  if (hasManagerAccess(staff.role)) {
+    const free = await checkPinFree(staff.employeeId, input.next);
+    if (!free.ok) return free;
   }
+
+  const { error: saveErr } = await supabase
+    .from("employees")
+    .update({ pin_hash: hashPin(input.next), pin_must_change: false, pin_set_at: new Date().toISOString() })
+    .eq("id", staff.employeeId);
+  if (saveErr) return { ok: false, error: "Couldn't save your PIN. Try again." };
   // The "still 9999" banner lives in the admin layout.
   revalidatePath("/admin", "layout");
   return { ok: true };

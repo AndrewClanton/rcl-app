@@ -15,16 +15,22 @@ export type LinkResult = { ok: true; created: boolean } | { ok: false; error: st
 // Facebook vouched for it, or they clicked a confirmation link we emailed.
 // A plain email + password sign-up proves nothing while Supabase's "Confirm
 // email" setting is off -- anyone can type someone else's address.
+//
+// Google or Facebook only counts for the address they gave us. With
+// "Confirm email" off, someone who signed in with Google can change the
+// login's email to anyone's, and it still says "google" in
+// app_metadata.providers -- so that list proves nothing, and a user
+// without identities (some admin lookups leave them out; fetch it with
+// auth.admin.getUserById) isn't proven by Google either.
 export function emailIsProven(user: User): boolean {
   const email = user.email?.toLowerCase();
   if (!email) return false;
-  const vouched =
-    (user.identities ?? []).some(
-      (i) => i.provider !== "email" && String(i.identity_data?.email ?? "").toLowerCase() === email && i.identity_data?.email_verified !== false,
-    ) ||
-    // Some admin lookups leave out identities; app_metadata.providers is
-    // kept by Supabase and can't be edited by the person.
-    ((user.app_metadata?.providers ?? []) as string[]).some((p) => p === "google" || p === "facebook");
+  const vouched = (user.identities ?? []).some(
+    (i) =>
+      (i.provider === "google" || i.provider === "facebook") &&
+      String(i.identity_data?.email ?? "").toLowerCase() === email &&
+      i.identity_data?.email_verified !== false,
+  );
   // confirmation_sent_at is only set when a real confirmation email went
   // out; with auto-confirm on, email_confirmed_at is stamped at sign-up.
   // email_vouched: the owner made this login for a staff member in person.

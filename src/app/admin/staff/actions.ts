@@ -6,8 +6,7 @@ import { requireOwner } from "@/lib/auth";
 import type { EmployeeRole } from "@/lib/types";
 import type { User } from "@supabase/supabase-js";
 import { emailIsProven } from "@/lib/member-link";
-import { DEFAULT_PIN_HASH, hashPin } from "@/lib/pin";
-import { pinProblem } from "@/lib/pin-rules";
+import { newTempPin } from "@/lib/manager-pin";
 import { siteOrigin } from "@/lib/site-origin";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
@@ -26,9 +25,10 @@ function revalidate() {
   revalidatePath("/admin");
 }
 
-// New accounts start on 9999 (DEFAULT_PIN_HASH, src/lib/pin.ts) like every
-// account before them, so they work on the register right away; the back
-// office then asks them to set their own under My PIN.
+// New accounts start on a random temporary PIN (newTempPin,
+// src/lib/manager-pin.ts), shown once to the owner to pass on. It works on
+// the register right away; the back office then asks them to set their own
+// under My PIN.
 
 // Every login with this email, looking past the first page (listUsers
 // returns 50 at a time by default).
@@ -49,7 +49,12 @@ async function findAuthUserByEmail(email: string): Promise<User | null> {
 // (Google, or a confirmed email), that login is reused so the same person
 // doesn't need two. An unconfirmed one isn't: anyone could have signed up
 // with a future hire's email ahead of time.
-export async function createEmployee(input: { name: string; email: string; password: string; role: EmployeeRole }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }> {
+export async function createEmployee(input: {
+  name: string;
+  email: string;
+  password: string;
+  role: EmployeeRole;
+}): Promise<{ ok: true; reused: boolean; pin: string | null } | { ok: false; error: string }> {
   await requireOwner();
   if (!ASSIGNABLE_ROLES.includes(input.role)) return { ok: false, error: "Pick a role." };
 
@@ -58,6 +63,10 @@ export async function createEmployee(input: { name: string; email: string; passw
   if (!name || !email) return { ok: false, error: "Name and email are required." };
   if (input.password.length < 6) return { ok: false, error: "Password must be at least 6 characters." };
 
+  // Made first, so a hiccup here doesn't leave a login with no staff row.
+  const temp = input.role === "display" ? null : await newTempPin(null);
+  if (input.role !== "display" && !temp) return { ok: false, error: "Couldn't make them a PIN. Try again." };
+
   const supabase = createAdminClient();
   const found = await findAuthUserByEmail(email);
   let authUserId = found?.id;
@@ -65,10 +74,14 @@ export async function createEmployee(input: { name: string; email: string; passw
   if (found) {
     const { data: existing } = await supabase.from("employees").select("id").eq("auth_user_id", found.id).maybeSingle();
     if (existing) return { ok: false, error: "That email already has a staff account." };
-    if (!emailIsProven(found)) {
+    // listUsers can leave out a login's identities, which emailIsProven
+    // needs to see that Google or Facebook gave this very address.
+    const { data: full, error: fullErr } = await supabase.auth.admin.getUserById(found.id);
+    if (fullErr || !full.user) return { ok: false, error: "Couldn't check the login that email already has. Try again." };
+    if (!emailIsProven(full.user)) {
       return {
         ok: false,
-        error: "That email already has a website login, made with a password and never confirmed, so it may not be theirs. Find them under “Give someone staff access” above to check, or use a different email.",
+        error: "That email already has a website login that never proved the address is theirs (a password login that was never confirmed, or a Google login whose email was changed). It may not be theirs. Find them under “Give someone staff access” above to check with them, or use a different email.",
       };
     }
   } else {
@@ -79,12 +92,10 @@ export async function createEmployee(input: { name: string; email: string; passw
     authUserId = userRes.user.id;
   }
 
-  const { error: empErr } = await supabase
-    .from("employees")
-    .insert({ name, auth_user_id: authUserId, role: input.role, pin_hash: input.role === "display" ? NO_PIN : DEFAULT_PIN_HASH });
+  const { error: empErr } = await supabase.from("employees").insert({ name, auth_user_id: authUserId, role: input.role, ...(temp ? temp.columns : { pin_hash: NO_PIN }) });
   if (empErr) return { ok: false, error: "Couldn't save that. Try again." };
   revalidate();
-  return { ok: true, reused: !!found };
+  return { ok: true, reused: !!found, pin: temp?.pin ?? null };
 }
 
 // ---------- giving an existing account staff access ----------
@@ -99,8 +110,9 @@ export interface AccountMatch {
   email: string | null;
   staffRole: EmployeeRole | null;
   staffActive: boolean;
-  // False for a password login whose email was never confirmed: it could
-  // have been made by someone else using this person's address.
+  // False when the login never proved it owns its email: a password login
+  // that was never confirmed, or a Google or Facebook login whose email
+  // was changed afterwards. Someone else could have made it.
   verified: boolean;
 }
 
@@ -122,6 +134,7 @@ export async function findAccounts(query: string): Promise<AccountMatch[]> {
   const authIds = (members ?? []).map((m) => m.auth_user_id as string);
   const { data: staff } = authIds.length ? await supabase.from("employees").select("auth_user_id, role, active").in("auth_user_id", authIds) : { data: [] };
   const staffByAuth = new Map((staff ?? []).map((s) => [s.auth_user_id, s]));
+  // getUserById, not listUsers: it includes the identities emailIsProven checks.
   const logins = await Promise.all(authIds.map((id) => supabase.auth.admin.getUserById(id).then((r) => r.data.user)));
   const verifiedByAuth = new Map(logins.filter((u) => !!u).map((u) => [u!.id, emailIsProven(u!)]));
   return (members ?? []).map((m) => {
@@ -130,8 +143,17 @@ export async function findAccounts(query: string): Promise<AccountMatch[]> {
   });
 }
 
-export async function makeStaff(memberId: string, role: EmployeeRole): Promise<{ ok: true } | { ok: false; error: string }> {
-  await requireOwner();
+// checkedInPerson: for a login that never proved its email, the owner
+// ticked that they checked with the person face to face that it's theirs.
+// The screen asks before sending it; this refuses without it, so calling
+// the action directly can't skip the question. pin is the new temporary
+// PIN to pass on, or null when restoring someone who keeps their old one.
+export async function makeStaff(
+  memberId: string,
+  role: EmployeeRole,
+  checkedInPerson?: boolean,
+): Promise<{ ok: true; pin: string | null } | { ok: false; error: string; needsCheck?: true }> {
+  const me = await requireOwner();
   // Display accounts are for TVs, not people -- those still get their own login below.
   if (!ASSIGNABLE_ROLES.includes(role) || role === "display") return { ok: false, error: "Pick cashier, manager or admin." };
   const supabase = createAdminClient();
@@ -142,12 +164,28 @@ export async function makeStaff(memberId: string, role: EmployeeRole): Promise<{
   const { data: existing } = await supabase.from("employees").select("id, role, active").eq("auth_user_id", member.auth_user_id).maybeSingle();
   if (existing?.role === "owner") return { ok: false, error: "That's an owner's account." };
   if (existing?.active) return { ok: false, error: "They're already on staff. Change their role in the list below." };
-  const { error } = existing
-    ? await supabase.from("employees").update({ role, active: true }).eq("id", existing.id)
-    : await supabase.from("employees").insert({ name: member.name, auth_user_id: member.auth_user_id, role, pin_hash: DEFAULT_PIN_HASH });
+
+  const { data: login, error: loginErr } = await supabase.auth.admin.getUserById(member.auth_user_id);
+  if (loginErr || !login.user) return { ok: false, error: "Couldn't check their login. Try again." };
+  if (!emailIsProven(login.user)) {
+    if (checkedInPerson !== true) {
+      return { ok: false, needsCheck: true, error: "Their login never proved the email is theirs. Check with them in person that it is, then try again." };
+    }
+    console.info(`staff: unconfirmed login ${member.auth_user_id} given ${role} by ${me.employeeId} after an in-person check, at ${new Date().toISOString()}`);
+  }
+
+  if (existing) {
+    const { error } = await supabase.from("employees").update({ role, active: true }).eq("id", existing.id);
+    if (error) return { ok: false, error: "Couldn't save that. Try again." };
+    revalidate();
+    return { ok: true, pin: null };
+  }
+  const temp = await newTempPin(null);
+  if (!temp) return { ok: false, error: "Couldn't make them a PIN. Try again." };
+  const { error } = await supabase.from("employees").insert({ name: member.name, auth_user_id: member.auth_user_id, role, ...temp.columns });
   if (error) return { ok: false, error: "Couldn't save that. Try again." };
   revalidate();
-  return { ok: true };
+  return { ok: true, pin: temp.pin };
 }
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -233,26 +271,20 @@ export async function createRecoveryLink(employeeId: string): Promise<RecoveryLi
   return { ok: true, link, email, passwordLogin: providers.includes("email") };
 }
 
-// For someone who forgot their PIN: the owner sets a temporary one and
-// tells them. pin_must_change makes the back office ask them to pick
-// their own (it arrives with migration 20260929100000_manager_pins.sql;
-// until then the PIN still saves, there's just no reminder).
-export async function resetEmployeePin(employeeId: string, tempPin: string): Promise<{ ok: true } | { ok: false; error: string }> {
+// For someone who forgot their PIN: a new random temporary one, shown once
+// to the owner to tell them. Their old PIN stops working straight away, and
+// pin_must_change makes the back office ask them to pick their own.
+export async function resetEmployeePin(employeeId: string): Promise<{ ok: true; pin: string } | { ok: false; error: string }> {
   await requireOwner();
-  const problem = pinProblem(tempPin);
-  if (problem) return { ok: false, error: problem };
-
   const supabase = createAdminClient();
   const { data: target } = await supabase.from("employees").select("role").eq("id", employeeId).maybeSingle();
   if (!target) return { ok: false, error: "That person wasn't found." };
   if (target.role === "display") return { ok: false, error: "Display screens don't use a PIN." };
 
-  const pin_hash = hashPin(tempPin);
-  const { error } = await supabase.from("employees").update({ pin_hash, pin_must_change: true }).eq("id", employeeId);
-  if (error) {
-    const { error: retryErr } = await supabase.from("employees").update({ pin_hash }).eq("id", employeeId);
-    if (retryErr) return { ok: false, error: "Couldn't save that. Try again." };
-  }
+  const temp = await newTempPin(employeeId);
+  if (!temp) return { ok: false, error: "Couldn't make a PIN. Try again." };
+  const { error } = await supabase.from("employees").update(temp.columns).eq("id", employeeId);
+  if (error) return { ok: false, error: "Couldn't save that. Try again." };
   revalidate();
-  return { ok: true };
+  return { ok: true, pin: temp.pin };
 }

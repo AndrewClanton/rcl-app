@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
+import { TEMP_PIN_DAYS } from "@/lib/pin-rules";
 import InfoTip from "@/components/help/InfoTip";
+import ConfirmModal from "@/components/ConfirmModal";
 import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, createRecoveryLink, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
@@ -22,10 +24,39 @@ const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px_90px] items-cent
 
 const MANAGER_ROLES: EmployeeRole[] = ["manager", "admin", "owner"];
 
-export default function StaffPanel({ employees }: { employees: EmployeeWithEmail[] }) {
-  // Until every manager has their own PIN, 9999 still approves refunds.
+// The date 9999 and old temporary PINs stop approving (MANAGER_PIN_CUTOVER,
+// src/lib/manager-pin.ts), and whether it's here yet. Null: not set.
+export type PinCutover = { date: string; reached: boolean } | null;
+
+// A question before a save, answered in a ConfirmModal.
+type Ask = { title: string; description?: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void };
+
+function AskModal({ ask, onClose }: { ask: Ask | null; onClose: () => void }) {
+  if (!ask) return null;
+  return (
+    <ConfirmModal
+      title={ask.title}
+      description={ask.description}
+      confirmLabel={ask.confirmLabel}
+      danger={ask.danger}
+      onCancel={onClose}
+      onConfirm={() => {
+        onClose();
+        ask.onConfirm();
+      }}
+    />
+  );
+}
+
+function longDate(date: string): string {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
+}
+
+export default function StaffPanel({ employees, pinCutover }: { employees: EmployeeWithEmail[]; pinCutover: PinCutover }) {
+  // Until the cutover, 9999 still approves refunds for anyone on it.
   const stillDefault = employees.filter((e) => e.active && e.pin === "default");
   const managersOnDefault = stillDefault.filter((e) => MANAGER_ROLES.includes(e.role));
+  const names = managersOnDefault.map((e) => e.name).join(", ");
 
   return (
     <div className="space-y-6">
@@ -39,8 +70,18 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
         {managersOnDefault.length > 0 ? (
           <div className="notice notice-warn mb-3">
-            Still on PIN 9999: {managersOnDefault.map((e) => e.name).join(", ")}. Until every manager picks their own PIN (My PIN, at the top of the back office), anyone who knows
-            9999 can approve refunds.
+            {pinCutover?.reached ? (
+              <>Still on PIN 9999: {names}. 9999 no longer approves anything, so they can&apos;t approve refunds until they set their own PIN (My PIN, at the top of the back office).</>
+            ) : pinCutover ? (
+              <>
+                Still on PIN 9999: {names}. From {longDate(pinCutover.date)}, 9999 stops approving anything, so they need their own PIN (My PIN, at the top of the back office)
+                before then. Until that day, anyone who knows 9999 can approve refunds.
+              </>
+            ) : (
+              <>
+                Still on PIN 9999: {names}. Until every manager picks their own PIN (My PIN, at the top of the back office), anyone who knows 9999 can approve refunds.
+              </>
+            )}
           </div>
         ) : stillDefault.length > 0 ? (
           <p className="mb-3 text-xs text-[var(--muted)]">
@@ -62,7 +103,7 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
             </div>
             <div className="divide-y divide-[var(--border)]">
               {employees.map((e) => (
-                <EmployeeRow key={e.id} employee={e} />
+                <EmployeeRow key={e.id} employee={e} pinCutover={pinCutover} />
               ))}
             </div>
           </div>
@@ -70,6 +111,22 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
       </div>
     </div>
   );
+}
+
+// A new temporary PIN, shown once for the owner to pass on in person.
+function TempPin({ pin }: { pin: string }) {
+  return <strong className="font-mono tracking-widest select-all">{pin}</strong>;
+}
+
+// What the owner is asked before giving staff access to a login that never
+// proved its email is theirs.
+function emailCheck(m: AccountMatch): Omit<Ask, "onConfirm"> {
+  const first = m.name.split(" ")[0];
+  return {
+    title: `Check that this is ${first}'s email`,
+    description: `${m.email ?? "This login"} never proved it belongs to them, so anyone could have made it with ${first}'s address, and staff access would go to whoever did.\n\nOnly go on if you checked with ${first} in person that this is their email.`,
+    confirmLabel: "I checked in person",
+  };
 }
 
 // Search the people who already sign in to the website and give one of
@@ -81,7 +138,8 @@ function FindAccount() {
   const [roles, setRoles] = useState<Record<string, EmployeeRole>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ name: string; role: EmployeeRole } | null>(null);
+  const [done, setDone] = useState<{ name: string; role: EmployeeRole; pin: string | null } | null>(null);
+  const [ask, setAsk] = useState<Ask | null>(null);
   const latest = useRef(0);
 
   useEffect(() => {
@@ -100,16 +158,27 @@ function FindAccount() {
     return () => clearTimeout(timer);
   }, [query]);
 
-  async function promote(m: AccountMatch) {
+  // An unproven email is checked first, then a manager or admin role.
+  function promote(m: AccountMatch) {
     const role = roles[m.memberId] ?? "cashier";
-    if (role !== "cashier" && !confirm(roleChangePrompt(m.name, role))) return;
+    const askRole = (checked: boolean) =>
+      role === "cashier" ? save(m, role, checked) : setAsk({ ...roleChangePrompt(m.name, role), confirmLabel: `Make ${ROLE_LABEL[role].toLowerCase()}`, onConfirm: () => save(m, role, checked) });
+    if (m.verified) askRole(false);
+    else setAsk({ ...emailCheck(m), onConfirm: () => askRole(true) });
+  }
+
+  async function save(m: AccountMatch, role: EmployeeRole, checked: boolean) {
     setBusy(m.memberId);
     setError(null);
     setDone(null);
-    const r = await makeStaff(m.memberId, role).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+    const r = await makeStaff(m.memberId, role, checked).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again.", needsCheck: undefined }));
     setBusy(null);
-    if (!r.ok) return setError(r.error);
-    setDone({ name: m.name, role });
+    if (!r.ok) {
+      // The list said proven but the server disagrees: ask next time.
+      if (r.needsCheck) setResults((prev) => prev?.map((x) => (x.memberId === m.memberId ? { ...x, verified: false } : x)) ?? null);
+      return setError(r.error);
+    }
+    setDone({ name: m.name, role, pin: r.pin });
     setResults((prev) => prev?.map((x) => (x.memberId === m.memberId ? { ...x, staffRole: role, staffActive: true } : x)) ?? null);
     router.refresh();
   }
@@ -134,7 +203,14 @@ function FindAccount() {
       {done && (
         <div className="notice notice-success mt-3 !p-3 text-sm">
           {done.name} is now {ROLE_LABEL[done.role] === "Admin" ? "an" : "a"} {ROLE_LABEL[done.role]}. They sign in at <strong>/login</strong> with the same Google or email login they
-          already use. Their PIN starts as 9999, and the back office asks them to pick their own under My PIN.
+          already use.{" "}
+          {done.pin ? (
+            <>
+              Their temporary PIN is <TempPin pin={done.pin} />. Tell them in person; it isn&apos;t shown again. The back office asks them to pick their own under My PIN.
+            </>
+          ) : (
+            <>They keep the PIN they had before.</>
+          )}
         </div>
       )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
@@ -151,7 +227,7 @@ function FindAccount() {
                   <div className="truncate font-medium">{m.name}</div>
                   <div className="truncate text-xs text-[var(--muted)]">{m.email ?? "no email"}</div>
                   {!m.verified && !m.staffActive && (
-                    <div className="text-xs text-[var(--danger-text)]">Password login, email never confirmed. Check with them in person that this is really their account.</div>
+                    <div className="text-xs text-[var(--danger-text)]">This login never proved the email is theirs. Check with them in person that this is really their account.</div>
                   )}
                 </div>
                 {m.staffRole && m.staffActive ? (
@@ -179,6 +255,7 @@ function FindAccount() {
           )}
         </div>
       )}
+      <AskModal ask={ask} onClose={() => setAsk(null)} />
     </div>
   );
 }
@@ -191,10 +268,15 @@ function AddEmployeeForm() {
   const [role, setRole] = useState<EmployeeRole>("cashier");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [justAdded, setJustAdded] = useState<{ name: string; email: string; password: string; role: EmployeeRole; reused: boolean } | null>(null);
+  const [justAdded, setJustAdded] = useState<{ name: string; email: string; password: string; role: EmployeeRole; reused: boolean; pin: string | null } | null>(null);
+  const [ask, setAsk] = useState<Ask | null>(null);
 
-  async function submit() {
-    if ((role === "admin" || role === "manager") && !confirm(roleChangePrompt(name.trim() || "this person", role))) return;
+  function submit() {
+    if (role === "admin" || role === "manager") setAsk({ ...roleChangePrompt(name.trim() || "this person", role), confirmLabel: "Add", onConfirm: save });
+    else save();
+  }
+
+  async function save() {
     setError(null);
     setJustAdded(null);
     setPending(true);
@@ -204,7 +286,7 @@ function AddEmployeeForm() {
         setError(r.error);
         return;
       }
-      setJustAdded({ name, email, password, role, reused: r.reused });
+      setJustAdded({ name, email, password, role, reused: r.reused, pin: r.pin });
       setName("");
       setEmail("");
       setPassword("");
@@ -232,6 +314,12 @@ function AddEmployeeForm() {
               Their password is <span className="font-mono font-semibold select-all">{justAdded.password}</span> -- share it with them
               directly; there&apos;s no self-service way for them to change it yet, so pick something you&apos;re both fine with
               long-term.
+            </>
+          )}
+          {justAdded.pin && (
+            <>
+              {" "}
+              Their temporary PIN is <TempPin pin={justAdded.pin} />. Tell them in person; it isn&apos;t shown again. The back office asks them to pick their own under My PIN.
             </>
           )}
         </div>
@@ -274,33 +362,44 @@ function AddEmployeeForm() {
       </div>
       {role === "display" && (
         <p className="mt-2 text-xs text-[var(--muted)]">
-          For a TV or other unattended screen. It can only open the display screens (like the ramp countdown) -- no back office, no
+          For a TV or other unattended screen. It can only open the display screens (like the Now Playing screen) -- no back office, no
           register, no member data -- so a tampered-with screen can&apos;t reach anything else. The email just has to be unique; a
-          Gmail alias like you+ramptv@gmail.com works.
+          Gmail alias like you+nowplaying@gmail.com works.
         </p>
       )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
+      <AskModal ask={ask} onClose={() => setAsk(null)} />
     </div>
   );
 }
 
 // What the owner is asked before giving someone a role. Admin gets the
 // strongest warning: it's the whole back office short of this page.
-function roleChangePrompt(name: string, to: EmployeeRole, from?: EmployeeRole): string {
+function roleChangePrompt(name: string, to: EmployeeRole, from?: EmployeeRole): Omit<Ask, "onConfirm"> {
   switch (to) {
     case "admin":
-      return `Make ${name} an ADMIN?\n\nAdmins get everything in the back office except this Staff page: every report and refund, member records, the menu, the team schedule, and the admin-only tools. Their PIN approves refunds.\n\nOnly give this to someone you'd trust with the whole business.`;
+      return {
+        title: `Make ${name} an ADMIN?`,
+        description: `Admins get everything in the back office except this Staff page: every report and refund, member records, the menu, the team schedule, and the admin-only tools. Their PIN approves refunds.\n\nOnly give this to someone you'd trust with the whole business.`,
+      };
     case "manager":
-      return `Make ${name} a manager?\n\nManagers change the menu, run the team schedule and training, and their PIN approves refunds and cancelled tabs.`;
+      return { title: `Make ${name} a manager?`, description: "Managers change the menu, run the team schedule and training, and their PIN approves refunds and cancelled tabs." };
     case "display":
-      return `Turn ${name}'s login into a display-screen login?\n\nIt will only open the signage screens. ${from ? "They lose the back office and the register." : ""}`.trim();
+      return {
+        title: `Turn ${name}'s login into a display-screen login?`,
+        description: `It will only open the signage screens.${from ? " They lose the back office and the register." : ""}`,
+        danger: !!from,
+      };
     default:
-      return `Change ${name} to cashier?${from && from !== "cashier" ? `\n\nThey lose the ${ROLE_LABEL[from].toLowerCase()} tools, and their PIN stops approving refunds.` : ""}`;
+      return from && from !== "cashier"
+        ? { title: `Change ${name} to cashier?`, description: `They lose the ${ROLE_LABEL[from].toLowerCase()} tools, and their PIN stops approving refunds.`, danger: true }
+        : { title: `Change ${name} to cashier?` };
   }
 }
 
-function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
+function EmployeeRow({ employee, pinCutover }: { employee: EmployeeWithEmail; pinCutover: PinCutover }) {
   const [pending, run] = useRefreshingAction();
+  const [ask, setAsk] = useState<Ask | null>(null);
   const isOwner = employee.role === "owner";
 
   return (
@@ -320,7 +419,7 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
           onChange={(e) => {
             const to = e.target.value as EmployeeRole;
             // Cancelling leaves the dropdown on their current role (it shows the saved value).
-            if (confirm(roleChangePrompt(employee.name, to, employee.role))) run(() => updateEmployeeRole(employee.id, to));
+            setAsk({ ...roleChangePrompt(employee.name, to, employee.role), confirmLabel: "Change role", onConfirm: () => run(() => updateEmployeeRole(employee.id, to)) });
           }}
         >
           {ASSIGNABLE.map((r) => (
@@ -336,8 +435,14 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
         <button
           disabled={pending}
           onClick={() => {
-            if (employee.active && !confirm(`Deactivate ${employee.name}? They can't sign in to the back office or use their PIN until you reactivate them.`)) return;
-            run(() => setEmployeeActive(employee.id, !employee.active));
+            if (!employee.active) return run(() => setEmployeeActive(employee.id, true));
+            setAsk({
+              title: `Deactivate ${employee.name}?`,
+              description: "They can't sign in to the back office or use their PIN until you reactivate them.",
+              confirmLabel: "Deactivate",
+              danger: true,
+              onConfirm: () => run(() => setEmployeeActive(employee.id, false)),
+            });
           }}
           className={`justify-self-start rounded border px-2 py-1 text-xs disabled:opacity-50 ${
             employee.active ? "border-[var(--border)] text-[var(--muted)]" : "border-[var(--danger-text)] text-[var(--danger-text)]"
@@ -346,8 +451,9 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
           {employee.active ? "Deactivate" : "Reactivate"}
         </button>
       )}
-      <PinCell employee={employee} />
+      <PinCell employee={employee} pinCutover={pinCutover} />
       <PasswordCell employee={employee} />
+      <AskModal ask={ask} onClose={() => setAsk(null)} />
     </div>
   );
 }
@@ -360,10 +466,10 @@ function PasswordCell({ employee }: { employee: EmployeeWithEmail }) {
   const [result, setResult] = useState<{ link: string; email: string; passwordLogin: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [asking, setAsking] = useState(false);
   const firstName = employee.name.split(" ")[0];
 
   async function make() {
-    if (!confirm(`Make a password reset link for ${employee.name}?\n\nAnyone who opens it can set a new password and sign in as ${firstName}. Give it only to ${firstName}.`)) return;
     setBusy(true);
     setError(null);
     setCopied(false);
@@ -379,10 +485,22 @@ function PasswordCell({ employee }: { employee: EmployeeWithEmail }) {
     <>
       {/* Pinned to the first row's last column, so the PIN panel opening below doesn't push it down. */}
       <span className="col-start-6 row-start-1">
-        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={busy} onClick={make}>
+        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={busy} onClick={() => setAsking(true)}>
           {busy ? "Making…" : "Reset link"}
         </button>
       </span>
+      {asking && (
+        <ConfirmModal
+          title={`Make a password reset link for ${employee.name}?`}
+          description={`Anyone who opens it can set a new password and sign in as ${firstName}. Give it only to ${firstName}.`}
+          confirmLabel="Make link"
+          onCancel={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            make();
+          }}
+        />
+      )}
       {error && <p className="col-span-full text-xs text-[var(--danger-text)]">{error}</p>}
       {result && (
         <div className="notice notice-warn col-span-full !p-3 text-sm">
@@ -435,26 +553,24 @@ const PIN_LABEL: Record<EmployeeWithEmail["pin"], string> = {
 };
 
 // Where they stand on their PIN, and a reset for someone who forgot theirs:
-// the owner picks a temporary PIN and tells them, and the back office asks
-// them to change it.
-function PinCell({ employee }: { employee: EmployeeWithEmail }) {
+// a new random temporary PIN, shown here once for the owner to tell them,
+// and the back office asks them to change it.
+function PinCell({ employee, pinCutover }: { employee: EmployeeWithEmail; pinCutover: PinCutover }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [pin, setPin] = useState("");
+  const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [newPin, setNewPin] = useState<string | null>(null);
   const firstName = employee.name.split(" ")[0];
 
-  async function save() {
+  async function reset() {
     setBusy(true);
     setError(null);
-    const r = await resetEmployeePin(employee.id, pin).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+    setNewPin(null);
+    const r = await resetEmployeePin(employee.id).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
     setBusy(false);
     if (!r.ok) return setError(r.error);
-    setOpen(false);
-    setPin("");
-    setSaved(true);
+    setNewPin(r.pin);
     router.refresh();
   }
 
@@ -464,56 +580,33 @@ function PinCell({ employee }: { employee: EmployeeWithEmail }) {
     <>
       <span className="flex items-center gap-2 text-xs">
         <span className={employee.pin === "default" ? "text-[var(--warn-text)]" : "text-[var(--muted)]"}>{PIN_LABEL[employee.pin]}</span>
-        {!open && (
-          <button
-            className="text-[var(--muted)] underline hover:text-[var(--foreground)]"
-            onClick={() => {
-              setOpen(true);
-              setSaved(false);
-            }}
-          >
-            Reset
-          </button>
-        )}
+        <button className="text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={busy} onClick={() => setAsking(true)}>
+          {busy ? "Making…" : "Reset"}
+        </button>
       </span>
-      {open && (
-        <div className="col-span-full rounded-lg border border-[var(--border)] p-3 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={`pin-${employee.id}`}>Temporary PIN for {employee.name}:</label>
-            <input
-              id={`pin-${employee.id}`}
-              inputMode="numeric"
-              autoComplete="off"
-              maxLength={6}
-              placeholder="4–6 digits"
-              className="w-28 rounded border border-[var(--border)] px-2 py-1 text-sm tracking-widest"
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-              onKeyDown={(e) => e.key === "Enter" && pin.length >= 4 && !busy && save()}
-            />
-            <button className="btn-primary !px-3 !py-1 text-xs" disabled={busy || pin.length < 4} onClick={save}>
-              {busy ? "Saving…" : "Set PIN"}
-            </button>
-            <button
-              className="text-xs text-[var(--muted)] hover:underline"
-              onClick={() => {
-                setOpen(false);
-                setPin("");
-                setError(null);
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-          <p className="mt-1.5 text-xs text-[var(--muted)]">
-            For someone who forgot theirs. Tell them in person. It works right away, and the back office asks them to change it to one only they know.
-          </p>
-          {error && <p className="mt-1 text-xs text-[var(--danger-text)]">{error}</p>}
-        </div>
+      {asking && (
+        <ConfirmModal
+          title={`New temporary PIN for ${employee.name}?`}
+          description={`For someone who forgot theirs. Their current PIN stops working straight away, and the new one is shown here once for you to tell ${firstName} in person.`}
+          confirmLabel="Make a new PIN"
+          onCancel={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            reset();
+          }}
+        />
       )}
-      {saved && (
-        <div className="notice notice-success col-span-full !p-2.5 text-xs">
-          {firstName}&apos;s temporary PIN is saved. Tell them in person. Next time they open the back office, it asks them to pick their own under My PIN.
+      {error && <p className="col-span-full text-xs text-[var(--danger-text)]">{error}</p>}
+      {newPin && (
+        <div className="notice notice-success col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 !p-2.5 text-xs">
+          <span className="min-w-0 flex-1">
+            {firstName}&apos;s temporary PIN is <TempPin pin={newPin} />. Tell them in person; it isn&apos;t shown again after you close this. Next time they open the back
+            office, it asks them to pick their own under My PIN.
+            {pinCutover && MANAGER_ROLES.includes(employee.role) && <> A temporary PIN stops approving refunds after {TEMP_PIN_DAYS} days, so they should do it soon.</>}
+          </span>
+          <button className="text-[var(--muted)] underline" onClick={() => setNewPin(null)}>
+            Done
+          </button>
         </div>
       )}
     </>
