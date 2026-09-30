@@ -2,9 +2,16 @@
 
 import { useState } from "react";
 
-export default function TipModal({ subtotal, tabName, onConfirm, onCancel }: { subtotal: number; tabName: string; onConfirm: (tip: number) => void; onCancel: () => void }) {
+// A tip goes on the card as-is, so it's whole cents and never below zero
+// (18% of $23.47 is $4.2246; a typed "-5" would have been a hidden discount).
+function tipAmount(n: number) {
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+}
+
+export default function TipModal({ subtotal, tabName, onConfirm: confirm, onCancel }: { subtotal: number; tabName: string; onConfirm: (tip: number) => void; onCancel: () => void }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState("");
+  const onConfirm = (tip: number) => confirm(tipAmount(tip));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
