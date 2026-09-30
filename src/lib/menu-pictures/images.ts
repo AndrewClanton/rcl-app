@@ -21,7 +21,9 @@ export async function downloadImage(url: string): Promise<Buffer> {
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isAllowedImageUrl(at)) throw new PictureError("That picture is on a site we don't download from.");
     const res = await fetch(at, {
-      headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/png,image/webp,image/*;q=0.8" },
+      // Openverse's thumbnails answer 406 unless */* is acceptable too; the
+      // content type is checked below either way.
+      headers: { "User-Agent": USER_AGENT, Accept: "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.5" },
       redirect: "manual",
       signal: AbortSignal.timeout(15_000),
       cache: "no-store",
