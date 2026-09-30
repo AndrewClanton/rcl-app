@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
 import MemberAvatar from "@/components/MemberAvatar";
+import InfoTip from "@/components/help/InfoTip";
 import MemberFinder from "./MemberFinder";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
@@ -145,6 +146,7 @@ export default function PosMemberPanel({
             <span>
               Rate: <strong>{RATE_LABEL[rate]}</strong>
               {source && <span style={{ color: "var(--muted)" }}> · {source}</span>}
+              <InfoTip topic="senior-student-rates" />
             </span>
             <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => setRateOpen((o) => !o)} disabled={busy}>
               {rateOpen ? "Close" : "Change rate"}
@@ -184,7 +186,10 @@ export default function PosMemberPanel({
           )}
 
           <div className="mt-2 flex items-center justify-between text-xs" style={{ color: "var(--muted)" }}>
-            <span>Loyalty points: {Math.round(member.points)}</span>
+            <span>
+              Loyalty points: {Math.round(member.points)}
+              <InfoTip topic="points-and-badges" />
+            </span>
             <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => attach(null)} disabled={busy}>
               Remove member
             </button>

@@ -8,6 +8,7 @@ import { listReaders, type ReaderOption } from "../terminal-actions";
 import { getStationPrinterStatus, type StationPrinterStatus } from "../print-actions";
 import { printTargetOf, sendPrint } from "../printing";
 import { saveDeviceSettings, useDeviceSettings } from "./settings";
+import InfoTip from "@/components/help/InfoTip";
 
 // The "Devices" button on the register: which register this is (Bar or
 // Outdoor stand), its card reader, how it prints (through the website to
@@ -85,7 +86,10 @@ export default function DevicesPanel({
             </div>
 
             <section className="space-y-2">
-              <div className="label-xs">Which register is this?</div>
+              <div className="label-xs flex items-center">
+                Which register is this?
+                <InfoTip topic="devices-station" />
+              </div>
               <div className="flex gap-2">
                 {STATIONS.map((s) => (
                   <button
@@ -107,7 +111,10 @@ export default function DevicesPanel({
             </section>
 
             <section className="space-y-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-              <div className="label-xs">Card reader next to this register</div>
+              <div className="label-xs flex items-center">
+                Card reader next to this register
+                <InfoTip topic="devices-reader" />
+              </div>
               {readerError ? (
                 <p className="text-sm" style={{ color: "var(--danger-text)" }}>
                   {readerError}
@@ -136,7 +143,10 @@ export default function DevicesPanel({
             </section>
 
             <section className="space-y-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-              <div className="label-xs">Receipt printer</div>
+              <div className="label-xs flex items-center">
+                Receipt printer
+                <InfoTip topic="devices-print-via" />
+              </div>
               <label className="flex items-start gap-2 text-sm">
                 <input
                   type="radio"

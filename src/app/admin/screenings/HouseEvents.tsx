@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { HouseEvent } from "@/lib/data/house-events";
 import { addHouseEvent, deleteHouseEvent } from "./actions";
+import InfoTip from "@/components/help/InfoTip";
 
 const QUICK = ["Trivia Night", "Comedy Night", "Book Swap", "Open Mic Night"];
 
@@ -40,7 +41,10 @@ export default function HouseEvents({ events }: { events: HouseEvent[] }) {
 
   return (
     <section className="mt-10 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
-      <h2 className="text-lg font-semibold">House events</h2>
+      <h2 className="text-lg font-semibold">
+        House events
+        <InfoTip topic="house-events" />
+      </h2>
       <p className="mb-4 text-sm text-[var(--muted)]">Trivia, comedy, the book swap and the like. They count down on the ramp TV with the films.</p>
 
       {events.length > 0 && (

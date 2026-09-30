@@ -28,9 +28,14 @@ export default async function AdminTrainingPage() {
           </>
         }
         actions={
-          <Link href="/training" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
-            Your own training →
-          </Link>
+          <span className="flex flex-wrap gap-2">
+            <Link href="/help" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
+              Help &amp; FAQ →
+            </Link>
+            <Link href="/training" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
+              Your own training →
+            </Link>
+          </span>
         }
       />
 

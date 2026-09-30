@@ -9,7 +9,7 @@ import "server-only";
 // Changing what a training says? Bump its `version`. Everyone who signed an
 // older version is asked to review it and sign again.
 
-export type TrainingCategory = "Box office" | "Register" | "House rules";
+export type TrainingCategory = "Box office" | "Register" | "Back office" | "House rules";
 
 export interface QuizQuestion {
   id: string;
@@ -84,6 +84,101 @@ export const TRAININGS: TrainingModule[] = [
     category: "Box office",
     minutes: 5,
     version: 1,
+  },
+  {
+    slug: "receipt-printer-setup",
+    title: "Setting up a receipt printer",
+    summary: "How our printers fetch their own jobs from the website, and how to add a new one: the back office, the printer's settings page, and each register's Devices.",
+    category: "Back office",
+    minutes: 12,
+    version: 1,
+    quiz: [
+      {
+        id: "how-it-travels",
+        prompt: "How does a receipt get from the register to the printer?",
+        choices: [
+          "The iPad sends it straight to the printer's IP address",
+          "The register puts it on the website, and the printer collects it a few seconds later",
+          "The card reader passes it to the printer",
+        ],
+        answer: 1,
+        why: "The printer asks the website for its jobs every few seconds. The iPad never talks to the printer, so there's no certificate to accept.",
+      },
+      {
+        id: "password-once",
+        prompt: "You just added a printer. When can you see its password?",
+        choices: ["Any time, on the Printers page", "Only right after saving it. If it's lost, you make a new one", "It's printed on the label under the printer"],
+        answer: 1,
+        why: "It's shown once. Keep the Set up panel open until it's typed into the printer, or press New password to make another.",
+      },
+      {
+        id: "last-seen",
+        prompt: "The Printers page says the kitchen printer was \"Last seen 25 min ago\". What does that mean?",
+        choices: [
+          "It printed something 25 minutes ago",
+          "It stopped asking the website for jobs 25 minutes ago: check its power, paper and network cable",
+          "Nothing, that's normal between orders",
+        ],
+        answer: 1,
+        why: "A working printer asks every few seconds and shows Online. \"Last seen\" means it has stopped asking.",
+      },
+      {
+        id: "station",
+        prompt: "Where do you choose whether a register is the Bar or the Outdoor stand?",
+        choices: ["Back office → Printers", "On that register: Devices → Which register is this?", "On the printer's own settings page"],
+        answer: 1,
+        why: "It's saved on each iPad, and decides which printer its receipts go to. It's also printed on the kitchen's tickets.",
+      },
+      {
+        id: "cert-error",
+        prompt: "Access Test on the printer fails with a certificate error. What do you try first?",
+        choices: [
+          "Update the printer's root certificates, and check its date and time",
+          "Turn Server Authentication off",
+          "Switch the registers back to printing straight to the printer's IP",
+        ],
+        answer: 0,
+        why: "The printer needs current certificates and the right date to trust the website. Network Security → Root Certificate Update → Update.",
+      },
+    ],
+  },
+  {
+    slug: "par-count-and-shopping-list",
+    title: "Par count and the shopping list",
+    summary: "Counting the par sheet in the unit shown (bottles to the quarter), saving a section at a time, the shopping list, and Ran out.",
+    category: "Register",
+    minutes: 5,
+    version: 1,
+    quiz: [
+      {
+        id: "unit",
+        prompt: "The nacho cheese line says \"Par 4 cans\". What do you count?",
+        choices: ["How many servings of cheese are left", "How many cans are on the shelf", "How many cans were opened today"],
+        answer: 1,
+        why: "Always count in the unit shown on the line, not in servings.",
+      },
+      {
+        id: "quarters",
+        prompt: "There are 2 full bottles of well vodka and one about three-quarters full. What's the count?",
+        choices: ["3", "2", "2¾"],
+        answer: 2,
+        why: "Bottles count to the quarter: tap + twice, then ¾ for the open one.",
+      },
+      {
+        id: "sections",
+        prompt: "You counted the candy and saved. Can you count the bar later and save that too?",
+        choices: ["No, the second save replaces the first", "Yes, saves from the same day are merged", "Only if a manager says so"],
+        answer: 1,
+        why: "Everything saved on the same business day is merged; the shopping list uses each item's latest count from today.",
+      },
+      {
+        id: "ran-out",
+        prompt: "The hot dog buns run out at 8 PM. What do you do?",
+        choices: ["Tell the next shift", "Tap Ran out, pick the buns and tick the hot dog so the register stops selling it", "Change the par count"],
+        answer: 1,
+        why: "Ran out puts OUT on the menu buttons that need it and puts the buns at the top of the shopping list.",
+      },
+    ],
   },
 ];
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { receiptXml, type ReceiptData } from "@/lib/print/receipt";
 import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import InfoTip from "@/components/help/InfoTip";
 import { approvalText } from "@/lib/pin-rules";
 import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "./actions";
 import { printTickets } from "./print-tickets";
@@ -204,9 +205,12 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                         </button>
                       )}
                       {selected.status === "completed" && (
-                        <button className="btn-secondary !px-4" style={{ color: "var(--danger-text)" }} disabled={!!busy} onClick={() => setRefunding(true)}>
-                          Refund…
-                        </button>
+                        <span className="inline-flex items-center">
+                          <button className="btn-secondary !px-4" style={{ color: "var(--danger-text)" }} disabled={!!busy} onClick={() => setRefunding(true)}>
+                            Refund…
+                          </button>
+                          <InfoTip topic="refunds" />
+                        </span>
                       )}
                     </div>
                     {!target && (

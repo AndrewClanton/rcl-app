@@ -1,6 +1,7 @@
 import { getAllBooths, getUpcomingBoothReservations, getBoothReservationsForMonth } from "@/lib/data/booths";
 import PageHeader from "@/components/admin/PageHeader";
 import BoothsAdminPanel from "./BoothsAdminPanel";
+import InfoTip from "@/components/help/InfoTip";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,7 @@ export default async function AdminBoothsPage() {
   return (
     <div>
       <PageHeader
+        titleAside={<InfoTip topic="booths" />}
         area="shows"
         title="Booths"
         purpose="Upcoming booth reservations, the booking calendar, and each of the 8 lounge booths: photo, size, fee, and whether it can be booked."

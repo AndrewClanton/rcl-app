@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { PrinterOverview, PrintJobRow } from "@/lib/data/printers";
 import { STATION_LABEL, type RegisterStation } from "@/lib/print/stations";
 import PageHeader from "@/components/admin/PageHeader";
+import InfoTip from "@/components/help/InfoTip";
 import { createPrinter, removePrinter, reprintJob, resetPrinterPassword, testPrinter, updatePrinter, type Credentials, type PrinterFields } from "./actions";
 
 const TZ = "America/Chicago";
@@ -58,6 +59,7 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
   return (
     <div className="space-y-6">
       <PageHeader
+        titleAside={<InfoTip topic="printers-how-it-works" />}
         area="setup"
         title="Printers"
         purpose={
@@ -73,7 +75,10 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
           const p = byRole(role);
           return (
             <div key={role} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-              <div className="label-xs">{role === "kitchen" ? "Kitchen order tickets" : `${STATION_LABEL[role]} receipts`}</div>
+              <div className="label-xs">
+                {role === "kitchen" ? "Kitchen order tickets" : `${STATION_LABEL[role]} receipts`}
+                {role === "kitchen" && <InfoTip topic="printers-kitchen-tickets" />}
+              </div>
               {p ? (
                 <div className="mt-1 text-sm">
                   <span className="font-semibold">{p.name}</span>
@@ -127,6 +132,7 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
                 <div className="text-right text-sm">
                   <div className="font-semibold" style={{ color: p.online ? "var(--success-text, green)" : "var(--danger-text)" }}>
                     {p.seen}
+                    <InfoTip topic="printers-online" />
                   </div>
                   <div className="text-xs text-[var(--muted)]">
                     {p.queued} waiting · <span style={p.failed ? { color: "var(--danger-text)" } : undefined}>{p.failed} failed</span> ·{" "}
@@ -189,14 +195,20 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
             }}
           />
         ) : (
-          <button className="btn-primary" onClick={() => setAdding(true)}>
-            Add printer
-          </button>
+          <div className="flex items-center gap-1">
+            <button className="btn-primary" onClick={() => setAdding(true)}>
+              Add printer
+            </button>
+            <InfoTip topic="printers-add" />
+          </div>
         )}
       </section>
 
       <section>
-        <h2 className="mb-2 text-sm font-semibold">Recent print jobs</h2>
+        <h2 className="mb-2 text-sm font-semibold">
+          Recent print jobs
+          <InfoTip topic="printers-job-expiry" />
+        </h2>
         {jobs.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">Nothing printed through the website yet.</p>
         ) : (
@@ -276,7 +288,10 @@ function PrinterForm({
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-      <h2 className="mb-3 text-sm font-semibold">{title}</h2>
+      <h2 className="mb-3 text-sm font-semibold">
+        {title}
+        {showKind && <InfoTip topic="printers-add" />}
+      </h2>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-xs text-[var(--muted)]">
           Name
@@ -295,15 +310,21 @@ function PrinterForm({
             <input type="radio" name="printer-kind" checked={f.kind === "sdp"} onChange={() => set({ kind: "sdp" })} />
             A new Epson (TM-m30II-H or TM-m30III) that collects its own jobs (Server Direct Print)
           </label>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="radio" name="printer-kind" checked={f.kind === "relay"} onChange={() => set({ kind: "relay", receiptStation: f.receiptStation ?? "bar" })} />
-            The old TM-m30 at the bar, through the Raspberry Pi relay
-          </label>
+          <div className="flex items-center">
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" name="printer-kind" checked={f.kind === "relay"} onChange={() => set({ kind: "relay", receiptStation: f.receiptStation ?? "bar" })} />
+              The old TM-m30 at the bar, through the Raspberry Pi relay
+            </label>
+            <InfoTip topic="printers-pi-relay" />
+          </div>
         </fieldset>
       )}
 
       <fieldset className="mt-3">
-        <legend className="mb-1 text-xs text-[var(--muted)]">What it prints</legend>
+        <legend className="mb-1 text-xs text-[var(--muted)]">
+          What it prints
+          <InfoTip topic="printers-station" />
+        </legend>
         <div className="flex flex-wrap gap-2">
           {([null, "bar", "outdoor"] as const).map((s) => (
             <button key={s ?? "none"} type="button" className={`chip !px-3 !py-1.5 !text-sm ${f.receiptStation === s ? "chip-selected font-bold" : ""}`} onClick={() => set({ receiptStation: s })}>
@@ -311,10 +332,13 @@ function PrinterForm({
             </button>
           ))}
         </div>
-        <label className="mt-2 flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={f.orderTickets} onChange={(e) => set({ orderTickets: e.target.checked })} />
-          Kitchen order tickets (every order from both registers)
-        </label>
+        <div className="mt-2 flex items-center">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={f.orderTickets} onChange={(e) => set({ orderTickets: e.target.checked })} />
+            Kitchen order tickets (every order from both registers)
+          </label>
+          <InfoTip topic="printers-kitchen-tickets" />
+        </div>
         <p className="mt-1 text-xs text-[var(--muted)]">One printer per job: choosing one here takes it off any other printer.</p>
       </fieldset>
 
@@ -394,7 +418,10 @@ function SetupPanel({ setup, pollUrl, onDone }: { setup: Setup; pollUrl: string;
   return (
     <section className="max-w-[calc(100vw-2rem)] rounded-lg border-2 p-4" style={{ borderColor: "var(--accent)" }}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-base font-semibold">Set up {setup.name}</h2>
+        <h2 className="text-base font-semibold">
+          Set up {setup.name}
+          <InfoTip topic={setup.kind === "relay" ? "printers-pi-relay" : "printers-sdp-settings"} />
+        </h2>
         <button className="btn-secondary !px-3 !py-1 text-sm" onClick={onDone}>
           Done, hide the password
         </button>

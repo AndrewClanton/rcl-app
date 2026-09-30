@@ -6,6 +6,7 @@ import type { GiftMembership } from "@/lib/gift-membership";
 import { ANNUAL_PRICE, dollars } from "@/lib/membership-rates";
 import { giftActive, subscriptionLive } from "@/lib/plus-status";
 import { createGiftLink } from "../actions";
+import InfoTip from "@/components/help/InfoTip";
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -45,7 +46,10 @@ export default function GiftCard({ member, gifts }: { member: Member; gifts: Gif
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
-      <h2 className="mb-1 text-lg font-semibold">Gift a year of Insiders+</h2>
+      <h2 className="mb-1 text-lg font-semibold">
+        Gift a year of Insiders+
+        <InfoTip topic="gift-membership" />
+      </h2>
       <p className="mb-3 text-sm text-[var(--muted)]">
         Someone else pays {dollars(ANNUAL_PRICE.adult)} plus tax, once, on their own card. {first} gets 12 months of Insiders+. Nothing renews and no card goes on {first}
         &apos;s account.

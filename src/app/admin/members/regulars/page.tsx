@@ -3,6 +3,7 @@ import { requireManager } from "@/lib/auth";
 import { businessDay } from "@/lib/ops/time";
 import MemberAvatar from "@/components/MemberAvatar";
 import PageHeader from "@/components/admin/PageHeader";
+import InfoTip from "@/components/help/InfoTip";
 import { currentBusinessMonth, getTopRegulars, shiftMonth, type RegularRow } from "@/lib/data/regulars";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,7 @@ export default async function TopRegularsPage({ searchParams }: { searchParams: 
       <p className="text-xs text-[var(--muted)]">
         A visit is a business day (4 a.m. to 4 a.m.) with an order on their account, or a movie they had an online ticket for. Spend is what they paid,
         tax included, tips not. Only sales with the member attached count, so checking in at the customer screen matters.
+        <InfoTip topic="business-day" />
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">

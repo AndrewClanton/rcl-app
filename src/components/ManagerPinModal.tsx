@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import InfoTip from "@/components/help/InfoTip";
 
 export default function ManagerPinModal({
   title = "Enter manager PIN",
@@ -35,6 +36,7 @@ export default function ManagerPinModal({
       <div className="card w-full max-w-xs text-center shadow-2xl">
         <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
           {title}
+          <InfoTip topic="manager-pin" />
         </h3>
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
           {description}
