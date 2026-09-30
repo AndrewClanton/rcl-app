@@ -108,9 +108,10 @@ export async function deleteCategory(id: string): Promise<Result> {
   const no = await denied();
   if (no) return no;
   const supabase = createAdminClient();
-  const { data: subs } = await supabase.from("menu_categories").select("id").eq("parent_id", id);
+  const { data: subs } = await supabase.from("menu_categories").select("id, image_url").eq("parent_id", id);
+  const { data: self } = await supabase.from("menu_categories").select("image_url").eq("id", id).maybeSingle();
   const categoryIds = [id, ...(subs ?? []).map((s) => s.id as string)];
-  const { data: items } = await supabase.from("menu_items").select("id, name").in("category_id", categoryIds);
+  const { data: items } = await supabase.from("menu_items").select("id, name, image_url").in("category_id", categoryIds);
   const sold = await soldItemIds(
     supabase,
     (items ?? []).map((i) => i.id as string),
@@ -128,6 +129,8 @@ export async function deleteCategory(id: string): Promise<Result> {
   if (error?.code === "23503") return { ok: false, error: "Can't delete this category: something in it has been sold. Hide those items from the register instead." };
   const f = failed(error, "delete that category");
   if (f) return f;
+  // Their photos went with them, so their files go too.
+  await deleteStoredPhotos(supabase, [self?.image_url, ...(subs ?? []).map((s) => s.image_url), ...(items ?? []).map((i) => i.image_url)]);
   revalidate();
   return { ok: true };
 }
@@ -219,10 +222,118 @@ export async function deleteItem(id: string): Promise<DeleteItemResult> {
   const cantDelete = { ok: false as const, canHide: true as const, error: "This item has been sold before (or is on an open tab), so it can't be deleted: past sales point at it. Hide it from the register instead." };
   const sold = await soldItemIds(supabase, [id]);
   if (sold?.has(id)) return cantDelete;
+  const { data: row } = await supabase.from("menu_items").select("image_url").eq("id", id).maybeSingle();
   const { error } = await supabase.from("menu_items").delete().eq("id", id);
   if (error?.code === "23503") return cantDelete;
   const f = failed(error, "delete that item");
   if (f) return f;
+  await deleteStoredPhotos(supabase, [row?.image_url]);
+  revalidate();
+  return { ok: true };
+}
+
+// ---------- photos ----------
+// The product photo on a register button (an item) or tab (a category). The
+// Menu page squares and shrinks it to a ~480px JPEG in the browser; this
+// checks what actually arrived (a real JPEG, 2 MB at most), stores it under
+// a name made here (the browser never picks the path), saves its address,
+// and deletes the file it replaced so old photos don't pile up.
+
+const PHOTO_BUCKET = "menu-photos";
+const PHOTO_MAX_BYTES = 2_000_000;
+const PHOTO_TABLES = { item: "menu_items", category: "menu_categories" } as const;
+export type PhotoTarget = keyof typeof PHOTO_TABLES;
+// Names this file makes: "<row id>-<milliseconds>.jpg".
+const PHOTO_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{13,}\.jpg$/;
+const NOT_THERE: Result = { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
+const PHOTO_RACE: Result = { ok: false, error: "Someone just changed this photo. Refresh the page and try again." };
+
+function photoTable(target: unknown): (typeof PHOTO_TABLES)[PhotoTarget] | null {
+  return target === "item" || target === "category" ? PHOTO_TABLES[target] : null;
+}
+
+// The file's name in the bucket, for a photo address this file saved.
+function storedPhotoPath(url: unknown): string | null {
+  if (typeof url !== "string") return null;
+  const marker = `/storage/v1/object/public/${PHOTO_BUCKET}/`;
+  const at = url.indexOf(marker);
+  if (at < 0) return null;
+  const path = url.slice(at + marker.length).split("?")[0];
+  return PHOTO_NAME.test(path) ? path : null;
+}
+
+// Never fails the change it follows: a file left behind is only clutter.
+async function deleteStoredPhotos(supabase: ReturnType<typeof createAdminClient>, urls: unknown[]) {
+  const paths = [...new Set(urls.map(storedPhotoPath).filter((p): p is string => !!p))];
+  if (paths.length === 0) return;
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).remove(paths);
+  if (error) console.error("menu: old photos not deleted", paths, error);
+}
+
+export async function uploadMenuPhoto(target: PhotoTarget, id: string, formData: FormData): Promise<Result> {
+  const no = await denied();
+  if (no) return no;
+  const table = photoTable(target);
+  if (!table || typeof id !== "string" || !UUID.test(id)) return NOT_THERE;
+  const file = formData instanceof FormData ? formData.get("photo") : null;
+  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a photo to upload." };
+  if (file.size > PHOTO_MAX_BYTES) return { ok: false, error: "That photo is over 2 MB even after shrinking. Try a different one." };
+  const buffer = Buffer.from(await file.arrayBuffer());
+  // A JPEG, going by its first bytes and not only what the browser says.
+  if (file.type !== "image/jpeg" || buffer.length < 3 || buffer[0] !== 0xff || buffer[1] !== 0xd8 || buffer[2] !== 0xff) {
+    return { ok: false, error: "That photo didn't come through as a JPEG. Try again, or try a screenshot of it." };
+  }
+
+  const supabase = createAdminClient();
+  const key = id.toLowerCase();
+  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
+  if (readErr) return failed(readErr, "save that photo")!;
+  if (!row) return NOT_THERE;
+  const old = (row.image_url as string | null) ?? null;
+
+  // A new name every time, so the register never shows a cached old photo
+  // (and the file can be cached for good).
+  const path = `${key}-${Date.now()}.jpg`;
+  const { error: uploadErr } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .upload(path, buffer, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
+  if (uploadErr) {
+    console.error("menu: photo upload failed", uploadErr);
+    return { ok: false, error: "The photo didn't upload. Check the connection and try again." };
+  }
+  const url = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+
+  // Saved only over the photo that was there when this started: if someone
+  // else changed it meanwhile, theirs stays (and its file isn't deleted).
+  const update = supabase.from(table).update({ image_url: url }).eq("id", key);
+  const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
+  if (error || !saved?.length) {
+    await deleteStoredPhotos(supabase, [url]);
+    return failed(error, "save that photo") ?? PHOTO_RACE;
+  }
+  await deleteStoredPhotos(supabase, [old]);
+  revalidate();
+  return { ok: true };
+}
+
+export async function removeMenuPhoto(target: PhotoTarget, id: string): Promise<Result> {
+  const no = await denied();
+  if (no) return no;
+  const table = photoTable(target);
+  if (!table || typeof id !== "string" || !UUID.test(id)) return NOT_THERE;
+  const supabase = createAdminClient();
+  const key = id.toLowerCase();
+  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
+  if (readErr) return failed(readErr, "remove that photo")!;
+  if (!row) return NOT_THERE;
+  const old = (row.image_url as string | null) ?? null;
+  if (old) {
+    const { data: saved, error } = await supabase.from(table).update({ image_url: null }).eq("id", key).eq("image_url", old).select("id");
+    const f = failed(error, "remove that photo");
+    if (f) return f;
+    if (!saved?.length) return PHOTO_RACE;
+    await deleteStoredPhotos(supabase, [old]);
+  }
   revalidate();
   return { ok: true };
 }

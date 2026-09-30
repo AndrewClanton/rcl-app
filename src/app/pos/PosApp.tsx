@@ -12,7 +12,7 @@ import CustomItemModal from "./CustomItemModal";
 import TabCardModal from "./TabCardModal";
 import { useOnShift } from "./shift/on-shift-store";
 import { publishCashier, useRanOut } from "./shift/ran-out-store";
-import { ItemOutDialog, MenuTile } from "./shift/RanOut";
+import { ItemOutDialog, MenuTile, RoundPhoto } from "./shift/RanOut";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
@@ -243,11 +243,14 @@ export default function PosApp({
   // subcategory (Beer, Wine, ...) under a heading -- no extra tap to drill in.
   const menuSections = useMemo(
     () => [
-      { id: "top", label: null as string | null, items: category?.items ?? [] },
-      ...(category?.subcategories ?? []).map((s) => ({ id: s.id, label: s.label as string | null, items: s.items })),
+      { id: "top", label: null as string | null, image: null as string | null, items: category?.items ?? [] },
+      ...(category?.subcategories ?? []).map((s) => ({ id: s.id, label: s.label as string | null, image: s.image_url ?? null, items: s.items })),
     ].filter((s) => s.items.length > 0),
     [category],
   );
+  // Photo buttons are taller, so a category with any photos gets one more
+  // column on a landscape iPad to keep as many buttons on screen.
+  const menuHasPhotos = menuSections.some((s) => s.items.some((i) => i.image_url));
   const findItem = useMemo(() => {
     const byId = new Map<string, MenuCategory["items"][number]>();
     for (const c of categories) {
@@ -1127,12 +1130,13 @@ export default function PosApp({
           {categories.map((c) => (
             <button
               key={c.id}
-              className={`chip min-w-[5.5rem] flex-1 !px-3 !py-2.5 !text-base ${categoryId === c.id ? "chip-selected" : ""}`}
+              className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base ${categoryId === c.id ? "chip-selected" : ""}`}
               onClick={() => {
                 setCategoryId(c.id);
                 setBuilderItemId(null);
               }}
             >
+              {c.image_url && <RoundPhoto url={c.image_url} size={28} className="-my-1 -ml-1" />}
               {c.label}
             </button>
           ))}
@@ -1161,8 +1165,13 @@ export default function PosApp({
           <div className="space-y-4">
             {menuSections.map((section, i) => (
               <section key={section.id}>
-                {section.label && <div className="eyebrow mb-2">{section.label}</div>}
-                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
+                {section.label && (
+                  <div className="eyebrow mb-2 flex items-center gap-2">
+                    {section.image && <RoundPhoto url={section.image} size={22} />}
+                    {section.label}
+                  </div>
+                )}
+                <div className={`grid grid-cols-2 gap-2.5 sm:grid-cols-3 ${menuHasPhotos ? "lg:grid-cols-4" : "xl:grid-cols-4"}`}>
                   {section.items.map((item) => {
                     const out = outs.get(item.id) ?? null;
                     return (
@@ -1170,6 +1179,7 @@ export default function PosApp({
                         key={item.id}
                         name={item.name}
                         price={money(item.price)}
+                        imageUrl={item.image_url}
                         out={out}
                         // An 86'd item asks first: sell anyway, or it's back.
                         onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}

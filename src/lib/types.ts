@@ -65,6 +65,9 @@ export interface MenuItem {
   out_since?: string | null;
   out_note?: string | null;
   out_outage_id?: string | null;
+  // Product photo on its register button (public "menu-photos" Storage
+  // URL, set on the Menu page). None: the button is name and price only.
+  image_url?: string | null;
   modifier_groups: ModifierGroup[];
 }
 
@@ -74,6 +77,8 @@ export interface MenuCategory {
   label: string;
   parent_id: string | null;
   sort_order: number;
+  // Small round photo on its register tab (or beside a subcategory heading).
+  image_url?: string | null;
   items: MenuItem[];
   subcategories: MenuCategory[];
 }
