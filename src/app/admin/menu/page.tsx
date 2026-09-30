@@ -6,6 +6,8 @@ import PageHeader from "@/components/admin/PageHeader";
 import MenuManager from "./MenuManager";
 
 export const dynamic = "force-dynamic";
+// Find pictures for everything searches a few at a time, waiting its turn with the free picture services.
+export const maxDuration = 120;
 
 // Everyone on staff can look things up here (prices, recipes, what's
 // hidden); only managers and up can change anything. The actions check

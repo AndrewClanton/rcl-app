@@ -13,7 +13,9 @@ import TabCardModal from "./TabCardModal";
 import InfoTip from "@/components/help/InfoTip";
 import { useOnShift } from "./shift/on-shift-store";
 import { publishCashier, useRanOut } from "./shift/ran-out-store";
-import { ItemOutDialog, MenuTile, RoundPhoto } from "./shift/RanOut";
+import { ItemOutDialog, MenuTile } from "./shift/RanOut";
+import CategoryIcon from "@/components/menu/CategoryIcon";
+import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
@@ -158,6 +160,7 @@ export default function PosApp({
   // 86'd items: what the shift bar's poll last saw, else what the page
   // loaded with.
   const ranOut = useRanOut();
+  const tileExtras = useMenuTileExtras();
   const outs = useMemo(() => {
     const m = new Map<string, RegisterOut>();
     if (ranOut.loaded) {
@@ -244,14 +247,14 @@ export default function PosApp({
   // subcategory (Beer, Wine, ...) under a heading -- no extra tap to drill in.
   const menuSections = useMemo(
     () => [
-      { id: "top", label: null as string | null, image: null as string | null, items: category?.items ?? [] },
-      ...(category?.subcategories ?? []).map((s) => ({ id: s.id, label: s.label as string | null, image: s.image_url ?? null, items: s.items })),
+      { id: "top", label: null as string | null, key: null as string | null, items: category?.items ?? [] },
+      ...(category?.subcategories ?? []).map((s) => ({ id: s.id, label: s.label as string | null, key: s.key as string | null, items: s.items })),
     ].filter((s) => s.items.length > 0),
     [category],
   );
-  // Photo buttons are taller, so a category with any photos gets one more
-  // column on a landscape iPad to keep as many buttons on screen.
-  const menuHasPhotos = menuSections.some((s) => s.items.some((i) => i.image_url));
+  // Every button has a picture (a photo, or its label tile), and picture
+  // buttons are taller, so a landscape iPad gets a fourth column to keep as
+  // many on screen.
   const findItem = useMemo(() => {
     const byId = new Map<string, MenuCategory["items"][number]>();
     for (const c of categories) {
@@ -1121,12 +1124,13 @@ export default function PosApp({
         {/* Category buttons share the row evenly, big enough to hit fast. */}
         <div className="mb-3 flex shrink-0 flex-wrap gap-2">
           <button
-            className={`chip min-w-[5.5rem] flex-1 !px-3 !py-2.5 !text-base font-bold ${categoryId === MOVIES_TAB ? "chip-selected" : ""}`}
+            className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${categoryId === MOVIES_TAB ? "chip-selected" : ""}`}
             onClick={() => {
               setCategoryId(MOVIES_TAB);
               setBuilderItemId(null);
             }}
           >
+            <CategoryIcon category="movies" />
             Movies
           </button>
           {categories.map((c) => (
@@ -1138,7 +1142,8 @@ export default function PosApp({
                 setBuilderItemId(null);
               }}
             >
-              {c.image_url && <RoundPhoto url={c.image_url} size={28} className="-my-1 -ml-1" />}
+              {/* An icon reads at this size where a tiny photo doesn't. */}
+              <CategoryIcon category={c.key} label={c.label} />
               {c.label}
             </button>
           ))}
@@ -1169,11 +1174,11 @@ export default function PosApp({
               <section key={section.id}>
                 {section.label && (
                   <div className="eyebrow mb-2 flex items-center gap-2">
-                    {section.image && <RoundPhoto url={section.image} size={22} />}
+                    <CategoryIcon category={section.key} label={section.label} size={18} />
                     {section.label}
                   </div>
                 )}
-                <div className={`grid grid-cols-2 gap-2.5 sm:grid-cols-3 ${menuHasPhotos ? "lg:grid-cols-4" : "xl:grid-cols-4"}`}>
+                <div className={`grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4`}>
                   {section.items.map((item) => {
                     const out = outs.get(item.id) ?? null;
                     return (
@@ -1182,6 +1187,8 @@ export default function PosApp({
                         name={item.name}
                         price={money(item.price)}
                         imageUrl={item.image_url}
+                        // Its label tile when there's no photo, and press and hold for its settings.
+                        {...tileExtras(item, category, section.label, out)}
                         out={out}
                         // An 86'd item asks first: sell anyway, or it's back.
                         onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}

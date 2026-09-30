@@ -7,6 +7,7 @@ import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
 import PosApp from "./PosApp";
+import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
 import UpdateBanner from "./UpdateBanner";
@@ -65,16 +66,19 @@ export default async function PosPage() {
             while a manager is signed in or on shift at this iPad. */}
         <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
       </div>
-      <PosApp
-        categories={orderableCategories}
-        employees={employees}
-        heldOrders={heldOrders}
-        openTabs={openTabs}
-        recipesByItem={recipesByItem}
-        defaultReaderId={defaultReaderId()}
-        initialScreenings={showings.ok ? showings.screenings : []}
-        registerTopic={registerTopic()}
-      />
+      {/* Press and hold a menu button for its settings (manager PIN). */}
+      <ItemSettingsProvider>
+        <PosApp
+          categories={orderableCategories}
+          employees={employees}
+          heldOrders={heldOrders}
+          openTabs={openTabs}
+          recipesByItem={recipesByItem}
+          defaultReaderId={defaultReaderId()}
+          initialScreenings={showings.ok ? showings.screenings : []}
+          registerTopic={registerTopic()}
+        />
+      </ItemSettingsProvider>
     </div>
   );
 }

@@ -7,6 +7,9 @@ import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCat
 import ItemModifiers from "./ItemModifiers";
 import ItemRecipe from "./ItemRecipe";
 import MenuPhoto from "./MenuPhoto";
+import MenuPictures from "./MenuPictures";
+import CategoryIcon from "@/components/menu/CategoryIcon";
+import { pictureOf } from "@/lib/menu-pictures/shared";
 
 // canEdit is false for cashiers: the same screens, read-only, so they can
 // still look up a price or a recipe. The actions refuse them regardless.
@@ -82,6 +85,7 @@ function CategoryList({ categories, canEdit, onManage }: { categories: MenuCateg
 
   return (
     <div>
+      {canEdit && <MenuPictures categories={categories} />}
       <h2 className="mb-3 text-lg font-semibold">Categories</h2>
       <div className="divide-y divide-[var(--border)] ">
         {categories.map((cat, idx) => {
@@ -109,8 +113,8 @@ function CategoryList({ categories, canEdit, onManage }: { categories: MenuCateg
                 </>
               )}
               {canEdit ? <CategoryLabelInput id={cat.id} label={cat.label} /> : <span className="min-w-[140px] flex-1 text-sm">{cat.label}</span>}
-              {/* The small round photo on its register tab. */}
-              <MenuPhoto target="category" id={cat.id} name={cat.label} url={cat.image_url} canEdit={canEdit} size={40} />
+              {/* Its icon on the register tab. */}
+              <CategoryIcon category={cat.key} label={cat.label} className="text-[var(--muted)]" />
               <span className="text-xs text-[var(--muted)]">
                 {allItems.length} item(s){hidden > 0 && `, ${hidden} hidden`}
                 {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
@@ -207,7 +211,7 @@ function SubcategoryList({
             <div key={sub.id} className="flex flex-wrap items-center gap-2 py-2">
               <span className="min-w-[140px] flex-1 text-sm">{sub.label}</span>
               {/* Shown beside its heading on the register. */}
-              <MenuPhoto target="category" id={sub.id} name={sub.label} url={sub.image_url} canEdit={canEdit} size={40} />
+              <CategoryIcon category={sub.key} label={sub.label} className="text-[var(--muted)]" />
               <span className="text-xs text-[var(--muted)]">
                 {sub.items.length} item(s){hidden > 0 && `, ${hidden} hidden`}
                 {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
@@ -293,7 +297,7 @@ function ItemManager({
       <div className="space-y-3">
         {target.items.length === 0 && <p className="text-sm text-[var(--muted)]">No items here yet.</p>}
         {target.items.map((item) => (
-          <ItemRow key={item.id} item={item} ingredients={ingredients} parItems={parItems} recipe={recipesByItem[item.id] ?? null} canEdit={canEdit} />
+          <ItemRow key={item.id} item={item} section={target.label} ingredients={ingredients} parItems={parItems} recipe={recipesByItem[item.id] ?? null} canEdit={canEdit} />
         ))}
       </div>
 
@@ -344,12 +348,14 @@ function ItemManager({
 // it), so when a delete is refused this offers Hide right there.
 function ItemRow({
   item,
+  section,
   ingredients,
   parItems,
   recipe,
   canEdit,
 }: {
   item: MenuItem;
+  section: string; // its category or subcategory, for its label tile
   ingredients: Ingredient[];
   parItems: ParItemRef[];
   recipe: Recipe | null;
@@ -444,12 +450,10 @@ function ItemRow({
           </>
         )}
       </div>
-      {/* The photo on its register button. */}
-      {(canEdit || item.image_url) && (
-        <div className="mt-2">
-          <MenuPhoto target="item" id={item.id} name={item.name} url={item.image_url} canEdit={canEdit} />
-        </div>
-      )}
+      {/* The picture on its register button. */}
+      <div className="mt-2">
+        <MenuPhoto target="item" id={item.id} name={item.name} picture={pictureOf(item)} category={section} canEdit={canEdit} />
+      </div>
       {deleteRefused && (
         <div className="notice notice-warn mt-2 flex flex-wrap items-center gap-2 !p-2.5 text-sm">
           <span className="min-w-0 flex-1">{deleteRefused}</span>

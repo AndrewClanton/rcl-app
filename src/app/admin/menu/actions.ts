@@ -8,6 +8,12 @@ import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import { logOpsChange } from "@/lib/ops/changes";
 import { putBackOnSale } from "@/lib/ops/outages";
+import { after } from "next/server";
+import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { approvePicture, defaultQuery, fillMissingPictures, storeFoundPicture, type FillReport } from "@/lib/menu-pictures/found";
+import { findCandidates, toView } from "@/lib/menu-pictures/sources";
+import { cleanQuery } from "@/lib/menu-pictures/query";
+import type { PhotoTarget, PictureResult, SearchResult } from "@/lib/menu-pictures/shared";
 
 // All writes here use the service-role client and bypass RLS. Menu tables
 // are public-read (see the initial migration); write access is gated by
@@ -170,9 +176,11 @@ export async function addItem(categoryId: string, name: string, price: number, i
   if (!(price >= 0)) return { ok: false, error: "Enter a price of $0.00 or more." };
   const supabase = createAdminClient();
   const { count } = await supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("category_id", categoryId);
-  const { error } = await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 });
+  const { data: added, error } = await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 }).select("id").maybeSingle();
   const f = failed(error, "add that item");
   if (f) return f;
+  // Its picture follows in a few seconds (the label tile until then).
+  findPictureLater("item", added?.id as string | undefined);
   revalidate();
   return { ok: true };
 }
@@ -234,84 +242,19 @@ export async function deleteItem(id: string): Promise<DeleteItemResult> {
 
 // ---------- photos ----------
 // The product photo on a register button (an item) or tab (a category). The
-// Menu page squares and shrinks it to a ~480px JPEG in the browser; this
-// checks what actually arrived (a real JPEG, 2 MB at most), stores it under
-// a name made here (the browser never picks the path), saves its address,
-// and deletes the file it replaced so old photos don't pile up.
-
-const PHOTO_BUCKET = "menu-photos";
-const PHOTO_MAX_BYTES = 2_000_000;
-const PHOTO_TABLES = { item: "menu_items", category: "menu_categories" } as const;
-export type PhotoTarget = keyof typeof PHOTO_TABLES;
-// Names this file makes: "<row id>-<milliseconds>.jpg".
-const PHOTO_NAME = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d{13,}\.jpg$/;
-const NOT_THERE: Result = { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
-const PHOTO_RACE: Result = { ok: false, error: "Someone just changed this photo. Refresh the page and try again." };
-
-function photoTable(target: unknown): (typeof PHOTO_TABLES)[PhotoTarget] | null {
-  return target === "item" || target === "category" ? PHOTO_TABLES[target] : null;
-}
-
-// The file's name in the bucket, for a photo address this file saved.
-function storedPhotoPath(url: unknown): string | null {
-  if (typeof url !== "string") return null;
-  const marker = `/storage/v1/object/public/${PHOTO_BUCKET}/`;
-  const at = url.indexOf(marker);
-  if (at < 0) return null;
-  const path = url.slice(at + marker.length).split("?")[0];
-  return PHOTO_NAME.test(path) ? path : null;
-}
-
-// Never fails the change it follows: a file left behind is only clutter.
-async function deleteStoredPhotos(supabase: ReturnType<typeof createAdminClient>, urls: unknown[]) {
-  const paths = [...new Set(urls.map(storedPhotoPath).filter((p): p is string => !!p))];
-  if (paths.length === 0) return;
-  const { error } = await supabase.storage.from(PHOTO_BUCKET).remove(paths);
-  if (error) console.error("menu: old photos not deleted", paths, error);
-}
+// Menu page squares and shrinks it to a ~480px JPEG in the browser; the
+// store (src/lib/menu-pictures/store.ts, shared with the register's item
+// settings) checks what actually arrived, stores it under a name it makes
+// (the browser never picks the path), saves its address, and deletes the
+// file it replaced so old photos don't pile up.
 
 export async function uploadMenuPhoto(target: PhotoTarget, id: string, formData: FormData): Promise<Result> {
   const no = await denied();
   if (no) return no;
-  const table = photoTable(target);
-  if (!table || typeof id !== "string" || !UUID.test(id)) return NOT_THERE;
-  const file = formData instanceof FormData ? formData.get("photo") : null;
-  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Choose a photo to upload." };
-  if (file.size > PHOTO_MAX_BYTES) return { ok: false, error: "That photo is over 2 MB even after shrinking. Try a different one." };
-  const buffer = Buffer.from(await file.arrayBuffer());
-  // A JPEG, going by its first bytes and not only what the browser says.
-  if (file.type !== "image/jpeg" || buffer.length < 3 || buffer[0] !== 0xff || buffer[1] !== 0xd8 || buffer[2] !== 0xff) {
-    return { ok: false, error: "That photo didn't come through as a JPEG. Try again, or try a screenshot of it." };
-  }
-
-  const supabase = createAdminClient();
-  const key = id.toLowerCase();
-  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
-  if (readErr) return failed(readErr, "save that photo")!;
-  if (!row) return NOT_THERE;
-  const old = (row.image_url as string | null) ?? null;
-
-  // A new name every time, so the register never shows a cached old photo
-  // (and the file can be cached for good).
-  const path = `${key}-${Date.now()}.jpg`;
-  const { error: uploadErr } = await supabase.storage
-    .from(PHOTO_BUCKET)
-    .upload(path, buffer, { contentType: "image/jpeg", cacheControl: "31536000", upsert: false });
-  if (uploadErr) {
-    console.error("menu: photo upload failed", uploadErr);
-    return { ok: false, error: "The photo didn't upload. Check the connection and try again." };
-  }
-  const url = supabase.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
-
-  // Saved only over the photo that was there when this started: if someone
-  // else changed it meanwhile, theirs stays (and its file isn't deleted).
-  const update = supabase.from(table).update({ image_url: url }).eq("id", key);
-  const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
-  if (error || !saved?.length) {
-    await deleteStoredPhotos(supabase, [url]);
-    return failed(error, "save that photo") ?? PHOTO_RACE;
-  }
-  await deleteStoredPhotos(supabase, [old]);
+  const file = await jpegFromForm(formData);
+  if (!file.ok) return file;
+  const r = await storePhoto(target, id, file.jpeg);
+  if (!r.ok) return r;
   revalidate();
   return { ok: true };
 }
@@ -319,23 +262,68 @@ export async function uploadMenuPhoto(target: PhotoTarget, id: string, formData:
 export async function removeMenuPhoto(target: PhotoTarget, id: string): Promise<Result> {
   const no = await denied();
   if (no) return no;
-  const table = photoTable(target);
-  if (!table || typeof id !== "string" || !UUID.test(id)) return NOT_THERE;
-  const supabase = createAdminClient();
-  const key = id.toLowerCase();
-  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
-  if (readErr) return failed(readErr, "remove that photo")!;
-  if (!row) return NOT_THERE;
-  const old = (row.image_url as string | null) ?? null;
-  if (old) {
-    const { data: saved, error } = await supabase.from(table).update({ image_url: null }).eq("id", key).eq("image_url", old).select("id");
-    const f = failed(error, "remove that photo");
-    if (f) return f;
-    if (!saved?.length) return PHOTO_RACE;
-    await deleteStoredPhotos(supabase, [old]);
-  }
+  const r = await removePhoto(target, id);
+  if (!r.ok) return r;
   revalidate();
   return { ok: true };
+}
+
+// ---------- found pictures ----------
+// Free-to-use pictures (lib/menu-pictures/): browse with ◀ ▶, pick one and
+// the server downloads it into our own bucket. The same as the register's
+// item settings, for categories too, and for managers signed in here.
+
+export async function findMenuPictures(target: PhotoTarget, id: string, query: string | null): Promise<SearchResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  if (!photoTable(target)) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
+  const q = cleanQuery(query) || (await defaultQuery(target, id));
+  if (!q) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
+  const { candidates, complete } = await findCandidates(q);
+  if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
+  return { ok: true, query: q, candidates: candidates.map(toView) };
+}
+
+export async function pickMenuPicture(target: PhotoTarget, id: string, query: string, index: number, page: string | null): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await storeFoundPicture(target, id, query, index, page, true);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// Checked on the Photo walk: the picture found automatically is right.
+export async function keepMenuPicture(target: PhotoTarget, id: string): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await approvePicture(target, id);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// Find pictures for everything: a few at a time (each search waits its turn
+// with the free services), so the page can show progress and call again.
+// `skip` is what couldn't be filled on earlier rounds.
+export async function fillMenuPictures(skip: string[]): Promise<{ ok: true; report: FillReport } | { ok: false; error: string }> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const report = await fillMissingPictures({ limit: 6, skip: Array.isArray(skip) ? skip.slice(0, 500) : [] });
+  if (report.lines.some((l) => l.ok)) revalidate();
+  return { ok: true, report };
+}
+
+// A new item gets a picture on its own, once the page has its
+// answer: found and put on unapproved, for the Photo walk. Never fails the
+// add: without one, the button shows its label tile.
+function findPictureLater(target: PhotoTarget, id: string | undefined) {
+  if (!id) return;
+  after(async () => {
+    try {
+      await fillMissingPictures({ only: { target, id } });
+    } catch (e) {
+      console.error("menu: no picture found for the new", target, e);
+    }
+  });
 }
 
 // ---------- modifier groups & options ----------
