@@ -80,7 +80,8 @@ export default function PeriodView({ report, noun, boxOfficeHref, tips }: { repo
         />
       </Card>
 
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {/* Two across on an iPad or laptop, three on a big screen. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 2xl:grid-cols-3">
         <Card title="Sales by category" subtitle="Before tax and tips.">
           {s.sold.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">Nothing sold.</p>

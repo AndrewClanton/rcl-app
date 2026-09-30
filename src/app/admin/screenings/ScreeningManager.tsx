@@ -93,7 +93,7 @@ function MovieLibrary({ movies }: { movies: Movie[] }) {
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Movie library</h2>
-      <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 lg:grid-cols-8">
+      <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 2xl:grid-cols-12">
         {movies.map((m) => (
           <div key={m.id}>
             <div className="relative aspect-[2/3] w-full overflow-hidden rounded border border-[var(--border)] bg-[var(--surface-hover)]">

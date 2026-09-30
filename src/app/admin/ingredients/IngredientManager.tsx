@@ -54,16 +54,21 @@ export default function IngredientManager({
         </label>
       </div>
 
-      {grouped.map(([category, items]) => (
-        <div key={category} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">{category}</h2>
-          <div className="divide-y divide-[var(--border)] ">
-            {items.map((ing) => (
-              <IngredientRow key={ing.id} ingredient={ing} parItems={parItems} parById={parById} linkedTo={linkedTo} canLink={canLink} />
-            ))}
-          </div>
+      {/* A big screen: two categories to a row. */}
+      {grouped.length > 0 && (
+        <div className="space-y-6 2xl:grid 2xl:grid-cols-2 2xl:items-start 2xl:gap-6 2xl:space-y-0">
+          {grouped.map(([category, items]) => (
+            <div key={category} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">{category}</h2>
+              <div className="divide-y divide-[var(--border)] ">
+                {items.map((ing) => (
+                  <IngredientRow key={ing.id} ingredient={ing} parItems={parItems} parById={parById} linkedTo={linkedTo} canLink={canLink} />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
 
       {grouped.length === 0 && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 text-sm text-[var(--muted)] ">

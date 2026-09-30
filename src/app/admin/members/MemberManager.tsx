@@ -73,78 +73,84 @@ export default function MemberManager({
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            className="min-w-[200px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
-            placeholder="Search members by name, email or phone..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-            <input type="checkbox" checked={compedOnly} onChange={(e) => toggleCompedOnly(e.target.checked)} />
-            Community/free members only
-          </label>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] ">
-        <div className="divide-y divide-[var(--border)] ">
-          {members.map((m) => (
-            <Link
-              key={m.id}
-              href={`/admin/members/${m.id}`}
-              className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-[var(--surface-hover)] "
-            >
-              <span className="flex min-w-[160px] flex-1 flex-wrap items-center gap-1.5 font-medium">
-                {m.name}
-                <StaffBadge info={staffInfo[m.id]} />
-              </span>
-              <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>
-              <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(m.tier)}`}>{m.tier}</span>
-              {m.comped && (
-                <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-0.5 text-xs text-[var(--success-text)] ">
-                  Free · {m.community_program?.name ?? "community"}
-                </span>
-              )}
-              <span className="text-xs text-[var(--muted)]">{m.points} pts</span>
-              <span className="ml-auto text-xs text-[var(--muted)]">→</span>
-            </Link>
-          ))}
-          {members.length === 0 && <div className="px-4 py-6 text-sm text-[var(--muted)]">No members match.</div>}
-        </div>
-
-        {total > 0 && (
-          <div className="flex items-center justify-between border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted)] ">
-            <span>
-              Showing {from}–{to} of {total}
-            </span>
-            <div className="flex gap-2">
-              <button
-                className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
-                disabled={page <= 1}
-                onClick={() => goToPage(page - 1)}
-              >
-                Prev
-              </button>
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <button
-                className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
-                disabled={page >= totalPages}
-                onClick={() => goToPage(page + 1)}
-              >
-                Next
-              </button>
-            </div>
+    // A computer: the search and the list on the left, adding a member and
+    // the community programs down the right.
+    <div className="space-y-6 xl:grid xl:grid-cols-[minmax(0,1fr)_24rem] xl:items-start xl:gap-6 xl:space-y-0 2xl:grid-cols-[minmax(0,1fr)_28rem]">
+      <div className="space-y-6">
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              className="min-w-[200px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
+              placeholder="Search members by name, email or phone..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <input type="checkbox" checked={compedOnly} onChange={(e) => toggleCompedOnly(e.target.checked)} />
+              Community/free members only
+            </label>
           </div>
-        )}
+        </div>
+
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] ">
+          <div className="divide-y divide-[var(--border)] ">
+            {members.map((m) => (
+              <Link
+                key={m.id}
+                href={`/admin/members/${m.id}`}
+                className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-[var(--surface-hover)] "
+              >
+                <span className="flex min-w-[160px] flex-1 flex-wrap items-center gap-1.5 font-medium">
+                  {m.name}
+                  <StaffBadge info={staffInfo[m.id]} />
+                </span>
+                <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>
+                <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(m.tier)}`}>{m.tier}</span>
+                {m.comped && (
+                  <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-0.5 text-xs text-[var(--success-text)] ">
+                    Free · {m.community_program?.name ?? "community"}
+                  </span>
+                )}
+                <span className="text-xs text-[var(--muted)]">{m.points} pts</span>
+                <span className="ml-auto text-xs text-[var(--muted)]">→</span>
+              </Link>
+            ))}
+            {members.length === 0 && <div className="px-4 py-6 text-sm text-[var(--muted)]">No members match.</div>}
+          </div>
+
+          {total > 0 && (
+            <div className="flex items-center justify-between border-t border-[var(--border)] px-4 py-3 text-xs text-[var(--muted)] ">
+              <span>
+                Showing {from}–{to} of {total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
+                  disabled={page <= 1}
+                  onClick={() => goToPage(page - 1)}
+                >
+                  Prev
+                </button>
+                <span>
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  className="rounded border border-[var(--border)] px-2 py-1 disabled:opacity-40 "
+                  disabled={page >= totalPages}
+                  onClick={() => goToPage(page + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
-      <AddMemberForm />
-      <CommunityProgramsPanel programs={communityPrograms} />
+      <div className="space-y-6">
+        <AddMemberForm />
+        <CommunityProgramsPanel programs={communityPrograms} />
+      </div>
     </div>
   );
 }

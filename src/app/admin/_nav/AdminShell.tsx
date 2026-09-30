@@ -11,14 +11,24 @@ import { activeHref } from "./active";
 import Badge from "./Badge";
 import FindAnything from "./FindAnything";
 import { FIND_EVENT } from "./FindButton";
-import { ChevronIcon, CloseIcon, MenuIcon, SearchIcon } from "./icons";
+import { RAIL_COOKIE } from "./prefs";
+import { recordVisit } from "./visits";
+import { ChevronIcon, CloseIcon, HomeIcon, MenuIcon, RegisterIcon, SearchIcon, SidebarIcon } from "./icons";
 
 // The back office's frame: a sidebar on an iPad or computer, a Menu button
 // and drawer on a phone, and Find anything on top of both. The pages go in
 // the middle. What's on the menu comes from ./map.ts, already cut down to
 // what this person's role can open.
+//
+// On an iPad or computer the sidebar can be folded down to a slim strip
+// (Menu, Find, Today, the register, you) to give the page the whole width;
+// Menu then opens the full menu over the page, like on a phone. Which way
+// it's set is remembered on this device (a cookie, so the page arrives
+// already that way).
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", admin: "Admin", manager: "Manager", cashier: "Staff" };
+
+const ACCOUNT_HREF = "/admin/me";
 
 // Which sections of the menu someone folded away, remembered on this
 // device only. Setup starts folded (it's the rarely-needed stuff); the
@@ -79,17 +89,20 @@ export default function AdminShell({
   nav,
   badges,
   me,
+  initialRail = false,
   children,
 }: {
   nav: BackOfficeNav;
   badges: NavBadges;
-  me: { name: string; role: string };
+  me: { id: string; name: string; role: string };
+  initialRail?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const search = useSearchParams();
   const [drawer, setDrawer] = useState(false);
   const [finding, setFinding] = useState(false);
+  const [rail, setRailState] = useState(initialRail);
 
   const allLinks = [nav.home, ...nav.groups.flatMap((g) => g.links), ...nav.you];
   const active = activeHref(
@@ -99,9 +112,24 @@ export default function AdminShell({
   );
   const here = allLinks.find((l) => l.href === active) ?? null;
   const hereArea = nav.groups.find((g) => g.links.some((l) => l.href === active))?.area ?? null;
-  // Anything amber or red anywhere on the menu, for the phone's Menu button.
+  // Anything amber or red anywhere on the menu, for the Menu buttons.
   const tones = Object.values(badges).map((b) => b?.tone);
   const alert = tones.includes("danger") ? "var(--danger-text)" : tones.includes("warn") ? "#d99a1e" : null;
+
+  // Counted for Your shortcuts on Today (this device only; see ./visits.ts).
+  useEffect(() => {
+    if (active && active !== nav.home.href) recordVisit(me.id, active);
+  }, [active, me.id, nav.home.href]);
+
+  function setRail(on: boolean) {
+    setRailState(on);
+    setDrawer(false);
+    try {
+      document.cookie = `${RAIL_COOKIE}=${on ? "rail" : "full"}; path=/admin; max-age=31536000; samesite=lax`;
+    } catch {
+      // Cookies off: it lasts until the page is reloaded.
+    }
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -125,7 +153,7 @@ export default function AdminShell({
     };
   }, []);
 
-  const menu = (onNavigate?: () => void) => (
+  const menu = (inDrawer: boolean) => (
     <SideNav
       nav={nav}
       badges={badges}
@@ -136,7 +164,9 @@ export default function AdminShell({
         setDrawer(false);
         setFinding(true);
       }}
-      onNavigate={onNavigate}
+      onNavigate={inDrawer ? () => setDrawer(false) : undefined}
+      onHide={inDrawer ? undefined : () => setRail(true)}
+      onPin={inDrawer && rail ? () => setRail(false) : undefined}
     />
   );
 
@@ -174,15 +204,38 @@ export default function AdminShell({
         </button>
       </header>
 
-      {/* iPad and up: the sidebar, pinned while the page scrolls. */}
-      <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 self-start border-r border-[var(--border)] bg-[var(--surface)] md:block lg:w-64 print:hidden">
-        {menu()}
+      {/* iPad and up: the sidebar, pinned while the page scrolls, or folded
+          down to the slim strip. */}
+      <aside
+        className={`sticky top-0 hidden h-dvh shrink-0 self-start border-r border-[var(--border)] bg-[var(--surface)] md:block print:hidden ${rail ? "w-[4.5rem]" : "w-60 lg:w-64"}`}
+      >
+        {rail ? (
+          <Rail
+            nav={nav}
+            badges={badges}
+            me={me}
+            active={active}
+            alert={alert}
+            drawerOpen={drawer}
+            onMenu={() => setDrawer(true)}
+            onFind={() => setFinding(true)}
+          />
+        ) : (
+          menu(false)
+        )}
       </aside>
 
-      {drawer && <Drawer onClose={() => setDrawer(false)}>{menu(() => setDrawer(false))}</Drawer>}
+      {drawer && (
+        <Drawer onClose={() => setDrawer(false)} everywhere={rail}>
+          {menu(true)}
+        </Drawer>
+      )}
 
       <main className="min-w-0 flex-1">
-        <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-6 print:max-w-none print:p-0">{children}</div>
+        {/* A phone keeps its one column. From an iPad sideways up the page
+            gets the width (up to 1600px), and each page lays itself out
+            in columns where it has the room. */}
+        <div className="mx-auto w-full max-w-5xl px-4 py-6 md:px-6 lg:max-w-[100rem] xl:px-8 print:max-w-none print:p-0">{children}</div>
       </main>
 
       {finding && <FindAnything entries={nav.find} badges={badges} onClose={() => setFinding(false)} />}
@@ -190,7 +243,7 @@ export default function AdminShell({
   );
 }
 
-function Drawer({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+function Drawer({ onClose, everywhere, children }: { onClose: () => void; everywhere: boolean; children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     const before = document.body.style.overflow;
@@ -202,8 +255,9 @@ function Drawer({ onClose, children }: { onClose: () => void; children: React.Re
     };
   }, [onClose]);
 
+  // A phone's menu; on bigger screens only while the sidebar is folded away.
   return (
-    <div id="bo-drawer" className="fixed inset-0 z-50 md:hidden print:hidden" role="dialog" aria-modal="true" aria-label="Back office menu">
+    <div id="bo-drawer" className={`fixed inset-0 z-50 print:hidden ${everywhere ? "" : "md:hidden"}`} role="dialog" aria-modal="true" aria-label="Back office menu">
       <button type="button" aria-label="Close the menu" tabIndex={-1} className="absolute inset-0 cursor-default bg-black/40" onClick={onClose} />
       <div className="absolute inset-y-0 left-0 flex w-[min(20rem,86vw)] flex-col bg-[var(--surface)] shadow-2xl">
         <button
@@ -221,6 +275,89 @@ function Drawer({ onClose, children }: { onClose: () => void; children: React.Re
   );
 }
 
+function Initial({ name }: { name: string }) {
+  return (
+    <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--foreground)] text-sm font-bold text-[var(--surface)]" aria-hidden>
+      {name.trim().charAt(0).toUpperCase() || "?"}
+    </span>
+  );
+}
+
+// The folded-down sidebar: the few things people reach for without
+// looking, each with its name under it (no hover needed).
+function Rail({
+  nav,
+  badges,
+  me,
+  active,
+  alert,
+  drawerOpen,
+  onMenu,
+  onFind,
+}: {
+  nav: BackOfficeNav;
+  badges: NavBadges;
+  me: { name: string; role: string };
+  active: string | null;
+  alert: string | null;
+  drawerOpen: boolean;
+  onMenu: () => void;
+  onFind: () => void;
+}) {
+  const item =
+    "relative flex min-h-14 w-full flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[11px] font-semibold leading-tight text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)]";
+  const current = "bg-[var(--surface-hover)] !text-[var(--foreground)]";
+  const tabs = badges.tabs;
+  return (
+    <nav aria-label="Back office" className="flex h-full flex-col items-center gap-1 px-1.5 py-3">
+      <button type="button" onClick={onMenu} aria-expanded={drawerOpen} aria-controls="bo-drawer" className={item}>
+        <MenuIcon />
+        Menu
+        {alert && (
+          <>
+            <span className="absolute right-3 top-2 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--surface)]" style={{ background: alert }} aria-hidden />
+            <span className="sr-only">(something needs a look)</span>
+          </>
+        )}
+      </button>
+      <button type="button" onClick={onFind} title="Find anything (Ctrl K)" className={item}>
+        <SearchIcon />
+        Find
+      </button>
+      <Link href={nav.home.href} aria-current={active === nav.home.href ? "page" : undefined} className={`${item} ${active === nav.home.href ? current : ""}`}>
+        <HomeIcon />
+        {nav.home.label}
+      </Link>
+      <Link href={nav.register.href} title={tabs?.title ?? nav.register.about} className={item}>
+        <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--accent)] text-[var(--accent-foreground)]">
+          <RegisterIcon />
+        </span>
+        Register
+        {tabs && (
+          <>
+            <span
+              className="absolute right-2.5 top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-[var(--surface)]"
+              style={{ background: tabs.tone === "warn" ? "#d99a1e" : "var(--foreground)" }}
+              aria-hidden
+            />
+            <span className="sr-only">({tabs.title})</span>
+          </>
+        )}
+      </Link>
+      <div className="flex-1" />
+      <Link
+        href={ACCOUNT_HREF}
+        aria-current={active === ACCOUNT_HREF ? "page" : undefined}
+        title={`${me.name} · My account`}
+        className={`${item} ${active === ACCOUNT_HREF ? current : ""}`}
+      >
+        <Initial name={me.name} />
+        <span className="max-w-full truncate">{me.name.trim().split(/\s+/)[0] || "You"}</span>
+      </Link>
+    </nav>
+  );
+}
+
 function SideNav({
   nav,
   badges,
@@ -229,6 +366,8 @@ function SideNav({
   activeArea,
   onFind,
   onNavigate,
+  onHide,
+  onPin,
 }: {
   nav: BackOfficeNav;
   badges: NavBadges;
@@ -237,10 +376,14 @@ function SideNav({
   activeArea: AreaKey | null;
   onFind: () => void;
   onNavigate?: () => void;
+  onHide?: () => void; // the pinned sidebar: fold it down to the slim strip
+  onPin?: () => void; // the menu opened from the slim strip: keep it open
 }) {
   const { folded, toggle } = useFolded();
   const list = useRef<HTMLElement>(null);
-  const youActive = nav.you.some((l) => l.href === active);
+  // Your name is the way to My account; the list under it is the rest.
+  const youLinks = nav.you.filter((l) => l.href !== ACCOUNT_HREF);
+  const youActive = youLinks.some((l) => l.href === active);
 
   // Keep the page you're on in view when the menu is longer than the screen.
   useEffect(() => {
@@ -255,10 +398,33 @@ function SideNav({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-2 p-3 pb-2">
-        <Link href="/admin" onClick={onNavigate} className="block rounded-lg px-2 py-1.5">
-          <span className="font-display block text-lg leading-tight">Royale</span>
-          <span className="block text-xs text-[var(--muted)]">Back office</span>
-        </Link>
+        <div className="flex items-start gap-1">
+          <Link href="/admin" onClick={onNavigate} className="block min-w-0 flex-1 rounded-lg px-2 py-1.5">
+            <span className="font-display block text-lg leading-tight">Royale</span>
+            <span className="block text-xs text-[var(--muted)]">Back office</span>
+          </Link>
+          {onHide && (
+            <button
+              type="button"
+              onClick={onHide}
+              aria-label="Fold the menu away"
+              title="Fold the menu away, for more room on the page"
+              className="hidden min-h-11 min-w-11 items-center justify-center rounded-lg text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)] md:inline-flex"
+            >
+              <SidebarIcon hide />
+            </button>
+          )}
+          {onPin && (
+            <button
+              type="button"
+              onClick={onPin}
+              className="mr-12 hidden min-h-11 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)] md:inline-flex"
+            >
+              <SidebarIcon hide={false} />
+              Keep open
+            </button>
+          )}
+        </div>
         <button
           type="button"
           onClick={onFind}
@@ -284,11 +450,12 @@ function SideNav({
         ))}
       </nav>
 
-      {/* You: your hours, PIN, training, help. Pinned to the bottom. */}
+      {/* You: your name opens My account; the arrow shows your hours, PIN,
+          training and help. Pinned to the bottom. */}
       <div className="shrink-0 border-t border-[var(--border)] p-3 pt-2">
         {youOpen && (
-          <ul className="mb-1">
-            {nav.you.map((l) => (
+          <ul id="bo-you" className="mb-1">
+            {youLinks.map((l) => (
               <li key={l.href}>
                 <Link href={l.href} onClick={onNavigate} aria-current={active === l.href ? "page" : undefined} className="bo-link">
                   <span className="flex-1">{l.label}</span>
@@ -305,17 +472,31 @@ function SideNav({
             </li>
           </ul>
         )}
-        <button type="button" onClick={() => setYouShown(!youOpen)} aria-expanded={youOpen} className="flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--surface-hover)]">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--foreground)] text-sm font-bold text-[var(--surface)]" aria-hidden>
-            {me.name.trim().charAt(0).toUpperCase() || "?"}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold">{me.name}</span>
-            <span className="block text-xs text-[var(--muted)]">{ROLE_LABEL[me.role] ?? me.role} · hours, PIN, help</span>
-          </span>
-          {!youOpen && pinBadge && <Badge badge={pinBadge} />}
-          <ChevronIcon open={!youOpen} />
-        </button>
+        <div className="flex items-center gap-1">
+          <Link
+            href={ACCOUNT_HREF}
+            onClick={onNavigate}
+            aria-current={active === ACCOUNT_HREF ? "page" : undefined}
+            className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--surface-hover)] ${active === ACCOUNT_HREF ? "bg-[var(--surface-hover)]" : ""}`}
+          >
+            <Initial name={me.name} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold">{me.name}</span>
+              <span className="block text-xs text-[var(--muted)]">{ROLE_LABEL[me.role] ?? me.role} · My account</span>
+            </span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => setYouShown(!youOpen)}
+            aria-expanded={youOpen}
+            aria-controls="bo-you"
+            aria-label={youOpen ? "Hide hours, PIN, help and sign out" : "Show hours, PIN, help and sign out"}
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1 rounded-lg px-1.5 hover:bg-[var(--surface-hover)]"
+          >
+            {!youOpen && pinBadge && <Badge badge={pinBadge} />}
+            <ChevronIcon open={!youOpen} />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -339,8 +520,10 @@ function Group({
   // A folded section still shows its warnings on the heading.
   const folded = open ? [] : group.links.map((l) => (l.badge ? badges[l.badge] : undefined)).filter((b) => b && b.tone !== "count");
   return (
-    <section className={`bo-area-${group.area} mt-3`}>
-      <button type="button" onClick={onToggle} aria-expanded={open} className="bo-eyebrow min-h-11 w-full rounded-lg px-3 hover:bg-[var(--surface-hover)]">
+    // With a mouse on a computer the rows can be shorter than a finger
+    // needs (globals.css), so more of the menu fits without scrolling.
+    <section className={`bo-area-${group.area} mt-3 lg:pointer-fine:mt-2`}>
+      <button type="button" onClick={onToggle} aria-expanded={open} className="bo-eyebrow min-h-11 w-full rounded-lg px-3 hover:bg-[var(--surface-hover)] lg:pointer-fine:min-h-8">
         <span className="bo-dot" />
         <span className="flex-1 text-left">{group.label}</span>
         {folded.map((b, i) => (

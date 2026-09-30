@@ -816,6 +816,14 @@ body {
     box-shadow: inset 3px 0 0 var(--area, var(--foreground));
     font-weight: 700;
   }
+  /* A computer with a mouse doesn't need a finger's 44px, so the menu's
+     rows are shorter there and more of it fits without scrolling. Touch
+     screens (the iPads, phones) keep the full height. */
+  @media (min-width: 64rem) and (pointer: fine) {
+    .bo-link {
+      min-height: 2.25rem;
+    }
+  }
 
   .bo-badge {
     @apply inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold leading-4 tabular-nums;

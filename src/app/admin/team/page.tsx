@@ -126,7 +126,8 @@ async function PayPeriodView({ start, link }: { start: string; link: (week: stri
   const [a, b] = await Promise.all([getTimesheet(start), getTimesheet(second)]);
   if (!a.length && !b.length) return <p className="text-sm text-[var(--muted)]">Nobody clocked in or was scheduled this pay period.</p>;
   return (
-    <div className="space-y-4">
+    // A handful of columns: no need for the whole width of a computer.
+    <div className="space-y-4 lg:max-w-3xl">
       <Totals
         people={[a, b]}
         weeks={[

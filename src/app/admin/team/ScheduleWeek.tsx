@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ScheduledShift, TeamMember } from "@/lib/data/team";
 import { addScheduledShift, copyWeekForward, deleteScheduledShift, restoreScheduledShift } from "./actions";
@@ -57,7 +58,9 @@ export default function ScheduleWeek({ week, days, team, shifts }: { week: strin
               return (
                 <tr key={m.id} className="align-top">
                   <td className="border-t border-[var(--border)] p-2">
-                    <div className="font-medium">{m.name}</div>
+                    <Link href={`/admin/team/${m.id}`} className="font-medium underline-offset-2 hover:underline">
+                      {m.name}
+                    </Link>
                     <div className="text-xs text-[var(--muted)]">{total ? `${total.toFixed(1)} h` : "—"}</div>
                   </td>
                   {days.map((d) => {

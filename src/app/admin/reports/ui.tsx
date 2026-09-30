@@ -120,7 +120,9 @@ export function PeriodNav({ title, subtitle, prev, next, children }: { title: Re
   const arrow = "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--surface)] text-sm transition-colors";
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 sm:gap-3">
+      {/* On a wide screen the arrows stay close to the title instead of
+          at the far edges. */}
+      <div className="flex items-center gap-2 sm:gap-3 lg:mx-auto lg:max-w-2xl">
         {prev ? (
           <Link href={prev} className={`${arrow} hover:border-[var(--foreground)]`} aria-label="Earlier">
             ◀
@@ -291,14 +293,16 @@ export function SplitBar({ parts, format = (n: number) => money(n) }: { parts: {
   const total = shown.reduce((s, p) => s + p.value, 0);
   const shades = ["rpt-bar-strong", "rpt-bar-mid", "rpt-bar", "rpt-bar-light"];
   if (total <= 0) return <p className="text-sm text-[var(--muted)]">Nothing yet.</p>;
+  // The key goes four across only when its card is wide enough (a
+  // container query), so a narrow card in a row of three keeps two.
   return (
-    <div>
+    <div className="@container">
       <div className="flex h-3 gap-[2px] overflow-hidden rounded-full">
         {shown.map((p, i) => (
           <div key={p.label} className={shades[i % shades.length]} style={{ width: `${(p.value / total) * 100}%` }} title={`${p.label}: ${format(p.value)}`} />
         ))}
       </div>
-      <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+      <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm @md:grid-cols-4">
         {shown.map((p, i) => {
           const inside = (
             <>

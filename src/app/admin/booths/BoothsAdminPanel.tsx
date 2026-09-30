@@ -172,24 +172,27 @@ export default function BoothsAdminPanel({
         </div>
       </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold">Schedule</h2>
-        <BoothCalendar initialMonthStart={calendarMonthStart} initialReservations={calendarReservations} />
-      </section>
+      {/* A computer: the calendar and the list of bookings side by side. */}
+      <div className="space-y-8 xl:grid xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:items-start xl:gap-8 xl:space-y-0">
+        <section>
+          <h2 className="mb-3 text-sm font-semibold">Schedule</h2>
+          <BoothCalendar initialMonthStart={calendarMonthStart} initialReservations={calendarReservations} />
+        </section>
 
-      <section>
-        <h2 className="mb-3 text-sm font-semibold">Upcoming reservations</h2>
-        {cancelled && <div className="notice notice-success mb-3 !p-3 text-sm">{cancelled}</div>}
-        {reservations.length === 0 ? (
-          <div className="text-sm text-[var(--muted)]">No upcoming reservations.</div>
-        ) : (
-          <div className="space-y-2">
-            {reservations.map((r) => (
-              <ReservationRow key={r.id} reservation={r} onCancelled={setCancelled} />
-            ))}
-          </div>
-        )}
-      </section>
+        <section>
+          <h2 className="mb-3 text-sm font-semibold">Upcoming reservations</h2>
+          {cancelled && <div className="notice notice-success mb-3 !p-3 text-sm">{cancelled}</div>}
+          {reservations.length === 0 ? (
+            <div className="text-sm text-[var(--muted)]">No upcoming reservations.</div>
+          ) : (
+            <div className="space-y-2">
+              {reservations.map((r) => (
+                <ReservationRow key={r.id} reservation={r} onCancelled={setCancelled} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }

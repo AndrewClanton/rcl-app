@@ -37,7 +37,9 @@ export default function MyHoursView({
   const you = self ? "You" : name.split(" ")[0];
 
   return (
-    <div className="mx-auto max-w-xl space-y-5">
+    // A phone: one column. A computer: the totals and bars on the left,
+    // each week's shifts on the right.
+    <div className="mx-auto max-w-xl space-y-5 lg:max-w-5xl">
       {fromRegister && (
         <Link href="/pos" className="inline-flex min-h-11 items-center text-sm font-semibold hover:underline">
           ← Back to the register
@@ -46,6 +48,11 @@ export default function MyHoursView({
       <div>
         <h1 className="text-lg font-semibold">{self ? "My hours" : `${name}'s hours`}</h1>
         <p className="text-sm text-[var(--muted)]">From Start shift and End shift on the register. Weeks run Monday 4 AM to Monday 4 AM.</p>
+        {self && !fromRegister && (
+          <Link href="/admin/me" className="inline-flex min-h-11 items-center text-sm font-semibold hover:underline">
+            My account: the pay period, what&apos;s coming up, tasks and sales →
+          </Link>
+        )}
       </div>
 
       {forgotten.length > 0 && (
@@ -65,29 +72,35 @@ export default function MyHoursView({
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="eyebrow">This week</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums">{formatHours(worked(now))}</div>
-          <div className="mt-1 space-y-0.5 text-xs text-[var(--muted)]">
-            {now && now.runningHours > 0 && <div>Includes {formatHours(now.runningHours)} on the clock now</div>}
-            {now && now.scheduledHours > 0 && <div>{formatHours(now.scheduledHours)} scheduled</div>}
-            {worked(now) > 40 && <div className="font-bold text-[var(--danger-text)]">Over 40 h: overtime</div>}
+      <div className="space-y-5 lg:grid lg:grid-cols-2 lg:items-start lg:gap-5 lg:space-y-0">
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+              <div className="eyebrow">This week</div>
+              <div className="mt-1 text-3xl font-bold tabular-nums">{formatHours(worked(now))}</div>
+              <div className="mt-1 space-y-0.5 text-xs text-[var(--muted)]">
+                {now && now.runningHours > 0 && <div>Includes {formatHours(now.runningHours)} on the clock now</div>}
+                {now && now.scheduledHours > 0 && <div>{formatHours(now.scheduledHours)} scheduled</div>}
+                {worked(now) > 40 && <div className="font-bold text-[var(--danger-text)]">Over 40 h: overtime</div>}
+              </div>
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+              <div className="eyebrow">Last week</div>
+              <div className="mt-1 text-3xl font-bold tabular-nums">{formatHours(worked(last))}</div>
+              <div className="mt-1 text-xs text-[var(--muted)]">
+                {shortDate(weeks[1])} – {shortDate(plusDays(weeks[1], 6))}
+              </div>
+            </div>
           </div>
+
+          <WeekBars weeks={weeks.map((w, i) => ({ start: w, hours: worked(sheets[i]), current: i === 0 })).reverse()} />
         </div>
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="eyebrow">Last week</div>
-          <div className="mt-1 text-3xl font-bold tabular-nums">{formatHours(worked(last))}</div>
-          <div className="mt-1 text-xs text-[var(--muted)]">
-            {shortDate(weeks[1])} – {shortDate(plusDays(weeks[1], 6))}
-          </div>
+
+        <div className="space-y-5">
+          <ShiftList title="This week" start={weeks[0]} person={now} you={you} />
+          <ShiftList title="Last week" start={weeks[1]} person={last} you={you} />
         </div>
       </div>
-
-      <WeekBars weeks={weeks.map((w, i) => ({ start: w, hours: worked(sheets[i]), current: i === 0 })).reverse()} />
-
-      <ShiftList title="This week" start={weeks[0]} person={now} you={you} />
-      <ShiftList title="Last week" start={weeks[1]} person={last} you={you} />
 
       <p className="text-xs text-[var(--muted)]">
         Something wrong, like a clock-in you forgot? Tell a manager: they can fix the times on Team → Timesheets, and the fix shows here marked Edited.
@@ -132,7 +145,8 @@ function WeekBars({ weeks }: { weeks: { start: string; hours: number; current: b
   );
 }
 
-function ShiftList({ title, start, person, you }: { title: string; start: string; person: TimesheetPerson | null; you: string }) {
+// Also on My account (../me), for the pay period's two weeks.
+export function ShiftList({ title, start, person, you }: { title: string; start: string; person: TimesheetPerson | null; you: string }) {
   const shifts = person?.shifts ?? [];
   return (
     <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">

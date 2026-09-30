@@ -86,19 +86,27 @@ export default function MemberDetail({
   }
 
   return (
-    <div className="space-y-6">
-      <div>
+    // A computer: their details on the left, the membership cards (free,
+    // billing, gifts) down the right, and the purchases across the bottom.
+    <div className="space-y-6 xl:grid xl:grid-cols-2 xl:items-start xl:gap-6 xl:space-y-0">
+      <div className="xl:col-span-2">
         <Link href="/admin/members" className="text-sm text-[var(--muted)] hover:underline">
           ← All members
         </Link>
       </div>
 
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} />
-      <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
-      <BillingCard member={member} />
-      <GiftCard member={member} gifts={gifts} />
-      <PurchaseHistoryCard purchases={purchases} />
-      <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
+      <div className="space-y-6">
+        <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
+        <BillingCard member={member} />
+        <GiftCard member={member} gifts={gifts} />
+      </div>
+      <div className="xl:col-span-2">
+        <PurchaseHistoryCard purchases={purchases} />
+      </div>
+      <div className="xl:col-span-2">
+        <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
+      </div>
     </div>
   );
 }

@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { requireStaff, hasManagerAccess } from "@/lib/auth";
 import { getPinStatus } from "@/lib/data/employees";
 import { getSignals, navBadges } from "@/lib/data/backoffice";
 import AdminErrorBar from "./AdminErrorBar";
 import AdminShell from "./_nav/AdminShell";
 import { navFor } from "./_nav/map";
+import { RAIL_COOKIE } from "./_nav/prefs";
 
 // The back office's frame: the menu (a sidebar on an iPad or computer, a
 // drawer on a phone), grouped by the job and cut down to what this
@@ -13,11 +15,16 @@ import { navFor } from "./_nav/map";
 // never the security.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
-  const [signals, pinStatus] = await Promise.all([getSignals(staff.role), getPinStatus(staff.employeeId)]);
+  const [signals, pinStatus, jar] = await Promise.all([getSignals(staff.role), getPinStatus(staff.employeeId), cookies()]);
   const nav = navFor(staff.role);
 
   return (
-    <AdminShell nav={nav} badges={navBadges(signals, pinStatus)} me={{ name: staff.name, role: staff.role }}>
+    <AdminShell
+      nav={nav}
+      badges={navBadges(signals, pinStatus)}
+      me={{ id: staff.employeeId, name: staff.name, role: staff.role }}
+      initialRail={jar.get(RAIL_COOKIE)?.value === "rail"}
+    >
       {/* Everyone started on 9999, and it keeps working until they pick
           their own -- this nags until they do (src/app/admin/my-pin). */}
       {(pinStatus === "default" || pinStatus === "temporary") && (
