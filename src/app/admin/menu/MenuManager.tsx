@@ -6,6 +6,7 @@ import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCategory, addItem, updateItem, deleteItem, setItemHidden, clearItemOut } from "./actions";
 import ItemModifiers from "./ItemModifiers";
 import ItemRecipe from "./ItemRecipe";
+import MenuPhoto from "./MenuPhoto";
 
 // canEdit is false for cashiers: the same screens, read-only, so they can
 // still look up a price or a recipe. The actions refuse them regardless.
@@ -108,6 +109,8 @@ function CategoryList({ categories, canEdit, onManage }: { categories: MenuCateg
                 </>
               )}
               {canEdit ? <CategoryLabelInput id={cat.id} label={cat.label} /> : <span className="min-w-[140px] flex-1 text-sm">{cat.label}</span>}
+              {/* The small round photo on its register tab. */}
+              <MenuPhoto target="category" id={cat.id} name={cat.label} url={cat.image_url} canEdit={canEdit} size={40} />
               <span className="text-xs text-[var(--muted)]">
                 {allItems.length} item(s){hidden > 0 && `, ${hidden} hidden`}
                 {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
@@ -203,6 +206,8 @@ function SubcategoryList({
           return (
             <div key={sub.id} className="flex flex-wrap items-center gap-2 py-2">
               <span className="min-w-[140px] flex-1 text-sm">{sub.label}</span>
+              {/* Shown beside its heading on the register. */}
+              <MenuPhoto target="category" id={sub.id} name={sub.label} url={sub.image_url} canEdit={canEdit} size={40} />
               <span className="text-xs text-[var(--muted)]">
                 {sub.items.length} item(s){hidden > 0 && `, ${hidden} hidden`}
                 {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
@@ -439,6 +444,12 @@ function ItemRow({
           </>
         )}
       </div>
+      {/* The photo on its register button. */}
+      {(canEdit || item.image_url) && (
+        <div className="mt-2">
+          <MenuPhoto target="item" id={item.id} name={item.name} url={item.image_url} canEdit={canEdit} />
+        </div>
+      )}
       {deleteRefused && (
         <div className="notice notice-warn mt-2 flex flex-wrap items-center gap-2 !p-2.5 text-sm">
           <span className="min-w-0 flex-1">{deleteRefused}</span>
