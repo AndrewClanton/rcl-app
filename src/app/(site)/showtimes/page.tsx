@@ -1,25 +1,27 @@
-import type { Metadata } from "next";
 import { Fragment } from "react";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
+import { pageMeta } from "@/lib/seo/page-meta";
 import type { Screening } from "@/lib/types";
 import { PageMasthead, ProofStamp, SpecFoot } from "@/components/print";
 import PlusLink from "@/components/PlusLink";
-import { getSignedInMember } from "@/lib/member-auth";
-import { hasPlusPerks } from "@/lib/plus-status";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 
-export const dynamic = "force-dynamic";
+// The same listing for everyone, rebuilt at most once a minute (and at once
+// when the schedule changes: admin/screenings/actions.ts revalidates it).
+// The Insiders+ wording is switched in the member's browser (plus-show /
+// plus-hide, see components/site/plus-hint.ts).
+export const revalidate = 60;
 
 // "Movie showtimes in Joplin" is what people actually search for, so the
 // title and description say it plainly.
-export const metadata: Metadata = {
+export const metadata = pageMeta({
   title: "Movie Showtimes in Joplin, MO",
   description: "Today's movie showtimes at Royale Cinema Lounge, a dine-in cinema and bar at 715 E Broadway in Joplin, MO. See what's playing and reserve your seat.",
-  alternates: { canonical: "/showtimes" },
-};
+  path: "/showtimes",
+});
 
 const TZ = "America/Chicago";
 const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: TZ });
@@ -60,7 +62,7 @@ function groupByDay(screenings: Screening[]): Day[] {
 // page is free with it.
 function PlusBand({ count }: { count: number }) {
   return (
-    <aside className="sheet halftone halftone-hero relative flex flex-wrap items-center justify-between gap-6 bg-[var(--gold)] p-6 !border-4 !shadow-[7px_7px_0_var(--foreground)] sm:p-7">
+    <aside className="plus-hide sheet halftone halftone-hero relative flex flex-wrap items-center justify-between gap-6 bg-[var(--gold)] p-6 !border-4 !shadow-[7px_7px_0_var(--foreground)] sm:p-7">
       <div className="relative z-[1] max-w-xl">
         <span className="ctag ctag-red">Insiders+</span>
         <p className="font-display mt-4 text-3xl leading-tight text-balance">
@@ -83,8 +85,7 @@ function PlusBand({ count }: { count: number }) {
 }
 
 export default async function ShowtimesPage() {
-  const [screenings, member] = await Promise.all([getPubliclyVisibleScreenings(), getSignedInMember()]);
-  const plus = !!member && hasPlusPerks(member);
+  const screenings = await getPubliclyVisibleScreenings();
   const days = groupByDay(screenings);
   const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
   const todayKey = dayKey(new Date());
@@ -122,7 +123,7 @@ export default async function ShowtimesPage() {
           <div className="mt-6 space-y-10">
             {days.map((day, i) => (
               <Fragment key={day.key}>
-              <section id={`d-${day.key}`} className="sheet crop scroll-mt-28">
+              <section id={`d-${day.key}`} className="site-anchor sheet crop">
                 <h2 className="spec-head rounded-t-[4px]">
                   <span>{day.label}</span>
                   <span className="flex items-center gap-4">
@@ -147,7 +148,13 @@ export default async function ShowtimesPage() {
                           {[film.room, film.movie.runtime_minutes ? `${film.movie.runtime_minutes} min` : null, film.movie.rating, film.price === 0 ? "Free" : `$${film.price.toFixed(2)} + tax`]
                             .filter(Boolean)
                             .join(" · ")}
-                          {film.price > 0 && <span className="text-[var(--accent)]"> · {plus ? "Free with your Insiders+" : "Free with Insiders+"}</span>}
+                          {film.price > 0 && (
+                            <span className="text-[var(--accent)]">
+                              {" · "}
+                              <span className="plus-show">Free with your Insiders+</span>
+                              <span className="plus-hide">Free with Insiders+</span>
+                            </span>
+                          )}
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           {film.showings.map((s) => (
@@ -164,7 +171,7 @@ export default async function ShowtimesPage() {
                 <SpecFoot />
               </section>
               {/* After the first day: the offer, while the times are in view. */}
-              {i === 0 && !plus && <PlusBand count={screenings.length} />}
+              {i === 0 && <PlusBand count={screenings.length} />}
               </Fragment>
             ))}
           </div>

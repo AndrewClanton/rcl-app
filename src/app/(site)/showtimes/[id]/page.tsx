@@ -13,6 +13,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { issueFormToken } from "@/lib/public-form-guard";
+import { pageMeta } from "@/lib/seo/page-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -20,42 +21,43 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+// Cut at a word, for a description that stops mid-sentence cleanly.
+function clip(text: string, max: number) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 20)).replace(/[\s,;:.-]+$/, "")}…`;
+}
+
+// The title and link preview name the film and when it plays ("The Musical ·
+// Wed 10/1, 7:00 PM"). The preview image is opengraph-image.tsx next to this
+// page: the poster with the day and time.
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  const path = `/showtimes/${id}`;
   const screening = await getScreeningById(id);
-  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime" };
+  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime", robots: { index: false, follow: false } };
 
   // An older title (MPLC) can be reached by direct link -- the members'
   // email -- but must not be advertised. Keep it out of search results, and
   // give link previews (a share on Facebook, a text message) nothing that
-  // names the movie.
+  // names the movie. (Its preview image is the plain site card.)
   if (isRestrictedRelease(screening.movie)) {
-    return {
-      title: "Members' screening",
-      robots: { index: false, follow: false },
-      openGraph: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
-      twitter: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
-    };
+    const generic = "A screening at Royale Cinema Lounge";
+    const meta = pageMeta({ title: "Members' screening", description: "Royale Cinema Lounge, Joplin, MO.", path, image: null, noindex: true });
+    return { ...meta, openGraph: { ...meta.openGraph, title: generic }, twitter: { ...meta.twitter, title: generic } };
   }
 
-  const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Chicago",
+  const start = new Date(screening.starts_at);
+  const day = start.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: "America/Chicago" }).replace(",", "");
+  const when = `${day}, ${start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}`;
+  const price = screening.ticket_price === 0 ? "Free" : `${money(screening.ticket_price)} + tax`;
+  const lead = `${screening.movie.title} at Royale Cinema Lounge, Joplin, MO · ${when} · ${price}.`;
+  return pageMeta({
+    title: `${screening.movie.title} · ${when}`,
+    description: screening.movie.synopsis ? `${lead} ${clip(screening.movie.synopsis, Math.max(60, 200 - lead.length))}` : lead,
+    path,
+    image: null,
   });
-  const description = screening.movie.synopsis
-    ? screening.movie.synopsis.slice(0, 155)
-    : `${screening.movie.title} -- ${showtime} at Royale Cinema Lounge, Joplin, MO.`;
-
-  return {
-    title: `${screening.movie.title} -- ${showtime}`,
-    description,
-    alternates: { canonical: `/showtimes/${screening.id}` },
-    openGraph: screening.movie.poster_url ? { images: [{ url: screening.movie.poster_url }] } : undefined,
-  };
 }
 
 export default async function ScreeningDetailPage({

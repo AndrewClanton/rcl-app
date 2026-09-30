@@ -1,11 +1,12 @@
 import { BackOfficeNav, DoDont, Hit, Need, Screen, Step, Tip, TrainingPage, s } from "@/components/training/kit";
+import { centralYear } from "@/lib/mplc";
 
 // The MPLC advertising rule (src/lib/mplc.ts) for staff: what they post,
 // print and send themselves. The website, lobby TV and schedule graphic's
 // Public edition already filter it automatically.
-const YEAR = new Date().getFullYear();
-
 export default function WhatWeCanPost() {
+  // The same "this year" the filter uses: Joplin's, not the server's UTC.
+  const YEAR = centralYear();
   return (
     <TrainingPage>
       <Need title="The short version">

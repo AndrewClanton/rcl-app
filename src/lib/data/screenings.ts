@@ -2,19 +2,10 @@
 // titles must never be listable), so every read goes through the server.
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
+import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow } from "@/lib/public-window";
 import type { Screening } from "@/lib/types";
 
-export const PUBLIC_SCHEDULE_WINDOW_DAYS = 14;
-
-// Whether a screening's start time falls inside the public visibility
-// window -- used to gate a direct link to a not-yet-public screening's own
-// detail/booking page, not just the listing pages.
-export function isWithinPublicWindow(startsAt: string): boolean {
-  const start = new Date(startsAt).getTime();
-  const now = Date.now();
-  const windowEnd = now + PUBLIC_SCHEDULE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  return start >= now && start <= windowEnd;
-}
+export { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow };
 
 // Upcoming screenings (now and later), soonest first, with movie + room
 // joined. Unwindowed -- for staff/admin tools that need to see and manage

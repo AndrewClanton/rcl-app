@@ -1,17 +1,21 @@
-import type { Metadata } from "next";
 import { getRooms } from "@/lib/data/rooms";
+import { createPublicClient } from "@/lib/supabase/public";
 import EventBookingForm from "./EventBookingForm";
 import { PageMasthead } from "@/components/print";
+import { pageMeta } from "@/lib/seo/page-meta";
 
-export const dynamic = "force-dynamic";
+// The same page for everyone (the spaces and their prices), rebuilt at most
+// every five minutes. The request form itself is sent by a Server Action.
+export const revalidate = 300;
 
-export const metadata: Metadata = {
+export const metadata = pageMeta({
   title: "Private Events",
-  description: "Book a space at Royale Cinema Lounge for a private screening, party, or gathering.",
-};
+  description: "Book a space at Royale Cinema Lounge in Joplin, MO for a private screening, party, or gathering.",
+  path: "/events",
+});
 
 export default async function EventsPage() {
-  const rooms = (await getRooms()).filter((r) => r.is_event_space);
+  const rooms = (await getRooms(createPublicClient())).filter((r) => r.is_event_space);
 
   return (
     <div>

@@ -1,15 +1,29 @@
-import type { Metadata } from "next";
 import Image from "next/image";
-import { getMenuTree } from "@/lib/data/menu";
+import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
+import { createPublicClient } from "@/lib/supabase/public";
 import type { MenuCategory, MenuItem } from "@/lib/types";
 import { PageMasthead } from "@/components/print";
+import { pageMeta } from "@/lib/seo/page-meta";
 
-export const dynamic = "force-dynamic";
+// The same page for everyone, rebuilt at most every five minutes (and at
+// once when a manager edits the menu: admin/menu/actions.ts and the
+// register's item settings revalidate "/menu").
+export const revalidate = 300;
 
-export const metadata: Metadata = {
+export const metadata = pageMeta({
   title: "Menu",
-  description: "Snacks, soft drinks, draft beer, wine, and specialty cocktails.",
-};
+  description: "The Royale Cinema Lounge menu: snacks, popcorn, pizza, soft drinks, draft beer, wine, specialty cocktails and movie-themed coffee drinks in Joplin, MO.",
+  path: "/menu",
+});
+
+// What the register sells, as the register sees it: items a manager hid
+// ("Hide from register") stay off the public menu too, and a section left
+// with nothing in it isn't printed as an empty heading.
+function withoutEmptySections(categories: MenuCategory[]): MenuCategory[] {
+  return categories
+    .map((c) => ({ ...c, subcategories: withoutEmptySections(c.subcategories) }))
+    .filter((c) => c.items.length > 0 || c.subcategories.length > 0);
+}
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -73,7 +87,7 @@ function CategorySection({ category, photos }: { category: MenuCategory; photos?
 }
 
 export default async function MenuPage() {
-  const categories = await getMenuTree();
+  const categories = withoutEmptySections(withoutHiddenItems(await getMenuTree(createPublicClient())));
   return (
     <div>
       <PageMasthead eyebrow="Food & drink" title="Menu" intro="Order at the counter. This page is for browsing and prices." />

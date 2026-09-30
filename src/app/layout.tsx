@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Archivo, Archivo_Black, Space_Mono } from "next/font/google";
-import { SITE_NAME, SITE_URL } from "@/lib/site";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
 import DevNotesWidget from "@/components/DevNotesWidget";
 import UsageTracker from "@/components/UsageTracker";
 import "./globals.css";
@@ -22,28 +22,26 @@ const spaceMono = Space_Mono({
   subsets: ["latin"],
 });
 
-const DESCRIPTION =
-  "A dine-in cinema, bar, and members' lounge in a historic 1920 building on Route 66 in Joplin, MO -- independent and repertory film, a full food and drink menu, and a VHS video lounge.";
-
+// The defaults for any page that doesn't set its own. Public pages each go
+// through pageMeta() (lib/seo/page-meta.ts) for their own title, canonical
+// and link preview. The preview image is app/opengraph-image.tsx, which Next
+// adds here by itself.
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: SITE_NAME, template: `%s | ${SITE_NAME}` },
-  description: DESCRIPTION,
+  description: SITE_DESCRIPTION,
   keywords: ["dine-in cinema", "Joplin MO movies", "independent theater", "movie lounge", "Route 66 Joplin", "repertory cinema"],
   openGraph: {
     title: SITE_NAME,
-    description: DESCRIPTION,
-    url: SITE_URL,
+    description: SITE_DESCRIPTION,
     siteName: SITE_NAME,
-    images: [{ url: "/photos/hero-couple.jpg", width: 1200, height: 800 }],
     locale: "en_US",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: SITE_NAME,
-    description: DESCRIPTION,
-    images: ["/photos/hero-couple.jpg"],
+    description: SITE_DESCRIPTION,
   },
 };
 
