@@ -3,6 +3,10 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [{ protocol: "https", hostname: "bfuwznfwickzeivnfrle.supabase.co" }],
+    // 75 is Next's default for every image; 85 is for the register's menu
+    // pictures (components/menu/MenuTile), so a food photo stays sharp on
+    // an iPad's retina screen.
+    qualities: [75, 85],
   },
   // Next's default (1MB) is well under a real phone camera photo, and photo
   // uploads (member avatars, booth photos) go through Server Actions as

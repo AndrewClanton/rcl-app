@@ -69,7 +69,7 @@ export interface MenuItem {
   out_outage_id?: string | null;
   // The picture on its register button: always a file in our public
   // "menu-photos" bucket (a photo someone took, or a free one the server
-  // found and stored), else its label tile. Where it came from and its
+  // found and stored), a text icon, else its label tile. Where it came from and its
   // credit: lib/menu-pictures/shared.ts (PictureState).
   image_url?: string | null;
   image_source?: PictureSource | null;
@@ -77,6 +77,9 @@ export interface MenuItem {
   image_query?: string | null;
   image_index?: number | null;
   image_approved_at?: string | null;
+  // A text icon ("$5" glowing red) when image_source is 'text': read it
+  // through pictureOf, which checks it.
+  image_text?: unknown;
   modifier_groups: ModifierGroup[];
 }
 
@@ -93,6 +96,7 @@ export interface MenuCategory {
   image_query?: string | null;
   image_index?: number | null;
   image_approved_at?: string | null;
+  image_text?: unknown;
   items: MenuItem[];
   subcategories: MenuCategory[];
 }

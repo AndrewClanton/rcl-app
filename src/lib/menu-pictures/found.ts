@@ -1,21 +1,23 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { findCandidates, type Candidate } from "./sources";
-import { downloadImage, PICTURE_SIZE, squareJpeg } from "./images";
+import { findCandidates, MIN_SIDE, type Candidate } from "./sources";
+import { downloadImage, PICTURE_SIZE, squareJpeg, TooSmall } from "./images";
 import { categoryQuery, cleanQuery, itemQuery } from "./query";
 import { isRowId, photoTable, storePhoto, storedPhotoPath } from "./store";
 import { pictureOf, type PhotoTarget, type PictureResult, type PictureState } from "./shared";
 
 // Free-to-use pictures, found and stored: the server downloads the picture
-// from its own site, squares it to a 480px JPEG and keeps it in our
+// from its own site, squares it to a 640px JPEG and keeps it in our
 // menu-photos bucket like any photo (lib/menu-pictures/store.ts), with its
-// credit. Nothing on a register button ever loads from another site.
+// credit. Nothing on a register button ever loads from another site, and a
+// picture too small to look sharp there is turned down (the next one is
+// tried instead).
 
 const GONE = "That picture isn't in the results anymore. Try again.";
 const PICTURE_FIELDS = "image_url, image_source, image_credit, image_query, image_index, image_approved_at";
 
 async function jpegOf(c: Candidate): Promise<Buffer> {
-  return squareJpeg(await downloadImage(c.image), PICTURE_SIZE, c.source === "off" ? "contain" : "cover");
+  return squareJpeg(await downloadImage(c.image), PICTURE_SIZE, c.source === "off" ? "contain" : "cover", MIN_SIDE);
 }
 
 async function pictureNow(target: PhotoTarget, id: string): Promise<PictureState | null> {
@@ -62,8 +64,8 @@ export async function storeFoundPicture(target: PhotoTarget, id: string, rawQuer
   let jpeg: Buffer;
   try {
     jpeg = await jpegOf(c);
-  } catch {
-    return { ok: false, error: "That picture wouldn't download. Pick another one." };
+  } catch (e) {
+    return { ok: false, error: e instanceof TooSmall ? e.message : "That picture wouldn't download. Pick another one." };
   }
   const r = await storePhoto(target, id, jpeg, { source: c.source, credit: c.credit, query, index: at, approved });
   if (!r.ok) return r;

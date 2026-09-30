@@ -6,7 +6,7 @@ import { checkManagerPin } from "@/lib/manager-pin";
 import { openApproval, sealApproval } from "@/lib/approval-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logOpsChange } from "@/lib/ops/changes";
-import { isRowId, jpegFromForm, NOT_THERE, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { isRowId, jpegFromForm, NOT_THERE, removePhoto, storePhoto, storeTextIcon } from "@/lib/menu-pictures/store";
 import { approvePicture, defaultQuery, storeFoundPicture } from "@/lib/menu-pictures/found";
 import { findCandidates, toView } from "@/lib/menu-pictures/sources";
 import { cleanQuery } from "@/lib/menu-pictures/query";
@@ -73,9 +73,9 @@ export async function findItemPictures(token: string, itemId: string, query: str
   if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
   const q = cleanQuery(query) || (await defaultQuery("item", itemId));
   if (!q) return NOT_THERE as { ok: false; error: string };
-  const { candidates, complete } = await findCandidates(q);
+  const { candidates, complete, sources } = await findCandidates(q);
   if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
-  return { ok: true, query: q, candidates: candidates.map(toView) };
+  return { ok: true, query: q, candidates: candidates.map(toView), sources };
 }
 
 // The one on screen: downloaded to our server and put on the button.
@@ -90,6 +90,15 @@ export async function pickItemPicture(token: string, itemId: string, query: stri
 export async function keepItemPicture(token: string, itemId: string): Promise<PictureResult> {
   if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
   const r = await approvePicture("item", itemId);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// A text icon instead of a photo ("$5" glowing red), made on the register.
+// The server checks it again (lib/menu-pictures/text-icon.ts).
+export async function saveItemTextIcon(token: string, itemId: string, icon: unknown): Promise<PictureResult> {
+  if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
+  const r = await storeTextIcon("item", itemId, icon);
   if (r.ok) revalidate();
   return r;
 }

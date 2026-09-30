@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { PHOTO_TARGETS, type PhotoTarget, type PictureCredit, type PictureSource } from "./shared";
+import { PHOTO_TARGETS, pictureOf, textIconOf, type PhotoTarget, type PictureCredit, type PictureResult, type PictureSource } from "./shared";
 
 // Where menu photos live, and putting one on a register button (an item) or
 // tab (a category), or taking it off. Shared by Back office → Menu and the
@@ -51,7 +51,7 @@ export async function deleteStoredPhotos(supabase: Db, urls: unknown[]) {
   if (error) console.error("menu: old photos not deleted", paths, error);
 }
 
-// A photo from the browser (squared and shrunk to a ~480px JPEG there):
+// A photo from the browser (squared and shrunk to a ~640px JPEG there):
 // checks what actually arrived (a real JPEG, 2 MB at most) before storing it.
 export async function jpegFromForm(formData: unknown): Promise<{ ok: true; jpeg: Buffer } | { ok: false; error: string }> {
   const file = formData instanceof FormData ? formData.get("photo") : null;
@@ -70,7 +70,7 @@ export async function jpegFromForm(formData: unknown): Promise<{ ok: true; jpeg:
 // replaced automatically); a found one keeps its credit, its search and its
 // place in the results, and is approved only when a manager keeps it.
 export interface PictureMeta {
-  source: Exclude<PictureSource, "label">;
+  source: Exclude<PictureSource, "label" | "text">;
   credit: PictureCredit | null;
   query: string | null;
   index: number | null;
@@ -155,4 +155,48 @@ export async function removePhoto(target: PhotoTarget, id: string): Promise<Resu
   if (!saved?.length) return PHOTO_RACE;
   await deleteStoredPhotos(supabase, [old]);
   return { ok: true };
+}
+
+// A text icon instead of a photo ("$5" glowing red): no file, just its
+// words, color and style, drawn by the app. Chosen by a person, so it counts
+// as approved and finding pictures for everything leaves it alone. The photo
+// it replaces is deleted, landing only over the photo that was there when
+// this started, like a new photo.
+const NEEDS_MIGRATION = "Text icons need the database update (20261001130000_menu_text_icons.sql) first.";
+
+export async function storeTextIcon(target: PhotoTarget, id: string, raw: unknown): Promise<PictureResult> {
+  const icon = textIconOf(raw);
+  if (!icon) return { ok: false, error: "Type 1 to 16 characters, and pick a color and a style." };
+  const table = photoTable(target);
+  if (!table || !isRowId(id)) return NOT_THERE as { ok: false; error: string };
+  const supabase = createAdminClient();
+  const key = id.toLowerCase();
+  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
+  if (readErr) {
+    console.error("menu: photo row not read", readErr);
+    return { ok: false, error: "Couldn't save the text icon. Try again." };
+  }
+  if (!row) return NOT_THERE as { ok: false; error: string };
+  const old = (row.image_url as string | null) ?? null;
+  const fields = {
+    image_url: null,
+    image_source: "text" as const,
+    image_text: icon,
+    image_credit: null,
+    image_query: null,
+    image_index: null,
+    image_approved_at: new Date().toISOString(),
+  };
+  const update = supabase.from(table).update(fields).eq("id", key);
+  const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
+  if (error) {
+    // Before the migration: no image_text column yet (PGRST204, 42703), or
+    // 'text' not allowed as a source yet (23514).
+    if (error.code === "PGRST204" || error.code === "42703" || error.code === "23514") return { ok: false, error: NEEDS_MIGRATION };
+    console.error("menu: text icon not saved", error);
+    return { ok: false, error: "Couldn't save the text icon. Try again." };
+  }
+  if (!saved?.length) return PHOTO_RACE as { ok: false; error: string };
+  await deleteStoredPhotos(supabase, [old]);
+  return { ok: true, picture: pictureOf(fields) };
 }
