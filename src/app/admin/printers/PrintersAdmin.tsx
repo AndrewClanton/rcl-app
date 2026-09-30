@@ -96,170 +96,173 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
 
       {setup && <SetupPanel setup={setup} pollUrl={pollUrl} onDone={() => setSetup(null)} />}
 
-      <section className="space-y-3">
-        {printers.length === 0 && !adding && <p className="text-sm text-[var(--muted)]">No printers yet.</p>}
-        {printers.map((p) =>
-          editing === p.id ? (
+      {/* A big screen: the printers and their recent jobs side by side. */}
+      <div className="space-y-6 2xl:grid 2xl:grid-cols-2 2xl:items-start 2xl:gap-6 2xl:space-y-0">
+        <section className="space-y-3">
+          {printers.length === 0 && !adding && <p className="text-sm text-[var(--muted)]">No printers yet.</p>}
+          {printers.map((p) =>
+            editing === p.id ? (
+              <PrinterForm
+                key={p.id}
+                title={`Edit ${p.name}`}
+                initial={{ name: p.name, location: p.location ?? "", receiptStation: p.receiptStation, orderTickets: p.orderTickets, pollInterval: p.pollInterval, active: p.active, kind: p.kind }}
+                showActive
+                onCancel={() => setEditing(null)}
+                onSave={async (f) => {
+                  const r = await updatePrinter(p.id, f);
+                  if (r.ok) {
+                    setEditing(null);
+                    setMessage({ ok: true, text: `${f.name} saved.` });
+                    router.refresh();
+                  }
+                  return r;
+                }}
+              />
+            ) : (
+              <div key={p.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4" style={p.active ? undefined : { opacity: 0.6 }}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold">
+                      {p.name}
+                      {!p.active && <span className="ml-2 text-xs font-bold uppercase text-[var(--muted)]">Off</span>}
+                    </div>
+                    <div className="text-xs text-[var(--muted)]">
+                      {[p.location, KIND_LABEL[p.kind], `ID ${p.loginId}`, p.reportedName && `calls itself "${p.reportedName}"`].filter(Boolean).join(" · ")}
+                    </div>
+                    <div className="mt-1 text-sm">Prints: {jobsFor(p)}</div>
+                  </div>
+                  <div className="text-right text-sm">
+                    <div className="font-semibold" style={{ color: p.online ? "var(--success-text, green)" : "var(--danger-text)" }}>
+                      {p.seen}
+                      <InfoTip topic="printers-online" />
+                    </div>
+                    <div className="text-xs text-[var(--muted)]">
+                      {p.queued} waiting · <span style={p.failed ? { color: "var(--danger-text)" } : undefined}>{p.failed} failed</span> ·{" "}
+                      <span style={p.expired ? { color: "var(--danger-text)" } : undefined}>{p.expired} expired</span>
+                      <span className="block">failed/expired in the last day</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="btn-secondary !px-3 !py-1.5 text-sm" disabled={!!busy || !p.active} onClick={() => act(`test-${p.id}`, () => testPrinter(p.id), `Test page sent to ${p.name}. It prints the next time the printer checks in.`)}>
+                    {busy === `test-${p.id}` ? "Sending…" : "Test print"}
+                  </button>
+                  <button className="btn-secondary !px-3 !py-1.5 text-sm" disabled={!!busy} onClick={() => setEditing(p.id)}>
+                    Edit
+                  </button>
+                  <button
+                    className="btn-secondary !px-3 !py-1.5 text-sm"
+                    disabled={!!busy}
+                    onClick={async () => {
+                      if (!window.confirm(`Make a new password for ${p.name}? The old one stops working right away, so the printer is offline until the new one is typed into it.`)) return;
+                      setBusy(`pw-${p.id}`);
+                      const r = await resetPrinterPassword(p.id).catch(() => null);
+                      setBusy(null);
+                      if (!r || !r.ok) return setMessage({ ok: false, text: r?.error ?? "Couldn't reach the website. Try again." });
+                      setSetup({ name: p.name, kind: p.kind, interval: p.pollInterval, creds: r });
+                      router.refresh();
+                    }}
+                  >
+                    New password
+                  </button>
+                  <button
+                    className="btn-secondary !px-3 !py-1.5 text-sm"
+                    style={{ color: "var(--danger-text)" }}
+                    disabled={!!busy}
+                    onClick={() => {
+                      if (window.confirm(`Remove ${p.name} and its print history? It stops getting print jobs right away.`)) void act(`rm-${p.id}`, () => removePrinter(p.id), `${p.name} removed.`);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ),
+          )}
+
+          {adding ? (
             <PrinterForm
-              key={p.id}
-              title={`Edit ${p.name}`}
-              initial={{ name: p.name, location: p.location ?? "", receiptStation: p.receiptStation, orderTickets: p.orderTickets, pollInterval: p.pollInterval, active: p.active, kind: p.kind }}
-              showActive
-              onCancel={() => setEditing(null)}
+              title="Add a printer"
+              initial={{ name: "", location: "", receiptStation: null, orderTickets: false, pollInterval: 5, active: true, kind: "sdp" }}
+              showKind
+              onCancel={() => setAdding(false)}
               onSave={async (f) => {
-                const r = await updatePrinter(p.id, f);
+                const r = await createPrinter(f);
                 if (r.ok) {
-                  setEditing(null);
-                  setMessage({ ok: true, text: `${f.name} saved.` });
+                  setAdding(false);
+                  setSetup({ name: f.name, kind: f.kind, interval: f.pollInterval, creds: r });
                   router.refresh();
                 }
                 return r;
               }}
             />
           ) : (
-            <div key={p.id} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4" style={p.active ? undefined : { opacity: 0.6 }}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-semibold">
-                    {p.name}
-                    {!p.active && <span className="ml-2 text-xs font-bold uppercase text-[var(--muted)]">Off</span>}
-                  </div>
-                  <div className="text-xs text-[var(--muted)]">
-                    {[p.location, KIND_LABEL[p.kind], `ID ${p.loginId}`, p.reportedName && `calls itself "${p.reportedName}"`].filter(Boolean).join(" · ")}
-                  </div>
-                  <div className="mt-1 text-sm">Prints: {jobsFor(p)}</div>
-                </div>
-                <div className="text-right text-sm">
-                  <div className="font-semibold" style={{ color: p.online ? "var(--success-text, green)" : "var(--danger-text)" }}>
-                    {p.seen}
-                    <InfoTip topic="printers-online" />
-                  </div>
-                  <div className="text-xs text-[var(--muted)]">
-                    {p.queued} waiting · <span style={p.failed ? { color: "var(--danger-text)" } : undefined}>{p.failed} failed</span> ·{" "}
-                    <span style={p.expired ? { color: "var(--danger-text)" } : undefined}>{p.expired} expired</span>
-                    <span className="block">failed/expired in the last day</span>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button className="btn-secondary !px-3 !py-1.5 text-sm" disabled={!!busy || !p.active} onClick={() => act(`test-${p.id}`, () => testPrinter(p.id), `Test page sent to ${p.name}. It prints the next time the printer checks in.`)}>
-                  {busy === `test-${p.id}` ? "Sending…" : "Test print"}
-                </button>
-                <button className="btn-secondary !px-3 !py-1.5 text-sm" disabled={!!busy} onClick={() => setEditing(p.id)}>
-                  Edit
-                </button>
-                <button
-                  className="btn-secondary !px-3 !py-1.5 text-sm"
-                  disabled={!!busy}
-                  onClick={async () => {
-                    if (!window.confirm(`Make a new password for ${p.name}? The old one stops working right away, so the printer is offline until the new one is typed into it.`)) return;
-                    setBusy(`pw-${p.id}`);
-                    const r = await resetPrinterPassword(p.id).catch(() => null);
-                    setBusy(null);
-                    if (!r || !r.ok) return setMessage({ ok: false, text: r?.error ?? "Couldn't reach the website. Try again." });
-                    setSetup({ name: p.name, kind: p.kind, interval: p.pollInterval, creds: r });
-                    router.refresh();
-                  }}
-                >
-                  New password
-                </button>
-                <button
-                  className="btn-secondary !px-3 !py-1.5 text-sm"
-                  style={{ color: "var(--danger-text)" }}
-                  disabled={!!busy}
-                  onClick={() => {
-                    if (window.confirm(`Remove ${p.name} and its print history? It stops getting print jobs right away.`)) void act(`rm-${p.id}`, () => removePrinter(p.id), `${p.name} removed.`);
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
+            <div className="flex items-center gap-1">
+              <button className="btn-primary" onClick={() => setAdding(true)}>
+                Add printer
+              </button>
+              <InfoTip topic="printers-add" />
             </div>
-          ),
-        )}
+          )}
+        </section>
 
-        {adding ? (
-          <PrinterForm
-            title="Add a printer"
-            initial={{ name: "", location: "", receiptStation: null, orderTickets: false, pollInterval: 5, active: true, kind: "sdp" }}
-            showKind
-            onCancel={() => setAdding(false)}
-            onSave={async (f) => {
-              const r = await createPrinter(f);
-              if (r.ok) {
-                setAdding(false);
-                setSetup({ name: f.name, kind: f.kind, interval: f.pollInterval, creds: r });
-                router.refresh();
-              }
-              return r;
-            }}
-          />
-        ) : (
-          <div className="flex items-center gap-1">
-            <button className="btn-primary" onClick={() => setAdding(true)}>
-              Add printer
-            </button>
-            <InfoTip topic="printers-add" />
-          </div>
-        )}
-      </section>
-
-      <section>
-        <h2 className="mb-2 text-sm font-semibold">
-          Recent print jobs
-          <InfoTip topic="printers-job-expiry" />
-        </h2>
-        {jobs.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">Nothing printed through the website yet.</p>
-        ) : (
-          // Capped at the screen, so on a phone the table scrolls sideways
-          // instead of widening the whole page.
-          <div className="max-w-[calc(100vw-2rem)] overflow-x-auto rounded-lg border border-[var(--border)]">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted)]">
-                  <th className="px-3 py-2 font-medium">When</th>
-                  <th className="px-3 py-2 font-medium">Printer</th>
-                  <th className="px-3 py-2 font-medium">What</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  <th className="px-3 py-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {jobs.map((j) => {
-                  const s = STATUS_STYLE[j.status] ?? { label: j.status, color: "var(--muted)" };
-                  const canReprint = (j.status === "failed" || j.status === "expired") && j.kind !== "drawer";
-                  return (
-                    <tr key={j.id} className="border-b border-[var(--border)] align-top last:border-0">
-                      <td className="whitespace-nowrap px-3 py-2 tabular-nums">{stamp(j.createdAt)}</td>
-                      <td className="px-3 py-2">{j.printerName}</td>
-                      <td className="px-3 py-2">{j.label ?? j.kind}</td>
-                      <td className="px-3 py-2">
-                        <span className="font-semibold" style={{ color: s.color }}>
-                          {s.label}
-                        </span>
-                        {j.attempts > 1 && <span className="text-xs text-[var(--muted)]"> · {j.attempts} tries</span>}
-                        {j.error && j.status !== "printed" && <div className="text-xs text-[var(--muted)]">{j.error}</div>}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        {canReprint && (
-                          <button className="chip !px-3 !py-1 text-xs" disabled={!!busy} onClick={() => act(`re-${j.id}`, () => reprintJob(j.id), `Sent again to ${j.printerName}.`)}>
-                            {busy === `re-${j.id}` ? "Sending…" : "Reprint"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="mt-2 text-xs text-[var(--muted)]">
-          Receipts and tickets expire if they aren&apos;t picked up within 10 minutes, a drawer kick within 2, a kitchen ticket within an hour, so a printer coming back
-          online never prints something long after the customer left. Jobs are kept for two weeks.
-        </p>
-      </section>
+        <section>
+          <h2 className="mb-2 text-sm font-semibold">
+            Recent print jobs
+            <InfoTip topic="printers-job-expiry" />
+          </h2>
+          {jobs.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">Nothing printed through the website yet.</p>
+          ) : (
+            // Capped at the screen, so on a phone the table scrolls sideways
+            // instead of widening the whole page.
+            <div className="max-w-[calc(100vw-2rem)] overflow-x-auto rounded-lg border border-[var(--border)]">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--muted)]">
+                    <th className="px-3 py-2 font-medium">When</th>
+                    <th className="px-3 py-2 font-medium">Printer</th>
+                    <th className="px-3 py-2 font-medium">What</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.map((j) => {
+                    const s = STATUS_STYLE[j.status] ?? { label: j.status, color: "var(--muted)" };
+                    const canReprint = (j.status === "failed" || j.status === "expired") && j.kind !== "drawer";
+                    return (
+                      <tr key={j.id} className="border-b border-[var(--border)] align-top last:border-0">
+                        <td className="whitespace-nowrap px-3 py-2 tabular-nums">{stamp(j.createdAt)}</td>
+                        <td className="px-3 py-2">{j.printerName}</td>
+                        <td className="px-3 py-2">{j.label ?? j.kind}</td>
+                        <td className="px-3 py-2">
+                          <span className="font-semibold" style={{ color: s.color }}>
+                            {s.label}
+                          </span>
+                          {j.attempts > 1 && <span className="text-xs text-[var(--muted)]"> · {j.attempts} tries</span>}
+                          {j.error && j.status !== "printed" && <div className="text-xs text-[var(--muted)]">{j.error}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          {canReprint && (
+                            <button className="chip !px-3 !py-1 text-xs" disabled={!!busy} onClick={() => act(`re-${j.id}`, () => reprintJob(j.id), `Sent again to ${j.printerName}.`)}>
+                              {busy === `re-${j.id}` ? "Sending…" : "Reprint"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            Receipts and tickets expire if they aren&apos;t picked up within 10 minutes, a drawer kick within 2, a kitchen ticket within an hour, so a printer coming back
+            online never prints something long after the customer left. Jobs are kept for two weeks.
+          </p>
+        </section>
+      </div>
     </div>
   );
 }

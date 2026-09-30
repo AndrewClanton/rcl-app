@@ -103,11 +103,10 @@ export default function DayScreen({
         </Card>
       )}
 
-      <DayFigures r={r} before={before} vs={vs} to={to} paidOut={drill.payout !== null} />
+      <DayFigures r={r} before={before} vs={vs} to={to} paidOut={drill.payout !== null} trend={<TrendCard trend={trend} date={date} days={days} keep={keep} />} />
 
-      <TrendCard trend={trend} date={date} days={days} keep={keep} />
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {/* A computer: what sold, top items and where the money goes side by side. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
         <Card title="What sold" subtitle="Before tax and tips. Tap a line for the orders behind it.">
           {r.sold.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p>
@@ -133,27 +132,27 @@ export default function DayScreen({
         <Card title="Top items">
           {r.topItems.length === 0 ? <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p> : <TopItems items={r.topItems.map((it) => ({ ...it, href: to({ show: "orders", item: it.name }) }))} />}
         </Card>
-      </div>
 
-      <Card title="Where the money goes" subtitle="Nathan's split. Each is its own rule, so they don't add up to sales.">
-        <Rows
-          rows={r.accounts.map((a) => ({
-            key: a.label,
-            label: (
-              <>
-                {a.label}
-                <div className="text-xs text-[var(--muted)]">{a.rule}</div>
-              </>
-            ),
-            value: <span className="text-base font-semibold">{money(a.amount)}</span>,
-            // The sales each rule is worked from.
-            href: a.label === "Box office" ? to({ show: "tickets" }) : a.label === "Tax account" ? to({ show: "net" }) : to({ show: "orders", cat: FOOD_AND_DRINK }),
-          }))}
-        />
-        <p className="mt-2 text-xs text-[var(--muted)]">
-          Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
-        </p>
-      </Card>
+        <Card title="Where the money goes" subtitle="Nathan's split. Each is its own rule, so they don't add up to sales." className="lg:col-span-2 xl:col-span-1">
+          <Rows
+            rows={r.accounts.map((a) => ({
+              key: a.label,
+              label: (
+                <>
+                  {a.label}
+                  <div className="text-xs text-[var(--muted)]">{a.rule}</div>
+                </>
+              ),
+              value: <span className="text-base font-semibold">{money(a.amount)}</span>,
+              // The sales each rule is worked from.
+              href: a.label === "Box office" ? to({ show: "tickets" }) : a.label === "Tax account" ? to({ show: "net" }) : to({ show: "orders", cat: FOOD_AND_DRINK }),
+            }))}
+          />
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
+          </p>
+        </Card>
+      </div>
 
       <Card title={`Orders · ${r.orders.length}`}>
         <OrdersTable orders={r.orders} />
@@ -166,7 +165,9 @@ export default function DayScreen({
   );
 }
 
-function DayFigures({ r, before, vs, to, paidOut }: { r: DayReport; before: DayReport; vs: string; to: (d: Drill) => string; paidOut: boolean }) {
+// The day's numbers, how it was paid, and (`trend`) the days around it. A
+// computer puts How it was paid and the trend side by side.
+function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; before: DayReport; vs: string; to: (d: Drill) => string; paidOut: boolean; trend: React.ReactNode }) {
   const avg = r.orderCount ? r.orderSales / r.orderCount : 0;
   const avgBefore = before.orderCount ? before.orderSales / before.orderCount : null;
   return (
@@ -180,16 +181,19 @@ function DayFigures({ r, before, vs, to, paidOut }: { r: DayReport; before: DayR
         <Stat label="Tickets" value={num(r.ticketsSold)} now={r.ticketsSold} before={before.ticketsSold} sub={r.tickets.free ? `${r.tickets.free} free` : undefined} href={to({ show: "tickets" })} />
         <Stat label="Average order" value={r.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} sub="before tax and tip" href={to({ show: "orders" })} />
       </div>
-      <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
-        <SplitBar
-          parts={[
-            { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
-            { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
-            { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
-            { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
-          ]}
-        />
-      </Card>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
+          <SplitBar
+            parts={[
+              { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
+              { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
+              { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
+              { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
+            ]}
+          />
+        </Card>
+        {trend}
+      </div>
     </div>
   );
 }

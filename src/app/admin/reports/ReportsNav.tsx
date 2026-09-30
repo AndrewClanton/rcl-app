@@ -35,7 +35,9 @@ export default function ReportsNav({ manager = false }: { manager?: boolean }) {
   }, [active]);
 
   return (
-    <nav aria-label="Reports" className="sticky top-0 z-20 -mx-4 bg-[var(--background)]/95 px-4 py-2 backdrop-blur print:hidden">
+    // Bleeds to the edges of the page's padding (px-4, md:px-6, xl:px-8 in
+    // the back office frame) so the pinned strip covers what scrolls under it.
+    <nav aria-label="Reports" className="sticky top-0 z-20 -mx-4 bg-[var(--background)]/95 px-4 py-2 backdrop-blur md:-mx-6 md:px-6 xl:-mx-8 xl:px-8 print:hidden">
       <div ref={strip} className="flex gap-1 overflow-x-auto rounded-full border border-[var(--border)] bg-[var(--surface)] p-1 [scrollbar-width:none] sm:inline-flex">
         {tabs.map((t) => {
           const on = t.href === active;

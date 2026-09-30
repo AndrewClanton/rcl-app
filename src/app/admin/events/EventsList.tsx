@@ -19,7 +19,8 @@ export default function EventsList({ events }: { events: EventRecord[] }) {
   }
 
   return (
-    <div className="space-y-3">
+    // Two to a row on a computer.
+    <div className="space-y-3 xl:grid xl:grid-cols-2 xl:items-start xl:gap-3 xl:space-y-0">
       {events.map((ev) => (
         <EventRow key={ev.id} event={ev} />
       ))}

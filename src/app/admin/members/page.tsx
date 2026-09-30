@@ -33,7 +33,7 @@ export default async function AdminMembersPage({
       <PageHeader
         area="guests"
         title="Members"
-        purpose="Find a member by name, email or phone to see their details, points and Insiders+. Adding a member and the free community programs are at the bottom."
+        purpose="Find a member by name, email or phone to see their details, points and Insiders+. Adding a member and the free community programs are below the list (on a computer, beside it)."
       />
       {params.removed === "1" && (
         <div className="notice notice-success text-sm">
