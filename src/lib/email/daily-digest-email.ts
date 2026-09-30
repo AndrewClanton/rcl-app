@@ -80,6 +80,17 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
       : "",
     d.good.length ? section("Good news", bullets(d.good)) : "",
     d.watch.length ? section("Worth a look", bullets(d.watch, INK)) : "",
+    d.ranOut?.length
+      ? section(
+          "Ran out today",
+          rows(
+            d.ranOut.map((o) => [
+              `<strong>${esc(o.what)}</strong> <span style="color:${MUTED}">· ${esc(o.time)}${o.by ? `, ${esc(o.by)}` : ""}</span>`,
+              o.bought ? esc(o.status) : `<span style="color:${o.status === "Not bought yet" ? RED : MUTED}">${esc(o.status)}</span>`,
+            ]),
+          ),
+        )
+      : "",
     d.staff.length ? section("On shift", rows(d.staff.map((s) => [esc(s.name), esc(s.hours)]))) : "",
     section(
       `Coming up · ${d.next.label}`,

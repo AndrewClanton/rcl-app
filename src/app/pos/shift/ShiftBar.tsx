@@ -7,6 +7,8 @@ import OpsPanel, { type OpsTab } from "./OpsPanel";
 import { publishOnShift } from "./on-shift-store";
 import BoothsToday from "./BoothsToday";
 import TrainingWindow from "./TrainingWindow";
+import { RanOutSheet } from "./RanOut";
+import { publishOuts, setOutsRefresher, useRanOut } from "./ran-out-store";
 
 // The register's shift tools: who's working, reminders, and the buttons that
 // open the checklist, par count, shopping list and history. Sits above the
@@ -65,6 +67,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
     if (!s) return setError("The shift tools couldn't reach the server. Check the connection.");
     setError(null);
     setStatus(s);
+    publishOuts(s.outs ?? []);
     setSnoozed(readSnoozed());
     // Who's using this tablet: the person picked here before, if they're
     // still on shift, else whoever started most recently.
@@ -83,10 +86,13 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
     const timer = setInterval(refresh, 60_000);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
+    // The register asks for a refresh after putting an item back on sale.
+    const unhook = setOutsRefresher(refresh);
     return () => {
       clearTimeout(first);
       clearInterval(timer);
       window.removeEventListener("focus", onFocus);
+      unhook();
     };
   }, [refresh]);
 
@@ -102,6 +108,13 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const training = status?.training ?? [];
   const [trainingOpen, setTrainingOpen] = useState<{ slug: string; employeeId: string; name: string } | null>(null);
   const [todoError, setTodoError] = useState<string | null>(null);
+  // "Ran out": reported by the register's cashier, else whoever's using this iPad.
+  const [ranOutOpen, setRanOutOpen] = useState(false);
+  const [ranOutSaved, setRanOutSaved] = useState<string | null>(null);
+  const { cashierId } = useRanOut();
+  const reporterId = cashierId ?? me?.employeeId ?? null;
+  const reporterName = reporterId ? (staff.find((s) => s.id === reporterId)?.name ?? status?.onShift.find((o) => o.employeeId === reporterId)?.name ?? null) : null;
+  const reporterShift = status?.onShift.find((o) => o.employeeId === reporterId)?.shiftId ?? me?.shiftId ?? null;
 
   // Tell the register who's working, so the cashier fills itself in.
   useEffect(() => {
@@ -130,10 +143,12 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   return (
     <>
       {/* One slim row on the iPad: who's on (scrolls sideways if it's a
-          crowd) on the left, shift tools on the right. */}
+          crowd) on the left, shift tools on the right. An iPad held
+          upright is too narrow for both, so the tools drop to a second row
+          there rather than squeezing who's on out of sight. */}
       <div className="card mb-2 !px-3 !py-2">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:flex-nowrap">
-          <div className="flex min-w-0 flex-wrap items-center gap-2 md:flex-1 md:flex-nowrap md:overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 md:min-w-[18rem] md:flex-1 md:flex-nowrap md:overflow-x-auto">
             <span className="eyebrow shrink-0">On shift</span>
             {status && status.onShift.length === 0 && (
               <span className="shrink-0 text-sm" style={{ color: "var(--muted)" }}>
@@ -163,6 +178,16 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             </button>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-2 md:shrink-0 md:flex-nowrap">
+            <button
+              className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm"
+              style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+              onClick={() => {
+                setRanOutSaved(null);
+                setRanOutOpen(true);
+              }}
+            >
+              Ran out
+            </button>
             <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "checklist" })}>
               Checklist
               {tasksLeft > 0 && <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>{tasksLeft}</span>}
@@ -173,6 +198,11 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
               Shopping
               {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
+              {!!status?.ranOut && (
+                <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>
+                  {status.ranOut} out
+                </span>
+              )}
             </button>
             <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "history" })}>
               History
@@ -190,6 +220,30 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
           </div>
         )}
       </div>
+
+      {ranOutSaved && (
+        <div className="notice notice-success mb-2 flex flex-wrap items-center gap-3 !px-4 !py-2 text-sm" role="status">
+          <span className="min-w-0 flex-1">{ranOutSaved}</span>
+          <button className="min-h-11 px-2 font-bold underline" onClick={() => setRanOutSaved(null)}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {ranOutOpen && (
+        <RanOutSheet
+          employeeId={reporterId}
+          employeeName={reporterName}
+          shiftId={reporterShift}
+          onClose={() => setRanOutOpen(false)}
+          onSaved={(message) => {
+            setRanOutOpen(false);
+            setRanOutSaved(message);
+            setTimeout(() => setRanOutSaved((m) => (m === message ? null : m)), 10_000);
+            refresh();
+          }}
+        />
+      )}
 
       {status && <BoothsToday booths={status.booths} onChanged={refresh} />}
 

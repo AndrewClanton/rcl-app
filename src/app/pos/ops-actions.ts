@@ -7,6 +7,7 @@ import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDa
 import { evaluateReminders } from "@/lib/ops/reminders";
 import { boothWindow } from "@/lib/booth-time";
 import { logOpsChange } from "@/lib/ops/changes";
+import { currentOuts } from "@/lib/ops/outages";
 import type {
   BoothHold,
   DueReminder,
@@ -87,6 +88,8 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
   await assertStaff();
   const supabase = db();
   const today = businessDay();
+  // 86'd menu items ride along on this poll so every register greys them out within a minute.
+  const outsP = currentOuts();
   const names = await employeeNames();
 
   const window = businessDayWindow(today.date);
@@ -156,7 +159,20 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     updated: t.state === "update",
   }));
 
-  return { workDate: today.date, onShift, tasks, reminders: await dueReminders(names), lastCount, todos, training, scheduled, booths: await boothHolds(today.date) };
+  const outs = await outsP;
+  return {
+    workDate: today.date,
+    onShift,
+    tasks,
+    reminders: await dueReminders(names),
+    lastCount,
+    todos,
+    training,
+    scheduled,
+    booths: await boothHolds(today.date),
+    outs: outs.outs,
+    ranOut: outs.open,
+  };
 }
 
 // ---------- booths ----------
@@ -354,20 +370,27 @@ export async function setReminderActive(id: string, active: boolean, employeeId:
 
 // ---------- par sheet ----------
 
-export async function getParSheet(): Promise<{ items: ParItem[]; last: Record<string, number>; lastAt: string | null }> {
+export async function getParSheet(): Promise<{ items: ParItem[]; last: Record<string, number>; lastAt: string | null; outs: Record<string, string> }> {
   await assertStaff();
   const supabase = db();
-  const { data: items } = await supabase.from("par_items").select("id, area, section, name, par_qty, unit, source, sort_order, active").order("sort_order");
-  const { data: lastCount } = await supabase.from("par_counts").select("id, completed_at").order("completed_at", { ascending: false }).limit(1);
+  const [{ data: items }, { data: lastCount }, { data: open }] = await Promise.all([
+    supabase.from("par_items").select("id, area, section, name, par_qty, unit, source, sort_order, active").order("sort_order"),
+    supabase.from("par_counts").select("id, completed_at").order("completed_at", { ascending: false }).limit(1),
+    // Lines reported out ("Ran out"), shown as a hint while counting.
+    supabase.from("stock_outages").select("par_item_id, reported_at").is("resolved_at", null).not("par_item_id", "is", null),
+  ]);
   const last: Record<string, number> = {};
   if (lastCount?.[0]) {
     const { data: lines } = await supabase.from("par_count_lines").select("item_id, qty").eq("count_id", lastCount[0].id);
     for (const l of lines ?? []) last[l.item_id] = Number(l.qty);
   }
+  const outs: Record<string, string> = {};
+  for (const o of open ?? []) outs[o.par_item_id as string] = o.reported_at as string;
   return {
     items: (items ?? []).map((i) => ({ ...i, par_qty: i.par_qty === null ? null : Number(i.par_qty) })) as ParItem[],
     last,
     lastAt: lastCount?.[0]?.completed_at ?? null,
+    outs,
   };
 }
 
@@ -406,10 +429,17 @@ export async function getShoppingList(countId?: string): Promise<ShoppingList | 
     employeeNames(),
   ]);
   if (!count) return null;
+  // Lines reported "Ran out" are listed on their own above this list while
+  // open, and once bought (or found) after the count they're stocked again.
+  const [{ data: open }, { data: restocked }] = await Promise.all([
+    supabase.from("stock_outages").select("par_item_id").is("resolved_at", null).not("par_item_id", "is", null),
+    supabase.from("stock_outages").select("par_item_id").gte("resolved_at", count.completed_at).in("resolution", ["bought", "found"]).not("par_item_id", "is", null),
+  ]);
+  const handled = new Set([...(open ?? []), ...(restocked ?? [])].map((o) => o.par_item_id as string));
   const groups = new Map<string, ShoppingList["bySource"][number]["lines"]>();
   type Line = { qty: number; par_qty: number | null; item: { id: string; name: string; area: string; unit: string | null; source: string | null; sort_order: number } };
   const below = ((lines ?? []) as unknown as Line[])
-    .filter((l) => l.item && l.par_qty !== null && Number(l.qty) < Number(l.par_qty))
+    .filter((l) => l.item && !handled.has(l.item.id) && l.par_qty !== null && Number(l.qty) < Number(l.par_qty))
     .sort((a, b) => a.item.sort_order - b.item.sort_order);
   for (const l of below) {
     const source = l.item.source || "No store listed";
@@ -493,7 +523,7 @@ export interface OpsHistory {
   ticks: { taskId: string; date: string; byName: string | null }[];
   totals: { name: string; count: number }[];
   counts: { id: string; at: string; byName: string | null; items: number; below: number }[];
-  changes: { at: string; byName: string | null; action: string; summary: string }[];
+  changes: { at: string; byName: string | null; entity: string; action: string; summary: string }[];
 }
 
 export async function getOpsHistory(days = 7): Promise<OpsHistory> {
@@ -505,7 +535,7 @@ export async function getOpsHistory(days = 7): Promise<OpsHistory> {
     supabase.from("shift_tasks").select("id, title, timing, active").order("sort_order"),
     supabase.from("task_completions").select("task_id, work_date, completed_by").in("work_date", dates),
     supabase.from("par_counts").select("id, completed_at, counted_by, lines:par_count_lines(qty, par_qty)").order("completed_at", { ascending: false }).limit(10),
-    supabase.from("ops_changes").select("changed_at, changed_by, action, summary").order("changed_at", { ascending: false }).limit(25),
+    supabase.from("ops_changes").select("changed_at, changed_by, entity, action, summary").order("changed_at", { ascending: false }).limit(25),
   ]);
   const tally = new Map<string, number>();
   for (const t of ticks.data ?? []) {
@@ -528,7 +558,7 @@ export async function getOpsHistory(days = 7): Promise<OpsHistory> {
         below: lines.filter((l) => l.par_qty !== null && Number(l.qty) < Number(l.par_qty)).length,
       };
     }),
-    changes: (changes.data ?? []).map((c) => ({ at: c.changed_at, byName: c.changed_by ? names.get(c.changed_by) ?? null : null, action: c.action, summary: c.summary })),
+    changes: (changes.data ?? []).map((c) => ({ at: c.changed_at, byName: c.changed_by ? names.get(c.changed_by) ?? null : null, entity: c.entity, action: c.action, summary: c.summary })),
   };
 }
 

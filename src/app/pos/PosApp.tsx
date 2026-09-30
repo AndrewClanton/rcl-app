@@ -11,6 +11,9 @@ import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
 import TabCardModal from "./TabCardModal";
 import { useOnShift } from "./shift/on-shift-store";
+import { publishCashier, useRanOut } from "./shift/ran-out-store";
+import { ItemOutDialog, MenuTile } from "./shift/RanOut";
+import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
@@ -147,6 +150,31 @@ export default function PosApp({
     (pickedCashier && pickedCashier.shiftKey === shiftKey && isEmployee(pickedCashier.id) ? pickedCashier.id : "") ||
     (isEmployee(onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
     (isEmployee(latestOnShift) ? latestOnShift : "");
+  // "Ran out" reports from the shift bar are made in the cashier's name.
+  useEffect(() => {
+    publishCashier(employeeId || null);
+  }, [employeeId]);
+  // 86'd items: what the shift bar's poll last saw, else what the page
+  // loaded with.
+  const ranOut = useRanOut();
+  const outs = useMemo(() => {
+    const m = new Map<string, RegisterOut>();
+    if (ranOut.loaded) {
+      for (const o of ranOut.outs) m.set(o.itemId, o);
+      return m;
+    }
+    const walk = (cs: MenuCategory[]) => {
+      for (const c of cs) {
+        for (const i of c.items) {
+          if (i.out_since) m.set(i.id, { itemId: i.id, reason: i.out_note || "Out", since: i.out_since, outageId: i.out_outage_id ?? null, what: null });
+        }
+        walk(c.subcategories);
+      }
+    };
+    walk(categories);
+    return m;
+  }, [ranOut, categories]);
+  const [outPromptId, setOutPromptId] = useState<string | null>(null);
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
   const [taxFree, setTaxFree] = useState(false);
@@ -220,13 +248,17 @@ export default function PosApp({
     ].filter((s) => s.items.length > 0),
     [category],
   );
-  const builderItem = useMemo(() => {
+  const findItem = useMemo(() => {
+    const byId = new Map<string, MenuCategory["items"][number]>();
     for (const c of categories) {
-      for (const i of c.items) if (i.id === builderItemId) return i;
-      for (const s of c.subcategories) for (const i of s.items) if (i.id === builderItemId) return i;
+      for (const i of c.items) byId.set(i.id, i);
+      for (const s of c.subcategories) for (const i of s.items) byId.set(i.id, i);
     }
-    return null;
-  }, [categories, builderItemId]);
+    return (id: string | null) => (id ? (byId.get(id) ?? null) : null);
+  }, [categories]);
+  const builderItem = findItem(builderItemId);
+  const outPromptItem = findItem(outPromptId);
+  const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
   const totals = computeTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
@@ -1131,16 +1163,19 @@ export default function PosApp({
               <section key={section.id}>
                 {section.label && <div className="eyebrow mb-2">{section.label}</div>}
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
-                  {section.items.map((item) => (
-                    <button key={item.id} className="card-flat flex min-h-[84px] flex-col items-center justify-center gap-1 p-3 text-center" onClick={() => setBuilderItemId(item.id)}>
-                      <span className="text-base font-medium leading-snug" style={{ color: "var(--foreground)" }}>
-                        {item.name}
-                      </span>
-                      <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
-                        {money(item.price)}
-                      </span>
-                    </button>
-                  ))}
+                  {section.items.map((item) => {
+                    const out = outs.get(item.id) ?? null;
+                    return (
+                      <MenuTile
+                        key={item.id}
+                        name={item.name}
+                        price={money(item.price)}
+                        out={out}
+                        // An 86'd item asks first: sell anyway, or it's back.
+                        onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}
+                      />
+                    );
+                  })}
                   {/* Anything the menu can't describe; each use files a dev note. */}
                   {i === menuSections.length - 1 && (
                     <button className="card-flat flex min-h-[84px] items-center justify-center p-3 text-center text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
@@ -1159,6 +1194,20 @@ export default function PosApp({
         )}
         </div>
       </div>
+
+      {outPromptItem && outPrompt && (
+        <ItemOutDialog
+          item={{ id: outPromptItem.id, name: outPromptItem.name }}
+          out={outPrompt}
+          outs={[...outs.values()]}
+          employeeId={employeeId || null}
+          onSell={() => {
+            setOutPromptId(null);
+            setBuilderItemId(outPromptItem.id);
+          }}
+          onClose={() => setOutPromptId(null)}
+        />
+      )}
 
       {tipOpen && (
         <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={continueAfterTip} onCancel={() => setTipOpen(false)} />

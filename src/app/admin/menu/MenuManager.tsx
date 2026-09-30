@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import type { Ingredient, MenuCategory, MenuItem, ParItemRef, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCategory, addItem, updateItem, deleteItem, setItemHidden } from "./actions";
+import { addCategory, addSubcategory, renameCategory, deleteCategory, reorderCategory, addItem, updateItem, deleteItem, setItemHidden, clearItemOut } from "./actions";
 import ItemModifiers from "./ItemModifiers";
 import ItemRecipe from "./ItemRecipe";
 
@@ -67,6 +67,13 @@ function hiddenCount(items: MenuItem[]) {
   return items.filter((i) => !i.active).length;
 }
 
+function outCount(items: MenuItem[]) {
+  return items.filter((i) => i.out_since).length;
+}
+
+const outSince = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+
 function CategoryList({ categories, canEdit, onManage }: { categories: MenuCategory[]; canEdit: boolean; onManage: (id: string) => void }) {
   const [pending, run] = useRefreshingAction();
   const [newName, setNewName] = useState("");
@@ -79,6 +86,7 @@ function CategoryList({ categories, canEdit, onManage }: { categories: MenuCateg
         {categories.map((cat, idx) => {
           const allItems = cat.subcategories.length ? cat.subcategories.flatMap((sc) => sc.items) : cat.items;
           const hidden = hiddenCount(allItems);
+          const out = outCount(allItems);
           return (
             <div key={cat.id} className="flex flex-wrap items-center gap-2 py-2">
               {canEdit && (
@@ -102,6 +110,7 @@ function CategoryList({ categories, canEdit, onManage }: { categories: MenuCateg
               {canEdit ? <CategoryLabelInput id={cat.id} label={cat.label} /> : <span className="min-w-[140px] flex-1 text-sm">{cat.label}</span>}
               <span className="text-xs text-[var(--muted)]">
                 {allItems.length} item(s){hidden > 0 && `, ${hidden} hidden`}
+                {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
               </span>
               <button className="ml-auto rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => onManage(cat.id)}>
                 {canEdit ? "Manage items" : "See items"}
@@ -190,11 +199,13 @@ function SubcategoryList({
       <div className="divide-y divide-[var(--border)] ">
         {parent.subcategories.map((sub) => {
           const hidden = hiddenCount(sub.items);
+          const out = outCount(sub.items);
           return (
             <div key={sub.id} className="flex flex-wrap items-center gap-2 py-2">
               <span className="min-w-[140px] flex-1 text-sm">{sub.label}</span>
               <span className="text-xs text-[var(--muted)]">
                 {sub.items.length} item(s){hidden > 0 && `, ${hidden} hidden`}
+                {out > 0 && <span className="text-[var(--accent)]">, {out} out</span>}
               </span>
               <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => onManage(sub.id)}>
                 {canEdit ? "Manage items" : "See items"}
@@ -360,6 +371,20 @@ function ItemRow({
           </>
         )}
         {hidden && <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]">hidden from register</span>}
+        {item.out_since && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent)] bg-[var(--accent-soft)] px-2 py-0.5 text-xs text-[var(--accent)]"
+            title={`86'd on the register since ${outSince(item.out_since)}`}
+          >
+            <strong>Out</strong>
+            {item.out_note ? ` · ${item.out_note}` : ""}
+            {canEdit && (
+              <button className="ml-1 font-bold underline disabled:opacity-50" disabled={pending} onClick={() => run(() => clearItemOut(item.id))}>
+                Clear
+              </button>
+            )}
+          </span>
+        )}
         {(canEdit || item.modifier_groups.length > 0) && (
           <button className="rounded border border-[var(--border)] px-2 py-1 text-xs " onClick={() => setModsOpen((v) => !v)}>
             Modifiers ({item.modifier_groups.length})

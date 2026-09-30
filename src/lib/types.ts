@@ -60,6 +60,11 @@ export interface MenuItem {
   event_price_mode: EventPriceMode | null;
   sort_order: number;
   active: boolean;
+  // 86'd ("Ran out" on the register): set while it shouldn't be sold, with
+  // the reason shown on its button ("Out of hot dog buns").
+  out_since?: string | null;
+  out_note?: string | null;
+  out_outage_id?: string | null;
   modifier_groups: ModifierGroup[];
 }
 
