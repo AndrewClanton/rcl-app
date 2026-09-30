@@ -242,23 +242,35 @@ type Split = { cash: number; tendered: number };
 type ReaderState = "waiting" | "failed";
 
 // A deploy landed mid-payment: this page can't check the charge anymore,
-// and the card may already be charged.
-const STALE_MID_PAYMENT = "The register was updated during this payment. Refresh the page, then check Stripe's Payments list before charging again: the card may already be charged.";
+// and the card may already be charged. Only a reload helps: the register
+// kept this payment, looks it up again when it loads, and shows "card WAS
+// charged" if it went through. ("Try again" from here would hit the same
+// out-of-date page and wrongly say nothing was charged.)
+const STALE_MID_PAYMENT = "The register was updated during this payment, and the card may already be charged. Reload the page: it looks this payment up again. Don't charge the card again until it has.";
 
 export default function PaymentModal({
   total,
   readerId,
   tipEligible,
+  tipTaken = false,
   tabCard = null,
   tabName = "Tab",
+  onReaderStarted,
+  onReaderCanceled,
   onConfirm,
   onCancel,
 }: {
   total: number;
   readerId: string | null; // this register's card reader, or null if none is set up
   tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
+  tipTaken?: boolean; // the register already asked for the tip (it's inside `total`), so it isn't asked again
   tabCard?: { tabId: string; label: string } | null; // the tab's card on file, charged without a tap
   tabName?: string;
+  // A reader payment was sent to the reader: kept by the register so a
+  // reload mid-payment can still find it. `payment` is the sale as it will be
+  // saved, before any tip picked on the reader.
+  onReaderStarted?: (payment: CheckoutPayment) => void;
+  onReaderCanceled?: (paymentIntentId: string) => void; // it's over, and nothing was charged
   onConfirm: (payment: CheckoutPayment, note?: string) => void; // note: shown to staff with the sale
   onCancel: () => void;
 }) {
@@ -282,8 +294,11 @@ export default function PaymentModal({
   const [splitCash, setSplitCash] = useState(0);
   // A split whose card part didn't go through: the cash has to go back.
   const [splitNote, setSplitNote] = useState<string | null>(null);
-  // Asking Stripe to send the charge to the reader (a second or so).
+  // Asking Stripe to send the charge to the reader (a second or so). The ref
+  // stops a double tap from starting a second payment, whose "reader busy"
+  // error would replace the one being watched.
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   // split: the cash already taken when the reader is charging a split's
   // card part (for the screen, and for how the sale is saved).
   const [reader, setReader] = useState<{ state: ReaderState; paymentIntentId: string; message?: string; split: Split | null } | null>(null);
@@ -340,6 +355,7 @@ export default function PaymentModal({
           again = false;
         } else if (status === "canceled") {
           again = false;
+          onReaderCanceled?.(paymentIntentId);
           setReader({ state: "failed", paymentIntentId, message: errorMessage ?? "Payment was canceled.", split });
         } else if (errorMessage) {
           // requires_payment_method after a decline -- reader auto-prompts retry, but surface the message.
@@ -361,10 +377,11 @@ export default function PaymentModal({
 
   // split: charging the rest of a split, after its cash was taken.
   async function handleReaderCharge(split: Split | null = null) {
+    if (!readerId || sendingRef.current) return;
+    sendingRef.current = true;
     setReader(null);
     setSplitNote(null);
     cancelTappedRef.current = false;
-    if (!readerId) return;
     const amountCents = Math.round(cardPart(split) * 100);
     // A split's tip suggestions are figured on its card part.
     const tipCents = tipEligible === null ? null : split ? Math.min(Math.round(tipEligible * 100), amountCents) : Math.round(tipEligible * 100);
@@ -376,11 +393,15 @@ export default function PaymentModal({
         return;
       }
       const { paymentIntentId } = started;
+      // Kept right away, so a reload from here on can still find this payment.
+      const cardPaid = { card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: 0, ...withVoucher };
+      onReaderStarted?.(split ? { method: "split", cash: split.cash, tendered: split.tendered, ...cardPaid } : { method: "card", cash: 0, ...cardPaid });
       setReader({ state: "waiting", paymentIntentId, split });
       watchReaderPayment(paymentIntentId, split);
     } catch (e) {
       setReader({ state: "failed", paymentIntentId: "", message: isStaleBuildError(e) ? STALE_BUILD_MESSAGE : e instanceof Error ? e.message : "Could not reach the card reader.", split });
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   }
@@ -405,9 +426,11 @@ export default function PaymentModal({
   }, []);
 
   // "Charge card on file": ask the customer on the reader. No reader on
-  // this register: ask here instead.
+  // this register: ask here instead, unless the register already asked when
+  // the tab was closed (that tip is in what's due), so it's asked once.
   async function startCardOnFile() {
     if (!tabCard || onFile.busy) return;
+    if (tipTaken) return void handleCardOnFile(0);
     if (!readerId) return setOnFileTipOpen(true);
     stopTipPoll();
     const ask = tipAskRef.current;
@@ -485,7 +508,10 @@ export default function PaymentModal({
     setCancelling(false);
     if (last === "stale") return setReader({ state: "failed", paymentIntentId, message: STALE_MID_PAYMENT, split });
     if (last?.status === "succeeded") return confirmReaderPayment(paymentIntentId, last.amountCents, last.tipCents, split);
-    if (last?.status === "canceled") return leaveReader(split);
+    if (last?.status === "canceled") {
+      onReaderCanceled?.(paymentIntentId);
+      return leaveReader(split);
+    }
     // Neither paid nor canceled (the cancel didn't take, or Stripe didn't
     // answer): keep watching rather than offer a second charge.
     setReader({ state: "waiting", paymentIntentId, message: "Cancel didn't go through. Wait for the reader, or tap Cancel again.", split });
@@ -650,17 +676,35 @@ export default function PaymentModal({
               </p>
               {split && (
                 <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
-                  Split: they handed over {money(split.tendered)} for the {money(split.cash)} cash part, and {money(cardPart(split))} still goes on the card. Try the card again, or go back and hand the {money(split.tendered)} back.
+                  {reader.message === STALE_MID_PAYMENT
+                    ? `Split: they handed over ${money(split.tendered)} for the ${money(split.cash)} cash part. Hold on to it until the reload shows whether the card went through.`
+                    : `Split: they handed over ${money(split.tendered)} for the ${money(split.cash)} cash part, and ${money(cardPart(split))} still goes on the card. Try the card again, or go back and hand the ${money(split.tendered)} back.`}
                 </p>
               )}
-              <div className="mt-4 flex justify-center gap-2">
-                <button className="btn-secondary" onClick={() => leaveReader(split)}>
-                  Back
-                </button>
-                <button className="btn-primary" onClick={() => handleReaderCharge(split)}>
-                  Try again
-                </button>
-              </div>
+              {reader.message === STALE_MID_PAYMENT ? (
+                // The card may be charged: only a reload can tell. Back or Try
+                // again from this out-of-date page could charge it twice.
+                <div className="mt-4 flex justify-center">
+                  <button className="btn-primary" onClick={() => window.location.reload()}>
+                    Reload page
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4 flex justify-center gap-2">
+                  <button className="btn-secondary" onClick={() => leaveReader(split)}>
+                    Back
+                  </button>
+                  {reader.message === STALE_BUILD_MESSAGE ? (
+                    <button className="btn-primary" onClick={() => window.location.reload()}>
+                      Reload page
+                    </button>
+                  ) : (
+                    <button className="btn-primary" onClick={() => handleReaderCharge(split)}>
+                      Try again
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -697,7 +741,7 @@ export default function PaymentModal({
             </button>
             {/* The tip question: asked on the reader, since a card on file has no tap. */}
             <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-              {readerId ? "They pick a tip on the reader first." : "You enter their tip here first."}
+              {tipTaken ? "Their tip is already in the total." : readerId ? "They pick a tip on the reader first." : "You enter their tip here first."}
               <InfoTip topic="card-on-file-tip" />
             </p>
             {onFile.error && (

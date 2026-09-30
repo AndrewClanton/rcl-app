@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
+import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
@@ -20,7 +20,6 @@ import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
-import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
 import RegisterCheckins from "./RegisterCheckins";
 import type { PosMember } from "./member-actions";
@@ -39,13 +38,24 @@ import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
-import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
+import UnsavedSaleBanner, {
+  clearPendingReaderSale,
+  currentUnsavedSale,
+  keepPendingReaderSale,
+  keepUnsavedSale,
+  readPendingReaderSales,
+  useUnsavedSale,
+  type UnsavedSale,
+} from "./UnsavedSaleBanner";
+import { pickCashier, useCashierPick } from "./cashier-pick";
+import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import { isStaleBuildError } from "@/lib/deployment";
-import { ENFORCE_REGISTER_TOTALS } from "@/lib/register-totals";
+import { cents, ENFORCE_REGISTER_TOTALS, pointsEarned, registerTotals } from "@/lib/register-totals";
 import {
   checkBeforePayment,
   completeOrder,
   isDraftOpen,
+  logAbandonedSale,
   saveDraftOrder,
   updateDraftOrder,
   loadDraftOrder,
@@ -53,12 +63,10 @@ import {
   cancelTab,
   type CheckoutPayment,
   type CheckoutTotals,
+  type CompleteOrderInput,
   type DraftOrderSummary,
   type DraftFields,
 } from "./actions";
-
-// Joplin, MO combined sales tax, shared with online tickets and Insiders+.
-const TAX_RATE = SALES_TAX_RATE;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -78,36 +86,11 @@ interface CartLine {
 // The Movies tab sits alongside the menu categories.
 const MOVIES_TAB = "__movies";
 
-type TotalsMember = { tier: MemberTier; points: number } | null;
-
-function memberDiscountRate(member: TotalsMember) {
-  if (!member) return 0;
-  return member.tier === "Insiders+" ? 0.1 : 0.05;
-}
-
-// The server redoes this math to check each sale (lib/register-totals.ts):
-// change one, change the other.
-function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
-  // Every money figure is rounded to the cent, so the tax shown, the total
-  // charged on the card and the order saved all agree to the penny.
-  const cents = (n: number) => Math.round(n * 100) / 100;
-  const subtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
-  const tierDiscount = cents(subtotal * memberDiscountRate(member));
-  const monthlyDiscount = monthlyMember ? cents(subtotal * 0.1) : 0;
-  const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
-  // A $5 reward on a $3 order takes $3 off, never more than what's left.
-  const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, subtotal - tierDiscount - monthlyDiscount))) : 0;
-  const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
-  const taxable = subtotal - discount;
-  // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
-  const tax = taxFree ? 0 : cents(Math.max(0, taxable) * TAX_RATE);
-  const total = cents(Math.max(0, taxable) + tax);
-  return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
-}
-
 // Draft rows (held orders + tabs) persist the same shape the cart displays,
 // so the held/tabs lists never drift from what's actually on the check.
-function totalsPayload(t: ReturnType<typeof computeTotals>): CheckoutTotals {
+// The math itself is registerTotals (lib/register-totals.ts), the very one
+// the server redoes to check each sale.
+function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
   return {
     subtotal: t.subtotal,
     tier_discount: t.tierDiscount,
@@ -148,9 +131,10 @@ export default function PosApp({
   const onShift = useOnShift();
   // The cashier follows the shift: this iPad's shift, else whoever started
   // most recently. A cashier picked by hand holds only until someone starts
-  // or ends a shift (the pick remembers the shift line-up it was made under).
+  // or ends a shift (the pick remembers the shift line-up it was made under),
+  // and it's kept on this iPad, so a reload keeps it too.
   const shiftKey = `${onShift.onShift.map((o) => o.shiftId).join(",")}|${onShift.meEmployeeId ?? ""}`;
-  const [pickedCashier, setPickedCashier] = useState<{ id: string; shiftKey: string } | null>(null);
+  const pickedCashier = useCashierPick();
   const isEmployee = (id: string | null | undefined): id is string => !!id && employees.some((e) => e.id === id);
   const latestOnShift = [...onShift.onShift].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]?.employeeId ?? null;
   const onShiftIds = new Set(onShift.onShift.map((o) => o.employeeId));
@@ -197,6 +181,9 @@ export default function PosApp({
   const [tipOpen, setTipOpen] = useState(false);
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
+  // The tip was asked on the register (a tab, no reader): the pay screen
+  // doesn't ask again, even if they said no tip.
+  const [tipAsked, setTipAsked] = useState(false);
   const [heldListOpen, setHeldListOpen] = useState(false);
   // ✨ Easter eggs: a surprise for the bottom of the next printed receipt.
   const [flourish, setFlourish] = useState<FlourishKey | null>(null);
@@ -272,7 +259,7 @@ export default function PosApp({
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
-  const totals = computeTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
+  const totals = registerTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
   const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
 
@@ -419,14 +406,14 @@ export default function PosApp({
     tax: totals.tax,
     total: totals.total,
     // The customer screen's live tally: savings, whose order it is, and the
-    // points it earns (1 per $1 of the subtotal, as completeOrder pays).
+    // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
       { label: "Member discount", amount: totals.tierDiscount },
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
       { label: "Points reward", amount: totals.redemptionDiscount },
     ].filter((d) => d.amount > 0),
     member: member ? { firstName: member.name.trim().split(/\s+/)[0] || member.name, points: Math.round(member.points), plus: member.tier === "Insiders+" } : null,
-    pointsToEarn: Math.max(0, Math.round(totals.subtotal)),
+    pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
@@ -666,8 +653,9 @@ export default function PosApp({
     }
   }
 
-  function continueAfterTip(tipAmount: number) {
+  function continueAfterTip(tipAmount: number, asked = false) {
     setTip(tipAmount);
+    setTipAsked(asked);
     setTipOpen(false);
     const hasAlcohol = cart.some((l) => l.isAlcohol);
     if (hasAlcohol) setAgeConfirmOpen(true);
@@ -697,6 +685,27 @@ export default function PosApp({
     }
   }
 
+  // The sale on screen as completeOrder gets it, paid with `payment`. A
+  // tab's tip is asked on the register (TipModal); any other card sale can
+  // get one on the reader. Either way it's one tip on the order.
+  function orderFor(payment: CheckoutPayment): CompleteOrderInput {
+    return {
+      ...currentFields(),
+      totals: totalsPayload(totals),
+      payment,
+      ageVerified: cart.some((l) => l.isAlcohol),
+      tip: cents(tip + (payment.tip ?? 0)),
+      draftOrderId: activeTabId,
+    };
+  }
+
+  // A payment just sent to the reader: kept in this browser until it's
+  // saved or canceled, so a reload mid-payment can still find it (see
+  // recoverReaderPayments).
+  function keepReaderPayment(payment: CheckoutPayment) {
+    if (readerId) keepPendingReaderSale({ readerId, order: orderFor(payment), memberName: member?.name ?? null, startedAt: Date.now() });
+  }
+
   async function finalizeCheckout(payment: CheckoutPayment, note?: string) {
     // A double tap (or a second "paid" answer from the reader) must not save
     // or print the sale twice.
@@ -704,31 +713,15 @@ export default function PosApp({
     finalizingRef.current = true;
     setPayOpen(false);
     setBusy(true);
-    // A tab's tip is asked on the register (TipModal); any other card sale
-    // can get one on the reader. Either way it's one tip on the order.
-    const allTip = tip + (payment.tip ?? 0);
     try {
-      const saved = await saveSale(
-        {
-          order: {
-            ...currentFields(),
-            totals: totalsPayload(totals),
-            payment,
-            ageVerified: cart.some((l) => l.isAlcohol),
-            tip: allTip,
-            draftOrderId: activeTabId,
-          },
-          memberName: member?.name ?? null,
-          tries: 0,
-        },
-        note,
-      );
+      const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note);
       // A charged card that didn't save is cleared too: the sale now lives in
       // the "card WAS charged" banner, so its items can't be charged again,
       // held, or moved onto a tab.
       if (saved || payment.stripePaymentIntentId) {
         resetOrder();
         setTip(0);
+        setTipAsked(false);
       }
     } finally {
       finalizingRef.current = false;
@@ -745,6 +738,7 @@ export default function PosApp({
     const allTip = order.tip ?? 0;
     const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
     let orderNumber: number;
+    let warning: string | undefined;
     try {
       const r = await completeOrder(order);
       if (!r.ok) {
@@ -756,6 +750,7 @@ export default function PosApp({
         return false;
       }
       orderNumber = r.orderNumber;
+      warning = r.warning;
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
@@ -770,6 +765,10 @@ export default function PosApp({
         setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
       }
       return false;
+    } finally {
+      // Saved, or kept in the "card WAS charged" warning: either way the
+      // reader payment isn't in progress anymore.
+      if (payment.stripePaymentIntentId) clearPendingReaderSale(payment.stripePaymentIntentId);
     }
     keepUnsavedSale(null);
     const receipt: ReceiptData = {
@@ -803,9 +802,10 @@ export default function PosApp({
     if (allTip > 0) parts.push(`${money(allTip)} tip`);
     if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
     if (change > 0) parts.push(`give ${money(change)} change`);
-    setToast(note ? `${note} ${parts.join(" — ")}` : parts.join(" — "));
+    const notes = [note, warning].filter(Boolean).join(" ");
+    setToast(notes ? `${notes} ${parts.join(" — ")}` : parts.join(" — "));
     router.refresh();
-    setTimeout(() => setToast(null), note ? 15000 : 7000);
+    setTimeout(() => setToast(null), warning ? 30000 : note ? 15000 : 7000);
     return true;
   }
 
@@ -813,19 +813,24 @@ export default function PosApp({
     if (!unsavedSale || finalizingRef.current) return;
     finalizingRef.current = true;
     setBusy(true);
+    let saved = false;
     try {
       const { draftOrderId } = unsavedSale.order;
+      saved = await saveSale(unsavedSale);
       // If that tab was opened again meanwhile, it's closed now: take it off
       // the screen so it can't be charged a second time.
-      if ((await saveSale(unsavedSale)) && draftOrderId && draftOrderId === activeTabId) resetOrder();
+      if (saved && draftOrderId && draftOrderId === activeTabId) resetOrder();
     } finally {
       finalizingRef.current = false;
       setBusy(false);
     }
+    // Another reader payment from before a reload may be waiting its turn.
+    if (saved) void recoverReaderPayments();
   }
 
-  // The way out if a save can never work (say, the tab was cancelled
-  // elsewhere), so one stuck sale can't keep the register from charging.
+  // The way out if a save can never work, so one stuck sale can't keep the
+  // register from charging. The card stays charged with no sale, so the
+  // office is told (Reports -> Register checks).
   function stopTryingUnsavedSale() {
     const onTab = !!unsavedSale?.order.draftOrderId;
     setConfirmState({
@@ -833,12 +838,76 @@ export default function PosApp({
       description: `The card stays charged, but the sale won't be in Reports.${onTab ? " Its tab may still be open: have a manager cancel it, don't charge it again." : ""} Only do this if a manager says so.`,
       danger: true,
       confirmLabel: "Stop trying",
-      onConfirm: () => {
+      onConfirm: async () => {
         setConfirmState(null);
+        const sale = unsavedSale;
         keepUnsavedSale(null);
+        if (!sale) return;
+        const told = await logAbandonedSale(sale.order, sale.tries).then(
+          () => true,
+          () => false,
+        );
+        if (!told) setToast(`Stopped trying. The office couldn't be told, so tell a manager: a card was charged ${money(sale.order.payment.card)} with no sale saved.`);
+        void recoverReaderPayments();
       },
     });
   }
+
+  // Reader payments this browser started that never finished here: the
+  // page was reloaded mid-payment (a deploy, a frozen screen). Each is
+  // looked up with Stripe. One that went through becomes the "card WAS
+  // charged" warning, so Retry saving records it; one still waiting on the
+  // reader is stopped first, since nothing is watching it anymore and a tap
+  // now would charge a sale nobody saves. One warning at a time: the next
+  // waits until this one is dealt with.
+  const recoveringRef = useRef(false);
+  async function recoverReaderPayments() {
+    if (recoveringRef.current) return;
+    recoveringRef.current = true;
+    try {
+      for (const p of readPendingReaderSales()) {
+        const paymentIntentId = p.order.payment.stripePaymentIntentId as string;
+        const held = currentUnsavedSale();
+        if (held?.order.payment.stripePaymentIntentId === paymentIntentId) {
+          clearPendingReaderSale(paymentIntentId);
+          continue;
+        }
+        let r = await checkReaderPayment(paymentIntentId).catch(() => null);
+        // No answer (offline, or an out-of-date page): looked at again next load.
+        if (!r) return;
+        if (r.status !== "succeeded" && r.status !== "canceled") {
+          await cancelReaderPayment(paymentIntentId, p.readerId).catch(() => {});
+          r = await checkReaderPayment(paymentIntentId).catch(() => null);
+          if (!r) return;
+        }
+        if (r.status === "succeeded") {
+          if (held) return;
+          const readerTip = r.tipCents / 100;
+          keepUnsavedSale({
+            order: { ...p.order, payment: { ...p.order.payment, card: r.amountCents / 100, tip: readerTip }, tip: cents((p.order.tip ?? 0) + readerTip) },
+            memberName: p.memberName,
+            tries: 0,
+          });
+          clearPendingReaderSale(paymentIntentId);
+          setToast("A card payment from before the page reloaded went through but isn't saved yet. Tap Retry saving below.");
+        } else if (r.status === "canceled") {
+          clearPendingReaderSale(paymentIntentId);
+          if (Date.now() - p.startedAt < 30 * 60_000) setToast("The card payment from before the page reloaded didn't go through, so nothing was charged. Take payment again.");
+        } else {
+          // Still going through: looked at again on the next load.
+          setToast("A card payment from before the page reloaded is still going through. Don't charge that card again: reload in a minute to see if it went through.");
+          return;
+        }
+      }
+    } finally {
+      recoveringRef.current = false;
+    }
+  }
+
+  // Once, when the register opens.
+  useEffect(() => {
+    void recoverReaderPayments();
+  }, []);
 
   return (
     <div className="grid gap-3 md:min-h-0 md:flex-1 md:grid-cols-[370px_1fr] lg:grid-cols-[440px_1fr]">
@@ -848,7 +917,7 @@ export default function PosApp({
       <div className="card flex flex-col !p-3 md:min-h-0">
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setPickedCashier({ id: e.target.value, shiftKey })}>
+            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
               <option value="">Choose cashier</option>
               {onShiftIds.size > 0 ? (
                 <>
@@ -1095,7 +1164,7 @@ export default function PosApp({
           {/* No new charges while a charged sale is unsaved: if sales aren't
               saving, the register shouldn't keep charging cards. */}
           <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
-            Complete order
+            {employeeId ? "Complete order" : "Pick a cashier"}
           </button>
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
@@ -1257,7 +1326,7 @@ export default function PosApp({
       )}
 
       {tipOpen && (
-        <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={continueAfterTip} onCancel={() => setTipOpen(false)} />
+        <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={(t) => continueAfterTip(t, true)} onCancel={() => setTipOpen(false)} />
       )}
 
       {ageConfirmOpen && (
@@ -1289,11 +1358,14 @@ export default function PosApp({
 
       {payOpen && (
         <PaymentModal
-          total={totals.total + tip}
+          total={cents(totals.total + tip)}
           readerId={readerId}
-          tipEligible={tip > 0 ? null : totals.total - totals.tax}
+          tipEligible={tip > 0 || tipAsked ? null : totals.total - totals.tax}
+          tipTaken={tipAsked}
           tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
           tabName={activeTab?.order_name ?? "Tab"}
+          onReaderStarted={keepReaderPayment}
+          onReaderCanceled={clearPendingReaderSale}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}
         />

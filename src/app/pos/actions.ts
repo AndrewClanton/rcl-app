@@ -12,7 +12,7 @@ import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
-import { cents, ENFORCE_REGISTER_TOTALS, pointsEarned } from "@/lib/register-totals";
+import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
 import { checkSaleTotals, flagSale, verifyCardPayment, type TotalsCheck } from "@/lib/register-sale-checks";
 
 export interface CheckoutLine {
@@ -218,7 +218,8 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
 
 // cardCharged: the card was charged for this sale even though it wasn't
 // saved, so the register keeps its "card WAS charged" warning up.
-export type CompleteOrderResult = { ok: true; orderNumber: number } | { ok: false; error: string; cardCharged: boolean };
+// warning: saved, but staff need to know something (shown with the sale).
+export type CompleteOrderResult = { ok: true; orderNumber: number; warning?: string } | { ok: false; error: string; cardCharged: boolean };
 
 export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
   await assertStaff();
@@ -287,26 +288,43 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     }
   }
 
-  let orderId: string;
-  let orderNumber: number;
+  let orderId = "";
+  let orderNumber = 0;
   let wasTab = false;
+  // A tab paid by card here after it was closed (paid or cancelled) on
+  // another register: the card is charged, so the sale is kept as a new
+  // walk-up order and flagged, instead of an error Retry saving could never
+  // get past.
+  let closedElsewhere: { tabId: string; orderNumber: number | null; status: string } | null = null;
 
   if (params.draftOrderId) {
-    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).single();
-    if (fetchErr || !existing) throw new Error("Tab no longer exists");
-    orderId = params.draftOrderId;
-    orderNumber = Number(existing.order_number);
-    wasTab = existing.status === "tab";
-    // Only an open tab or held order can be closed, so two closes racing
-    // can't both award points and write items.
-    const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId).in("status", ["draft", "held", "tab"]).select("id");
-    if (updateErr) throw updateErr;
-    if (!closed?.length) {
-      if ((await orderForPayment()) !== null) return { ok: true, orderNumber };
-      throw new Error("This tab was already closed. Check Reports before taking payment again.");
+    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).maybeSingle();
+    if (fetchErr) throw fetchErr;
+    let closedNow = false;
+    if (existing) {
+      // Only an open tab or held order can be closed, so two closes racing
+      // can't both award points and write items.
+      const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", params.draftOrderId).in("status", ["draft", "held", "tab"]).select("id");
+      if (updateErr) throw updateErr;
+      closedNow = !!closed?.length;
     }
-    await saveSaleItems(supabase, orderId, params.lines);
-  } else {
+    if (closedNow && existing) {
+      orderId = params.draftOrderId;
+      orderNumber = Number(existing.order_number);
+      wasTab = existing.status === "tab";
+      await saveSaleItems(supabase, orderId, params.lines);
+    } else {
+      // This payment's own close may have landed a moment ago (a retry).
+      const saved = await orderForPayment();
+      if (saved !== null) return { ok: true, orderNumber: saved };
+      if (!paymentIntentId) {
+        return { ok: false, error: "This tab was already closed on another register, so this sale wasn't saved. Hand back any cash taken for it, and check Recent orders.", cardCharged: false };
+      }
+      closedElsewhere = { tabId: params.draftOrderId, orderNumber: existing ? Number(existing.order_number) : null, status: existing?.status ?? "deleted" };
+    }
+  }
+
+  if (!params.draftOrderId || closedElsewhere) {
     const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
     if (numberErr) throw numberErr;
     orderNumber = Number(newNumber);
@@ -330,6 +348,20 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // it never slows a sale down.
   const saved = { ...flagBase, orderId, orderNumber };
   after(async () => {
+    if (closedElsewhere) {
+      await flagSale("tab_closed_elsewhere", {
+        ...saved,
+        details: {
+          summary: `Possible double charge: tab "${params.orderName || "Tab"}"${closedElsewhere.orderNumber ? ` (#${closedElsewhere.orderNumber})` : ""} was ${closedElsewhere.status === "deleted" ? "cancelled" : "closed"} on another register before this card payment saved, so it was saved as new order #${orderNumber}. Check both and refund one.`,
+          tabId: closedElsewhere.tabId,
+          tabOrderNumber: closedElsewhere.orderNumber,
+          tabStatus: closedElsewhere.status,
+          amount: params.payment.card,
+          payment: params.payment,
+          tip,
+        },
+      });
+    }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
     const check = totalsCheck ?? (await checkSaleTotals(saleForCheck));
     if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
@@ -361,11 +393,13 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
 
   // A closed tab's card on file comes off file, however the tab was paid.
-  if (params.draftOrderId) await releaseTabCard(orderId);
+  // (A tab closed elsewhere had its card released there.)
+  if (params.draftOrderId && !closedElsewhere) await releaseTabCard(orderId);
 
   // A custom item usually means the menu couldn't describe the sale, so each
-  // one becomes a dev note to review. Best-effort: never blocks the sale.
-  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id);
+  // one becomes a dev note to review. Best-effort: never blocks the sale. A
+  // badge reward's $0 line isn't one.
+  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l));
   if (customLines.length) {
     const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
     await supabase
@@ -381,14 +415,48 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
 
   // The kitchen's order ticket: the whole order, or for a tab whatever
   // hadn't gone to the kitchen yet. Never throws; nothing happens without a
-  // kitchen printer.
-  await sendKitchenTicket(
-    { orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: params.lines },
-    "now",
-  );
+  // kitchen printer. A tab closed elsewhere already went to the kitchen as
+  // that tab, so its new order doesn't print again.
+  if (!closedElsewhere) {
+    await sendKitchenTicket(
+      { orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: params.lines },
+      "now",
+    );
+  }
 
   revalidate();
+  if (closedElsewhere) {
+    return {
+      ok: true,
+      orderNumber,
+      warning: `That tab was already closed on another register, so this card payment was saved as new order #${orderNumber}. The customer may have paid twice: get a manager to check Recent orders and refund one.`,
+    };
+  }
   return { ok: true, orderNumber };
+}
+
+// "Stop trying" on the register's "card WAS charged" warning: the card
+// stays charged and the sale won't be in Reports, so a manager is told
+// (Reports -> Register checks). The flag itself is best effort (see
+// flagSale); the register tells staff if this call doesn't get through.
+export async function logAbandonedSale(order: CompleteOrderInput, tries: number): Promise<void> {
+  const staff = await assertStaff();
+  const paymentIntentId = order.payment?.stripePaymentIntentId ?? null;
+  const amount = cents(Number(order.payment?.card) || 0);
+  await flagSale("sale_abandoned", {
+    employeeId: order.employeeId,
+    paymentIntentId: paymentIntentId && /^pi_[A-Za-z0-9]+$/.test(paymentIntentId) ? paymentIntentId : null,
+    details: {
+      summary: `The card was charged $${amount.toFixed(2)} but the sale never saved, and someone tapped "Stop trying". The money is in Stripe with no sale in Reports: check with the cashier, and refund it if the customer shouldn't have paid.`,
+      amount,
+      tip: cents(Number(order.tip) || 0),
+      orderName: String(order.orderName ?? "").slice(0, 120),
+      tabId: order.draftOrderId ?? null,
+      items: (order.lines ?? []).slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`),
+      tries,
+      stoppedBy: staff.name,
+    },
+  });
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------

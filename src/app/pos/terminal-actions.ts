@@ -103,10 +103,20 @@ export async function checkReaderPayment(paymentIntentId: string): Promise<{ sta
   };
 }
 
+// Also used when the register reloads mid-payment and finds this payment
+// still open, by which time the reader may have moved on to the next sale:
+// its screen is only cleared while it's still showing this payment.
 export async function cancelReaderPayment(paymentIntentId: string, readerId: string): Promise<void> {
   await assertStaff();
   const stripe = getStripe();
-  if (readerId) await stripe.terminal.readers.cancelAction(readerId).catch(() => {});
+  if (readerId) {
+    // No answer about the reader: clear it anyway, as before.
+    const reader = await stripe.terminal.readers.retrieve(readerId).catch(() => null);
+    const action = reader && !("deleted" in reader && reader.deleted) ? reader.action : null;
+    const pi = action?.type === "process_payment_intent" ? action.process_payment_intent?.payment_intent : null;
+    const showing = typeof pi === "string" ? pi : (pi?.id ?? null);
+    if (!reader || showing === paymentIntentId) await stripe.terminal.readers.cancelAction(readerId).catch(() => {});
+  }
   await stripe.paymentIntents.cancel(paymentIntentId).catch(() => {});
 }
 

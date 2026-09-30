@@ -53,6 +53,61 @@ export function useUnsavedSale(): UnsavedSale | null {
   return useSyncExternalStore(subscribe, read, () => null);
 }
 
+// The one kept right now, read straight from storage (the hook above is
+// empty until the page has hydrated).
+export function currentUnsavedSale(): UnsavedSale | null {
+  return read();
+}
+
+// ---------- reader payments still in progress ----------
+// A payment sent to the card reader, kept from the moment it starts until
+// it's saved or canceled, so a reload mid-payment (a deploy, a frozen
+// screen) doesn't lose it: when the register loads it looks each one up with
+// Stripe, and one that went through becomes the unsaved sale above, for
+// Retry saving. `order` is the sale as it will be saved, before any tip
+// picked on the reader.
+
+export interface PendingReaderSale {
+  readerId: string;
+  order: CompleteOrderInput;
+  memberName: string | null;
+  startedAt: number;
+}
+
+const PENDING_KEY = "rcl.register-reader-payments.v1";
+
+export function readPendingReaderSales(): PendingReaderSale[] {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    const list = raw ? (JSON.parse(raw) as PendingReaderSale[]) : [];
+    return Array.isArray(list) ? list.filter((p) => p?.order?.payment?.stripePaymentIntentId) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePending(list: PendingReaderSale[]) {
+  try {
+    if (list.length) localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+    else localStorage.removeItem(PENDING_KEY);
+  } catch {
+    // Storage blocked: a reload mid-payment can't find it, but Reports ->
+    // Register checks still lists a card payment with no sale.
+  }
+}
+
+export function keepPendingReaderSale(p: PendingReaderSale) {
+  const id = p.order.payment.stripePaymentIntentId;
+  // Newest first; a handful at most (older ones are long settled).
+  writePending([p, ...readPendingReaderSales().filter((q) => q.order.payment.stripePaymentIntentId !== id)].slice(0, 5));
+}
+
+export function clearPendingReaderSale(paymentIntentId: string) {
+  const list = readPendingReaderSales();
+  const rest = list.filter((q) => q.order.payment.stripePaymentIntentId !== paymentIntentId);
+  if (rest.length !== list.length) writePending(rest);
+}
+
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }

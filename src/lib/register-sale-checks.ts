@@ -14,9 +14,11 @@ import type { MemberTier } from "@/lib/types";
 //   refused. If Stripe can't be reached the sale is saved and flagged: the
 //   card was already charged, and losing the record is worse.
 // - checkSaleTotals: redoes the order's math from menu prices, modifiers,
-//   ticket prices, discounts and tax (the register's computeTotals, via
-//   lib/register-totals.ts) and lists anything more than a cent off.
-//   Log-only unless ENFORCE_REGISTER_TOTALS is on.
+//   ticket prices, discounts and tax (registerTotals in
+//   lib/register-totals.ts, the same function the register uses) and lists
+//   anything more than a cent off, a "pick one" question left unanswered,
+//   and payments that don't add up to the total plus tip. Log-only unless
+//   ENFORCE_REGISTER_TOTALS is on.
 //
 // Anything worth a look lands in register_sale_flags (and the server log,
 // prefixed "[register-check]").
@@ -26,7 +28,8 @@ import type { MemberTier } from "@/lib/types";
 // legitimate sale can differ: a menu or ticket price changed while an item
 // sat on an open tab (the tab keeps the old price), a modifier renamed or
 // removed since it was rung, or a member's points or tier changing between
-// attaching them and paying. With enforce on, the register checks before
+// attaching them and paying, or a "pick one" question added to an item
+// after it was rung. With enforce on, the register checks before
 // the payment screen, so those show a message and nothing is charged; a
 // sale whose card was already charged is still saved (and flagged), never
 // refused.
@@ -137,7 +140,9 @@ export async function checkSaleTotals(sale: SaleForCheck): Promise<TotalsCheck> 
   }
 }
 
-type Group = { item_id: string; options: { name: string; price_delta: number }[] };
+// must_choose: a "pick one" question with no default (the $5 Special's
+// soda). Read with "*", so a database without that column still checks.
+type Group = { item_id: string; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
 
 // What a line's modifiers add to the item's price, found by option name
 // (the register saves names, not ids).
@@ -160,7 +165,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
 
   const [items, groups, screenings, memberRow] = await Promise.all([
     itemIds.length ? supabase.from("menu_items").select("id, price, is_alcohol").in("id", itemIds) : none,
-    itemIds.length ? supabase.from("menu_modifier_groups").select("item_id, options:menu_modifier_options(name, price_delta)").in("item_id", itemIds) : none,
+    itemIds.length ? supabase.from("menu_modifier_groups").select("*, options:menu_modifier_options(name, price_delta)").in("item_id", itemIds) : none,
     screeningIds.length ? supabase.from("screenings").select("id, ticket_price").in("id", screeningIds) : none,
     sale.memberId ? supabase.from("members").select("tier, points").eq("id", sale.memberId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
@@ -191,15 +196,25 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
       if (!item) {
         problems.push(`"${l.name}" isn't on the menu anymore, so its price couldn't be checked.`);
       } else {
-        const mods = modifierPrice(groupsByItem.get(item.id) ?? [], l.modifiers ?? []);
+        const itemGroups = groupsByItem.get(item.id) ?? [];
+        const mods = modifierPrice(itemGroups, l.modifiers ?? []);
         if ("extra" in mods) expected = Number(item.price) + mods.extra;
         else if ("unknown" in mods) problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore, so its price couldn't be checked.`);
         else note = `two options are called "${mods.ambiguous}", price not checked`;
+        // The register won't add an item until its "pick one" questions are
+        // answered, so an unanswered one means the line didn't come from there.
+        for (const g of itemGroups) {
+          if (g.must_choose && (g.type ?? "single") === "single" && !g.options.some((o) => (l.modifiers ?? []).includes(o.name))) {
+            problems.push(`"${l.name}": nothing was picked for "${g.label ?? "a pick-one question"}", which has to be answered.`);
+          }
+        }
         if (item.is_alcohol !== l.is_alcohol) problems.push(`"${l.name}" was rung as ${l.is_alcohol ? "" : "not "}alcohol, but the menu says it ${item.is_alcohol ? "is" : "isn't"}.`);
       }
     } else if (sent < 0) {
       problems.push(`The custom item "${l.name}" has a negative price.`);
     }
+    // A badge reward ($0, no menu item) and a custom item are taken at the
+    // price rung: there's nothing on the menu to check them against.
     if (differs(sent, expected)) problems.push(`"${l.name}" was rung at ${money(sent)} each; the menu says ${money(expected)}.`);
     return { name: l.name, sent, expected, qty: l.quantity, note };
   });
@@ -211,6 +226,9 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     if (differs(sent, server[key])) problems.push(`${label}: the register sent ${money(sent)}, the server figures ${money(server[key])}.`);
   }
 
+  // The payment: cash, card (a tip picked on the reader is inside it) and
+  // vouchers cover the total plus the whole tip, whether it was asked on
+  // the register or on the reader.
   if (sale.payment) {
     const { cash, card, voucher = 0 } = sale.payment;
     const tip = sale.tip ?? 0;
@@ -225,12 +243,23 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
 
 // ---------- flags ----------
 
-export type SaleFlagKind = "card_refused" | "card_unchecked" | "totals_mismatch" | "totals_refused" | "points_short";
+// What each kind means is in the table's migration
+// (20261001100000_register_sale_flags.sql). kind is free text there, so a
+// new one needs no migration: add it here and to that list.
+export type SaleFlagKind =
+  | "card_refused"
+  | "card_unchecked"
+  | "totals_mismatch"
+  | "totals_refused"
+  | "points_short"
+  | "tab_closed_elsewhere"
+  | "sale_abandoned"
+  | "items_not_saved";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Best effort, never throws. The server log always gets it; the table does
-// once its migration (20260929210000_register_sale_flags) is applied.
+// once its migration (20261001100000_register_sale_flags) is applied.
 export async function flagSale(
   kind: SaleFlagKind,
   f: { orderId?: string | null; orderNumber?: number | null; employeeId?: string | null; paymentIntentId?: string | null; details: Record<string, unknown> },
