@@ -9,6 +9,7 @@ import BoothsToday from "./BoothsToday";
 import TrainingWindow from "./TrainingWindow";
 import { RanOutSheet } from "./RanOut";
 import { publishOuts, setOutsRefresher, useRanOut } from "./ran-out-store";
+import MyHours from "./MyHours";
 
 // The register's shift tools: who's working, reminders, and the buttons that
 // open the checklist, par count, shopping list and history. Sits above the
@@ -214,6 +215,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             )}
           </div>
         </div>
+        {me && <MyHours shiftId={me.shiftId} />}
         {error && (
           <div className="mt-1.5 text-xs" style={{ color: "var(--danger-text)" }}>
             {error}

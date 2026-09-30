@@ -3,13 +3,115 @@
 import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { centralToIso } from "@/lib/ops/time";
+import { businessDay, centralToIso } from "@/lib/ops/time";
+import { centralLocal } from "@/lib/hours";
 
 type Result = { ok: true } | { ok: false; error: string };
 
 function revalidate() {
   revalidatePath("/admin/team");
   revalidatePath("/pos");
+}
+
+// ---------- fixing a clock-in or clock-out ----------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LOCAL = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/;
+const MAX_SHIFT_MS = 24 * 3_600_000;
+
+// A forgotten End shift, or times that were plainly wrong. Times come in as
+// Central wall-clock "2026-09-28T23:00" (the picker's format); an empty
+// clock-out leaves someone who's on right now still on. Every fix needs a
+// reason, is marked on the shift, and is kept (before and after) in
+// shift_edits.
+export async function editShiftTimes(input: { shiftId: string; clockIn: string; clockOut: string; note: string }): Promise<Result> {
+  const staff = await assertManager();
+  if (!input || typeof input.shiftId !== "string" || !UUID.test(input.shiftId)) return { ok: false, error: "That shift isn't there any more. Reload the page." };
+  if (typeof input.clockIn !== "string" || typeof input.clockOut !== "string" || typeof input.note !== "string") return { ok: false, error: "Pick the times and say why." };
+  const note = input.note.trim().replace(/\s+/g, " ");
+  if (note.length < 3) return { ok: false, error: "Say why you're changing it, in a few words." };
+  if (note.length > 200) return { ok: false, error: "Keep the reason under 200 characters." };
+
+  const supabase = createAdminClient();
+  const { data: shift } = await supabase.from("shifts").select("id, employee_id, started_at, ended_at").eq("id", input.shiftId).maybeSingle();
+  if (!shift) return { ok: false, error: "That shift isn't there any more. Reload the page." };
+
+  const toIso = (v: string) => {
+    const m = LOCAL.exec(v);
+    if (!m || Number(m[2].slice(0, 2)) > 23 || Number(m[2].slice(3)) > 59) return null;
+    try {
+      const iso = centralToIso(m[1], m[2]);
+      // A day that doesn't exist (Feb 31) rolls over; don't accept it.
+      return centralLocal(iso).slice(0, 10) === m[1] ? iso : null;
+    } catch {
+      return null;
+    }
+  };
+  // A time left as it was keeps its seconds, so an untouched clock-in still
+  // lines up exactly with the shift before it.
+  const clockIn = input.clockIn === centralLocal(shift.started_at) ? shift.started_at : toIso(input.clockIn);
+  if (!clockIn) return { ok: false, error: "Pick the clock-in day and time." };
+  let clockOut: string | null = null;
+  if (input.clockOut === "") {
+    if (shift.ended_at) return { ok: false, error: "Pick the clock-out day and time." };
+    if (businessDay(new Date(clockIn)).date !== businessDay().date) return { ok: false, error: "They never clocked out. Pick when they left." };
+  } else {
+    clockOut = shift.ended_at && input.clockOut === centralLocal(shift.ended_at) ? shift.ended_at : toIso(input.clockOut);
+    if (!clockOut) return { ok: false, error: "Pick the clock-out day and time." };
+  }
+
+  const now = Date.now();
+  const inMs = new Date(clockIn).getTime();
+  const outMs = clockOut ? new Date(clockOut).getTime() : null;
+  if (inMs > now + 60_000) return { ok: false, error: "The clock-in can't be in the future." };
+  if (outMs !== null) {
+    if (outMs > now + 60_000) return { ok: false, error: "The clock-out can't be in the future." };
+    if (outMs <= inMs) return { ok: false, error: "The clock-out has to be after the clock-in." };
+    if (outMs - inMs > MAX_SHIFT_MS) return { ok: false, error: "That's more than 24 hours. Check the days." };
+  }
+  if (inMs === new Date(shift.started_at).getTime() && (outMs ?? null) === (shift.ended_at ? new Date(shift.ended_at).getTime() : null)) {
+    return { ok: false, error: "Those are the times it already has." };
+  }
+
+  // Not on top of another of their shifts (a minute's slack for back-to-back ones).
+  const { data: theirs } = await supabase
+    .from("shifts")
+    .select("id, started_at, ended_at")
+    .eq("employee_id", shift.employee_id)
+    .neq("id", shift.id)
+    .gte("started_at", new Date(inMs - 2 * MAX_SHIFT_MS).toISOString())
+    .lte("started_at", new Date((outMs ?? now) + MAX_SHIFT_MS).toISOString());
+  const clash = (theirs ?? []).find((o) => {
+    const s = new Date(o.started_at).getTime();
+    const e = o.ended_at ? new Date(o.ended_at).getTime() : now;
+    return s < (outMs ?? now) - 60_000 && e > inMs + 60_000;
+  });
+  if (clash) return { ok: false, error: "That runs into another of their shifts. Fix that one first, or pick other times." };
+
+  // The record first, so a fix can't land without one.
+  const { data: log, error: logError } = await supabase
+    .from("shift_edits")
+    .insert({ shift_id: shift.id, edited_by: staff.employeeId, note, old_started_at: shift.started_at, old_ended_at: shift.ended_at, new_started_at: clockIn, new_ended_at: clockOut })
+    .select("id")
+    .single();
+  if (logError || !log) return { ok: false, error: "Couldn't save that. Try again." };
+
+  // Only if nobody changed it meanwhile (they clocked out on the register, or another fix).
+  let update = supabase
+    .from("shifts")
+    .update({ started_at: clockIn, ended_at: clockOut, edited_by: staff.employeeId, edited_at: new Date(now).toISOString(), edit_note: note })
+    .eq("id", shift.id)
+    .eq("started_at", shift.started_at);
+  update = shift.ended_at ? update.eq("ended_at", shift.ended_at) : update.is("ended_at", null);
+  const { data: changed, error } = await update.select("id");
+  if (error || !changed?.length) {
+    await supabase.from("shift_edits").delete().eq("id", log.id);
+    return { ok: false, error: error ? "Couldn't save that. Try again." : "That shift just changed (they may have clocked out). Reload and check it." };
+  }
+
+  revalidatePath("/admin/team");
+  revalidatePath("/admin/my-hours");
+  return { ok: true };
 }
 
 // ---------- to-dos ----------
