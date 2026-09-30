@@ -75,6 +75,7 @@ const PAGE_NAMES: Record<string, string> = {
   "/admin/ingredients": "Ingredients",
   "/admin/members": "Members",
   "/admin/members/[id]": "Members · One member",
+  "/admin/members/indy": "Members · Indy import",
   "/admin/members/old-site": "Members · Old site",
   "/admin/members/regulars": "Members · Regulars",
   "/admin/menu": "Menu",
@@ -103,7 +104,9 @@ const PAGE_NAMES: Record<string, string> = {
   "/display/customer": "Customer screen",
   "/display/kitchen": "Kitchen board",
   "/display/prep": "Prep board",
-  "/display/ramp": "Ramp TV",
+  "/display/now-playing": "Now Playing screen",
+  // Its old address, kept so visits logged before the rename keep a name.
+  "/display/ramp": "Now Playing screen (old address)",
 };
 
 export function pageName(pattern: string, movieTitle: string | null = null) {

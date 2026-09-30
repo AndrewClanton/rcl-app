@@ -330,7 +330,7 @@ export const HELP_TOPICS = {
     title: "House events",
     area: "Showtimes, events and booths",
     body:
-      "Trivia, comedy, the book swap and the like. They count down on the ramp TV next to the films, but aren't on the public website. Add them with a date and start time; the end time and note are optional.",
+      "Trivia, comedy, the book swap and the like. They count down on the Now Playing screen next to the films, but aren't on the public website. Add them with a date and start time; the end time and note are optional.",
   },
   "private-events": {
     title: "Private event bookings",
@@ -384,10 +384,6 @@ export const HELP_TOPICS = {
 } satisfies Record<string, HelpTopic>;
 
 export type HelpTopicKey = keyof typeof HELP_TOPICS;
-
-export function getHelpTopic(key: HelpTopicKey): HelpTopic {
-  return HELP_TOPICS[key];
-}
 
 // Where a topic lives on the Help & FAQ page.
 export function helpHref(key: HelpTopicKey): string {

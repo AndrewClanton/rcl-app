@@ -10,13 +10,13 @@ const DISPLAYS: { href: string; title: string; description: string; variants?: {
   { href: "/display/customer", title: "Customer-facing", description: "Point-of-service tablet: this week's lineup, sign in by phone, live order as it's rung up." },
   { href: "/display/box-office", title: "Box office signage", description: "Lobby showtimes board. Public -- no sign-in needed on this one." },
   {
-    href: "/display/ramp",
-    title: "Ramp TV (portrait)",
+    href: "/display/now-playing",
+    title: "Now Playing screen (portrait)",
     description:
       "Big poster + countdown to the next film; stays on it 20 minutes after it starts, then moves to the next. If the TV only outputs landscape it turns itself upright -- use the other direction if it comes out upside down.",
     variants: [
-      { href: "/display/ramp?rotate=ccw", label: "Turn the other way" },
-      { href: "/display/ramp?rotate=off", label: "No rotation" },
+      { href: "/display/now-playing?rotate=ccw", label: "Turn the other way" },
+      { href: "/display/now-playing?rotate=off", label: "No rotation" },
     ],
   },
 ];
@@ -29,7 +29,7 @@ export default async function DisplayHubPage() {
   await requireStaff();
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <h1 className="font-display mb-1 text-2xl">Live displays</h1>
+      <h1 className="font-display mb-1 text-2xl">Screens & TVs</h1>
       <p className="mb-6 text-sm text-[var(--muted)]">Pick which display this device shows.</p>
       <div className="grid gap-4 sm:grid-cols-2">
         {DISPLAYS.map((d) => (

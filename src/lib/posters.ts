@@ -1,6 +1,6 @@
 // Poster sources hand out small renditions by default (OMDb ~300-380px,
-// the TMDb picker's 342px thumbnails). The ramp TV shows a poster ~560px
-// wide, 2x that on high-DPI screens, so we store a bigger rendition --
+// the TMDb picker's 342px thumbnails). The Now Playing screen shows a poster
+// ~560px wide, 2x that on high-DPI screens, so we store a bigger rendition --
 // but not the originals (up to 8100px / 7.5MB), since the weekly flyer
 // embeds ~10 posters at full size when it renders.
 const TMDB_SIZE = "w780"; // 780px wide

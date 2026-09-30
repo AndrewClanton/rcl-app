@@ -2,14 +2,11 @@ import type { PictureCredit, PictureSource } from "./menu-pictures/shared";
 
 export type ModifierType = "single" | "multi";
 export type EventPriceMode = "deposit" | "full";
-export type OrderSource = "pos" | "web";
-export type OrderStatus = "draft" | "held" | "tab" | "completed" | "refunded" | "voided";
-export type PaymentMethod = "cash" | "card" | "split";
-// 'display' = an unattended signage login (e.g. the ramp TV), not a person.
-// Treated as not-staff everywhere except its screens; see src/lib/auth.ts.
+// 'display' = an unattended signage login (e.g. the Now Playing screen), not
+// a person. Treated as not-staff everywhere except its screens; see
+// src/lib/auth.ts.
 export type EmployeeRole = "cashier" | "manager" | "admin" | "owner" | "display";
 export type MemberTier = "Insiders" | "Insiders+";
-export type EventStatus = "outstanding" | "paid";
 export type DevNoteStatus = "new" | "approved" | "dismissed" | "done";
 
 export interface DevNoteComment {

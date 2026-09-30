@@ -26,10 +26,11 @@ export interface StaffSession {
 // request needs a plain 401/403 response, not a redirect() built for page
 // rendering. Page-level gating should use requireStaff() below instead.
 //
-// A 'display' account (an unattended signage login, like the ramp TV) is
-// deliberately NOT staff here, so every existing staff check -- pages, the
-// register, every Server Action, route handlers -- locks it out without
-// each one having to remember to. Its screens use requireDisplayScreen().
+// A 'display' account (an unattended signage login, like the TV showing the
+// Now Playing screen) is deliberately NOT staff here, so every existing staff
+// check -- pages, the register, every Server Action, route handlers -- locks
+// it out without each one having to remember to. Its screens use
+// requireDisplayScreen().
 export async function getStaffSession(): Promise<StaffSession | null> {
   const session = await getEmployeeSession();
   return session && session.role !== "display" ? session : null;
@@ -57,7 +58,7 @@ export async function getEmployeeSession(): Promise<StaffSession | null> {
 }
 
 // Where a display account lands if it's pointed anywhere else.
-export const DISPLAY_HOME = "/display/ramp";
+export const DISPLAY_HOME = "/display/now-playing";
 
 // For signage pages: any active staff login *or* a display account. Sends
 // someone signed out to the login page and back here afterwards, so a TV

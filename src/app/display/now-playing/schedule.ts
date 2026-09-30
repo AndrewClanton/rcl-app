@@ -1,13 +1,13 @@
-// Which film the ramp TV shows at a given moment. Pure (no React, no
-// fetching) so the page and the client component share one definition.
+// Which film the Now Playing screen shows at a given moment. Pure (no React,
+// no fetching) so the page and the client component share one definition.
 
 // How long a film stays on screen after it starts, for latecomers walking
-// up the ramp, before the TV moves on to the next one.
+// in, before the screen moves on to the next one.
 export const NOW_PLAYING_MINUTES = 20;
 
 export const CENTRAL_TZ = "America/Chicago";
 
-export interface RampScreening {
+export interface NowPlayingFilm {
   id: string;
   kind: "film" | "event"; // event: trivia, comedy, the book swap...
   startsAt: number; // epoch ms
@@ -20,9 +20,9 @@ export interface RampScreening {
   room: string;
 }
 
-export type RampState =
+export type NowPlayingState =
   | { kind: "empty" }
-  | { kind: "countdown" | "now-playing"; featured: RampScreening[]; later: RampScreening[]; laterLabel: string };
+  | { kind: "countdown" | "now-playing"; featured: NowPlayingFilm[]; later: NowPlayingFilm[]; laterLabel: string };
 
 function centralDateKey(ms: number) {
   return new Date(ms).toLocaleDateString("en-CA", { timeZone: CENTRAL_TZ });
@@ -32,7 +32,7 @@ function weekday(ms: number) {
   return new Date(ms).toLocaleDateString("en-US", { timeZone: CENTRAL_TZ, weekday: "long" }).toUpperCase();
 }
 
-export function rampStateAt(screenings: RampScreening[], now: number): RampState {
+export function nowPlayingStateAt(screenings: NowPlayingFilm[], now: number): NowPlayingState {
   const grace = NOW_PLAYING_MINUTES * 60 * 1000;
   const active = screenings.filter((s) => now < s.startsAt + grace).sort((a, b) => a.startsAt - b.startsAt);
   if (active.length === 0) return { kind: "empty" };

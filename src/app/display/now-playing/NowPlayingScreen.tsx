@@ -4,7 +4,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { rampStateAt, formatCountdown, formatClock, formatDayTime, type RampScreening, type RampState } from "./schedule";
+import { nowPlayingStateAt, formatCountdown, formatClock, formatDayTime, type NowPlayingFilm, type NowPlayingState } from "./schedule";
 
 // Designed as a fixed 1080x1920 portrait stage, then scaled to whatever the
 // TV reports -- so it looks identical on a 1080p or 4K panel. If the device
@@ -43,7 +43,7 @@ const getViewport = () => `${window.innerWidth}x${window.innerHeight}`;
 const getZero = () => 0;
 const getEmpty = () => "";
 
-export default function RampCountdown({ screenings, serverNow, rotate }: { screenings: RampScreening[]; serverNow: number; rotate: "cw" | "ccw" | "off" }) {
+export default function NowPlayingScreen({ screenings, serverNow, rotate }: { screenings: NowPlayingFilm[]; serverNow: number; rotate: "cw" | "ccw" | "off" }) {
   const router = useRouter();
 
   useEffect(() => {
@@ -52,6 +52,7 @@ export default function RampCountdown({ screenings, serverNow, rotate }: { scree
 
   useEffect(() => {
     const supabase = createClient();
+    // Old topic name on purpose: the private-channel policy allowlists it (migration 20260929233000).
     const channel = supabase
       .channel("ramp-screenings")
       .on("postgres_changes", { event: "*", schema: "public", table: "screenings" }, () => router.refresh())
@@ -66,7 +67,7 @@ export default function RampCountdown({ screenings, serverNow, rotate }: { scree
   const second = useSyncExternalStore(subscribeClock, getClockSecond, getZero);
   const viewport = useSyncExternalStore(subscribeResize, getViewport, getEmpty);
   const now = second * 1000;
-  const state = useMemo(() => rampStateAt(screenings, now), [screenings, now]);
+  const state = useMemo(() => nowPlayingStateAt(screenings, now), [screenings, now]);
 
   // Nothing time-dependent renders on the server -- avoids a hydration
   // mismatch and a flash of the wrong countdown.
@@ -100,7 +101,7 @@ export default function RampCountdown({ screenings, serverNow, rotate }: { scree
   );
 }
 
-function Stage({ state, now }: { state: RampState; now: number }) {
+function Stage({ state, now }: { state: NowPlayingState; now: number }) {
   return (
     <>
       <header style={{ height: 130, padding: "0 64px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
@@ -122,7 +123,7 @@ function Band({ label, background, color }: { label: string; background: string;
   );
 }
 
-function Featured({ state, now }: { state: Extract<RampState, { featured: RampScreening[] }>; now: number }) {
+function Featured({ state, now }: { state: Extract<NowPlayingState, { featured: NowPlayingFilm[] }>; now: number }) {
   const start = state.featured[0].startsAt;
   const untilStart = start - now;
   const countdown = formatCountdown(untilStart);
@@ -188,7 +189,7 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function meta(film: RampScreening) {
+function meta(film: NowPlayingFilm) {
   if (film.kind === "event") {
     const time = film.endsAt ? `${formatClock(film.startsAt)}–${formatClock(film.endsAt)}` : formatClock(film.startsAt);
     return [time, film.note?.toUpperCase()].filter(Boolean).join(" · ");
@@ -200,7 +201,7 @@ function titleSize(title: string, base: number) {
   return title.length <= 14 ? base : title.length <= 24 ? Math.round(base * 0.82) : Math.round(base * 0.68);
 }
 
-function Poster({ film, width, height }: { film: RampScreening; width: number; height: number }) {
+function Poster({ film, width, height }: { film: NowPlayingFilm; width: number; height: number }) {
   const frame = { width, height, flexShrink: 0, borderRadius: 10, boxShadow: `14px 14px 0 ${GOLD}`, overflow: "hidden", position: "relative" as const, background: INK_CARD };
   // A house event has no poster: a marquee card instead.
   if (film.kind === "event") {
@@ -230,7 +231,7 @@ function Poster({ film, width, height }: { film: RampScreening; width: number; h
   );
 }
 
-function Solo({ film }: { film: RampScreening }) {
+function Solo({ film }: { film: NowPlayingFilm }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
       <Poster film={film} width={560} height={840} />
@@ -244,7 +245,7 @@ function Solo({ film }: { film: RampScreening }) {
   );
 }
 
-function Row({ film }: { film: RampScreening }) {
+function Row({ film }: { film: NowPlayingFilm }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 40 }}>
       <Poster film={film} width={320} height={480} />
@@ -260,7 +261,7 @@ function Row({ film }: { film: RampScreening }) {
   );
 }
 
-function Later({ state }: { state: Extract<RampState, { later: RampScreening[] }> }) {
+function Later({ state }: { state: Extract<NowPlayingState, { later: NowPlayingFilm[] }> }) {
   return (
     <footer style={{ height: 230, flexShrink: 0, background: INK_CARD, padding: "30px 64px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 10 }}>
       {state.later.length > 0 ? (

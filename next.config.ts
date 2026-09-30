@@ -38,6 +38,12 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  // The Now Playing screen's old address (it was "the ramp TV"). The TV
+  // stick's kiosk browser still starts there; the query string (?rotate=)
+  // carries over on its own.
+  async redirects() {
+    return [{ source: "/display/ramp", destination: "/display/now-playing", permanent: true }];
+  },
 };
 
 export default nextConfig;

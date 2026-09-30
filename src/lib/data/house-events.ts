@@ -2,7 +2,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Trivia night, comedy, the book swap: public happenings that aren't films.
-// Shown on the ramp TV next to the screenings; managed on the Showtimes page.
+// Shown on the Now Playing screen next to the screenings; managed on the
+// Showtimes page.
 export interface HouseEvent {
   id: string;
   title: string;
