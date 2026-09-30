@@ -73,7 +73,8 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
   }
 
   const selected = orders?.find((o) => o.id === selectedId) ?? null;
-  const tickets = selected ? selected.lines.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, qty: l.qty })) : [];
+  // A cancelled tab's tickets were never paid for, so they don't print.
+  const tickets = selected && selected.status !== "cancelled" ? selected.lines.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, qty: l.qty })) : [];
 
   return (
     <>
