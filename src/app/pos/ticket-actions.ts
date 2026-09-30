@@ -2,7 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
-import { businessDay } from "@/lib/ops/time";
+import { businessDay, shiftDate } from "@/lib/ops/time";
 
 // Movie tickets at the register: the showings staff can sell (today's and
 // tomorrow's business days, including a show that started a few minutes
@@ -40,7 +40,7 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
     const supabase = createAdminClient();
     const now = Date.now();
     const today = businessDay(new Date(now)).date;
-    const tomorrow = businessDay(new Date(now + 86_400_000)).date;
+    const tomorrow = shiftDate(today, 1); // not now + 24 hours: wrong by a day the nights the clocks change
     // Generous window; each showing is then placed on its business day and
     // anything past tomorrow's is dropped.
     const { data, error } = await supabase
