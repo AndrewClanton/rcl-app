@@ -41,7 +41,7 @@ export default function EasterEggs({
         ✨{picked ? ` ${picked.icon}` : ""}
       </button>
       {open && (
-        <div className="card absolute bottom-full right-0 z-40 mb-2 w-72 space-y-3 !p-3 text-sm shadow-2xl">
+        <div className="card absolute bottom-full left-0 z-40 mb-2 w-72 max-w-[calc(100vw-2rem)] space-y-3 !p-3 text-sm shadow-2xl">
           <div className="flex items-center justify-between">
             <span className="font-display text-base">Just for fun</span>
             <button className="text-xs hover:underline" style={{ color: "var(--muted)" }} onClick={() => setOpen(false)}>
