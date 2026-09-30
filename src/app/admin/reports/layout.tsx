@@ -1,3 +1,5 @@
+import Link from "next/link";
+import PageHeader from "@/components/admin/PageHeader";
 import { getStaffSession, hasManagerAccess } from "@/lib/auth";
 import ReportsNav from "./ReportsNav";
 
@@ -10,9 +12,17 @@ export default async function ReportsLayout({ children }: { children: React.Reac
   const staff = await getStaffSession();
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline justify-between gap-3 print:hidden">
-        <h1 className="text-2xl font-bold">Reports</h1>
-      </div>
+      <PageHeader
+        area="money"
+        title="Reports"
+        purpose="How we're doing: sales by day, week and month, the box office for distributors, sales tax, the bar and members."
+        actions={
+          <Link href="/admin/reports/daily" className="inline-flex min-h-11 items-center rounded-lg border border-[var(--border)] px-3 text-sm hover:border-[var(--foreground)]">
+            Daily email
+          </Link>
+        }
+        className="!mb-3 print:hidden"
+      />
       <ReportsNav manager={!!staff && hasManagerAccess(staff.role)} />
       {children}
     </div>

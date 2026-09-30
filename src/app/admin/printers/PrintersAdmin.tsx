@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { PrinterOverview, PrintJobRow } from "@/lib/data/printers";
 import { STATION_LABEL, type RegisterStation } from "@/lib/print/stations";
+import PageHeader from "@/components/admin/PageHeader";
 import { createPrinter, removePrinter, reprintJob, resetPrinterPassword, testPrinter, updatePrinter, type Credentials, type PrinterFields } from "./actions";
 
 const TZ = "America/Chicago";
@@ -56,13 +57,16 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="mb-1 text-lg font-semibold">Printers</h1>
-        <p className="text-sm text-[var(--muted)]">
-          The receipt printers and the kitchen printer collect their print jobs from the website every few seconds, so the registers never talk to a printer directly. A
-          register chooses this under Devices → &quot;Print through the website&quot;.
-        </p>
-      </div>
+      <PageHeader
+        area="setup"
+        title="Printers"
+        purpose={
+          <>
+            The receipt printers and the kitchen printer collect their print jobs from the website every few seconds, so the registers never talk to a printer
+            directly. A register chooses this under Devices → &quot;Print through the website&quot;.
+          </>
+        }
+      />
 
       <section className="grid gap-3 sm:grid-cols-3">
         {(["bar", "outdoor", "kitchen"] as const).map((role) => {

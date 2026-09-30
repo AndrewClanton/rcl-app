@@ -1,5 +1,6 @@
 import { requireOwner } from "@/lib/auth";
 import { getEmployees } from "@/lib/data/employees";
+import PageHeader from "@/components/admin/PageHeader";
 import StaffPanel from "./StaffPanel";
 
 export const dynamic = "force-dynamic";
@@ -9,10 +10,7 @@ export default async function AdminStaffPage() {
   const employees = await getEmployees();
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Staff & access</h1>
-      <p className="mb-4 text-sm text-[var(--muted)]">
-        Who has admin access. Only you (the owner) can see this page or change roles.
-      </p>
+      <PageHeader area="setup" title="Staff logins & access" purpose="Who can sign in, and what each person can do. Only owners can see this page or change roles." />
       <StaffPanel employees={employees} />
     </div>
   );

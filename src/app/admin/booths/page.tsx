@@ -1,4 +1,5 @@
 import { getAllBooths, getUpcomingBoothReservations, getBoothReservationsForMonth } from "@/lib/data/booths";
+import PageHeader from "@/components/admin/PageHeader";
 import BoothsAdminPanel from "./BoothsAdminPanel";
 
 export const dynamic = "force-dynamic";
@@ -20,11 +21,11 @@ export default async function AdminBoothsPage() {
   ]);
   return (
     <div>
-      <h1 className="mb-1 text-lg font-semibold">Booth reservations</h1>
-      <p className="mb-4 max-w-2xl text-sm text-[var(--muted)]">
-        Manage the 8 lounge booths (photo, capacity, reservation fee, active/inactive), see the schedule on a
-        calendar, and see upcoming reservations.
-      </p>
+      <PageHeader
+        area="shows"
+        title="Booths"
+        purpose="Upcoming booth reservations, the booking calendar, and each of the 8 lounge booths: photo, size, fee, and whether it can be booked."
+      />
       <BoothsAdminPanel booths={booths} reservations={reservations} calendarMonthStart={calendarMonthStart} calendarReservations={calendarReservations} />
     </div>
   );

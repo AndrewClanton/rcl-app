@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 
 // The back office's error page. It sits inside the admin layout, so the
-// menu across the top keeps working and they can go somewhere else. "Try
+// menu keeps working and they can go somewhere else. "Try
 // again" uses retry(), which re-fetches the page from the server (reset()
 // would only re-render what's already in the browser, which can't fix a
 // failed database read). The reference is the digest Next.js logs with the

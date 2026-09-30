@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import type { LegacyAccount, LegacyGroup, LegacySummary } from "@/lib/data/legacy";
+import PageHeader from "@/components/admin/PageHeader";
 import { importApprovedLegacyAccounts, setLegacyDecision } from "./actions";
 
 const GROUP_INFO: Record<LegacyGroup, { label: string; hint: string }> = {
@@ -66,17 +67,17 @@ export default function OldSiteReview({
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/admin/members" className="text-sm text-[var(--muted)] hover:underline">
-          ← Members
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold">Old site members</h1>
-        <p className="mt-1 max-w-3xl text-sm text-[var(--muted)]">
-          Every account from royalecinemajoplin.com, sorted automatically. Most are spam-bot signups (many using strangers&apos; real email
-          addresses), so only approved accounts get copied into Members, and only those will ever be emailed. Importing doesn&apos;t send
-          anything or create logins.
-        </p>
-      </div>
+      <PageHeader
+        area="guests"
+        back={{ href: "/admin/members", label: "Members" }}
+        title="Old site members"
+        purpose={
+          <>
+            Every account from royalecinemajoplin.com, sorted automatically. Most are spam-bot signups (many using strangers&apos; real email addresses), so only
+            approved accounts get copied into Members, and only those will ever be emailed. Importing doesn&apos;t send anything or create logins.
+          </>
+        }
+      />
 
       <ImportPanel summary={summary} />
 

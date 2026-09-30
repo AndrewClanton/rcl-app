@@ -3,6 +3,7 @@ import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getCommunityPrograms, getMembersPage } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getLegacySummary } from "@/lib/data/legacy";
+import PageHeader from "@/components/admin/PageHeader";
 import MemberManager from "./MemberManager";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,11 @@ export default async function AdminMembersPage({
 
   return (
     <div className="space-y-4">
+      <PageHeader
+        area="guests"
+        title="Members"
+        purpose="Find a member by name, email or phone to see their details, points and Insiders+. Adding a member and the free community programs are at the bottom."
+      />
       {params.removed === "1" && (
         <div className="notice notice-success text-sm">
           <strong>Personal info removed.</strong> Reply to their request to let them know it&apos;s done. The privacy page promises a confirmation
