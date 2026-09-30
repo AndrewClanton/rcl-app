@@ -1,10 +1,22 @@
 import Link from "next/link";
+import DrillLink from "./DrillLink";
 
 // The building blocks every Reports screen is made of: cards, big numbers
 // with their change from last time, simple bar charts, and the period
 // arrows. Plain server components (no browser code), styled with the back
 // office's own colors. Color means something here: green is up, red is
-// down; everything else is ink on paper.
+// down; everything else is ink on paper. A figure given an `href` opens
+// its drill-down (the Day report's DayDrill) when tapped.
+
+const TAPPABLE = "transition-colors hover:border-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--foreground)]";
+
+function Chevron() {
+  return (
+    <span aria-hidden className="text-sm leading-none text-[var(--muted)]">
+      ›
+    </span>
+  );
+}
 
 export function money(n: number, opts: { cents?: boolean } = {}) {
   const cents = opts.cents ?? true;
@@ -64,6 +76,7 @@ export function Stat({
   beforeText,
   sub,
   hero = false,
+  href,
   className = "",
 }: {
   label: string;
@@ -73,11 +86,16 @@ export function Stat({
   beforeText?: string;
   sub?: React.ReactNode;
   hero?: boolean;
+  href?: string;
   className?: string;
 }) {
-  return (
-    <div className={`min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 ${hero ? "sm:py-4" : ""} ${className}`}>
-      <div className="text-xs font-medium text-[var(--muted)]">{label}</div>
+  const box = `min-w-0 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 ${hero ? "sm:py-4" : ""} ${className}`;
+  const inside = (
+    <>
+      <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--muted)]">
+        {label}
+        {href && <Chevron />}
+      </div>
       <div className={`mt-0.5 font-bold leading-tight ${hero ? "text-4xl sm:text-5xl" : "text-2xl"}`}>{value}</div>
       {(now !== undefined || sub) && (
         <div className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-[var(--muted)]">
@@ -86,7 +104,14 @@ export function Stat({
           {sub && <span>{sub}</span>}
         </div>
       )}
-    </div>
+    </>
+  );
+  return href ? (
+    <DrillLink href={href} className={`block ${box} ${TAPPABLE}`}>
+      {inside}
+    </DrillLink>
+  ) : (
+    <div className={box}>{inside}</div>
   );
 }
 
@@ -214,32 +239,54 @@ export function Columns({ columns, height = 128, format = (n: number) => compact
 }
 
 // Sideways bars with the figure at the end: sales by category, and the like.
-export function BarList({ rows, format = (n: number) => money(n), showShare = true }: { rows: { label: string; value: number; detail?: string }[]; format?: (n: number) => string; showShare?: boolean }) {
+export function BarList({
+  rows,
+  format = (n: number) => money(n),
+  showShare = true,
+}: {
+  rows: { label: string; value: number; detail?: string; href?: string }[];
+  format?: (n: number) => string;
+  showShare?: boolean;
+}) {
   const max = Math.max(0, ...rows.map((r) => r.value));
   const total = rows.reduce((s, r) => s + Math.max(0, r.value), 0);
   return (
     <ul className="space-y-2.5">
-      {rows.map((r) => (
-        <li key={r.label}>
-          <div className="flex items-baseline gap-2 text-sm">
-            <span className="min-w-0 flex-1 truncate">
-              {r.label}
-              {r.detail && <span className="ml-1.5 text-xs text-[var(--muted)]">{r.detail}</span>}
-            </span>
-            {showShare && total > 0 && <span className="text-xs tabular-nums text-[var(--muted)]">{Math.round((Math.max(0, r.value) / total) * 100)}%</span>}
-            <span className="w-24 text-right font-semibold tabular-nums">{format(r.value)}</span>
-          </div>
-          <div className="mt-1 h-2 rounded-full bg-[var(--surface-hover)]">
-            <div className="rpt-bar-strong h-2 rounded-full" style={{ width: max > 0 ? `${Math.max(1, (Math.max(0, r.value) / max) * 100)}%` : 0 }} />
-          </div>
-        </li>
-      ))}
+      {rows.map((r) => {
+        const inside = (
+          <>
+            <div className="flex items-baseline gap-2 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                {r.label}
+                {r.detail && <span className="ml-1.5 text-xs text-[var(--muted)]">{r.detail}</span>}
+              </span>
+              {showShare && total > 0 && <span className="text-xs tabular-nums text-[var(--muted)]">{Math.round((Math.max(0, r.value) / total) * 100)}%</span>}
+              <span className="w-24 text-right font-semibold tabular-nums">{format(r.value)}</span>
+              {r.href && <Chevron />}
+            </div>
+            <div className="mt-1 h-2 rounded-full bg-[var(--surface-hover)]">
+              <div className="rpt-bar-strong h-2 rounded-full" style={{ width: max > 0 ? `${Math.max(1, (Math.max(0, r.value) / max) * 100)}%` : 0 }} />
+            </div>
+          </>
+        );
+        return (
+          <li key={r.label}>
+            {r.href ? (
+              <DrillLink href={r.href} className="-mx-1.5 block rounded-md px-1.5 py-0.5 hover:bg-[var(--surface-hover)]">
+                {inside}
+              </DrillLink>
+            ) : (
+              inside
+            )}
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
 // Parts of a whole on one line (cash, card, online), with a key underneath.
-export function SplitBar({ parts, format = (n: number) => money(n) }: { parts: { label: string; value: number }[]; format?: (n: number) => string }) {
+export function SplitBar({ parts, format = (n: number) => money(n) }: { parts: { label: string; value: number; href?: string }[]; format?: (n: number) => string }) {
   const shown = parts.filter((p) => p.value > 0.004);
   const total = shown.reduce((s, p) => s + p.value, 0);
   const shades = ["rpt-bar-strong", "rpt-bar-mid", "rpt-bar", "rpt-bar-light"];
@@ -252,49 +299,90 @@ export function SplitBar({ parts, format = (n: number) => money(n) }: { parts: {
         ))}
       </div>
       <ul className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
-        {shown.map((p, i) => (
-          <li key={p.label} className="min-w-0">
-            <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-              <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${shades[i % shades.length]}`} />
-              {p.label} · {Math.round((p.value / total) * 100)}%
-            </div>
-            <div className="font-semibold tabular-nums">{format(p.value)}</div>
-          </li>
-        ))}
+        {shown.map((p, i) => {
+          const inside = (
+            <>
+              <div className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                <span className={`inline-block h-2.5 w-2.5 shrink-0 rounded-sm ${shades[i % shades.length]}`} />
+                {p.label} · {Math.round((p.value / total) * 100)}%{p.href && <Chevron />}
+              </div>
+              <div className="font-semibold tabular-nums">{format(p.value)}</div>
+            </>
+          );
+          return (
+            <li key={p.label} className="min-w-0">
+              {p.href ? (
+                <DrillLink href={p.href} className="-mx-1.5 block rounded-md px-1.5 py-0.5 hover:bg-[var(--surface-hover)]">
+                  {inside}
+                </DrillLink>
+              ) : (
+                inside
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
 }
 
 // Best sellers, most money first.
-export function TopItems({ items }: { items: { name: string; qty: number; revenue: number; options: string }[] }) {
+export function TopItems({ items }: { items: { name: string; qty: number; revenue: number; options: string; href?: string }[] }) {
   return (
     <ol className="divide-y divide-[var(--border)] text-sm">
-      {items.map((it, i) => (
-        <li key={it.name} className="flex items-baseline gap-3 py-2">
-          <span className="w-5 shrink-0 text-right text-xs tabular-nums text-[var(--muted)]">{i + 1}</span>
-          <span className="min-w-0 flex-1">
-            {it.name}
-            {it.options && <span className="block truncate text-xs text-[var(--muted)]">{it.options}</span>}
-          </span>
-          <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">{num(it.qty)} sold</span>
-          <span className="w-20 shrink-0 text-right font-semibold tabular-nums">{money(it.revenue)}</span>
-        </li>
-      ))}
+      {items.map((it, i) => {
+        const inside = (
+          <>
+            <span className="w-5 shrink-0 text-right text-xs tabular-nums text-[var(--muted)]">{i + 1}</span>
+            <span className="min-w-0 flex-1">
+              {it.name}
+              {it.options && <span className="block truncate text-xs text-[var(--muted)]">{it.options}</span>}
+            </span>
+            <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">{num(it.qty)} sold</span>
+            <span className="w-20 shrink-0 text-right font-semibold tabular-nums">{money(it.revenue)}</span>
+            {it.href && <Chevron />}
+          </>
+        );
+        return (
+          <li key={it.name}>
+            {it.href ? (
+              <DrillLink href={it.href} className="-mx-1.5 flex items-baseline gap-3 rounded-md px-1.5 py-2 hover:bg-[var(--surface-hover)]">
+                {inside}
+              </DrillLink>
+            ) : (
+              <div className="flex items-baseline gap-3 py-2">{inside}</div>
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
 // Label on the left, figure on the right, one per line.
-export function Rows({ rows }: { rows: { label: React.ReactNode; value: React.ReactNode; muted?: boolean; strong?: boolean; key?: string }[] }) {
+export function Rows({ rows }: { rows: { label: React.ReactNode; value: React.ReactNode; muted?: boolean; strong?: boolean; key?: string; href?: string }[] }) {
   return (
     <dl className="divide-y divide-[var(--border)] text-sm">
-      {rows.map((r, i) => (
-        <div key={r.key ?? i} className={`flex items-baseline justify-between gap-3 py-1.5 ${r.muted ? "text-[var(--muted)]" : ""} ${r.strong ? "font-semibold" : ""}`}>
-          <dt className="min-w-0">{r.label}</dt>
-          <dd className="shrink-0 text-right tabular-nums">{r.value}</dd>
-        </div>
-      ))}
+      {rows.map((r, i) => {
+        const cls = `flex items-baseline justify-between gap-3 py-1.5 ${r.muted ? "text-[var(--muted)]" : ""} ${r.strong ? "font-semibold" : ""}`;
+        return r.href ? (
+          // The link is the row (a term and its figure can't sit inside a link).
+          <div key={r.key ?? i}>
+            <DrillLink href={r.href} className={`${cls} -mx-1.5 rounded-md px-1.5 hover:bg-[var(--surface-hover)]`}>
+              <span className="min-w-0">{r.label}</span>
+              <span className="flex shrink-0 items-baseline gap-1.5 text-right tabular-nums">
+                {r.value}
+                <Chevron />
+              </span>
+            </DrillLink>
+          </div>
+        ) : (
+          <div key={r.key ?? i} className={cls}>
+            <dt className="min-w-0">{r.label}</dt>
+            <dd className="shrink-0 text-right tabular-nums">{r.value}</dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }

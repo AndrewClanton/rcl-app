@@ -17,6 +17,7 @@ export interface PeriodDay {
   collected: number;
   orders: number;
   tickets: number;
+  tips: number;
 }
 
 export interface MemberActivity {
@@ -102,9 +103,9 @@ export async function getPeriodReport(period: Period, now = new Date()): Promise
   const perDay = salesByDay(cur.rows);
   const days: PeriodDay[] = datesIn(period.start, through).map((date) => {
     const rows = perDay.get(date);
-    if (!rows) return { date, netSales: 0, collected: 0, orders: 0, tickets: 0 };
+    if (!rows) return { date, netSales: 0, collected: 0, orders: 0, tickets: 0, tips: 0 };
     const s = summarizeSales(rows, cur.buckets);
-    return { date, netSales: round2(s.netSales), collected: round2(s.collected), orders: s.orderCount, tickets: s.ticketsSold };
+    return { date, netSales: round2(s.netSales), collected: round2(s.collected), orders: s.orderCount, tickets: s.ticketsSold, tips: round2(s.tips) };
   });
 
   const byHour = new Map<number, { orders: number; sales: number }>();
