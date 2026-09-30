@@ -134,12 +134,19 @@ export default function PosApp({
   // The cashier: whoever picked themselves in the list, else the person
   // using this iPad per the shift bar, else the only person on shift. No
   // more re-picking after every reload.
-  const [pickedCashier, setPickedCashier] = useState<string>("");
   const onShift = useOnShift();
+  // The cashier follows the shift: this iPad's shift, else whoever started
+  // most recently. A cashier picked by hand holds only until someone starts
+  // or ends a shift (the pick remembers the shift line-up it was made under).
+  const shiftKey = `${onShift.onShift.map((o) => o.shiftId).join(",")}|${onShift.meEmployeeId ?? ""}`;
+  const [pickedCashier, setPickedCashier] = useState<{ id: string; shiftKey: string } | null>(null);
+  const isEmployee = (id: string | null | undefined): id is string => !!id && employees.some((e) => e.id === id);
+  const latestOnShift = [...onShift.onShift].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]?.employeeId ?? null;
+  const onShiftIds = new Set(onShift.onShift.map((o) => o.employeeId));
   const employeeId =
-    (pickedCashier && employees.some((e) => e.id === pickedCashier) ? pickedCashier : "") ||
-    (onShift.meEmployeeId && employees.some((e) => e.id === onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
-    (onShift.onShift.length === 1 && employees.some((e) => e.id === onShift.onShift[0].employeeId) ? onShift.onShift[0].employeeId : "");
+    (pickedCashier && pickedCashier.shiftKey === shiftKey && isEmployee(pickedCashier.id) ? pickedCashier.id : "") ||
+    (isEmployee(onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
+    (isEmployee(latestOnShift) ? latestOnShift : "");
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
   const [taxFree, setTaxFree] = useState(false);
@@ -774,13 +781,36 @@ export default function PosApp({
       <div className="card flex flex-col !p-3 md:min-h-0">
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setPickedCashier(e.target.value)}>
+            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setPickedCashier({ id: e.target.value, shiftKey })}>
               <option value="">Choose cashier</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
+              {onShiftIds.size > 0 ? (
+                <>
+                  <optgroup label="On shift">
+                    {employees
+                      .filter((e) => onShiftIds.has(e.id))
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="Everyone else">
+                    {employees
+                      .filter((e) => !onShiftIds.has(e.id))
+                      .map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name}
+                        </option>
+                      ))}
+                  </optgroup>
+                </>
+              ) : (
+                employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))
+              )}
             </select>
             <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
               Held {heldOrders.length}
