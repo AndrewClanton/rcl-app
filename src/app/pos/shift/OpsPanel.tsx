@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { OnShift, ShiftStatus } from "@/lib/ops/shared";
 import ChecklistTab from "./ChecklistTab";
 import ParCountTab from "./ParCountTab";
@@ -40,6 +40,10 @@ export default function OpsPanel({
   onClose: () => void;
   onFinishClosing: () => void;
 }) {
+  // Just saved a par count: the Shopping list tab opens on "Since the last
+  // count" first.
+  const [justCounted, setJustCounted] = useState(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -56,7 +60,10 @@ export default function OpsPanel({
               className={`rounded-full border-2 px-4 py-2 text-sm font-bold transition-colors ${t.id === tab ? "text-[var(--background)]" : ""}`}
               style={{ borderColor: "var(--foreground)", background: t.id === tab ? "var(--foreground)" : "transparent" }}
               aria-current={t.id === tab ? "page" : undefined}
-              onClick={() => onTab(t.id)}
+              onClick={() => {
+                setJustCounted(false);
+                onTab(t.id);
+              }}
             >
               {t.label}
             </button>
@@ -78,11 +85,12 @@ export default function OpsPanel({
               closing={closing}
               onSubmitted={() => {
                 onChanged();
+                setJustCounted(true);
                 onTab("shopping");
               }}
             />
           )}
-          {tab === "shopping" && <ShoppingListTab me={me} closing={closing} onFinishClosing={onFinishClosing} onChanged={onChanged} />}
+          {tab === "shopping" && <ShoppingListTab me={me} closing={closing} justCounted={justCounted} onFinishClosing={onFinishClosing} onChanged={onChanged} />}
           {tab === "history" && <HistoryTab />}
           {tab === "reminders" && <RemindersTab me={me} staff={staff} onChanged={onChanged} />}
         </div>

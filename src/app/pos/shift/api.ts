@@ -23,6 +23,7 @@ export type OpsApi = Pick<
   | "getParSheet"
   | "submitParCount"
   | "getShoppingList"
+  | "getCountComparison"
   | "saveParItem"
   | "setParItemActive"
   | "getOpsHistory"
