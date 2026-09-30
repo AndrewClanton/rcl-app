@@ -204,6 +204,9 @@ export interface Member {
   // Their own short line (profile), shown to staff at check-in. Optional:
   // not every members query selects it.
   tagline?: string | null;
+  // "2000-MM-DD": only the month and day mean anything (lib/visits.ts), for
+  // the Birthday Visit badge. Optional: not every members query selects it.
+  birthday?: string | null;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;

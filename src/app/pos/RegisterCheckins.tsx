@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import MemberAvatar from "@/components/MemberAvatar";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
-import { REWARD_LABEL } from "@/lib/visits";
+import { REWARD_LABEL, badgeList } from "@/lib/visits";
 import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
@@ -61,11 +61,11 @@ function phoneEnding(m: PosMember) {
 // PosApp passes the order's member and its setter, whether an order is open,
 // and the last sale's receipt (how this hears a sale completed).
 //
-// Confirming is a visit (lib/visits.ts): Check in pays today's streak
-// points without touching the order, so a group can check in as they walk
-// in and buy later; "+ add to order" also puts them on the order. Everyone
-// checked in today is under "Here today", faces first, so staff learn names
-// and can put someone on an order with one tap.
+// Confirming is a visit (lib/visits.ts): Check in pays the check-in's
+// points and any new badges without touching the order, so a group can
+// check in as they walk in and buy later; "+ add to order" also puts them
+// on the order. Everyone checked in today is under "Here today", faces
+// first, so staff learn names and can put someone on an order with one tap.
 export default function RegisterCheckins({
   registerTopic,
   member,
@@ -133,8 +133,8 @@ export default function RegisterCheckins({
     send("checkin-seen", { id });
   }
 
-  // Staff said "that's them": today's visit (streak points, maybe a
-  // reward), and with addToOrder, onto the order too.
+  // Staff said "that's them": today's visit (its points, maybe badges and
+  // a reward), and with addToOrder, onto the order too.
   async function confirm(p: Pending, m: PosMember, isNew: boolean, note: string | null, addToOrder: boolean) {
     patch(p.id, { working: true, error: null });
     const r = await confirmVisit(m.id).catch(() => null);
@@ -149,7 +149,9 @@ export default function RegisterCheckins({
       firstName: firstNameOf(m.name),
       points: Math.round(visit ? visit.balance : m.points),
       isNew,
-      ...(visit ? { visit: { earned: visit.earned, streak: visit.streak, alreadyToday: visit.alreadyToday, reward: visit.reward } } : {}),
+      ...(visit
+        ? { visit: { earned: visit.earned, visitPoints: visit.visitPoints, weekStreak: visit.weekStreak, alreadyToday: visit.alreadyToday, badges: visit.badges } }
+        : {}),
       // No website login yet: the tablet shows a QR code to set one up.
       ...(r?.ok && r.claimUrl ? { claimUrl: r.claimUrl } : {}),
     };
@@ -167,9 +169,10 @@ export default function RegisterCheckins({
       .catch(() => {});
     const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
     if (visit?.alreadyToday) bits.push("Already checked in today, so no new points.");
-    else if (visit) bits.push(`Day ${visit.streak} streak, +${visit.earned} pts.`);
+    else if (visit) bits.push(`+${visit.visitPoints} pts${visit.weekStreak > 1 ? `, ${visit.weekStreak}-week streak` : ""}.`);
     else bits.push("Their visit points didn't save; check them in again later.");
-    if (visit?.reward) bits.push(`They earned: ${REWARD_LABEL[visit.reward]}! Redeem it from their member panel.`);
+    if (visit?.badges.length) bits.push(`New badge${visit.badges.length === 1 ? "" : "s"}: ${badgeList(visit.badges)}.`);
+    for (const r of visit?.rewards ?? []) bits.push(`They earned: ${REWARD_LABEL[r]}! Redeem it from their member panel.`);
     if (addToOrder) bits.push(already ? "Already on this order." : hasOrder ? "On this order." : "They'll be on the next order.");
     if (note) bits.push(note);
     setNotice(bits.join(" "));
@@ -531,7 +534,7 @@ function HereTodayPanel({
                 <div className="truncate text-base font-bold leading-tight">{h.member.name}</div>
                 <div className="text-xs" style={{ color: "var(--muted)" }}>
                   {new Date(h.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
-                  {h.streak ? ` · day ${h.streak} streak` : ""}
+                  {h.streak && h.streak > 1 ? ` · ${h.streak}-week streak` : ""}
                 </div>
                 {h.member.tagline && <div className="truncate text-xs italic">“{h.member.tagline}”</div>}
               </div>

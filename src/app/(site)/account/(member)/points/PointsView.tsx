@@ -1,8 +1,11 @@
 import Link from "next/link";
 import type { LedgerEntry } from "@/lib/data/member-account";
+import type { VisitSummary } from "@/lib/visits-server";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import { VISIT_POINTS } from "@/lib/visits";
 import { dateShort, points } from "../format";
 import { Empty, Panel, SpecPanel } from "../ui";
+import { BadgeCabinet, StreakPanel } from "./Badges";
 
 function describe(l: LedgerEntry): { title: string; href: string | null } {
   const receipt = l.orderId ? `/account/purchases/order/${l.orderId}` : l.bookingId ? `/account/purchases/ticket/${l.bookingId}` : null;
@@ -18,15 +21,18 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
     case "opening_balance":
       return { title: "Starting balance", href: null };
     case "visit":
-      return { title: l.note ?? "Checked in", href: null };
+      return { title: "Check-in", href: null };
+    case "badge":
+      return { title: `Badge: ${l.note ?? "earned"}`, href: null };
     default:
       return { title: l.note && l.note !== "Adjusted by staff" ? `Adjusted by staff: ${l.note}` : "Adjusted by staff", href: null };
   }
 }
 
-export default function PointsView({ balance, ledger }: { balance: number; ledger: LedgerEntry[] }) {
+export default function PointsView({ balance, ledger, visits, birthday }: { balance: number; ledger: LedgerEntry[]; visits: VisitSummary; birthday: string | null }) {
   const earned = ledger.filter((l) => l.delta > 0 && l.reason !== "opening_balance").reduce((s, l) => s + l.delta, 0);
-  const used = -ledger.filter((l) => l.reason === "redeem").reduce((s, l) => s + l.delta, 0);
+  // (Math.abs: no redemptions would otherwise show as "-0".)
+  const used = Math.abs(ledger.filter((l) => l.reason === "redeem").reduce((s, l) => s + l.delta, 0));
 
   return (
     <div className="space-y-10">
@@ -40,6 +46,10 @@ export default function PointsView({ balance, ledger }: { balance: number; ledge
         ]}
       />
 
+      <StreakPanel visits={visits} />
+
+      <BadgeCabinet visits={visits} birthday={birthday} />
+
       <Panel title="How points work">
         <ul className="grid gap-4 p-5 text-[15px] sm:grid-cols-2">
           <li>
@@ -50,6 +60,12 @@ export default function PointsView({ balance, ledger }: { balance: number; ledge
               {POINTS_PER_REWARD} points = ${REWARD_VALUE} off
             </strong>
             . Ask at the register when you order.
+          </li>
+          <li>
+            <strong>{VISIT_POINTS} points every check-in</strong>, once a day: type your phone on the tablet at the door.
+          </li>
+          <li>
+            <strong>Badges</strong> pay bonus points once each. Come in every week to keep your streak going.
           </li>
           <li className="text-[var(--muted)]">Points land the moment your purchase goes through. Refunds take back the points that purchase earned.</li>
           <li className="text-[var(--muted)]">At the register, make sure staff attach your account: scan your member card or give your name.</li>

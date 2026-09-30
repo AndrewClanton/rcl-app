@@ -4,8 +4,8 @@
 // customer screen can use these types and helpers too. The work itself is
 // in lib/ticket-scan.ts; the register's actions are in app/pos/scan-actions.ts.
 
-import type { RewardKind, VisitResult } from "@/lib/visits";
-import { REWARD_LABEL } from "@/lib/visits";
+import type { VisitResult } from "@/lib/visits";
+import { REWARD_LABEL, badgeList } from "@/lib/visits";
 
 // The number an online booking goes by: on its receipt in the account, and
 // as the order on its printed keepsake tickets. (Register sales use their
@@ -94,12 +94,15 @@ export type ScanResult = TicketScanned | MemberScanned | ScanRefused;
 // Print on a member's check-in card.
 export type ClaimResult = { ok: true; ticket: DoorTicket; print: TicketPrintJob; memberId: string | null } | ScanRefused;
 
-// "Sam checked in: +15 points, day 3 in a row. Free popcorn!" for a toast.
+// "Sam checked in: +5 points, 3 weeks in a row. New badge: 🦉 Night Owl
+// (+25)." for a toast.
 export function visitLine(firstName: string, visit: VisitResult | null): string {
   if (!visit) return `${firstName} is here, but the check-in didn't save. Check them in from their card.`;
   if (visit.alreadyToday) return `${firstName} already checked in today.`;
-  const reward: RewardKind | null = visit.reward;
-  return `${firstName} checked in: +${visit.earned} points, day ${visit.streak} in a row.${reward ? ` ${REWARD_LABEL[reward]}!` : ""}`;
+  const streak = visit.weekStreak > 1 ? `, ${visit.weekStreak} weeks in a row` : "";
+  const badges = visit.badges.length ? ` New badge${visit.badges.length === 1 ? "" : "s"}: ${badgeList(visit.badges)}.` : "";
+  const rewards = visit.rewards.map((r) => ` ${REWARD_LABEL[r]}!`).join("");
+  return `${firstName} checked in: +${visit.visitPoints} points${streak}.${badges}${rewards}`;
 }
 
 // ---------- the customer screen ----------

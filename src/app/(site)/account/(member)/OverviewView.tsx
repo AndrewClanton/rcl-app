@@ -71,7 +71,7 @@ export default function OverviewView({
                 1 point per $1 · {POINTS_PER_REWARD} points = ${REWARD_VALUE} off
               </span>
               <Link href="/account/points" className="text-sm font-bold underline decoration-2 underline-offset-2">
-                Points history →
+                Badges &amp; points history →
               </Link>
             </div>
           </div>

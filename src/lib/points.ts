@@ -7,7 +7,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 
-export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit";
+// visit and badge: check-ins and their badges, paid by award_member_visit
+// in the database (lib/visits-server.ts), not through applyPoints.
+export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit" | "badge";
 
 export async function applyPoints(args: {
   memberId: string;

@@ -2,7 +2,8 @@
 // builds a throwaway member with an order, a ticket, a booth reservation,
 // a private event, an old-site record (plus a duplicate old account with
 // the same email), points, a custom item, a gift they bought and one they
-// got, check-in visits and rewards, runs erase_member_personal_info(),
+// got, check-in visits, rewards, badges and a birthday, runs
+// erase_member_personal_info(),
 // checks that every trace of them is gone, then rolls everything back.
 //
 // Usage: node scripts/check-member-erase.mjs [migration.sql]
@@ -49,6 +50,7 @@ try {
   const hasTagline = await exists("select true as ok from information_schema.columns where table_schema = 'public' and table_name = 'members' and column_name = 'tagline'");
   const hasVisits = await exists("select (to_regclass('public.member_visits') is not null) as ok");
   const hasRewards = await exists("select (to_regclass('public.member_rewards') is not null) as ok");
+  const hasBadges = await exists("select (to_regclass('public.member_badges') is not null) as ok");
 
   const staff = await one("select id from employees order by created_at limit 1");
   const room = await one("select id from rooms limit 1");
@@ -89,6 +91,10 @@ try {
      values ($1, 'Erase Friend', 'erase-friend@example.invalid', 'For you, Erase', 100) returning id`, [m])).id;
   if (hasVisits) await c.query("insert into member_visits (member_id, business_date, streak, points_awarded) values ($1, current_date - 1, 1, 10), ($1, current_date, 2, 10)", [m]);
   if (hasRewards) await c.query("insert into member_rewards (member_id, kind, reason, earned_on, redeemed_at) values ($1, 'popcorn', '7-day streak', current_date - 3, now()), ($1, 'pizza', '30-day streak', current_date, null)", [m]);
+  if (hasBadges) {
+    await c.query("update members set birthday = '2000-12-30' where id = $1", [m]);
+    await c.query("insert into member_badges (member_id, badge, period, points) values ($1, 'welcome', '', 50), ($1, 'birthday', '2026', 50), ($2, 'welcome', '', 50)", [m, friend]);
+  }
 
   const res = hasV2
     ? (await one("select erase_member_personal_info($1, $2, $3::date) as r", [m, staff?.id ?? null, REQUESTED_ON])).r
@@ -144,6 +150,13 @@ try {
     if (hasRewards) {
       const rw = (await c.query("select kind, redeemed_at from member_rewards where member_id = $1", [m])).rows;
       check("unused reward deleted, used one kept as a count", rw.length === 1 && rw[0].kind === "popcorn" && rw[0].redeemed_at);
+    }
+    if (hasBadges) {
+      const bd = await one("select birthday from members where id = $1", [m]);
+      const bg = await one("select count(*)::int as n from member_badges where member_id = $1", [m]);
+      check("birthday and badges removed", bd.birthday === null && bg.n === 0);
+      const fb = await one("select count(*)::int as n from member_badges where member_id = $1", [friend]);
+      check("  but nobody else's", fb.n === 1);
     }
     const log = await one("select requested_on::text as requested_on, erased_by, cleared from member_erasures where member_id = $1", [m]);
     check("removal logged with the day they asked and who did it", !!log && log.requested_on === REQUESTED_ON && log.erased_by === (staff?.id ?? null) && typeof log.cleared?.orders === "number");

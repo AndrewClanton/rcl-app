@@ -1,55 +1,91 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { businessDay } from "@/lib/ops/time";
-import { applyPoints } from "@/lib/points";
-import { REWARD_LABEL, visitPoints, visitReward, type RewardKind, type VisitResult } from "@/lib/visits";
+import {
+  REWARD_LABEL,
+  VISIT_POINTS,
+  badgeFor,
+  badgesFor,
+  earnedBadge,
+  recentWeeks,
+  visitBusinessDate,
+  weekStart,
+  type BadgeKey,
+  type EarnedBadge,
+  type RewardKind,
+  type VisitResult,
+} from "@/lib/visits";
 
-// Records a confirmed check-in as today's visit and pays its streak points
-// (and any streak reward). Once per member per business day: a second
-// check-in today changes nothing and says so. Two registers confirming the
-// same person at once can't both pay: the visit row is unique per day.
-export async function recordVisit(memberId: string, confirmedBy: string | null): Promise<VisitResult | null> {
+// Records a confirmed check-in as today's visit and pays it: VISIT_POINTS,
+// plus any badges it earns (lib/visits.ts) and their rewards. Once per
+// member per business day: a second check-in today changes nothing and
+// says so.
+//
+// Never pays twice. The visit row is unique per member and day, so two
+// registers confirming the same person at once make one visit; the payment
+// (award_member_visit, one database transaction) locks the visit and pays
+// it only if it hasn't been paid, and each badge only if it's new. A visit
+// whose payment didn't go through (the connection dropped) is paid by the
+// next check-in that day, so trying again fixes it.
+//
+// `at` is for the checks in scripts/ (a visit on another day); the app
+// always records now.
+export async function recordVisit(memberId: string, confirmedBy: string | null, at = new Date()): Promise<VisitResult | null> {
   const supabase = createAdminClient();
-  const date = businessDay().date;
+  const date = visitBusinessDate(at);
 
-  const { data: visit, error } = await supabase
+  const { data: inserted, error } = await supabase
     .from("member_visits")
-    .insert({ member_id: memberId, business_date: date, confirmed_by: confirmedBy })
-    .select("id")
+    .insert({ member_id: memberId, business_date: date, checked_in_at: at.toISOString(), confirmed_by: confirmedBy })
+    .select("id, checked_in_at, points_awarded")
     .single();
-  const already = error?.code === "23505";
-  if (error && !already) return null;
+  if (error && error.code !== "23505") return null;
+  let visit = inserted;
+  if (!visit) {
+    // Checked in already today.
+    const { data } = await supabase.from("member_visits").select("id, checked_in_at, points_awarded").eq("member_id", memberId).eq("business_date", date).maybeSingle();
+    if (!data) return null;
+    visit = data;
+  }
 
-  const [{ data: streakData }, { count }] = await Promise.all([
-    supabase.rpc("member_visit_streak", { p_member: memberId, p_date: date }),
-    supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId),
+  const [streakRes, countRes, memberRes] = await Promise.all([
+    supabase.rpc("member_week_streak", { p_member: memberId, p_date: date }),
+    supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId).lte("business_date", date),
+    supabase.from("members").select("points, birthday").eq("id", memberId).maybeSingle(),
   ]);
-  const streak = Math.max(1, Number(streakData) || 1);
+  const weekStreak = Math.max(0, Math.round(Number(streakRes.data) || 0));
+  const visits = countRes.count ?? 0;
+  const already = (balance: number): VisitResult => ({ earned: 0, visitPoints: 0, badges: [], rewards: [], weekStreak, alreadyToday: true, balance, visits });
 
-  if (already || !visit) {
-    const { data: m } = await supabase.from("members").select("points").eq("id", memberId).maybeSingle();
-    return { earned: 0, streak, alreadyToday: true, reward: null, balance: Number(m?.points ?? 0), visits: count ?? 0 };
-  }
+  if (visit.points_awarded !== null) return already(Number(memberRes.data?.points ?? 0));
+  // Can't tell which badges it earns: leave it unpaid for a retry to pay.
+  if (streakRes.error || countRes.error || !memberRes.data) return null;
 
-  const earned = visitPoints(streak);
-  const paid = await applyPoints({ memberId, delta: earned, reason: "visit", note: `Checked in · day ${streak} of their streak`, by: confirmedBy });
-  await supabase.from("member_visits").update({ streak, points_awarded: paid.ok ? earned : 0 }).eq("id", visit.id);
+  const claims = badgesFor({ at: new Date(visit.checked_in_at as string), visitNumber: visits, weekStreak, birthday: (memberRes.data.birthday as string | null) ?? null });
+  const payload = claims.flatMap((c) => {
+    const b = badgeFor(c.key);
+    if (!b) return [];
+    const reason = `${b.label} badge${b.weeks ? `: ${b.weeks} weeks in a row` : ""}`;
+    return [{ key: b.key, period: c.period, points: b.points, reward: b.reward ?? null, note: b.label, reason }];
+  });
+  const { data: award, error: awardErr } = await supabase.rpc("award_member_visit", {
+    p_visit: visit.id,
+    p_points: VISIT_POINTS,
+    p_week_streak: weekStreak,
+    p_badges: payload,
+    p_by: confirmedBy,
+  });
+  if (awardErr || !award) return null;
+  const a = award as { paid: boolean; balance: number | string; badges: string[] };
+  // Paid a moment ago by another register (or this one, twice).
+  if (!a.paid) return already(Number(a.balance));
 
-  let reward: RewardKind | null = visitReward(streak);
-  if (reward) {
-    const { error: rewardErr } = await supabase
-      .from("member_rewards")
-      .insert({ member_id: memberId, kind: reward, reason: `${streak}-day streak`, earned_on: date });
-    if (rewardErr) reward = null;
-  }
-
-  let balance: number;
-  if (paid.ok) balance = paid.balance;
-  else {
-    const { data: m } = await supabase.from("members").select("points").eq("id", memberId).maybeSingle();
-    balance = Number(m?.points ?? 0);
-  }
-  return { earned: paid.ok ? earned : 0, streak, alreadyToday: false, reward, balance, visits: count ?? 1 };
+  const badges: EarnedBadge[] = (a.badges ?? []).flatMap((key) => {
+    const b = badgeFor(key);
+    return b ? [earnedBadge(b)] : [];
+  });
+  const rewards = badges.flatMap((b): RewardKind[] => (b.reward ? [b.reward] : []));
+  const earned = VISIT_POINTS + badges.reduce((s, b) => s + b.points, 0);
+  return { earned, visitPoints: VISIT_POINTS, badges, rewards, weekStreak, alreadyToday: false, balance: Number(a.balance), visits };
 }
 
 export interface OpenReward {
@@ -91,13 +127,55 @@ export async function unredeemReward(id: string): Promise<void> {
   await createAdminClient().from("member_rewards").update({ redeemed_at: null, redeemed_by: null }).eq("id", id);
 }
 
-// Who's checked in today (business day), newest first, with their streak.
+// Who's checked in today (business day), newest first, with their week
+// streak.
 export async function todaysVisitors(): Promise<{ memberId: string; at: string; streak: number | null }[]> {
   const { data } = await createAdminClient()
     .from("member_visits")
     .select("member_id, checked_in_at, streak")
-    .eq("business_date", businessDay().date)
+    .eq("business_date", visitBusinessDate(new Date()))
     .order("checked_in_at", { ascending: false })
     .limit(100);
   return (data ?? []).map((v) => ({ memberId: v.member_id as string, at: v.checked_in_at as string, streak: (v.streak as number | null) ?? null }));
+}
+
+// ---------- the member's own account ----------
+
+export interface MemberBadge {
+  key: BadgeKey;
+  period: string; // "" or, for Birthday Visit, the year
+  earnedAt: string;
+  points: number;
+}
+
+export interface VisitSummary {
+  weekStreak: number;
+  visits: number; // all-time check-ins
+  thisWeek: boolean; // checked in this week yet
+  weeks: { monday: string; visited: boolean }[]; // the last 13, oldest first; the last is this week
+  badges: MemberBadge[]; // oldest first
+}
+
+export const STRIP_WEEKS = 13;
+
+export async function visitSummary(memberId: string, now = new Date()): Promise<VisitSummary> {
+  const supabase = createAdminClient();
+  const date = visitBusinessDate(now);
+  const mondays = recentWeeks(date, STRIP_WEEKS);
+  const [streak, recent, count, earned] = await Promise.all([
+    supabase.rpc("member_week_streak", { p_member: memberId, p_date: date }),
+    supabase.from("member_visits").select("business_date").eq("member_id", memberId).gte("business_date", mondays[0]).lte("business_date", date),
+    supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId),
+    supabase.from("member_badges").select("badge, period, earned_at, points").eq("member_id", memberId).order("earned_at"),
+  ]);
+  const visited = new Set((recent.data ?? []).map((v) => weekStart(v.business_date as string)));
+  return {
+    weekStreak: Math.max(0, Math.round(Number(streak.data) || 0)),
+    visits: count.count ?? 0,
+    thisWeek: visited.has(weekStart(date)),
+    weeks: mondays.map((monday) => ({ monday, visited: visited.has(monday) })),
+    badges: (earned.data ?? []).flatMap((r) =>
+      badgeFor(r.badge) ? [{ key: r.badge as BadgeKey, period: (r.period as string) ?? "", earnedAt: r.earned_at as string, points: Number(r.points) }] : [],
+    ),
+  };
 }

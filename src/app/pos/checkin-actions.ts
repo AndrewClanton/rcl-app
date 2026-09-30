@@ -140,7 +140,7 @@ export async function createCheckinMember(ref: string, existingId: string | null
   return { ok: true, member, isNew: true, note };
 }
 
-// ---------- visits, streaks and rewards (lib/visits.ts) ----------
+// ---------- visits, badges and rewards (lib/visits.ts) ----------
 
 export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null } | { ok: false; error: string };
 
@@ -148,8 +148,9 @@ export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]
 // this long (the tablet already made one if it just created the account).
 const CLAIM_LINK_EVERY_MS = 10 * 60_000;
 
-// Staff tapped Check in: today's visit, with its streak points and any
-// streak reward. Once a day per member; a repeat says so and pays nothing.
+// Staff tapped Check in: today's visit, with its points and any new badges
+// (and their rewards). Once a day per member; a repeat says so and pays
+// nothing.
 // A member with no website login also gets a claim link (lib/member-claim.ts)
 // for the tablet to show as a QR code: only here, once staff have said it's
 // them, never from the number typed at the screen alone. Not for anyone with
@@ -174,7 +175,7 @@ export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
 export interface HereToday {
   member: PosMember;
   at: string;
-  streak: number | null;
+  streak: number | null; // weeks in a row, as of today's visit
 }
 
 // Everyone who's checked in today, newest first: faces and names for the

@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
-import { REWARD_LABEL } from "@/lib/visits";
+import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
 import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
 import type { TicketsShown } from "./TicketsCard";
 import { isClaimUrl } from "@/lib/claim-link";
@@ -21,17 +21,24 @@ export type CheckinStep =
   | { name: "created"; firstName: string; claimUrl: string | null }; // a new account, made
 
 // Confirmations land as banners across the top of the panel, so they
-// never block the keypad for the next person.
+// never block the keypad for the next person. A new badge gets a banner of
+// its own, a moment after the check-in's.
 interface Toast {
   key: number;
   title: string;
   detail: string;
-  reward: string | null;
-  tone: "ok" | "warn";
+  tone: "ok" | "warn" | "badge";
+  emoji: string | null; // a badge's, big beside the words
   // A member with no website login, confirmed by staff: a QR code to set
   // one up (only ever a link that passed isClaimUrl).
   claimUrl: string | null;
 }
+
+// Badge banners follow the check-in's one at a time, and go quickly so the
+// line keeps moving (a little longer when there's a free popcorn to ask for).
+const BADGE_STAGGER_MS = 1100;
+const BADGE_MS = 6000;
+const BADGE_REWARD_MS = 10_000;
 
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 
@@ -104,11 +111,11 @@ export default function CheckinKiosk({
     setStep({ name: "phone" });
   }
 
-  function toast(t: Omit<Toast, "key">) {
+  function toast(t: Omit<Toast, "key">, ms = 8_000) {
     const key = Date.now() + Math.random();
     setToasts((ts) => [...ts.slice(-2), { ...t, key }]);
     // A QR code stays up long enough to get a phone out.
-    setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.claimUrl ? 25_000 : t.reward ? 12_000 : 8_000);
+    setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.claimUrl ? 25_000 : ms);
   }
 
   const onSeen = useEffectEvent((id: unknown) => {
@@ -125,19 +132,25 @@ export default function CheckinKiosk({
     const name = p.firstName.slice(0, 40);
     const points = Math.max(0, Math.round(Number(p.points) || 0));
     const v = p.visit;
-    const earned = Math.max(0, Math.round(Number(v?.earned) || 0));
-    const streak = Math.max(1, Math.round(Number(v?.streak) || 1));
-    const reward = v?.reward === "popcorn" || v?.reward === "pizza" ? v.reward : null;
+    const visitPoints = Math.max(0, Math.round(Number(v?.visitPoints) || 0));
+    const weekStreak = Math.max(0, Math.round(Number(v?.weekStreak) || 0));
+    // Only badges this screen knows, in its own words (never text off the
+    // channel).
+    const badges = v?.alreadyToday || !Array.isArray(v?.badges) ? [] : [...new Set(v.badges.map((b) => badgeFor(b?.key)).filter((b): b is Badge => !!b))].slice(0, 6);
     let detail: string;
     if (v?.alreadyToday) detail = `Already checked in today · ${points.toLocaleString("en-US")} points`;
-    else if (v) detail = `+${earned} points${streak > 1 ? ` · 🔥 ${streak} visits in a row` : ""} · ${points.toLocaleString("en-US")} total`;
+    else if (v) detail = `+${visitPoints} points${weekStreak > 1 ? ` · 🔥 ${weekStreak} weeks in a row` : ""} · ${points.toLocaleString("en-US")} total`;
     else detail = `${points.toLocaleString("en-US")} points`;
     toast({
       title: p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
       detail,
-      reward: reward ? `🎉 You earned a ${REWARD_LABEL[reward].toLowerCase()}! Just ask your bartender.` : null,
       tone: "ok",
+      emoji: null,
       claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
+    });
+    badges.forEach((b, i) => {
+      const c = badgeCheer(b, name);
+      setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
     });
   });
 
@@ -161,7 +174,7 @@ export default function CheckinKiosk({
 
   const onDeclined = useEffectEvent((id: unknown) => {
     if (typeof id !== "string" || !outbox.current.delete(id)) return;
-    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", reward: null, tone: "warn", claimUrl: null });
+    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", tone: "warn", emoji: null, claimUrl: null });
   });
 
   const onPoints = useEffectEvent((p: Partial<PointsEarned> | null) => {
@@ -285,11 +298,15 @@ export default function CheckinKiosk({
       {toasts.length > 0 && (
         <div className={k.toasts} aria-live="polite">
           {toasts.map((t) => (
-            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.claimUrl ? k.toastClaim : ""}`}>
-              <div>
+            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""}`}>
+              {t.emoji && (
+                <span className={k.badgeEmoji} aria-hidden="true">
+                  {t.emoji}
+                </span>
+              )}
+              <div style={{ minWidth: 0 }}>
                 <div className={k.toastTitle}>{t.title}</div>
                 <div className={k.toastDetail}>{t.detail}</div>
-                {t.reward && <div className={k.toastDetail} style={{ fontWeight: 800 }}>{t.reward}</div>}
                 {t.claimUrl && <div className={k.toastScan}>Scan to see your points online →</div>}
               </div>
               {t.claimUrl && <ClaimQr url={t.claimUrl} size={104} label="QR code: see your points online" />}
