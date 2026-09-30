@@ -14,6 +14,8 @@ const TABS = [
   { href: "/admin/reports/tax", label: "Sales tax" },
   { href: "/admin/reports/bar", label: "Bar usage" },
   { href: "/admin/reports/members", label: "Members" },
+  // Managers and up (the page checks too).
+  { href: "/admin/reports/usage", label: "Website usage", managers: true },
 ];
 
 function activeTab(pathname: string) {
@@ -21,9 +23,10 @@ function activeTab(pathname: string) {
   return TABS.find((t) => t.href !== "/admin/reports" && pathname.startsWith(t.href))?.href ?? null;
 }
 
-export default function ReportsNav() {
+export default function ReportsNav({ manager = false }: { manager?: boolean }) {
   const pathname = usePathname();
   const active = activeTab(pathname);
+  const tabs = TABS.filter((t) => manager || !t.managers);
   const strip = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -34,7 +37,7 @@ export default function ReportsNav() {
   return (
     <nav aria-label="Reports" className="sticky top-0 z-20 -mx-4 bg-[var(--background)]/95 px-4 py-2 backdrop-blur print:hidden">
       <div ref={strip} className="flex gap-1 overflow-x-auto rounded-full border border-[var(--border)] bg-[var(--surface)] p-1 [scrollbar-width:none] sm:inline-flex">
-        {TABS.map((t) => {
+        {tabs.map((t) => {
           const on = t.href === active;
           return (
             <Link
