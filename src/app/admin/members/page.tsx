@@ -3,6 +3,7 @@ import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getCommunityPrograms, getMembersPage } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getLegacySummary } from "@/lib/data/legacy";
+import { getIndyOverview } from "@/lib/data/indy";
 import PageHeader from "@/components/admin/PageHeader";
 import MemberManager from "./MemberManager";
 
@@ -25,7 +26,8 @@ export default async function AdminMembersPage({
     getCommunityPrograms(),
   ]);
   const staffInfo = await getStaffInfoForMembers(membersPage.members, session?.employeeId ?? null);
-  const legacy = session && hasAdminAccess(session.role) ? await getLegacySummary() : null;
+  const isAdmin = !!session && hasAdminAccess(session.role);
+  const [legacy, indy] = isAdmin ? await Promise.all([getLegacySummary(), getIndyOverview()]) : [null, null];
   const legacyTotal = legacy ? Object.values(legacy.groups).reduce((a, b) => a + b, 0) : 0;
 
   return (
@@ -51,6 +53,19 @@ export default async function AdminMembersPage({
             <span className="font-semibold">Old site members</span> · {legacy.imported.toLocaleString()} imported ·{" "}
             {legacy.toImport.toLocaleString()} approved, waiting
             {legacy.awaitingReview > 0 && <> · <span className="text-[var(--accent)]">{legacy.awaitingReview} need review</span></>}
+          </span>
+          <span className="text-[var(--muted)]">Review →</span>
+        </Link>
+      )}
+      {indy && (
+        <Link
+          href="/admin/members/indy"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Indy import</span> · {indy.imported.toLocaleString()} imported · {indy.toImport.toLocaleString()} approved,
+            waiting
+            {indy.needsChoice > 0 && <> · <span className="text-[var(--accent)]">{indy.needsChoice} need a pick</span></>}
           </span>
           <span className="text-[var(--muted)]">Review →</span>
         </Link>
