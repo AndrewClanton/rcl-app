@@ -12,8 +12,9 @@ import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
-import { settleSaleCard } from "@/lib/member-cards";
+import { readRegisterCard, settleSaleCard } from "@/lib/member-cards";
 import { cardLabel, type CardNotice } from "@/lib/card-match";
+import { schemaMissing } from "@/lib/schema-missing";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -183,10 +184,12 @@ export type CompleteOrderInput = DraftFields & {
 };
 
 // A card sale's card, once the sale is saved: linked to the member on it,
-// or finding the sale's member (lib/member-cards.ts). Best-effort and quick:
-// it never fails the sale, and if Stripe is slow the register moves on after
-// 2.5 seconds while the rest finishes in the background (the points still
-// land; the register just doesn't show them).
+// or finding the member for the sale's points (lib/member-cards.ts).
+// Best-effort and quick: the Stripe read starts as soon as the sale comes
+// in (so it's usually back by now), it never fails the sale, and if it's
+// slow the register moves on after 2.5 seconds while the rest finishes in
+// the background (the points still land; the register just doesn't show
+// them).
 const CARD_WAIT_MS = 2500;
 
 async function settleCard(args: Parameters<typeof settleSaleCard>[0]): Promise<CardNotice | null> {
@@ -217,6 +220,10 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
 
   const supabase = createAdminClient();
   const tip = params.tip ?? 0;
+  const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
+  // The card that paid, read from Stripe while the sale is saved (it's
+  // checked against the saved sale before it's used). Never throws.
+  const cardRead = paymentIntentId ? readRegisterCard(paymentIntentId) : Promise.resolve(null);
 
   const orderFields = {
     source: "pos" as const,
@@ -245,19 +252,22 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
 
   // One card payment is one sale. If this payment already has its order
   // (the register asked twice), hand back that order instead of a copy.
-  const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
   const orderForPayment = async () => {
     if (!paymentIntentId) return null;
-    const { data } = await supabase.from("orders").select("id, order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
-    return data?.[0] ? { id: data[0].id as string, orderNumber: Number(data[0].order_number) } : null;
+    const { data } = await supabase.from("orders").select("id, order_number, employee_id").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+    return data?.[0] ? { id: data[0].id as string, orderNumber: Number(data[0].order_number), employeeId: (data[0].employee_id as string | null) ?? null } : null;
   };
   // The card step, also for a sale saved on an earlier try whose answer
   // never reached the register: it's safe to repeat (nothing is linked or
-  // paid twice), and shows the register what it missed.
-  const cardFor = (orderId: string) =>
-    paymentIntentId ? settleCard({ orderId, paymentIntentId, cashierId: params.employeeId || null, staffEmployeeId: staff.employeeId }) : Promise.resolve(null);
+  // paid twice), and shows the register what it missed. mayAct: the
+  // notice's buttons, only for the cashier who rang the sale.
+  const cardFor = (orderId: string, mayAct: boolean) =>
+    paymentIntentId
+      ? settleCard({ orderId, paymentIntentId, cardRead, cashierId: params.employeeId || null, staff: { employeeId: staff.employeeId, email: staff.email || null }, mayAct })
+      : Promise.resolve(null);
+  const sameCashier = (saved: { employeeId: string | null }) => !!saved.employeeId && saved.employeeId === params.employeeId;
   const already = await orderForPayment();
-  if (already !== null) return { orderNumber: already.orderNumber, card: await cardFor(already.id) };
+  if (already !== null) return { orderNumber: already.orderNumber, card: await cardFor(already.id, sameCashier(already)) };
 
   let orderId: string;
   let orderNumber: number;
@@ -275,7 +285,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     if (updateErr) throw updateErr;
     if (!closed?.length) {
       const paid = await orderForPayment();
-      if (paid !== null) return { orderNumber, card: await cardFor(paid.id) };
+      if (paid !== null) return { orderNumber, card: await cardFor(paid.id, sameCashier(paid)) };
       throw new Error("This tab was already closed. Check Reports before taking payment again.");
     }
     await saveSaleItems(supabase, orderId, params.lines);
@@ -292,7 +302,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       // Lost a race with a repeat of this same card payment (the database
       // allows one order per payment): the other call saved it.
       const saved = orderErr.code === "23505" ? await orderForPayment() : null;
-      if (saved !== null) return { orderNumber: saved.orderNumber, card: await cardFor(saved.id) };
+      if (saved !== null) return { orderNumber: saved.orderNumber, card: await cardFor(saved.id, sameCashier(saved)) };
       throw orderErr;
     }
     orderId = order.id;
@@ -337,8 +347,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     "now",
   );
 
-  // Last, so nothing above waits on Stripe.
-  const card = await cardFor(orderId);
+  // Last, so nothing above waits on it.
+  const card = await cardFor(orderId, true);
 
   revalidate();
   return { orderNumber, card };
@@ -572,15 +582,14 @@ export interface RecentOrder {
 
 export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]> {
   await assertStaff();
-  const { data, error } = await createAdminClient()
-    .from("orders")
-    .select(
-      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, member_source, card_brand, card_last4, card_wallet, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
-    )
-    .in("status", ["completed", "refunded", "voided"])
-    .not("completed_at", "is", null)
-    .order("completed_at", { ascending: false })
-    .limit(limit);
+  const base =
+    "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)";
+  const recent = (columns: string) =>
+    createAdminClient().from("orders").select(columns).in("status", ["completed", "refunded", "voided"]).not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(limit);
+  // The card that paid and how the member got on the sale (migration
+  // 20261001100000); without it, the list as it was.
+  let { data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`);
+  if (schemaMissing(error)) ({ data, error } = await recent(base));
   if (error) throw error;
   type Row = {
     id: string;
@@ -600,40 +609,43 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     tax: number;
     tip: number;
     total: number;
-    member_source: string | null;
-    card_brand: string | null;
-    card_last4: string | null;
-    card_wallet: string | null;
+    member_source?: string | null;
+    card?: CardParts | CardParts[] | null;
     employee: { name: string } | null;
     member: { name: string } | null;
     items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; screening_id: string | null }[];
   };
-  return ((data ?? []) as unknown as Row[]).map((o) => ({
-    id: o.id,
-    orderNumber: Number(o.order_number),
-    status: o.status,
-    at: o.completed_at,
-    name: o.tab_name || o.order_name || null,
-    cashier: o.employee?.name ?? null,
-    member: o.member?.name ?? null,
-    memberByCard: o.member_source === "card" && !!o.member,
-    cardLabel: o.card_brand || o.card_last4 || o.card_wallet ? cardLabel({ brand: o.card_brand, last4: o.card_last4, wallet: o.card_wallet }) : null,
-    method: o.payment_method,
-    cash: Number(o.payment_cash_amount ?? 0),
-    card: Number(o.payment_card_amount ?? 0),
-    voucher: Number(o.payment_voucher_amount ?? 0),
-    subtotal: Number(o.subtotal),
-    discounts: [
-      { label: "Member discount", amount: Number(o.tier_discount) },
-      { label: "Monthly member discount", amount: Number(o.monthly_discount) },
-      { label: "Points reward", amount: Number(o.redemption_discount) },
-    ].filter((d) => d.amount > 0),
-    tax: Number(o.tax),
-    tip: Number(o.tip),
-    total: Number(o.total),
-    lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
-  }));
+  return ((data ?? []) as unknown as Row[]).map((o) => {
+    const card = Array.isArray(o.card) ? (o.card[0] ?? null) : (o.card ?? null);
+    return {
+      id: o.id,
+      orderNumber: Number(o.order_number),
+      status: o.status,
+      at: o.completed_at,
+      name: o.tab_name || o.order_name || null,
+      cashier: o.employee?.name ?? null,
+      member: o.member?.name ?? null,
+      memberByCard: !!o.member_source && !!o.member,
+      cardLabel: card ? cardLabel(card) : null,
+      method: o.payment_method,
+      cash: Number(o.payment_cash_amount ?? 0),
+      card: Number(o.payment_card_amount ?? 0),
+      voucher: Number(o.payment_voucher_amount ?? 0),
+      subtotal: Number(o.subtotal),
+      discounts: [
+        { label: "Member discount", amount: Number(o.tier_discount) },
+        { label: "Monthly member discount", amount: Number(o.monthly_discount) },
+        { label: "Points reward", amount: Number(o.redemption_discount) },
+      ].filter((d) => d.amount > 0),
+      tax: Number(o.tax),
+      tip: Number(o.tip),
+      total: Number(o.total),
+      lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
+    };
+  });
 }
+
+type CardParts = { brand: string | null; last4: string | null; wallet: string | null };
 
 // Refund from the register (manager PIN). Card money goes back to the card
 // through Stripe; for cash, staff hand it back. Returns the reason on failure

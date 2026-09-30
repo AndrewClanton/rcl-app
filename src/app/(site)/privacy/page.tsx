@@ -62,12 +62,16 @@ export default async function PrivacyPage() {
           </li>
           <li>
             <strong>Purchases:</strong> what you buy at the bar, kitchen and box office when your account is attached, tickets you buy online, and the
-            amounts, tips and taxes, and whether you paid by cash or card.
+            amounts, tips and taxes, and whether you paid by cash or card. When a card linked to your account pays and nobody attached your account,
+            we record the points that purchase earned you, not what was bought.
           </li>
           <li>
-            <strong>Linked cards:</strong> when you pay by card with your account attached, we remember that card&apos;s type, last four digits and
-            Stripe fingerprint (a code from Stripe that recognizes the same card again), never the card number, so you still get your points if you
-            pay with it and forget to sign in, and you can remove it anytime on your account&apos;s Profile tab.
+            <strong>Cards:</strong> for card payments at the register and for tickets bought online, whether or not an account is attached, we keep the card&apos;s
+            type, its last four digits and Stripe&apos;s fingerprint for it (a code from Stripe, our card processor, that recognizes the same card
+            again). Never the card number. A card is linked to your account once it pays for your purchases with your account attached on two
+            different days, or when you pay with it signed in. You can remove a linked card, or turn linking off, anytime on your account&apos;s
+            Profile tab. When a card is removed, we delete its type and last four digits and keep only Stripe&apos;s fingerprint, so it isn&apos;t
+            linked to you again.
           </li>
           <li>
             <strong>Points:</strong> every point you earn or use, and any adjustment, with the reason.
@@ -107,6 +111,7 @@ export default async function PrivacyPage() {
         <ul>
           <li>To run your account and membership, including Insiders+ billing.</li>
           <li>To keep your points balance and history accurate.</li>
+          <li>To give you your points when you pay with a card linked to your account and nobody attached your account.</li>
           <li>To give you receipts and yearly statements.</li>
           <li>
             To recognize you at the register. Staff can look you up by name, email, phone number, the QR code in your account, or your photo. The
@@ -170,6 +175,7 @@ export default async function PrivacyPage() {
         <ul>
           <li>See and update your details anytime on the Profile tab of your account.</li>
           <li>Add, change or remove your photo anytime.</li>
+          <li>Remove a linked card, or turn off card linking, on the Profile tab of your account.</li>
           <li>Turn off the weekly emails in your account, or with the unsubscribe link in any of those emails.</li>
           <li>
             Ask for a copy of your information, or to delete your account, by emailing info@royalecinemajoplin.com. See{" "}

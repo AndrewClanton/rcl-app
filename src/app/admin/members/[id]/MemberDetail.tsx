@@ -30,6 +30,7 @@ import {
   revokeFreeMembership,
   saveMemberDetails,
   setMemberRate,
+  linkCardFromSale,
   relinkMemberCard,
   undoCardMatchInBackOffice,
   unlinkMemberCard,
@@ -100,7 +101,7 @@ export default function MemberDetail({
             </p>
           )}
         </div>
-        <PurchaseHistoryCard memberId={member.id} purchases={purchases} canUndoCardMatch={false} />
+        <PurchaseHistoryCard member={member} purchases={purchases} canUndoCardMatch={false} />
       </div>
     );
   }
@@ -123,7 +124,7 @@ export default function MemberDetail({
         <GiftCard member={member} gifts={gifts} />
       </div>
       <div className="xl:col-span-2">
-        <PurchaseHistoryCard memberId={member.id} purchases={purchases} canUndoCardMatch={canUndoCardMatch} />
+        <PurchaseHistoryCard member={member} purchases={purchases} canUndoCardMatch={canUndoCardMatch} />
       </div>
       <div className="xl:col-span-2">
         <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
@@ -580,19 +581,33 @@ function BillingCard({ member }: { member: Member }) {
   );
 }
 
-function PurchaseHistoryCard({ memberId, purchases, canUndoCardMatch }: { memberId: string; purchases: MemberPurchase[]; canUndoCardMatch: boolean }) {
+function PurchaseHistoryCard({ member, purchases, canUndoCardMatch }: { member: Member; purchases: MemberPurchase[]; canUndoCardMatch: boolean }) {
   const router = useRouter();
   const [refundTarget, setRefundTarget] = useState<MemberPurchase | null>(null);
   const [refunded, setRefunded] = useState<string | null>(null);
   const [undoTarget, setUndoTarget] = useState<MemberPurchase | null>(null);
-  const [undoError, setUndoError] = useState<string | null>(null);
-  const [undoing, startUndo] = useTransition();
+  const [linkTarget, setLinkTarget] = useState<MemberPurchase | null>(null);
+  const [cardError, setCardError] = useState<string | null>(null);
+  const [cardBusy, startCard] = useTransition();
+  const who = firstName(member.name);
+
+  function undo(target: MemberPurchase, unlink: boolean) {
+    setUndoTarget(null);
+    setCardError(null);
+    startCard(async () => {
+      const ref = target.kind === "order" ? { orderId: target.id } : { bookingId: target.id };
+      const r = await undoCardMatchInBackOffice(member.id, ref, unlink).catch(() => ({ ok: false as const, error: "Couldn't undo it. Try again." }));
+      if (!r.ok) setCardError(r.error);
+      else setRefunded(`${target.label}: ${r.message}`);
+      router.refresh();
+    });
+  }
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Purchase history</h2>
       {refunded && <div className="notice notice-success mb-3 !p-3 text-sm">{refunded}</div>}
-      {undoError && <div className="notice notice-warn mb-3 !p-3 text-sm">{undoError}</div>}
+      {cardError && <div className="notice notice-warn mb-3 !p-3 text-sm">{cardError}</div>}
       {purchases.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No purchases on file for this member.</p>
       ) : (
@@ -608,21 +623,40 @@ function PurchaseHistoryCard({ memberId, purchases, canUndoCardMatch }: { member
               <span className="text-[var(--muted)]">{money(p.total)}</span>
               <span className="text-xs text-[var(--muted)]">
                 {new Date(p.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                {p.paymentMethod ? ` · ${p.cardLabel && p.paymentMethod === "card" ? p.cardLabel : p.paymentMethod}` : ""}
+                {p.cardLabel ? ` · ${p.cardLabel}` : p.paymentMethod ? ` · ${p.paymentMethod}` : ""}
               </span>
-              {p.byCard && (
-                <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]" title="Nobody was attached at the register, so the card that paid found this member">
-                  Found by card
+              {p.cardHow && (
+                <span
+                  className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]"
+                  title={
+                    p.cardHow === "card"
+                      ? "Nobody was attached, so the card that paid gave them the points. They see only the points, not what was bought."
+                      : p.cardHow === "picked"
+                        ? "The card that paid is on more than one account, and the cashier picked this member."
+                        : "Given to this member at the register after a card match was undone."
+                  }
+                >
+                  {p.pointsOnly ? "Points only, by card" : "Points by card"}
                 </span>
               )}
-              {p.byCard && canUndoCardMatch && p.status === "completed" && (
-                <button className="rounded border border-[var(--border)] px-2 py-1 text-xs" disabled={undoing} onClick={() => setUndoTarget(p)}>
-                  Not their card
+              {p.cardHow && canUndoCardMatch && p.status !== "refunded" && (
+                <button className="rounded border border-[var(--border)] px-2 py-1 text-xs" disabled={cardBusy} onClick={() => setUndoTarget(p)}>
+                  Someone else paid
+                </button>
+              )}
+              {p.canLinkCard && canUndoCardMatch && (
+                <button
+                  className="rounded border border-[var(--border)] px-2 py-1 text-xs"
+                  disabled={cardBusy}
+                  title={`Link the card that paid, if ${who} asks: then a sale on it with nobody attached earns their points.`}
+                  onClick={() => setLinkTarget(p)}
+                >
+                  Link this card
                 </button>
               )}
               {p.status === "refunded" ? (
                 <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]">Refunded</span>
-              ) : p.total > 0 ? (
+              ) : p.total > 0 && !p.pointsOnly ? (
                 <button
                   className="ml-auto rounded border border-[var(--border)] px-2 py-1 text-xs "
                   onClick={() => setRefundTarget(p)}
@@ -651,20 +685,52 @@ function PurchaseHistoryCard({ memberId, purchases, canUndoCardMatch }: { member
       )}
 
       {undoTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="card w-full max-w-sm text-center shadow-2xl">
+            <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+              Take these points back from {who}?
+            </h3>
+            <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+              {undoTarget.label} was paid with {undoTarget.cardLabel ?? "a card"}, and nobody was attached, so its points went to {who}.
+              {undoTarget.kind === "order" ? " Taking them back also takes the sale off their account." : ""}
+            </p>
+            <div className="mt-4 flex flex-col gap-2">
+              {undoTarget.cardHow === "card" ? (
+                <>
+                  <button className="btn-secondary" onClick={() => undo(undoTarget, false)}>
+                    Someone else paid with {who}&apos;s card (keep it linked)
+                  </button>
+                  <button className="btn-secondary" style={{ color: "var(--danger-text)" }} onClick={() => undo(undoTarget, true)}>
+                    It isn&apos;t {who}&apos;s card (unlink it too)
+                  </button>
+                </>
+              ) : (
+                <button className="btn-secondary" style={{ color: "var(--danger-text)" }} onClick={() => undo(undoTarget, false)}>
+                  Take them back
+                </button>
+              )}
+              <button className="btn-secondary" onClick={() => setUndoTarget(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {linkTarget && (
         <ConfirmModal
-          title="Not their card?"
-          description={`${undoTarget.label} was put on this member because ${undoTarget.cardLabel ?? "the card"} that paid is linked to them. This takes its points back off their account, takes them off the sale, and unlinks that card from them.`}
-          confirmLabel="Take it back"
-          danger
-          onCancel={() => setUndoTarget(null)}
+          title={`Link ${linkTarget.cardLabel ?? "this card"}?`}
+          description={`Only if ${who} asks. Then a sale paid with it, with nobody attached, earns ${who}'s points. Cards link on their own once they've paid for ${who} on 2 different days.`}
+          confirmLabel="Link it"
+          onCancel={() => setLinkTarget(null)}
           onConfirm={() => {
-            const target = undoTarget;
-            setUndoTarget(null);
-            setUndoError(null);
-            startUndo(async () => {
-              const r = await undoCardMatchInBackOffice(memberId, target.id).catch(() => ({ ok: false as const, error: "Couldn't undo it. Try again." }));
-              if (!r.ok) setUndoError(r.error);
-              else setRefunded(`${target.label}: ${r.message}`);
+            const target = linkTarget;
+            setLinkTarget(null);
+            setCardError(null);
+            startCard(async () => {
+              const r = await linkCardFromSale(member.id, target.id).catch(() => ({ ok: false as const, error: "Couldn't link it. Try again." }));
+              if (!r.ok) setCardError(r.error);
+              else setRefunded(r.message ?? "Linked.");
               router.refresh();
             });
           }}
@@ -680,11 +746,27 @@ function PurchaseHistoryCard({ memberId, purchases, canUndoCardMatch }: { member
 // them again on its own. A manager can link a removed one again.
 function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: MemberCard[]; canRelink: boolean }) {
   const [pending, run, error] = useRefreshingAction();
+  const [note, setNote] = useState<string | null>(null);
+  const [relinkTarget, setRelinkTarget] = useState<MemberCard | null>(null);
   const active = cards.filter((c) => !c.removedAt);
   const removed = cards.filter((c) => c.removedAt);
+  const who = firstName(member.name);
   const day = (d: string) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
   const how = (c: MemberCard) =>
-    c.source === "online" ? "buying tickets online" : c.source === "plus" ? "from their Insiders+ billing" : `at the register${c.linkedBy ? ` (${c.linkedBy})` : ""}`;
+    c.source === "online"
+      ? "buying tickets online, signed in"
+      : c.source === "plus"
+        ? "from their Insiders+ billing"
+        : c.source === "staff"
+          ? `by a manager${c.linkedBy ? ` (${c.linkedBy})` : ""}`
+          : `at the register${c.linkedBy ? ` (${c.linkedBy})` : ""}`;
+  const relink = (c: MemberCard) =>
+    run(async () => {
+      setNote(null);
+      const r = await relinkMemberCard(member.id, c.id);
+      if (r.ok && r.message) setNote(r.message);
+      return r;
+    });
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
@@ -692,12 +774,15 @@ function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: 
         Linked cards <InfoTip topic="card-linked-points" />
       </h2>
       <p className="mb-3 text-sm text-[var(--muted)]">
-        A sale paid with one of these, with nobody attached, goes on {firstName(member.name)}&apos;s account with its points. We keep the
-        card type and last four digits only.
+        A sale paid with one of these, with nobody attached, earns {who}&apos;s points ({who} sees only the points, not what was bought). We keep
+        each card&apos;s type, last four digits and Stripe&apos;s code for recognizing it, never the card number.
         {member.link_cards === false && <strong> They turned card linking off, so these aren&apos;t used.</strong>}
       </p>
       {active.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">No cards linked. A card links when they pay by card with their account attached.</p>
+        <p className="text-sm text-[var(--muted)]">
+          No cards linked. A card links when it pays for {who} with their account attached on 2 different days, when they buy tickets online signed
+          in, or from their Insiders+ billing.
+        </p>
       ) : (
         <ul className="divide-y divide-[var(--border)]">
           {active.map((c) => (
@@ -718,10 +803,11 @@ function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: 
         </ul>
       )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
+      {note && <p className="mt-2 text-sm text-[var(--muted)]">{note}</p>}
       {removed.length > 0 && (
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer text-[var(--muted)]">
-            {removed.length} removed card{removed.length === 1 ? "" : "s"} (not linked again on their own)
+            {removed.length} removed card{removed.length === 1 ? "" : "s"} (not linked again on their own; only Stripe&apos;s code for each is kept)
           </summary>
           <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
             {removed.map((c) => (
@@ -735,10 +821,7 @@ function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: 
                     className="rounded border border-[var(--border)] px-2 py-0.5 text-xs disabled:opacity-50"
                     disabled={pending}
                     title={c.removedByMember ? "They removed it themselves: only link it again if they ask" : undefined}
-                    onClick={() => {
-                      if (c.removedByMember && !window.confirm(`${firstName(member.name)} removed ${c.label} from their account themselves. Link it again only if they asked. Link it again?`)) return;
-                      run(() => relinkMemberCard(member.id, c.id), { quiet: true });
-                    }}
+                    onClick={() => (c.removedByMember ? setRelinkTarget(c) : relink(c))}
                   >
                     Link again
                   </button>
@@ -747,6 +830,19 @@ function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: 
             ))}
           </ul>
         </details>
+      )}
+      {relinkTarget && (
+        <ConfirmModal
+          title="Link it again?"
+          description={`${who} removed this card from their account themselves. Link it again only if they asked.`}
+          confirmLabel="Link it again"
+          onCancel={() => setRelinkTarget(null)}
+          onConfirm={() => {
+            const c = relinkTarget;
+            setRelinkTarget(null);
+            relink(c);
+          }}
+        />
       )}
     </div>
   );

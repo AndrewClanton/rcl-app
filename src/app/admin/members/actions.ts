@@ -14,6 +14,8 @@ import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 import { seesFullContact } from "@/lib/contact-mask";
 import { birthdayFromInput } from "@/lib/visits";
+import { MAX_AUTO_LINKED_CARDS, cardLabel, cardOwners, type SaleCard } from "@/lib/card-match";
+import { linkCard, loadCardLinks, loadSaleOrder, staffAccount, storedCard } from "@/lib/member-cards";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -147,13 +149,15 @@ export async function adjustMemberPoints(id: string, newBalance: number, note?: 
 
 // ---------- linked cards (lib/member-cards.ts) ----------
 
+type CardResult = { ok: true; message?: string } | { ok: false; error: string };
+
 // Takes a card off a member: it stops finding them, and isn't linked to
 // them again on its own. Any staff.
-export async function unlinkMemberCard(memberId: string, cardId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function unlinkMemberCard(memberId: string, cardId: string): Promise<CardResult> {
   const staff = await assertStaff();
   const { data, error } = await createAdminClient()
     .from("member_cards")
-    .update({ removed_at: new Date().toISOString(), removed_by: staff.employeeId })
+    .update({ removed_at: new Date().toISOString(), removed_by: staff.employeeId, brand: null, last4: null, wallet: null })
     .eq("id", cardId)
     .eq("member_id", memberId)
     .is("removed_at", null)
@@ -164,17 +168,50 @@ export async function unlinkMemberCard(memberId: string, cardId: string): Promis
   return { ok: true };
 }
 
+// Whether a manager may link a card to this member by hand: not a removed
+// member, not one who turned linking off, not the manager's own account
+// (another manager does that), and not past the card limit.
+async function mayLinkByHand(supabase: ReturnType<typeof createAdminClient>, memberId: string, staff: { employeeId: string; email: string }, livemode: boolean): Promise<string | null> {
+  const { data: member } = await supabase.from("members").select("erased_at, link_cards, email, auth_user_id").eq("id", memberId).maybeSingle();
+  if (!member || member.erased_at) return "This member's personal info was removed.";
+  if (member.link_cards === false) return "They turned card linking off on their account.";
+  if (await staffAccount(supabase, { authUserId: member.auth_user_id, email: member.email }, { ids: [staff.employeeId], emails: [staff.email] })) {
+    return "That's your own account. Ask another manager to link your card.";
+  }
+  const { count } = await supabase.from("member_cards").select("id", { count: "exact", head: true }).eq("member_id", memberId).eq("livemode", livemode).is("removed_at", null);
+  if ((count ?? 0) >= MAX_AUTO_LINKED_CARDS) return `They already have ${MAX_AUTO_LINKED_CARDS} cards linked. Unlink one first.`;
+  return null;
+}
+
+async function sharedNote(supabase: ReturnType<typeof createAdminClient>, memberId: string, card: SaleCard): Promise<string> {
+  const others = cardOwners(card, await loadCardLinks(supabase, card.fingerprint)).filter((id) => id !== memberId).length;
+  return others ? ` It's on ${others} other account${others === 1 ? "" : "s"} too, so a sale on it with nobody attached asks who's paying.` : "";
+}
+
 // Puts back a card that was unlinked (by mistake, or the member asks for
 // it back). A removed card is never linked again on its own, so this is the
 // only way back. Managers and up.
-export async function relinkMemberCard(memberId: string, cardId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  await assertManager();
+export async function relinkMemberCard(memberId: string, cardId: string): Promise<CardResult> {
+  const staff = await assertManager();
   const supabase = createAdminClient();
-  const { data: member } = await supabase.from("members").select("erased_at").eq("id", memberId).maybeSingle();
-  if (!member || member.erased_at) return { ok: false, error: "This member's personal info was removed." };
+  const { data: link } = await supabase.from("member_cards").select("fingerprint, livemode, brand, last4, wallet, removed_at").eq("id", cardId).eq("member_id", memberId).maybeSingle();
+  if (!link) return { ok: false, error: "That card isn't on this member." };
+  if (!link.removed_at) return { ok: false, error: "That card is already linked." };
+  const blocked = await mayLinkByHand(supabase, memberId, staff, link.livemode);
+  if (blocked) return { ok: false, error: blocked };
+  // Its type and last four were deleted when it was removed: back from the
+  // last payment made with it, if there is one.
+  const { data: paid } = await supabase
+    .from("card_payments")
+    .select("brand, last4, wallet")
+    .eq("fingerprint", link.fingerprint)
+    .eq("livemode", link.livemode)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
   const { data, error } = await supabase
     .from("member_cards")
-    .update({ removed_at: null, removed_by: null, removed_by_member: false })
+    .update({ removed_at: null, removed_by: null, removed_by_member: false, linked_by: staff.employeeId, ...(paid ? { brand: paid.brand, last4: paid.last4, wallet: paid.wallet } : {}) })
     .eq("id", cardId)
     .eq("member_id", memberId)
     .not("removed_at", "is", null)
@@ -182,28 +219,71 @@ export async function relinkMemberCard(memberId: string, cardId: string): Promis
   if (error) return { ok: false, error: "Couldn't link it again. Try again." };
   if (!data?.length) return { ok: false, error: "That card is already linked." };
   revalidatePath(`/admin/members/${memberId}`);
-  return { ok: true };
+  return { ok: true, message: `Linked again.${await sharedNote(supabase, memberId, { fingerprint: link.fingerprint, livemode: link.livemode, brand: link.brand, last4: link.last4, wallet: link.wallet })}` };
 }
 
-// A sale the card found them for, but it wasn't their card. The register
-// can undo it for 2 minutes; after that it's here, managers and up. The
-// points come back off through their points history, the sale goes back to
-// having no member, and the card isn't linked to them anymore.
-export async function undoCardMatchInBackOffice(memberId: string, orderId: string): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+// Links the card that paid one of their sales (one they were attached to),
+// when they ask: a card that doesn't link on its own (the first day it
+// paid for them, their own staff account, or a card already on someone
+// else's account). Managers and up.
+export async function linkCardFromSale(memberId: string, orderId: string): Promise<CardResult> {
   const staff = await assertManager();
   const supabase = createAdminClient();
-  const { data: order } = await supabase.from("orders").select("member_id, member_source").eq("id", orderId).maybeSingle();
-  if (!order || order.member_id !== memberId || order.member_source !== "card") return { ok: false, error: "That sale isn't matched to this member by card anymore." };
-  const { data: taken, error } = await supabase.rpc("undo_card_match", { p_order: orderId, p_by: staff.employeeId });
-  if (error) {
-    console.error("card match undo failed", orderId, error.message);
+  const sale = await loadSaleOrder(supabase, orderId);
+  if (!sale?.payment || sale.order.member_id !== memberId || sale.order.member_source || sale.order.status !== "completed") {
+    return { ok: false, error: "Only the card on a sale they were attached to can be linked from here." };
+  }
+  const card = storedCard(sale.payment);
+  const { data: existing } = await supabase.from("member_cards").select("removed_at").eq("member_id", memberId).eq("fingerprint", card.fingerprint).eq("livemode", card.livemode).maybeSingle();
+  if (existing && !existing.removed_at) return { ok: false, error: "That card is already linked to them." };
+  if (existing) return { ok: false, error: "That card was removed from their account before. Use Link again under Linked cards." };
+  const blocked = await mayLinkByHand(supabase, memberId, staff, card.livemode);
+  if (blocked) return { ok: false, error: blocked };
+  try {
+    await linkCard(supabase, { memberId, card, source: "staff", orderId, by: staff.employeeId });
+  } catch {
+    return { ok: false, error: "Couldn't link it. Try again." };
+  }
+  revalidatePath(`/admin/members/${memberId}`);
+  return { ok: true, message: `${cardLabel(card)} is linked.${await sharedNote(supabase, memberId, card)}` };
+}
+
+// A sale (or online tickets) whose points the card gave this member, but
+// someone else paid. The register can undo it for 2 minutes; after that
+// it's here, managers and up. The points come back off through their
+// points history, and a register sale goes back to having no member.
+// unlink: it isn't their card at all, so it comes off their account too.
+export async function undoCardMatchInBackOffice(memberId: string, ref: { orderId?: string; bookingId?: string }, unlink: boolean): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const staff = await assertManager();
+  const supabase = createAdminClient();
+  const gone = "Those points aren't from this member's card anymore.";
+  const id = ref.orderId ?? ref.bookingId;
+  if (typeof id !== "string" || !id) return { ok: false, error: gone };
+  const { data: payment } = await supabase
+    .from("card_payments")
+    .select("credited_member_id, credited_how, undone_at")
+    .eq(ref.orderId ? "order_id" : "booking_id", id)
+    .maybeSingle();
+  if (!payment || payment.credited_member_id !== memberId || payment.undone_at) return { ok: false, error: gone };
+  if (ref.orderId) {
+    const { data: order } = await supabase.from("orders").select("member_id, member_source").eq("id", ref.orderId).maybeSingle();
+    if (!order || order.member_id !== memberId || order.member_source !== "card") return { ok: false, error: gone };
+  }
+  // A cashier's pick of a shared card, or points given after an undo, never
+  // unlink anyone (the database checks this too).
+  const unlinks = unlink === true && payment.credited_how === "card";
+  const r = ref.orderId
+    ? await supabase.rpc("undo_card_sale", { p_order: id, p_unlink: unlinks, p_by: staff.employeeId })
+    : await supabase.rpc("undo_card_booking", { p_booking: id, p_unlink: unlinks, p_by: staff.employeeId });
+  if (r.error) {
+    console.error("card match undo failed", id, r.error.message);
     return { ok: false, error: "Couldn't undo it. Try again." };
   }
-  if (taken === null) return { ok: false, error: "That sale isn't matched to this member by card anymore." };
+  if (r.data === null || r.data === undefined) return { ok: false, error: gone };
   revalidate();
   revalidatePath(`/admin/members/${memberId}`);
-  const n = Math.round(Number(taken));
-  return { ok: true, message: `Undone: ${n} point${n === 1 ? "" : "s"} taken back, and the card isn't linked to them anymore.` };
+  const n = Math.round(Number(r.data));
+  return { ok: true, message: `Undone: ${n} point${n === 1 ? "" : "s"} taken back${unlinks ? ", and the card is unlinked from them" : ""}.` };
 }
 
 // Removes a member's personal info on request (see /data-deletion): cancels
@@ -327,6 +407,8 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
     returnTo: null,
     firstChargeAt,
     interval: annual ? "year" : "month",
+    // Staff started it for this member: the card is theirs.
+    linkCard: true,
   }).catch(() => null);
   return url ? { ok: true, url } : { ok: false, error: "Couldn't open Stripe's card page. Try again." };
 }

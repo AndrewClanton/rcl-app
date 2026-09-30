@@ -5,6 +5,7 @@ import { bookingNumber } from "@/lib/door-tickets";
 import { businessDay } from "@/lib/ops/time";
 import { cardLabel } from "@/lib/card-match";
 import { stripeKeyMode } from "@/lib/stripe";
+import { schemaMissing } from "@/lib/schema-missing";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -32,16 +33,26 @@ export interface PurchaseRow {
   status: "completed" | "refunded";
 }
 
+// A register sale is theirs to see (items, receipt) only when staff
+// attached them: one whose points a linked card paid them (member_source
+// 'card', lib/member-cards.ts) may have been someone else paying, so it
+// shows only as points in their points history. Before migration
+// 20261001100000 there's no member_source, and every sale is theirs.
+
 export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
   const supabase = createAdminClient();
-  const [orders, bookings, booths] = await Promise.all([
-    supabase
+  const ordersQuery = (withSource: boolean) => {
+    let q = supabase
       .from("orders")
       .select("id, order_number, total, tax, status, completed_at, items:order_items(name, quantity)")
       .eq("member_id", memberId)
       .in("status", ["completed", "refunded"])
-      .not("completed_at", "is", null)
-      .order("completed_at", { ascending: false }),
+      .not("completed_at", "is", null);
+    if (withSource) q = q.is("member_source", null);
+    return q.order("completed_at", { ascending: false });
+  };
+  const [firstOrders, bookings, booths] = await Promise.all([
+    ordersQuery(true),
     supabase
       .from("bookings")
       .select("id, quantity, unit_price, tax_amount, status, created_at, screening:screenings(starts_at, movie:movies(title))")
@@ -60,6 +71,7 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       .in("status", ["confirmed", "cancelled"])
       .order("created_at", { ascending: false }),
   ]);
+  const orders = schemaMissing(firstOrders.error) ? await ordersQuery(false) : firstOrders;
   if (orders.error) throw orders.error;
   if (bookings.error) throw bookings.error;
   if (booths.error) throw booths.error;
@@ -156,15 +168,21 @@ async function ledgerFor(ref: { orderId?: string; bookingId?: string }) {
 export async function getReceipt(member: { id: string; name: string; email: string | null }, kind: PurchaseKind, id: string): Promise<Receipt | null> {
   const supabase = createAdminClient();
   if (kind === "order") {
-    const { data: o } = await supabase
-      .from("orders")
-      .select(
-        "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, items:order_items(name, quantity, unit_price, modifiers)"
-      )
-      .eq("id", id)
-      .eq("member_id", member.id)
-      .in("status", ["completed", "refunded"])
-      .maybeSingle();
+    // Only a sale staff attached them to (see getPurchases).
+    const receiptQuery = (withSource: boolean) => {
+      let q = supabase
+        .from("orders")
+        .select(
+          "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, items:order_items(name, quantity, unit_price, modifiers)"
+        )
+        .eq("id", id)
+        .eq("member_id", member.id)
+        .in("status", ["completed", "refunded"]);
+      if (withSource) q = q.is("member_source", null);
+      return q.maybeSingle();
+    };
+    let { data: o, error } = await receiptQuery(true);
+    if (schemaMissing(error)) ({ data: o, error } = await receiptQuery(false));
     if (!o || !o.completed_at) return null;
     const pts = await ledgerFor({ orderId: o.id });
     const discounts = [
@@ -408,17 +426,34 @@ export interface LedgerEntry {
   createdAt: string;
   orderId: string | null;
   bookingId: string | null;
+  // Their receipt for it is on their account: a sale staff attached them to,
+  // or their own booking. Not for points a linked card paid them on a sale
+  // or online tickets someone else may have bought (lib/member-cards.ts).
+  receipt: boolean;
 }
 
 export async function getPointsLedger(memberId: string, limit = 300): Promise<LedgerEntry[]> {
-  const { data, error } = await createAdminClient()
-    .from("points_ledger")
-    .select("id, delta, balance_after, reason, note, created_at, order_id, booking_id")
-    .eq("member_id", memberId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const base = "id, delta, balance_after, reason, note, created_at, order_id, booking_id";
+  const ledger = (columns: string) => createAdminClient().from("points_ledger").select(columns).eq("member_id", memberId).order("created_at", { ascending: false }).limit(limit);
+  // Who each sale or booking is on now, and how (migration 20261001100000);
+  // before it, every one of them is theirs, as it always was.
+  let { data, error } = await ledger(`${base}, order:orders(member_id, member_source), booking:bookings(member_id)`);
+  const withOwners = !schemaMissing(error);
+  if (!withOwners) ({ data, error } = await ledger(base));
   if (error) throw error;
-  return (data ?? []).map((l) => ({
+  type Row = {
+    id: string;
+    delta: number;
+    balance_after: number;
+    reason: string;
+    note: string | null;
+    created_at: string;
+    order_id: string | null;
+    booking_id: string | null;
+    order?: { member_id: string | null; member_source: string | null } | null;
+    booking?: { member_id: string | null } | null;
+  };
+  return ((data ?? []) as unknown as Row[]).map((l) => ({
     id: l.id,
     delta: Number(l.delta),
     balanceAfter: Number(l.balance_after),
@@ -427,6 +462,13 @@ export async function getPointsLedger(memberId: string, limit = 300): Promise<Le
     createdAt: l.created_at,
     orderId: l.order_id,
     bookingId: l.booking_id,
+    receipt: !withOwners
+      ? !!(l.order_id || l.booking_id)
+      : l.order_id
+        ? l.order?.member_id === memberId && !l.order.member_source
+        : l.booking_id
+          ? l.booking?.member_id === memberId
+          : false,
   }));
 }
 
@@ -453,6 +495,8 @@ export async function getMyLinkedCards(memberId: string): Promise<MyLinkedCard[]
     .is("removed_at", null);
   if (stripeKeyMode() === "live") query = query.eq("livemode", true);
   const { data, error } = await query.order("created_at", { ascending: false });
+  // Before migration 20261001100000: no cards yet.
+  if (schemaMissing(error)) return [];
   if (error) throw error;
   return (data ?? []).map((c) => ({
     id: c.id,

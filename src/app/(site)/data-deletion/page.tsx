@@ -48,7 +48,7 @@ export default async function DataDeletionPage() {
           <li>Your photo</li>
           <li>Your sign-in connections: password, Google and Facebook</li>
           <li>Your points and points history</li>
-          <li>Your linked cards</li>
+          <li>Your linked cards, and the card details on your purchases</li>
           <li>Your email preferences</li>
         </ul>
       </section>

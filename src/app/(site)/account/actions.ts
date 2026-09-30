@@ -139,13 +139,16 @@ export async function setEmailOptIn(optIn: boolean): Promise<ProfileResult> {
 // ---------- linked cards (lib/member-cards.ts) ----------
 
 // Takes a card off their account: it stops earning them points without
-// signing in, and isn't linked to them again on its own. Only their own.
+// signing in, and isn't linked to them again on its own. Its type and last
+// four digits are deleted; only Stripe's code for it stays, so it's
+// recognized and not linked again. Only their own. (Staff removing one does
+// the same: admin/members/actions.ts, pos/card-link-actions.ts.)
 export async function removeMyCard(cardId: string): Promise<ProfileResult> {
   const member = await requireMember();
   if (typeof cardId !== "string" || !cardId) return { ok: false, error: "Couldn't remove it. Try again." };
   const { data, error } = await createAdminClient()
     .from("member_cards")
-    .update({ removed_at: new Date().toISOString(), removed_by_member: true })
+    .update({ removed_at: new Date().toISOString(), removed_by_member: true, brand: null, last4: null, wallet: null })
     .eq("id", cardId)
     .eq("member_id", member.id)
     .is("removed_at", null)

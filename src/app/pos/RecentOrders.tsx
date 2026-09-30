@@ -20,7 +20,9 @@ function asReceipt(o: RecentOrder): ReceiptData {
     orderNumber: o.orderNumber,
     at: o.at,
     cashier: o.cashier,
-    member: o.member,
+    // A member the card found isn't printed: whoever paid takes the
+    // receipt, and it may not be their card.
+    member: o.memberByCard ? null : o.member,
     orderName: o.name,
     lines: o.lines.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit, mods: l.mods })),
     subtotal: o.subtotal,
@@ -150,7 +152,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       {[
                         selected.name && `For ${selected.name}`,
                         selected.cashier && `Rung up by ${selected.cashier}`,
-                        selected.member && `Member: ${selected.member}${selected.memberByCard ? " (found by their card)" : ""}`,
+                        selected.member && `Member: ${selected.member}${selected.memberByCard ? " (points by card)" : ""}`,
                         `Paid ${paidWith(selected)}`,
                       ]
                         .filter(Boolean)
@@ -158,8 +160,8 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                     </p>
                     {selected.memberByCard && (
                       <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                        Nobody was attached, so the card found them and they got the points. If it wasn&apos;t their card, a manager can undo it on
-                        their page in Back office.
+                        Nobody was attached, so the card that paid gave them the points (they see only the points, not what was bought). If
+                        someone else paid, a manager can undo it on their page in Back office.
                       </p>
                     )}
                     {selected.status !== "completed" && (

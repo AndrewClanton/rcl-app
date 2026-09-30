@@ -14,14 +14,21 @@
 // manager can undo a card match from the member's page in Back office.
 export const CARD_UNDO_MS = 2 * 60 * 1000;
 
-// A member attached to card sales gets up to this many cards linked on
-// their own. Past that, more aren't linked (someone attached to a lot of
-// other people's sales shouldn't collect their cards).
+// A card links to a member on its own only after it has paid for sales they
+// were attached to on this many different business days. One sale isn't
+// enough: whoever paid for a friend's or a teen's order would otherwise be
+// linked to them.
+export const LINK_AFTER_DAYS = 2;
+
+// A member gets up to this many cards linked on their own. Past that, more
+// aren't linked (someone attached to a lot of other people's sales
+// shouldn't collect their cards). A manager can still link one in Back
+// office, up to the same number.
 export const MAX_AUTO_LINKED_CARDS = 4;
 
-// The note on the points taken back by an Undo (undo_card_match in
-// migration 20261001100000). The member's points history shows it as
-// "Taken back: not your card".
+// The note on the points taken back by an Undo (undo_card_sale and
+// undo_card_booking in migration 20261001100000). The member's points
+// history shows it as "Taken back: this purchase wasn't yours".
 export const CARD_UNDO_NOTE = "Card match undone";
 
 export interface SaleCard {
@@ -75,6 +82,20 @@ export function cardFromCharge(charge: ChargeLike | null | undefined): SaleCard 
   };
 }
 
+// The register's payments carry metadata.source "pos" (a tap or insert on
+// the reader) or "pos-tab" (a tab's card on file). A payment id sent by a
+// register is only read for its card if it's one of those, for the amount
+// the sale says was paid by card: never an online booking, a membership
+// bill or someone else's payment.
+export const REGISTER_PAYMENT_SOURCES = ["pos", "pos-tab"];
+
+export function isRegisterPayment(pi: { status?: string | null; metadata?: Record<string, string> | null; amount_received?: number | null }, cardAmount: number | null | undefined): boolean {
+  if (pi.status !== "succeeded") return false;
+  if (!REGISTER_PAYMENT_SOURCES.includes(pi.metadata?.source ?? "")) return false;
+  const want = Math.round(Number(cardAmount ?? NaN) * 100);
+  return Number.isFinite(want) && want > 0 && pi.amount_received === want;
+}
+
 const WALLET_NAMES: Record<string, string> = { apple_pay: "Apple Pay", google_pay: "Google Pay", samsung_pay: "Samsung Pay", unknown: "Phone wallet" };
 const BRAND_NAMES: Record<string, string> = { amex: "Amex", american_express: "Amex", mastercard: "Mastercard", visa: "Visa", discover: "Discover", diners: "Diners Club", jcb: "JCB", unionpay: "UnionPay" };
 
@@ -91,11 +112,14 @@ export function cardLabel(card: { brand: string | null; last4: string | null; wa
   return card.last4 ? `${cardName(card)} •••• ${card.last4}` : cardName(card);
 }
 
-// For the note on the points: "matched by card ending 4242", or "matched by
-// Apple Pay ending 1234" for a phone.
-export function matchedByNote(card: { last4: string | null; wallet: string | null }): string {
-  const what = card.wallet && card.wallet !== "link" ? (WALLET_NAMES[card.wallet] ?? "phone wallet") : "card";
-  return card.last4 ? `matched by ${what} ending ${card.last4}` : `matched by ${what}`;
+// The notes on points a card paid. No card digits: if it turns out the card
+// wasn't theirs, their points history mustn't show someone else's card.
+export type CreditHow = "card" | "picked" | "given";
+export function saleCreditNote(orderNumber: number, how: CreditHow): string {
+  return how === "given" ? `Order #${orderNumber}, given to you at the register` : `Order #${orderNumber}, paid with a card linked to your account`;
+}
+export function bookingCreditNote(quantity: number): string {
+  return `${quantity} ticket${quantity === 1 ? "" : "s"} bought online, paid with a card linked to your account`;
 }
 
 export function firstName(name: string | null | undefined): string {
@@ -128,6 +152,8 @@ export interface SaleForMatch {
   status: string;
   memberId: string | null;
   memberSource: string | null;
+  // A card match on this sale was undone: it isn't matched again.
+  undone: boolean;
 }
 
 // The member staff attached to the sale, when there is one.
@@ -135,23 +161,26 @@ export interface AttachedMember {
   erased: boolean;
   linksCards: boolean;
   activeCards: number; // cards linked to them now (not removed), in this mode
-  isCashier: boolean; // the cashier's own account (a staff login is also a member)
+  // The cashier's own account (a staff login is also a member). Their card
+  // is linked only by a manager in Back office.
+  isCashier: boolean;
+  // Different business days this card paid for a sale they were attached
+  // to, this one included.
+  daysWithCard: number;
+  // They paid it themselves, signed in (online tickets, or an Insiders+
+  // checkout they or staff started for them): no second day needed.
+  selfPaid: boolean;
 }
 
 export type CardDecision =
   | { kind: "skip"; why: string }
-  // Found by this card already (a retried save): show it again.
-  | { kind: "already_matched"; memberId: string }
+  // Credited by the card already (a retried save): show it again.
+  | { kind: "already_credited"; memberId: string }
   // This sale is what linked the card (a retried save): show it again.
   | { kind: "linked_here"; memberId: string }
   // Already theirs: just note it was used.
   | { kind: "used"; memberId: string }
   | { kind: "link"; memberId: string }
-  // The cashier's own account: ask instead of linking.
-  | { kind: "offer_self"; memberId: string }
-  // Already linked to someone else (a family card): ask before sharing it,
-  // since a shared card never finds anyone on its own.
-  | { kind: "offer_shared"; memberId: string; ownerIds: string[] }
   | { kind: "attach"; memberId: string }
   // On more than one account (a shared family card): ask who.
   | { kind: "choose"; memberIds: string[] };
@@ -165,40 +194,44 @@ export function cardOwners(card: { livemode: boolean }, links: CardLinkRow[]): s
 }
 
 // What to do with a paid card sale.
-//  - With a member attached (by staff): link the card to them, unless
-//    they removed it before, it's the cashier's own account (asked
-//    instead), it's already someone else's (asked whether to share it;
-//    until then it stays theirs alone), or they already have enough cards.
-//    The sale's points were already paid to them; nothing moves.
-//  - With nobody attached: one member owns the card, so the sale is
-//    theirs. Two or more, nobody gets it automatically.
+//  - With a member attached (by staff): link the card to them once it has
+//    paid for their sales on 2 different days, unless they removed it
+//    before, they have enough cards, it's the cashier's own account, or
+//    it's already someone else's (a manager can link those in Back
+//    office). The sale's points were already paid to them; nothing moves.
+//  - With nobody attached: one member owns the card, so the points are
+//    theirs. Two or more, nobody gets them automatically: the cashier asks.
 export function decideCardOutcome(sale: SaleForMatch, card: { livemode: boolean }, links: CardLinkRow[], attached: AttachedMember | null): CardDecision {
   if (sale.status !== "completed") return { kind: "skip", why: "not a completed sale" };
   const owners = cardOwners(card, links);
 
   if (sale.memberId) {
     const memberId = sale.memberId;
-    if (sale.memberSource === "card") return { kind: "already_matched", memberId };
+    if (sale.memberSource) return { kind: "already_credited", memberId };
     if (!attached || attached.erased) return { kind: "skip", why: "member removed" };
     const mine = links.find((l) => l.memberId === memberId && l.livemode === card.livemode) ?? null;
     if (mine?.removed) return { kind: "skip", why: "removed before" };
-    if (mine) return mine.linkedOrderId === sale.orderId ? { kind: "linked_here", memberId } : { kind: "used", memberId };
+    if (mine) return mine.linkedOrderId && mine.linkedOrderId === sale.orderId ? { kind: "linked_here", memberId } : { kind: "used", memberId };
     if (!attached.linksCards) return { kind: "skip", why: "linking turned off" };
-    const others = owners.filter((id) => id !== memberId);
-    // A cashier on their own account isn't offered someone else's card.
-    if (others.length && attached.isCashier) return { kind: "skip", why: "someone else's card" };
-    if (!others.length && attached.isCashier) return { kind: "offer_self", memberId };
     if (attached.activeCards >= MAX_AUTO_LINKED_CARDS) return { kind: "skip", why: "enough cards" };
-    if (others.length) return { kind: "offer_shared", memberId, ownerIds: others };
+    if (attached.isCashier) return { kind: "skip", why: "the cashier's own account" };
+    if (owners.some((id) => id !== memberId)) return { kind: "skip", why: "someone else's card" };
+    if (!attached.selfPaid && attached.daysWithCard < LINK_AFTER_DAYS) return { kind: "skip", why: "not on another day yet" };
     return { kind: "link", memberId };
   }
 
+  if (sale.undone) return { kind: "skip", why: "undone" };
   if (owners.length === 1) return { kind: "attach", memberId: owners[0] };
   if (owners.length > 1) return { kind: "choose", memberIds: owners };
   return { kind: "skip", why: "no one has this card" };
 }
 
 // ---------- what the register shows ----------
+
+export interface NoticeCandidate {
+  id: string;
+  name: string; // "Sarah R."
+}
 
 interface NoticeBase {
   orderId: string;
@@ -213,12 +246,15 @@ interface NoticeBase {
 }
 
 export type CardNotice =
-  | (NoticeBase & { kind: "matched"; firstName: string; points: number })
+  // The card's member got the points (how: the card found them, the
+  // cashier picked them for a shared card, or gave them after an undo).
+  | (NoticeBase & { kind: "matched"; firstName: string; points: number; how: CreditHow })
   | (NoticeBase & { kind: "linked"; firstName: string })
-  | (NoticeBase & { kind: "choose"; points: number; candidates: { id: string; name: string }[] })
-  | (NoticeBase & { kind: "self"; firstName: string })
-  // Someone else's card: link it to this member too? ownerNames: "Sarah R."
-  | (NoticeBase & { kind: "shared"; firstName: string; ownerNames: string[] });
+  | (NoticeBase & { kind: "choose"; points: number; candidates: NoticeCandidate[] })
+  // Taken back (taken: the points; unlinked: the card came off their
+  // account too). Give the sale's points to someone else? candidates: the
+  // card's other members, if it's shared.
+  | (NoticeBase & { kind: "undone"; firstName: string; taken: number; unlinked: boolean; points: number; candidates: NoticeCandidate[] });
 
 // "Sarah R.", "Sarah R. and Mike T.", "Sarah R., Mike T. and Ana P."
 export function nameList(names: string[]): string {

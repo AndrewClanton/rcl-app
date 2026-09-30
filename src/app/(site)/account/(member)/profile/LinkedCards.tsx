@@ -6,7 +6,7 @@ import type { MyLinkedCard } from "@/lib/data/member-account";
 import { dateShort } from "../format";
 import { removeMyCard, setCardLinking } from "../../actions";
 
-const HOW: Record<string, string> = { register: "at the register", online: "buying tickets online", plus: "from your Insiders+ billing" };
+const HOW: Record<string, string> = { register: "at the register", online: "buying tickets online", plus: "from your Insiders+ billing", staff: "by our staff" };
 
 // "Cards linked to your account" (lib/member-cards.ts): each with Remove,
 // and their own switch for linking cards at all.
@@ -28,13 +28,17 @@ export function LinkedCards({ cards, linkCards }: { cards: MyLinkedCard[]; linkC
   return (
     <div className="space-y-4">
       <p className="text-[15px] text-[var(--muted)]">
-        Pay with one of these cards and you get your points, even if you forget to sign in or nobody puts your account on the order. We keep only the
-        card type, its last four digits, and a code from Stripe (our card processor) that recognizes the same card again. Never the card number.
+        Pay with one of these cards and you get the points, even if you forget to sign in or nobody puts your account on the order. Those
+        purchases show up in your points history as points only, not what was bought. We keep only the card type, its last four digits, and a code from Stripe (our
+        card processor) that recognizes the same card again. Never the card number. Remove a card and we delete its type and last four, keeping
+        only that code so it isn&apos;t linked to you again.
       </p>
 
       {cards.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">
-          {on ? "No cards yet. Pay by card at the register with your account on the order, and that card is linked for next time." : "No cards linked."}
+          {on
+            ? "No cards yet. A card is linked once it pays at the register with your account on the order on 2 different days, or when you buy tickets here signed in."
+            : "No cards linked."}
         </p>
       ) : (
         <ul className="divide-y-2 divide-dashed divide-[var(--border)]">

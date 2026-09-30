@@ -13,3 +13,13 @@ export function getStripe(): Stripe {
   if (!key) throw new Error("STRIPE_SECRET_KEY is not set.");
   return new Stripe(key);
 }
+
+// For a quick, optional read while someone waits (the card on a register
+// sale, lib/member-cards.ts): gives up after a few seconds with no retries,
+// instead of the SDK's 80-second wait, so a slow Stripe can't keep the
+// server busy on something the sale doesn't need.
+export function getQuickStripe(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY is not set.");
+  return new Stripe(key, { timeout: 5000, maxNetworkRetries: 0 });
+}

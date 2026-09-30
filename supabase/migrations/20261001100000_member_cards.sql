@@ -1,6 +1,10 @@
 -- Card-linked points: if a member forgets to sign in (or staff forget to
 -- attach them), a card sale still earns their points when they pay with a
--- card they've paid with before on their account.
+-- card linked to their account.
+--
+-- APPLY THIS BEFORE THE APP CODE THAT USES IT GOES LIVE, then run
+-- scripts/check-member-cards-db.mjs. (The app's reads fall back if it's
+-- missing, but no card is read, linked or matched until it's here.)
 --
 -- How a card is recognized: Stripe gives every card payment a
 -- "fingerprint", a code that is the same each time the same card number
@@ -8,27 +12,40 @@
 -- We keep that code with the card's brand and last four digits (for
 -- showing "Visa •••• 4242"). Never a card number.
 --
+--   - card_payments: the card each register card sale or online ticket
+--     payment was made with (read from Stripe by the server, never sent by
+--     a register or a browser), whether or not anyone was attached. Kept in
+--     its own server-only table, not on orders, so staff screens that can
+--     read orders can't read card codes. When the card paid a member's
+--     points on a sale nobody was attached to, it says who and how, and
+--     whether that was undone.
 --   - member_cards: which member each card belongs to. Linked when a card
---     sale is saved with a member attached, when a signed-in member buys
---     tickets online, and from an Insiders+ subscription's card. A link
---     removed by the member or staff stays as a "removed" row, so the same
---     card isn't linked to them again on its own.
---   - orders.card_*: the card a register sale was paid with (read from
---     Stripe by the server, never sent by the register), and
---     member_source = 'card' when the member was found by that card rather
---     than attached by staff.
+--     pays for sales a member was attached to on 2 different days, when a
+--     signed-in member buys tickets online, from an Insiders+ subscription
+--     started by the member (signed in) or by staff, or by a manager in
+--     Back office. A link removed by the member or staff stays as a
+--     "removed" row, so the same card isn't linked to them again on its
+--     own. A removed link's type and last four are deleted; only Stripe's
+--     code is kept, for that.
+--   - orders.member_source = 'card' when the member on a sale was put
+--     there by its card rather than attached by staff. The member sees only
+--     the points for such a sale, never its items or receipt, and tickets
+--     on it stay off their account.
 --   - members.link_cards: the member's own on/off switch (their account's
 --     Profile tab). Off: no new links, and no matching.
---   - attach_card_member(): gives a card-matched sale to its member and
---     pays its points, once, in one transaction.
---   - undo_card_match(): takes that back (the register's Undo, or a
---     manager in Back office): the points come off through the points
---     history, and that member's link to the card is removed.
+--   - credit_card_sale(): gives a sale's points to the card's member (or
+--     the member picked for a shared card, or the right member after an
+--     undo), once, in one transaction.
+--   - credit_card_booking(): the same for tickets bought online as a guest:
+--     points only; the booking stays a guest booking.
+--   - undo_card_sale() / undo_card_booking(): take it back (the register's
+--     Undo for 2 minutes, then a manager in Back office). The points come
+--     off through the points history. The card stays linked unless staff
+--     say it isn't the member's card at all.
 --   - Removing a member's personal info also deletes their linked cards
---     and the card details on their orders.
+--     and the card details of their sales.
 --
--- Additive and safe to run more than once. The app code that uses this
--- must be deployed only after it has been applied.
+-- Additive and safe to run more than once.
 
 -- ---------- linked cards ----------
 create table if not exists member_cards (
@@ -44,9 +61,10 @@ create table if not exists member_cards (
   -- card itself. A phone counts as its own card: Stripe gives it a
   -- different fingerprint from the plastic card.
   wallet text check (wallet is null or wallet ~ '^[a-z_]{1,40}$'),
-  -- How it was linked: a register sale (a tap, an insert, or a tab's card
-  -- on file), tickets bought online, or the Insiders+ subscription.
-  source text not null check (source in ('register', 'online', 'plus')),
+  -- How it was linked: register sales (a tap, an insert, or a tab's card
+  -- on file), tickets bought online signed in, the Insiders+ subscription,
+  -- or a manager in Back office.
+  source text not null check (source in ('register', 'online', 'plus', 'staff')),
   linked_order_id uuid references orders(id) on delete set null,
   linked_booking_id uuid references bookings(id) on delete set null,
   linked_by uuid references employees(id) on delete set null,
@@ -66,27 +84,59 @@ create index if not exists member_cards_fingerprint_idx on member_cards (fingerp
 -- Server-only, like the rest: RLS on, no client policies.
 alter table member_cards enable row level security;
 
--- ---------- the card on each sale ----------
-alter table orders add column if not exists card_fingerprint text;
-alter table orders add column if not exists card_livemode boolean;
-alter table orders add column if not exists card_brand text;
-alter table orders add column if not exists card_last4 text;
-alter table orders add column if not exists card_wallet text;
--- null: attached by staff (or no member). 'card': found by the card.
--- 'backfill': reserved for a later, reviewed catch-up of past sales.
+-- ---------- the card on each card payment ----------
+create table if not exists card_payments (
+  id uuid primary key default gen_random_uuid(),
+  -- A register sale, or a ticket booking paid online: one or the other.
+  order_id uuid unique references orders(id) on delete cascade,
+  booking_id uuid unique references bookings(id) on delete cascade,
+  fingerprint text not null,
+  livemode boolean not null,
+  brand text,
+  last4 text check (last4 is null or last4 ~ '^[0-9]{4}$'),
+  wallet text check (wallet is null or wallet ~ '^[a-z_]{1,40}$'),
+  -- Points this card paid to a member on a sale nobody was attached to:
+  -- 'card' (the card's only member), 'picked' (a card on more than one
+  -- account; the cashier asked who was paying), or 'given' (after an
+  -- undo, the cashier gave the points to the right member).
+  credited_member_id uuid references members(id) on delete set null,
+  credited_how text check (credited_how in ('card', 'picked', 'given')),
+  credited_at timestamptz,
+  credited_by uuid references employees(id) on delete set null,
+  -- Taken back (the register's Undo, or a manager in Back office).
+  undone_at timestamptz,
+  undone_by uuid references employees(id) on delete set null,
+  created_at timestamptz not null default now(),
+  constraint card_payments_one_sale check ((order_id is null) <> (booking_id is null))
+);
+create index if not exists card_payments_fingerprint_idx on card_payments (fingerprint, livemode);
+create index if not exists card_payments_credited_idx on card_payments (credited_member_id) where credited_member_id is not null;
+
+-- Server-only: RLS on, no client policies. (The card code is here, not on
+-- orders, because signed-in staff screens can read orders.)
+alter table card_payments enable row level security;
+
+-- ---------- how the member got on a sale ----------
+-- null: attached by staff (or no member). 'card': put there by its card
+-- (credit_card_sale). 'backfill': reserved for a later, reviewed catch-up
+-- of past sales.
 alter table orders add column if not exists member_source text check (member_source in ('card', 'backfill'));
-create index if not exists orders_card_fingerprint_idx on orders (card_fingerprint) where card_fingerprint is not null;
 
 -- ---------- the member's own switch ----------
 alter table members add column if not exists link_cards boolean not null default true;
 
--- ---------- giving a sale to the card's member ----------
--- Only a completed sale with nobody on it, whose points nobody has earned
--- yet (after an Undo, the sale stays without a member: a second member's
--- points go on by hand with Adjust points). Pays 1 point per $1 of the
--- subtotal, like a sale rung up with the member attached. Returns the
--- points paid, or null when nothing was done (so a repeat does nothing).
-create or replace function public.attach_card_member(p_order uuid, p_member uuid, p_note text, p_by uuid default null)
+-- ---------- giving a sale's points by its card ----------
+-- A completed register sale with nobody on it, whose card was read from
+-- Stripe (card_payments). p_how:
+--   'card' / 'picked': the sale's first points: a 'purchase' row, like a
+--     sale rung up with the member attached (1 point per $1 of the
+--     subtotal), only if nobody has earned this sale's points yet.
+--   'given': after an undo on this sale, the points go to the right
+--     member instead. A sale earns one 'purchase' row, ever, so this is an
+--     'adjustment' row tied to the order (a refund later takes it back).
+-- Tickets on the sale stay off the member's account. Returns the points
+-- paid, or null when nothing was done (so a repeat does nothing).
+create or replace function public.credit_card_sale(p_order uuid, p_member uuid, p_how text, p_note text, p_by uuid default null)
 returns numeric
 language plpgsql
 security definer
@@ -94,41 +144,98 @@ set search_path = public
 as $$
 declare
   o orders%rowtype;
-  paid numeric := 0;
+  cp card_payments%rowtype;
+  pts numeric := 0;
 begin
-  select * into o from orders where id = p_order for update;
-  -- Only a card sale whose card is on it (read from Stripe by the server).
-  if not found or o.status <> 'completed' or o.member_id is not null or o.card_fingerprint is null then
+  if p_how not in ('card', 'picked', 'given') then
     return null;
   end if;
-  if exists (select 1 from points_ledger where order_id = p_order and reason = 'purchase') then
+  select * into o from orders where id = p_order for update;
+  if not found or o.status <> 'completed' or o.member_id is not null then
+    return null;
+  end if;
+  select * into cp from card_payments where order_id = p_order for update;
+  if not found then
+    return null;
+  end if;
+  if not exists (select 1 from members where id = p_member and erased_at is null) then
+    return null;
+  end if;
+  if p_how = 'given' then
+    if cp.undone_at is null then
+      return null;
+    end if;
+  elsif cp.credited_member_id is not null or cp.undone_at is not null
+     or exists (select 1 from points_ledger where order_id = p_order and reason = 'purchase') then
+    return null;
+  end if;
+
+  update orders set member_id = p_member, member_source = 'card' where id = p_order;
+  pts := coalesce(o.subtotal, 0);
+  if pts > 0 then
+    perform public.apply_member_points(p_member, pts, case when p_how = 'given' then 'adjustment' else 'purchase' end, p_order, null, p_note, p_by);
+  end if;
+  update card_payments
+  set credited_member_id = p_member, credited_how = p_how, credited_at = now(), credited_by = p_by, undone_at = null, undone_by = null
+  where id = cp.id;
+  if p_how <> 'given' then
+    update member_cards set last_used_at = now()
+    where member_id = p_member and fingerprint = cp.fingerprint and livemode = cp.livemode and removed_at is null;
+  end if;
+  return pts;
+end;
+$$;
+
+-- The same for tickets bought online by a guest: the card's only member
+-- gets the tickets' points (1 per $1, like any online booking). Points
+-- only: the booking stays a guest booking, so its tickets and door code
+-- never show on the member's account. Once per booking.
+create or replace function public.credit_card_booking(p_booking uuid, p_member uuid, p_note text)
+returns numeric
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  b bookings%rowtype;
+  cp card_payments%rowtype;
+  pts numeric := 0;
+begin
+  select * into b from bookings where id = p_booking for update;
+  if not found or b.status <> 'confirmed' or b.member_id is not null or b.order_id is not null then
+    return null;
+  end if;
+  select * into cp from card_payments where booking_id = p_booking for update;
+  if not found or cp.credited_member_id is not null or cp.undone_at is not null then
+    return null;
+  end if;
+  if exists (select 1 from points_ledger where booking_id = p_booking and reason = 'purchase') then
     return null;
   end if;
   if not exists (select 1 from members where id = p_member and erased_at is null) then
     return null;
   end if;
 
-  update orders set member_id = p_member, member_source = 'card' where id = p_order;
-  if coalesce(o.subtotal, 0) > 0 then
-    perform public.apply_member_points(p_member, o.subtotal, 'purchase', p_order, null, p_note, p_by);
-    paid := o.subtotal;
+  pts := coalesce(b.unit_price, 0) * coalesce(b.quantity, 0);
+  if pts > 0 then
+    perform public.apply_member_points(p_member, pts, 'purchase', null, p_booking, p_note, null);
   end if;
-  -- Movie tickets sold on the sale go in their history too.
-  update bookings set member_id = p_member where order_id = p_order and member_id is null;
+  update card_payments set credited_member_id = p_member, credited_how = 'card', credited_at = now() where id = cp.id;
   update member_cards set last_used_at = now()
-  where member_id = p_member and fingerprint = o.card_fingerprint and livemode = coalesce(o.card_livemode, livemode) and removed_at is null;
-  return paid;
+  where member_id = p_member and fingerprint = cp.fingerprint and livemode = cp.livemode and removed_at is null;
+  return pts;
 end;
 $$;
 
 -- ---------- undoing it ----------
--- Only for a sale whose member was found by the card. Takes back whatever
--- that member still holds from the sale (its points, less any a partial
--- refund already took back) as a 'refund' row, so a real refund later
--- finds nothing left to take. The sale goes back to having no member, and
--- that member's link to the card is removed so it doesn't match again.
+-- Takes back whatever that member still holds from the sale (its points,
+-- less any a partial refund already took back) as a 'refund' row, so a real
+-- refund later finds nothing left to take. The sale goes back to having no
+-- member. p_unlink: it wasn't their card at all, so their link to it is
+-- removed too (only for a match the card made on its own; a cashier's pick
+-- of a shared card, or points given after an undo, never unlink anyone).
 -- Returns the points taken back, or null when there was nothing to undo.
-create or replace function public.undo_card_match(p_order uuid, p_by uuid default null)
+create or replace function public.undo_card_sale(p_order uuid, p_unlink boolean, p_by uuid default null)
 returns numeric
 language plpgsql
 security definer
@@ -136,25 +243,60 @@ set search_path = public
 as $$
 declare
   o orders%rowtype;
+  cp card_payments%rowtype;
   held numeric;
 begin
   select * into o from orders where id = p_order for update;
   if not found or o.member_id is null or o.member_source is distinct from 'card' then
     return null;
   end if;
+  select * into cp from card_payments where order_id = p_order for update;
 
   select coalesce(sum(delta), 0) into held
   from points_ledger
-  where order_id = p_order and member_id = o.member_id and reason in ('purchase', 'redeem', 'refund');
+  where order_id = p_order and member_id = o.member_id and reason in ('purchase', 'redeem', 'refund', 'adjustment');
   if held <> 0 then
     perform public.apply_member_points(o.member_id, -held, 'refund', p_order, null, 'Card match undone', p_by);
   end if;
 
   update orders set member_id = null, member_source = null where id = p_order;
-  update bookings set member_id = null where order_id = p_order and member_id = o.member_id;
-  if o.card_fingerprint is not null then
-    update member_cards set removed_at = now(), removed_by = p_by
-    where member_id = o.member_id and fingerprint = o.card_fingerprint and livemode = coalesce(o.card_livemode, livemode) and removed_at is null;
+  if cp.id is not null then
+    update card_payments set undone_at = now(), undone_by = p_by where id = cp.id;
+    if p_unlink and cp.credited_how = 'card' then
+      update member_cards set removed_at = now(), removed_by = p_by, brand = null, last4 = null, wallet = null
+      where member_id = o.member_id and fingerprint = cp.fingerprint and livemode = cp.livemode and removed_at is null;
+    end if;
+  end if;
+  return held;
+end;
+$$;
+
+create or replace function public.undo_card_booking(p_booking uuid, p_unlink boolean, p_by uuid default null)
+returns numeric
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  cp card_payments%rowtype;
+  held numeric;
+begin
+  select * into cp from card_payments where booking_id = p_booking for update;
+  if not found or cp.credited_member_id is null or cp.undone_at is not null then
+    return null;
+  end if;
+
+  select coalesce(sum(delta), 0) into held
+  from points_ledger
+  where booking_id = p_booking and member_id = cp.credited_member_id and reason in ('purchase', 'redeem', 'refund', 'adjustment');
+  if held <> 0 then
+    perform public.apply_member_points(cp.credited_member_id, -held, 'refund', null, p_booking, 'Card match undone', p_by);
+  end if;
+
+  update card_payments set undone_at = now(), undone_by = p_by where id = cp.id;
+  if p_unlink and cp.credited_how = 'card' then
+    update member_cards set removed_at = now(), removed_by = p_by, brand = null, last4 = null, wallet = null
+    where member_id = cp.credited_member_id and fingerprint = cp.fingerprint and livemode = cp.livemode and removed_at is null;
   end if;
   return held;
 end;
@@ -162,7 +304,8 @@ $$;
 
 -- ---------- removing a member's personal info ----------
 -- erase_member_personal_info (20260929220000) sets erased_at; when it does,
--- their linked cards go, and so do the card details on their orders.
+-- their linked cards go, and so do the card details of their sales and of
+-- anything their cards paid them points for.
 create or replace function public.members_erase_cards()
 returns trigger
 language plpgsql
@@ -172,8 +315,10 @@ as $$
 begin
   if new.erased_at is not null and old.erased_at is null then
     delete from member_cards where member_id = new.id;
-    update orders set card_fingerprint = null, card_brand = null, card_last4 = null, card_wallet = null
-    where member_id = new.id and (card_fingerprint is not null or card_last4 is not null);
+    delete from card_payments
+    where credited_member_id = new.id
+       or order_id in (select id from orders where member_id = new.id)
+       or booking_id in (select id from bookings where member_id = new.id);
   end if;
   return new;
 end;
@@ -184,8 +329,12 @@ create trigger members_erase_cards after update of erased_at on members
 
 -- Server-only plumbing: Supabase grants new public functions to anon and
 -- authenticated by default.
-revoke execute on function public.attach_card_member(uuid, uuid, text, uuid) from public, anon, authenticated;
-revoke execute on function public.undo_card_match(uuid, uuid) from public, anon, authenticated;
+revoke execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) from public, anon, authenticated;
+revoke execute on function public.credit_card_booking(uuid, uuid, text) from public, anon, authenticated;
+revoke execute on function public.undo_card_sale(uuid, boolean, uuid) from public, anon, authenticated;
+revoke execute on function public.undo_card_booking(uuid, boolean, uuid) from public, anon, authenticated;
 revoke execute on function public.members_erase_cards() from public, anon, authenticated;
-grant execute on function public.attach_card_member(uuid, uuid, text, uuid) to service_role;
-grant execute on function public.undo_card_match(uuid, uuid) to service_role;
+grant execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) to service_role;
+grant execute on function public.credit_card_booking(uuid, uuid, text) to service_role;
+grant execute on function public.undo_card_sale(uuid, boolean, uuid) to service_role;
+grant execute on function public.undo_card_booking(uuid, boolean, uuid) to service_role;

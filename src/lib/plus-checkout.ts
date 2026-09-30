@@ -16,7 +16,11 @@ export { hasPlusPerks, plusPaidFor, plusNeedsCard, giftEndsWithoutRenewal } from
 // `firstChargeAt` (staff only) saves the card now but holds the first
 // charge until then -- for someone who already paid for this month another
 // way (cash, or the old site). Stripe needs it at least 48 hours out.
-// `interval`: monthly, or yearly at 15% off.
+// `interval`: monthly, or yearly at 15% off. `linkCard`: the member started
+// this themselves, signed in, or staff did it for them, so the card they
+// pay with is linked to their account for points (lib/member-cards.ts
+// linkPlusCard). Never from the public join form, where anyone can type an
+// existing member's email.
 export async function createPlusCheckout(p: {
   memberId: string | null;
   customerId: string | null;
@@ -27,6 +31,7 @@ export async function createPlusCheckout(p: {
   returnTo: string | null;
   firstChargeAt?: Date | null;
   interval?: BillingInterval;
+  linkCard?: boolean;
 }): Promise<string | null> {
   const interval = p.interval ?? "month";
   const priceId = await insidersPlusPriceIdFor(p.priceTier, interval);
@@ -50,6 +55,7 @@ export async function createPlusCheckout(p: {
       pending_phone: p.phone ?? "",
       price_tier: p.priceTier,
       billing_interval: interval,
+      ...(p.linkCard && p.memberId ? { link_card_member: p.memberId } : {}),
     },
   });
   return session.url;
