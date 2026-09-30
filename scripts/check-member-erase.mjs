@@ -49,6 +49,7 @@ try {
   );
   const hasTagline = await exists("select true as ok from information_schema.columns where table_schema = 'public' and table_name = 'members' and column_name = 'tagline'");
   const hasVisits = await exists("select (to_regclass('public.member_visits') is not null) as ok");
+  const hasProfile = await exists("select true as ok from information_schema.columns where table_schema = 'public' and table_name = 'members' and column_name = 'share_profile'");
   const hasRewards = await exists("select (to_regclass('public.member_rewards') is not null) as ok");
   const hasBadges = await exists("select (to_regclass('public.member_badges') is not null) as ok");
 
@@ -62,6 +63,12 @@ try {
   )).id;
   const friend = (await one(`insert into members (name, email, tier, points) values ('Erase Friend', 'erase-friend@example.invalid', 'Insiders', 0) returning id`)).id;
   if (hasTagline) await c.query("update members set tagline = 'Horror or nothing' where id = $1", [m]);
+  if (hasProfile) {
+    await c.query(
+      "update members set share_profile = true, profile_handle = 'erase-check-page', display_name = 'Erase C.', flair_color = 'pink', flair_effect = 'unicorn', flair_sticker = 'heart', birthday_party = false, tagline_hidden_at = now() where id = $1",
+      [m],
+    );
+  }
   const o = (await one(`insert into orders (order_number, source, status, member_id, order_name, tab_name, subtotal, total, completed_at)
      values (999999002, 'pos', 'completed', $1, 'Erase Check''s tab', 'Erase tab', 20, 21.6, now()) returning id`, [m])).id;
   await c.query(`insert into order_items (order_id, menu_item_id, name, unit_price, quantity) values ($1, null, 'Cake for Erase Check', 5, 1)`, [o]);
@@ -141,7 +148,14 @@ try {
     check("the friend's own account untouched", fr.name === "Erase Friend" && fr.email === "erase-friend@example.invalid");
     if (hasTagline) {
       const t = await one("select tagline from members where id = $1", [m]);
-      check("profile quote removed", !t.tagline);
+      check("profile line removed", !t.tagline);
+    }
+    if (hasProfile) {
+      const pr = await one("select share_profile, profile_handle, display_name, flair_color, flair_effect, flair_sticker, birthday_party, tagline_hidden_at from members where id = $1", [m]);
+      check(
+        "shared profile page (its link and name) and check-in flair removed",
+        pr.share_profile === false && !pr.profile_handle && !pr.display_name && !pr.flair_color && !pr.flair_effect && !pr.flair_sticker && pr.birthday_party === true && !pr.tagline_hidden_at,
+      );
     }
     if (hasVisits) {
       const v = (await c.query("select streak, points_awarded from member_visits where member_id = $1", [m])).rows;

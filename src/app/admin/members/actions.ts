@@ -295,3 +295,43 @@ export async function createGiftLink(memberId: string, fields: { buyerName: stri
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) return { ok: false, error: "Enter the buyer's email. Their receipt goes there." };
   return createGiftCheckout({ recipientId: memberId, buyerName, buyerEmail, message: message || null, soldBy: session.employeeId });
 }
+
+// ---------- a member's profile line and shared page ----------
+// (lib/member-profile.ts) Both are words a member wrote for others to see,
+// so any staff member can take one down, and it's recorded who and when.
+
+export type ProfileModerationResult = { ok: true } | { ok: false; error: string };
+
+function moderationError(error: { code?: string } | null): ProfileModerationResult {
+  if (!error) return { ok: true };
+  const missing = error.code === "42703" || error.code === "PGRST204";
+  return { ok: false, error: missing ? "Profile pages aren't switched on yet (the member_profiles migration)." : "Couldn't save. Try again." };
+}
+
+// Hide (or show again) their profile line. Hidden, it shows nowhere (their
+// shared page, the check-in screen, the register), even after they edit
+// it, until staff show it again; they see "hidden by our staff".
+export async function setProfileLineHidden(id: string, hidden: boolean): Promise<ProfileModerationResult> {
+  const staff = await assertStaff();
+  const { error } = await createAdminClient()
+    .from("members")
+    .update(hidden ? { tagline_hidden_at: new Date().toISOString(), tagline_hidden_by: staff.employeeId } : { tagline_hidden_at: null, tagline_hidden_by: null })
+    .eq("id", id)
+    .is("erased_at", null);
+  revalidate();
+  return moderationError(error);
+}
+
+// Turn off their shared profile page (a rude display name or link, say),
+// or let them share again. Off, they can't turn it back on themselves;
+// allowing it again doesn't switch it on (that's theirs to do).
+export async function setSharedPageBlocked(id: string, blocked: boolean): Promise<ProfileModerationResult> {
+  const staff = await assertStaff();
+  const { error } = await createAdminClient()
+    .from("members")
+    .update(blocked ? { share_profile: false, profile_hidden_at: new Date().toISOString(), profile_hidden_by: staff.employeeId } : { profile_hidden_at: null, profile_hidden_by: null })
+    .eq("id", id)
+    .is("erased_at", null);
+  revalidate();
+  return moderationError(error);
+}

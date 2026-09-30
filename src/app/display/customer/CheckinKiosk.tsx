@@ -10,6 +10,9 @@ import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
 import type { TicketsShown } from "./TicketsCard";
 import { isClaimUrl } from "@/lib/claim-link";
 import ClaimQr from "./ClaimQr";
+import FlairEffect from "@/components/flair/FlairEffect";
+import { flairColor, flairHex, parseFlair, type EntranceKey, type StickerKey } from "@/lib/flair";
+import { lineFromChannel } from "@/lib/member-profile";
 import k from "./kiosk.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -32,6 +35,10 @@ interface Toast {
   // A member with no website login, confirmed by staff: a QR code to set
   // one up (only ever a link that passed isClaimUrl).
   claimUrl: string | null;
+  // The check-in's: their profile line, and their favorite color (a hex
+  // from lib/flair.ts's palette, never text off the channel).
+  line?: string | null;
+  color?: string | null;
 }
 
 // Badge banners follow the check-in's one at a time, and go quickly so the
@@ -60,10 +67,11 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 //   right away (email marketing off), then offers a QR code to finish on
 //   their own phone. Staff still confirm the visit on the register.
 // This screen never shows anyone's details until staff have confirmed:
-// then just a first name and points (and, for a member with no website
-// login yet, a QR code in the banner to set one up). When a sale with a
-// member on it completes, the register says so and the points burst plays
-// here.
+// then just a first name and points, their profile line, and their
+// entrance in their color (lib/flair.ts; or a party in their birthday
+// week), and, for a member with no website login yet, a QR code in the
+// banner to set one up. When a sale with a member on it completes, the
+// register says so and the points burst plays here.
 // initialStep is for previews only.
 // onTickets: someone's online tickets for today, after staff confirm their
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
@@ -83,7 +91,9 @@ export default function CheckinKiosk({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [celebration, setCelebration] = useState<(PointsEarned & { key: number }) | null>(null);
+  const [celebration, setCelebration] = useState<(PointsEarned & { key: number; accent: string | null }) | null>(null);
+  // The member's entrance (lib/flair.ts), playing over the whole screen.
+  const [entrance, setEntrance] = useState<{ key: number; entrance: EntranceKey; color: string; sticker: StickerKey } | null>(null);
   // Our own requests the register confirmed lately: their tickets (a
   // separate, later message) are ours to show; anyone else's aren't.
   const confirmedHere = useRef(new Map<string, number>());
@@ -141,13 +151,22 @@ export default function CheckinKiosk({
     if (v?.alreadyToday) detail = `Already checked in today · ${points.toLocaleString("en-US")} points`;
     else if (v) detail = `+${visitPoints} points${weekStreak > 1 ? ` · 🔥 ${weekStreak} weeks in a row` : ""} · ${points.toLocaleString("en-US")} total`;
     else detail = `${points.toLocaleString("en-US")} points`;
+    // Their flair: keys looked up in our own catalog (lib/flair.ts); their
+    // line tidied and cut to length. The entrance never takes a tap.
+    const f = p.flair && typeof p.flair === "object" ? p.flair : null;
+    const party = f?.entrance === "party";
+    const flair = parseFlair({ color: f?.color, effect: party ? "classic" : f?.entrance, sticker: f?.sticker });
+    const show: EntranceKey = party ? "party" : flair.effect;
     toast({
       title: p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
       detail,
       tone: "ok",
       emoji: null,
       claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
+      line: lineFromChannel(p.line),
+      color: flair.color?.hex ?? null,
     });
+    if (show !== "classic") setEntrance({ key: Date.now(), entrance: show, color: flairHex(flair), sticker: flair.sticker });
     badges.forEach((b, i) => {
       const c = badgeCheer(b, name);
       setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
@@ -181,7 +200,14 @@ export default function CheckinKiosk({
     const earned = Math.round(Number(p?.earned));
     const balance = Math.round(Number(p?.balance));
     if (!p || typeof p.firstName !== "string" || !(earned > 0) || !Number.isFinite(balance)) return;
-    setCelebration({ orderNumber: Number(p.orderNumber) || 0, firstName: p.firstName.slice(0, 40), earned, balance: Math.max(0, balance), key: Date.now() });
+    setCelebration({
+      orderNumber: Number(p.orderNumber) || 0,
+      firstName: p.firstName.slice(0, 40),
+      earned,
+      balance: Math.max(0, balance),
+      key: Date.now(),
+      accent: flairColor(p.color)?.hex ?? null,
+    });
   });
 
   // Joined, back after a dropped connection, or a register (re)joined:
@@ -298,7 +324,11 @@ export default function CheckinKiosk({
       {toasts.length > 0 && (
         <div className={k.toasts} aria-live="polite">
           {toasts.map((t) => (
-            <div key={t.key} className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""}`}>
+            <div
+              key={t.key}
+              className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""}`}
+              style={t.color ? { background: t.color } : undefined}
+            >
               {t.emoji && (
                 <span className={k.badgeEmoji} aria-hidden="true">
                   {t.emoji}
@@ -307,6 +337,7 @@ export default function CheckinKiosk({
               <div style={{ minWidth: 0 }}>
                 <div className={k.toastTitle}>{t.title}</div>
                 <div className={k.toastDetail}>{t.detail}</div>
+                {t.line && <div className={k.toastLine}>“{t.line}”</div>}
                 {t.claimUrl && <div className={k.toastScan}>Scan to see your points online →</div>}
               </div>
               {t.claimUrl && <ClaimQr url={t.claimUrl} size={104} label="QR code: see your points online" />}
@@ -434,7 +465,20 @@ export default function CheckinKiosk({
           firstName={celebration.firstName}
           earned={celebration.earned}
           balance={celebration.balance}
+          accent={celebration.accent}
           onDone={() => setCelebration(null)}
+        />
+      )}
+
+      {entrance && (
+        <FlairEffect
+          key={entrance.key}
+          entrance={entrance.entrance}
+          color={entrance.color}
+          sticker={entrance.sticker}
+          mode="screen"
+          seed={entrance.key % 100_000}
+          onDone={() => setEntrance(null)}
         />
       )}
     </section>

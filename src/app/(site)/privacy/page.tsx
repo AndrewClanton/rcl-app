@@ -57,6 +57,10 @@ export default async function PrivacyPage() {
             <strong>Your photo,</strong> if you add one to your account.
           </li>
           <li>
+            <strong>Your profile, if you fill it in:</strong> a short profile line, your check-in effect (a favorite color and an animation), and, if you
+            share a profile page, the name and link you choose for it.
+          </li>
+          <li>
             <strong>If you sign in with Google or Facebook:</strong> your name, email address and profile photo from that account. We don&apos;t get
             your password, contacts, friends or posts.
           </li>
@@ -108,8 +112,16 @@ export default async function PrivacyPage() {
             register also suggests members who visit often, with their photos, so staff can find them quickly.
           </li>
           <li>
-            To greet you at checkout. If you look yourself up by phone number on the customer-facing screen, your name, photo and points balance
-            appear on that screen.
+            To greet you when you check in. After staff confirm it&apos;s you, the screen facing you shows your first name and points, your profile line
+            if you wrote one, and the check-in effect you picked.
+          </li>
+          <li>
+            <strong>For your profile page, only if you turn it on.</strong> It&apos;s off unless you switch it on in your account. It shows the name you
+            choose for it, your photo, your profile line, your badges, how many weeks in a row and how many times you&apos;ve visited, when you joined,
+            and the movies you&apos;ve seen with us (this year&apos;s releases by name, older films only as a count). It never shows your email, phone,
+            full name (unless you type it as your page&apos;s name), points, purchases, or when you check in. Anyone with the link can see it, and we
+            keep it out of search engines. Turn it off or change its link anytime on the Profile tab of your account; the old link stops working right
+            away. Our staff can hide a profile line, or turn off a page, if it&apos;s offensive.
           </li>
           <li>
             To send the emails you ask for (the weekly lineup and member news) and account emails such as receipts, sign-in links and billing
@@ -165,6 +177,7 @@ export default async function PrivacyPage() {
         <ul>
           <li>See and update your details anytime on the Profile tab of your account.</li>
           <li>Add, change or remove your photo anytime.</li>
+          <li>Turn your profile page on or off, change its link, and change or clear your profile line and check-in effect, on the Profile tab.</li>
           <li>Turn off the weekly emails in your account, or with the unsubscribe link in any of those emails.</li>
           <li>
             Ask for a copy of your information, or to delete your account, by emailing info@royalecinemajoplin.com. See{" "}
