@@ -27,6 +27,8 @@ export async function createPlusCheckout(p: {
   returnTo: string | null;
   firstChargeAt?: Date | null;
   interval?: BillingInterval;
+  // They ticked "email me the weekly lineup" on the join form.
+  emailOptIn?: boolean;
 }): Promise<string | null> {
   const interval = p.interval ?? "month";
   const priceId = await insidersPlusPriceIdFor(p.priceTier, interval);
@@ -50,6 +52,7 @@ export async function createPlusCheckout(p: {
       pending_phone: p.phone ?? "",
       price_tier: p.priceTier,
       billing_interval: interval,
+      ...(p.emailOptIn ? { email_opt_in: "1" } : {}),
     },
   });
   return session.url;

@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
+import { cancelPendingSends } from "@/lib/email/consent";
 
 // Removing a member's personal info on request, as promised on /data-deletion.
 //
@@ -113,6 +114,11 @@ export async function eraseMember(memberId: string, byEmployeeId: string, reques
     }
     login = "deleted";
   }
+
+  // Email waiting at Resend for later goes first, while the send rows still
+  // say whose it is. (The database step clears the rest: their email
+  // preferences and consent-log address; the never-mail list is kept.)
+  await cancelPendingSends(memberId, "Member removed").catch(() => 0);
 
   // 3. Database. The three-argument form logs the day they asked; until
   // its migration (20260929220000) is applied, fall back to the original.

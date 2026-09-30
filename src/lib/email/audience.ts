@@ -1,0 +1,239 @@
+import "server-only";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { businessDay } from "@/lib/ops/time";
+import { addDays, capCheck, genreKey, hardFilter, matchesAudience, trustRank, type CampaignShape, type RuleContext } from "./rules";
+import { holdoutBucket, shuffleKey } from "./hash";
+import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
+
+// Who a campaign goes to. The audience only ever reads `members` (through
+// member_email_facts): never the old-site holding table, never Resend.
+//
+// In order, counting everyone left out by reason:
+//   1. hard filters: email on, the campaign's category on, not paused, not
+//      gone quiet (except "Still want these?"), address not on the
+//      never-mail list, not already sent this campaign (or dedupe key);
+//   2. the segment: every include rule, minus any exclude rule;
+//   3. the caps (rules.ts), at the time it would arrive;
+//   4. warm-up order and wave size (order 'trust', limit);
+//   5. the holdout: a fixed ~pct% get a row but no email, to measure lift.
+
+const PAGE = 1000;
+
+type FactsRow = {
+  member_id: string;
+  email: string;
+  email_hash: string;
+  name: string;
+  tier: string;
+  legacy_plus: boolean;
+  legacy_user_id: number | null;
+  indy_user_id: string | null;
+  has_login: boolean;
+  has_phone: boolean;
+  created_at: string;
+  imported_at: string | null;
+  birthday: string | null;
+  email_opt_in: boolean;
+  lineup: boolean;
+  alerts: boolean;
+  events: boolean;
+  offers: boolean;
+  rewards: boolean;
+  paused_until: string | null;
+  consent_source: MemberFacts["consentSource"];
+  import_group: MemberFacts["importGroup"];
+  engagement: MemberFacts["engagement"];
+  reconfirm_sent_at: string | null;
+  last_engaged_at: string | null;
+  suppressed: string | null;
+  visit_days: string[] | null;
+  archive_days: string[] | null;
+  first_visit_on: string | null;
+  last_visit_on: string | null;
+  tickets: MemberFacts["tickets"] | null;
+  orders: MemberFacts["orders"] | null;
+  last_click_at: string | null;
+  sends: MemberFacts["sends"] | null;
+  delivered_since_engaged: number | null;
+  invite_delivered: boolean | null;
+};
+
+export function parseFacts(r: FactsRow): MemberFacts {
+  return {
+    memberId: r.member_id,
+    email: r.email,
+    emailHash: r.email_hash,
+    name: r.name,
+    tier: r.tier === "Insiders+" ? "Insiders+" : "Insiders",
+    legacyPlus: !!r.legacy_plus,
+    imported: r.legacy_user_id !== null || !!r.indy_user_id,
+    fromOldSite: r.legacy_user_id !== null,
+    hasLogin: !!r.has_login,
+    hasPhone: !!r.has_phone,
+    createdAt: r.created_at,
+    birthday: r.birthday,
+    emailOptIn: r.email_opt_in !== false,
+    prefs: { lineup: r.lineup !== false, alerts: r.alerts !== false, events: r.events !== false, offers: r.offers !== false, rewards: r.rewards !== false },
+    pausedUntil: r.paused_until,
+    consentSource: r.consent_source ?? "unknown",
+    importGroup: r.import_group ?? null,
+    engagement: r.engagement ?? "active",
+    reconfirmSentAt: r.reconfirm_sent_at,
+    lastEngagedAt: r.last_engaged_at,
+    suppressed: r.suppressed,
+    visitDays: (r.visit_days ?? []).map(String),
+    archiveDays: (r.archive_days ?? []).map(String),
+    firstVisitOn: r.first_visit_on,
+    lastVisitOn: r.last_visit_on,
+    tickets: (r.tickets ?? []).map((t) => ({ d: t.d, q: Number(t.q) || 0, p: Number(t.p) || 0 })),
+    orders: (r.orders ?? []).map((o) => ({ d: o.d, a: !!o.a, c: !!o.c, f: !!o.f, t: Number(o.t) || 0 })),
+    lastClickAt: r.last_click_at,
+    sends: r.sends ?? [],
+    deliveredSinceEngaged: r.delivered_since_engaged ?? 0,
+    inviteDelivered: !!r.invite_delivered,
+  };
+}
+
+// Every live member with an email, a page (1,000) at a time. `memberId`
+// narrows it to one person.
+export async function loadFacts(opts: { memberId?: string } = {}): Promise<MemberFacts[]> {
+  const admin = createAdminClient();
+  const out: MemberFacts[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await admin.rpc("member_email_facts", { p_offset: offset, p_limit: PAGE, p_member: opts.memberId ?? null });
+    if (error) throw new Error(`Couldn't read the members list (${error.message}).`);
+    const rows = (data ?? []) as FactsRow[];
+    out.push(...rows.map(parseFacts));
+    if (rows.length < PAGE || opts.memberId) break;
+  }
+  return out;
+}
+
+function genreRules(a: Audience): Extract<Rule, { r: "genre" }>[] {
+  return [...(a.include ?? []), ...(a.exclude ?? [])].filter((r): r is Extract<Rule, { r: "genre" }> => r.r === "genre");
+}
+
+export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> {
+  const today = businessDay(now).date;
+  const ctx: RuleContext = { now, today };
+  const genres = genreRules(a);
+  if (genres.length) {
+    ctx.genreMembers = new Map();
+    for (const g of genres) {
+      const { data } = await createAdminClient().rpc("member_genre_days", { p_genre: g.v, p_since: addDays(today, -g.within), p_min: g.min });
+      ctx.genreMembers.set(genreKey(g), new Set(((data ?? []) as { member_id: string }[]).map((x) => x.member_id)));
+    }
+  }
+  return ctx;
+}
+
+export interface Resolved {
+  send: { facts: MemberFacts; heldOut: boolean; dedupeKey: string | null }[];
+  willSend: number;
+  heldOut: number;
+  excluded: Partial<Record<Exclusion, number>>;
+  considered: number;
+}
+
+// Who already has this campaign (or, for an automation, this dedupe key).
+async function alreadyHave(campaignId: string): Promise<{ members: Set<string>; keys: Set<string> }> {
+  const admin = createAdminClient();
+  const members = new Set<string>();
+  const keys = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await admin.from("email_sends").select("member_id, dedupe_key").eq("campaign_id", campaignId).order("id").range(from, from + PAGE - 1);
+    if (error) throw new Error("Couldn't read who already got it.");
+    for (const s of data ?? []) {
+      if (!s.member_id) continue;
+      if (s.dedupe_key) keys.add(`${s.member_id}|${s.dedupe_key}`);
+      else members.add(s.member_id);
+    }
+    if ((data ?? []).length < PAGE) break;
+  }
+  return { members, keys };
+}
+
+export async function resolveAudience(
+  c: CampaignShape & { audience: Audience; holdoutPct: number },
+  opts: {
+    at: Date; // when it would arrive, for the caps
+    facts?: MemberFacts[];
+    memberId?: string;
+    dedupeKey?: (f: MemberFacts) => string | null;
+    limit?: number | null;
+    now?: Date;
+  },
+): Promise<Resolved> {
+  const now = opts.now ?? new Date();
+  const facts = opts.facts ?? (await loadFacts({ memberId: opts.memberId }));
+  const ctx = await ruleContext(c.audience, now);
+  const have = await alreadyHave(c.id);
+  const excluded: Partial<Record<Exclusion, number>> = {};
+  const skip = (why: Exclusion) => {
+    excluded[why] = (excluded[why] ?? 0) + 1;
+  };
+
+  const ok: { facts: MemberFacts; dedupeKey: string | null }[] = [];
+  for (const f of facts) {
+    const hard = hardFilter(f, c, now);
+    if (hard) {
+      skip(hard);
+      continue;
+    }
+    const key = opts.dedupeKey ? opts.dedupeKey(f) : null;
+    if (opts.dedupeKey && !key) {
+      skip("segment");
+      continue;
+    }
+    if (key ? have.keys.has(`${f.memberId}|${key}`) : have.members.has(f.memberId)) {
+      skip("already_sent");
+      continue;
+    }
+    if (!matchesAudience(f, c.audience, ctx)) {
+      skip("segment");
+      continue;
+    }
+    const cap = capCheck(f.sends, c, opts.at, { createdAt: f.createdAt, imported: f.imported });
+    if (cap) {
+      skip(cap);
+      continue;
+    }
+    ok.push({ facts: f, dedupeKey: key });
+  }
+
+  // Warm-up: the most trusted first, then a fixed random order.
+  if (c.audience.order === "trust" || c.audience.order === "random") {
+    const rank = (f: MemberFacts) => (c.audience.order === "trust" ? trustRank(f) : 0);
+    ok.sort((a, b) => rank(a.facts) - rank(b.facts) || shuffleKey(a.facts.memberId, c.id).localeCompare(shuffleKey(b.facts.memberId, c.id)));
+  }
+  const limit = opts.limit ?? c.audience.limit ?? null;
+  let chosen = ok;
+  if (limit && limit > 0 && ok.length > limit) {
+    chosen = ok.slice(0, limit);
+    excluded.wave_limit = ok.length - limit;
+  }
+
+  const send = chosen.map((x) => ({ ...x, heldOut: c.holdoutPct > 0 && holdoutBucket(x.facts.memberId, c.id) < c.holdoutPct }));
+  const heldOut = send.filter((s) => s.heldOut).length;
+  return { send, willSend: send.length - heldOut, heldOut, excluded, considered: facts.length };
+}
+
+// Writes the chosen people as email_sends rows ('queued' or 'held_out').
+// Anyone who already has a row is skipped by the database.
+export async function queueSends(campaignId: string, resolved: Resolved, deliverAt: Date): Promise<number> {
+  const admin = createAdminClient();
+  let n = 0;
+  for (let i = 0; i < resolved.send.length; i += 500) {
+    const rows = resolved.send.slice(i, i + 500).map((s) => ({
+      member_id: s.facts.memberId,
+      status: s.heldOut ? "held_out" : "queued",
+      dedupe_key: s.dedupeKey ?? "",
+      deliver_at: deliverAt.toISOString(),
+      tier_at_send: s.facts.tier,
+    }));
+    const { data, error } = await admin.rpc("email_queue_sends", { p_campaign: campaignId, p_rows: rows });
+    if (error) throw new Error(`Couldn't queue the email (${error.message}).`);
+    n += Number(data) || 0;
+  }
+  return n;
+}

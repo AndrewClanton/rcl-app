@@ -6,7 +6,7 @@ import { emailIsProven } from "@/lib/member-link";
 import { firstNameOf, last10 } from "@/lib/checkin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { claimUrl } from "@/lib/claim-link";
-import { MAX_WRONG_DIGITS, digitsProofOk, openClaimToken, sealClaimToken, sealDigitsProof, type ClaimKind } from "@/lib/member-claim-token";
+import { CLAIM_LIFETIME_S, MAX_WRONG_DIGITS, digitsProofOk, emailClaimNonce, openClaimToken, sealClaimToken, sealDigitsProof, type ClaimKind } from "@/lib/member-claim-token";
 
 // "Claim your account": lets someone who has a members row but no website
 // login (imported from the old site, or a regular made at the check-in
@@ -187,8 +187,49 @@ export async function describeLogin(user: User): Promise<{ email: string | null;
   };
 }
 
+// The invite email's "Set my password" links, one per send, for a batch of
+// recipients (lib/email/campaign-send.ts). Deterministic: the nonce comes
+// from the send id and the expiry from when the send was queued, so a
+// retried batch renders the same email (Resend's idempotency needs that),
+// and the member_claims row is written once. A member who already has a
+// login, was removed, or has no phone to check gets no link (the email
+// then points them at sign-in instead). Never throws.
+export async function issueEmailClaimLinks(items: { memberId: string; sendId: string; queuedAt: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const ids = items.map((i) => i.memberId).filter((id) => UUID.test(id));
+    if (!ids.length) return out;
+    const admin = createAdminClient();
+    const { data: members, error } = await admin.from("members").select("id, auth_user_id, erased_at, phone").in("id", ids);
+    if (error) return out;
+    const ok = new Set((members ?? []).filter((m) => !m.auth_user_id && !m.erased_at && phoneLast4(m.phone)).map((m) => m.id as string));
+    const rows: { nonce: string; member_id: string; kind: ClaimKind; expires_at: string; issued_at: string }[] = [];
+    const urls = new Map<string, string>();
+    for (const it of items) {
+      if (!ok.has(it.memberId)) continue;
+      const nonce = emailClaimNonce(it.sendId);
+      const issued = Math.floor(Date.parse(it.queuedAt) / 1000);
+      if (!nonce || !Number.isFinite(issued)) continue;
+      const sealed = sealClaimToken(it.memberId, "email", Date.now(), { nonce, expS: issued + CLAIM_LIFETIME_S.email });
+      if (!sealed) continue;
+      rows.push({ nonce: sealed.nonce, member_id: it.memberId, kind: "email", expires_at: new Date(sealed.exp).toISOString(), issued_at: new Date(issued * 1000).toISOString() });
+      urls.set(it.memberId, claimUrl(sealed.token));
+    }
+    if (!rows.length) return out;
+    const { error: saveErr } = await admin.from("member_claims").upsert(rows, { onConflict: "nonce", ignoreDuplicates: true });
+    if (saveErr) {
+      console.error("invite claim links not recorded:", saveErr.message);
+      return out;
+    }
+    return urls;
+  } catch (e) {
+    console.error("invite claim links failed:", e instanceof Error ? e.message : e);
+    return out;
+  }
+}
+
 export type ClaimFailure = "invalid" | "expired" | "digits" | "no_email" | "used" | "has_login" | "user_linked" | "screen" | "gone" | "failed";
-export type ClaimResult = { ok: true; emailSaved: boolean } | { ok: false; reason: ClaimFailure; error: string };
+export type ClaimResult = { ok: true; emailSaved: boolean; memberId: string } | { ok: false; reason: ClaimFailure; error: string };
 
 // The last step: attach this signed-in login to the account the link was
 // made for. `digitsProof` is the note from checkClaimDigits. The checks and
@@ -217,11 +258,11 @@ export async function claimMemberForUser(user: User, token: string, digitsProof:
 
   switch (data as string) {
     case "linked":
-      return { ok: true, emailSaved: false };
+      return { ok: true, emailSaved: false, memberId: t.memberId };
     case "linked_email":
-      return { ok: true, emailSaved: true };
+      return { ok: true, emailSaved: true, memberId: t.memberId };
     case "mine": // already done: a double tap or a reload
-      return { ok: true, emailSaved: false };
+      return { ok: true, emailSaved: false, memberId: t.memberId };
     case "used":
       return { ok: false, reason: "used", error: STATE_ERROR.used };
     case "has_login":

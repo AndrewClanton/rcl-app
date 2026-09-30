@@ -1,0 +1,573 @@
+// Checks email marketing (src/lib/email/*, the unsubscribe, webhook and
+// click routes, the Back office actions and the Indy import) against
+// in-memory stand-ins for Supabase and Resend
+// (scripts/check-email-marketing-fakes.mjs). No database, no network,
+// nothing is sent: fetch is replaced before anything loads, and it throws
+// on any host but a fake api.resend.com.
+//
+// Usage: node scripts/check-email-marketing.mjs   (Node 23.6+ runs the .ts directly)
+import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { registerHooks } from "node:module";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const src = path.join(root, "src");
+const fakesUrl = new URL("./check-email-marketing-fakes.mjs", import.meta.url).href;
+const STUBBED = {
+  "server-only": fakesUrl,
+  "next/server": fakesUrl,
+  "next/cache": fakesUrl,
+  "@/lib/supabase/admin": fakesUrl,
+  "@/lib/auth": fakesUrl,
+  "@/lib/data/lineup": fakesUrl,
+};
+const withExt = (base) => [".ts", ".tsx", "/index.ts"].map((e) => base + e).find((p) => existsSync(p));
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (STUBBED[specifier]) return { url: STUBBED[specifier], shortCircuit: true };
+    if (specifier.startsWith("@/")) {
+      const file = withExt(path.join(src, specifier.slice(2)));
+      if (file) return { url: pathToFileURL(file).href, shortCircuit: true };
+    }
+    if (specifier.startsWith(".") && context.parentURL?.startsWith("file:") && !path.extname(specifier)) {
+      const parent = fileURLToPath(context.parentURL);
+      if (parent.startsWith(src)) {
+        const file = withExt(path.resolve(path.dirname(parent), specifier));
+        if (file) return { url: pathToFileURL(file).href, shortCircuit: true };
+      }
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const fakes = await import(fakesUrl);
+const { db, resend, fakeFetch, flushAfter, setLineup } = fakes;
+globalThis.fetch = fakeFetch;
+// Test-only values, set in this process only. The key is fake and fetch is
+// the fake above: nothing can reach Resend.
+process.env.RESEND_API_KEY = "re_test_fake";
+process.env.EMAIL_FROM = "Royale Cinema Lounge <hello@royalecinemajoplin.com>";
+process.env.EMAIL_TOKEN_SECRET = randomBytes(32).toString("base64url");
+process.env.EMAIL_SENDING_ENABLED = "true";
+process.env.EMAIL_SCHEDULE_AHEAD_HOURS = "60";
+const WEBHOOK_SECRET = `whsec_${randomBytes(24).toString("base64")}`;
+process.env.RESEND_WEBHOOK_SECRET = WEBHOOK_SECRET;
+delete process.env.CRON_SECRET;
+
+const load = (p) => import(pathToFileURL(path.join(src, p)).href);
+const rules = await load("lib/email/rules.ts");
+const timing = await load("lib/email/timing.ts");
+const tokens = await load("lib/email/tokens.ts");
+const lintMod = await load("lib/email/lint.ts");
+const render = await load("lib/email/render.ts");
+const format = await load("lib/email/format.ts");
+const hash = await load("lib/email/hash.ts");
+const sender = await load("lib/email/campaign-send.ts");
+const consent = await load("lib/email/consent.ts");
+const clicks = await load("lib/email/clicks.ts");
+const sig = await load("lib/email/webhook-signature.ts");
+const { SITE_URL } = await load("lib/site.ts");
+const unsubRoute = await load("app/api/email/unsubscribe/route.ts");
+const hookRoute = await load("app/api/resend/webhook/route.ts");
+const actions = await load("app/admin/email/actions.ts");
+
+let failures = 0;
+let passed = 0;
+const check = (label, ok, detail = "") => {
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail && !ok ? `  (${detail})` : ""}`);
+  if (ok) passed++;
+  else failures++;
+};
+const eq = (label, got, want) => {
+  const ok = JSON.stringify(got) === JSON.stringify(want);
+  check(label, ok, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+};
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const cdt = (date, time) => new Date(`${date}T${time}:00-05:00`);
+const cst = (date, time) => new Date(`${date}T${time}:00-06:00`);
+
+// ===================== 1. caps =====================
+{
+  const at = cdt("2026-10-15", "15:00"); // Thursday
+  const lineupTue = { c: "L", t: cdt("2026-10-13", "10:30").toISOString(), k: "lineup", a: null, g: "lineup", x: null, s: "delivered", ck: false };
+  const eventMon = { c: "E", t: cdt("2026-10-12", "10:30").toISOString(), k: "event", a: null, g: "events", x: null, s: "delivered", ck: false };
+  const member = { createdAt: "2026-01-01T00:00:00Z", imported: true };
+  const event = { id: "N", kind: "event", category: "events", automation: null };
+  const offer = { id: "O", kind: "offer", category: "offers", automation: null };
+  eq("caps: an extra after only the lineup this week is fine", rules.capCheck([lineupTue], event, at, member), null);
+  eq("caps: a second extra in the same 7 days is refused", rules.capCheck([eventMon], event, at, member), "cap_extra");
+  eq("caps: a third email in 7 days is refused", rules.capCheck([lineupTue, eventMon], offer, at, member), "cap_week");
+  eq("caps: two within 20 hours are refused", rules.capCheck([{ ...lineupTue, t: new Date(at.getTime() - 19 * HOUR).toISOString() }], event, at, member), "cap_day");
+  eq("caps: 21 hours apart is fine", rules.capCheck([{ ...lineupTue, t: new Date(at.getTime() - 21 * HOUR).toISOString() }], event, at, member), null);
+  eq("caps: account emails (the invite) are never held back", rules.capCheck([lineupTue, eventMon], { id: "I", kind: "invite", category: "account", automation: null }, at, member), null);
+  eq("caps: account emails don't count against the week", rules.capCheck([{ ...eventMon, k: "invite", g: "account" }], event, at, member), null);
+  eq("caps: a held-back row doesn't count", rules.capCheck([{ ...eventMon, s: "held_out" }], event, at, member), null);
+  const fresh = { createdAt: new Date(at.getTime() - 3 * DAY).toISOString(), imported: false };
+  const welcome2 = { id: "W", kind: "automation", category: "rewards", automation: "welcome_2" };
+  const welcome1Sent = { c: "W1", t: new Date(at.getTime() - 3 * DAY).toISOString(), k: "automation", a: "welcome_1", g: "rewards", x: null, s: "delivered", ck: false };
+  eq("caps: welcome skips the extra cap in a new member's first 14 days", rules.capCheck([welcome1Sent], welcome2, at, fresh), null);
+  eq("caps: ...but not after 14 days", rules.capCheck([welcome1Sent], welcome2, at, { createdAt: new Date(at.getTime() - 20 * DAY).toISOString(), imported: false }), "cap_extra");
+  const month = Array.from({ length: 8 }, (_, i) => ({ ...lineupTue, c: `m${i}`, t: new Date(at.getTime() - (i * 3 + 25) * DAY).toISOString() }));
+  eq("caps: under 8 in 30 days is fine", rules.capCheck(month.filter((s) => Date.parse(s.t) > at.getTime() - 30 * DAY), event, at, member), null);
+  const eight = Array.from({ length: 8 }, (_, i) => ({ ...lineupTue, c: `n${i}`, k: "lineup", t: new Date(at.getTime() - (8 + i * 2.5) * DAY).toISOString() }));
+  eq("caps: a ninth in 30 days is refused", rules.capCheck(eight, { id: "Z", kind: "lineup", category: "lineup", automation: null }, at, member), "cap_month");
+  const tonight = { id: "T", kind: "alert", category: "alerts", automation: null, alert: "tonight" };
+  const tonights = [8, 16].map((d) => ({ ...lineupTue, c: `t${d}`, k: "alert", g: "alerts", x: "tonight", t: new Date(at.getTime() - d * DAY).toISOString() }));
+  eq("caps: a third tonight alert in 30 days is refused", rules.capCheck(tonights, tonight, at, member), "cap_kind");
+  const offerSent = { ...lineupTue, c: "o1", k: "offer", g: "offers", t: new Date(at.getTime() - 12 * DAY).toISOString() };
+  eq("caps: a second offer in 30 days is refused", rules.capCheck([offerSent], offer, at, member), "cap_kind");
+  check("caps: fitsWindow counts a send scheduled later today too", !rules.fitsWindow([at.getTime() + 2 * HOUR, at.getTime() - 2 * DAY], at.getTime(), 7, 2));
+}
+
+// ===================== send windows =====================
+{
+  const slot = (d) => timing.nextSendSlot(d).toISOString();
+  eq("window: Wednesday noon stays", slot(cdt("2026-10-14", "12:00")), cdt("2026-10-14", "12:00").toISOString());
+  eq("window: Tuesday 8 AM moves to 10:30 the same day", slot(cdt("2026-10-13", "08:00")), cdt("2026-10-13", "10:30").toISOString());
+  eq("window: Friday 7:30 PM moves to Saturday 10:30", slot(cdt("2026-10-16", "19:30")), cdt("2026-10-17", "10:30").toISOString());
+  eq("window: Saturday 8 PM skips Sunday to Monday 10:30", slot(cdt("2026-10-17", "20:00")), cdt("2026-10-19", "10:30").toISOString());
+  eq("window: Sunday noon moves to Monday 10:30", slot(cdt("2026-10-18", "12:00")), cdt("2026-10-19", "10:30").toISOString());
+  eq("window: across the clocks going back (Sun Nov 1) lands Monday 10:30 CST", slot(cst("2026-11-01", "12:00")), cst("2026-11-02", "10:30").toISOString());
+  check("window: 6:59 PM is inside, 7:00 PM isn't", timing.inSendWindow(cdt("2026-10-14", "18:59")) && !timing.inSendWindow(cdt("2026-10-14", "19:00")));
+  check("window: 8:59 AM isn't, 9:00 AM is", !timing.inSendWindow(cdt("2026-10-14", "08:59")) && timing.inSendWindow(cdt("2026-10-14", "09:00")));
+  eq("lineup slot: from a Monday, the next day at 10:30", timing.nextLineupSlot(cdt("2026-10-12", "09:00")).at.toISOString(), cdt("2026-10-13", "10:30").toISOString());
+  eq("lineup slot: from Tuesday 11 AM, next Tuesday", timing.nextLineupSlot(cdt("2026-10-13", "11:00")).date, "2026-10-20");
+}
+
+// ===================== segment rules =====================
+const facts = (over = {}) => ({
+  memberId: randomUUID(),
+  email: "sam@example.com",
+  emailHash: hash.hashEmail("sam@example.com"),
+  name: "Sam",
+  tier: "Insiders",
+  legacyPlus: false,
+  imported: true,
+  fromOldSite: true,
+  hasLogin: false,
+  hasPhone: true,
+  createdAt: "2026-09-25T12:00:00Z",
+  birthday: null,
+  emailOptIn: true,
+  prefs: { lineup: true, alerts: true, events: true, offers: true, rewards: true },
+  pausedUntil: null,
+  consentSource: "old_site_import",
+  importGroup: null,
+  engagement: "active",
+  reconfirmSentAt: null,
+  lastEngagedAt: null,
+  suppressed: null,
+  visitDays: [],
+  archiveDays: [],
+  firstVisitOn: null,
+  lastVisitOn: null,
+  tickets: [],
+  orders: [],
+  lastClickAt: null,
+  sends: [],
+  deliveredSinceEngaged: 0,
+  inviteDelivered: false,
+  ...over,
+});
+{
+  const now = cdt("2026-10-15", "12:00");
+  const ctx = { now, today: "2026-10-15" };
+  const m = (f, r) => rules.matchesRule(facts(f), r, ctx);
+  check("rule: tier Insiders+ only matches Insiders+", m({ tier: "Insiders+" }, { r: "tier", v: "Insiders+" }) && !m({}, { r: "tier", v: "Insiders+" }));
+  check("rule: consent source", m({ consentSource: "indy_yes" }, { r: "consent", v: ["indy_yes"] }) && !m({}, { r: "consent", v: ["indy_yes"] }));
+  check("rule: regulars = 3+ visit days in 30", m({ visitDays: ["2026-10-01", "2026-10-08", "2026-10-14"] }, { r: "visit_days", within: 30, min: 3 }) && !m({ visitDays: ["2026-10-01", "2026-10-08", "2026-09-01"] }, { r: "visit_days", within: 30, min: 3 }));
+  check("rule: lapsed 45 = came before, nothing for 45 days", m({ lastVisitOn: "2026-08-20", firstVisitOn: "2026-08-01" }, { r: "lapsed", days: 45 }) && !m({ lastVisitOn: "2026-09-20" }, { r: "lapsed", days: 45 }) && !m({}, { r: "lapsed", days: 45 }));
+  check("rule: never visited", m({}, { r: "never_visited" }) && !m({ firstVisitOn: "2026-10-01" }, { r: "never_visited" }));
+  check("rule: birthday this week (and Dec 30 -> Jan 2 wraps)", m({ birthday: "2000-10-19" }, { r: "birthday_within", days: 7 }) && rules.birthdayWithin("2000-01-02", "2026-12-30", 7) && !m({ birthday: "2000-10-25" }, { r: "birthday_within", days: 7 }));
+  check("rule: Feb 29 birthdays count on Feb 28", rules.birthdayWithin("2000-02-29", "2027-02-28", 1));
+  const t = (d, q, p) => ({ d: new Date(now.getTime() - d * DAY).toISOString(), q, p });
+  check("rule: 2+ paid tickets in 30 days (free ones don't count)", m({ tickets: [t(3, 1, 8), t(10, 1, 8)] }, { r: "paid_tickets", within: 30, min: 2 }) && !m({ tickets: [t(3, 1, 8), t(10, 3, 0)] }, { r: "paid_tickets", within: 30, min: 2 }));
+  const o = (d, c) => ({ d: new Date(now.getTime() - d * DAY).toISOString(), a: false, c, f: false, t: 5 });
+  check("rule: coffee regulars", m({ orders: [o(2, true), o(9, true)] }, { r: "bar", v: "coffee", within: 30, min: 2 }) && !m({ orders: [o(2, true), o(9, false)] }, { r: "bar", v: "coffee", within: 30, min: 2 }));
+  check("rule: engaged = a click or a visit within N days", m({ lastClickAt: new Date(now.getTime() - 5 * DAY).toISOString() }, { r: "engaged", days: 60 }) && !m({}, { r: "engaged", days: 60 }));
+  check("rule: Indy returners = said yes, never had an old-site account", m({ consentSource: "indy_yes", fromOldSite: false }, rules.PRESETS.find((p) => p.key === "indy_returners").audience.include[1]));
+  check("audience: include AND-ed, minus exclude", rules.matchesAudience(facts({ tier: "Insiders", legacyPlus: true }), { include: [{ r: "legacy_plus" }, { r: "tier", v: "Insiders" }], exclude: [{ r: "has_login", v: true }] }, ctx));
+  check("sunset: old-site import, invite + 4 delivered, no engagement -> due", rules.sunsetDue(facts({ inviteDelivered: true, deliveredSinceEngaged: 5 }), now) && !rules.sunsetDue(facts({ inviteDelivered: true, deliveredSinceEngaged: 3 }), now));
+  check("sunset: 10+ since engaging over 90 days ago -> due", rules.sunsetDue(facts({ consentSource: "indy_yes", deliveredSinceEngaged: 10, lastEngagedAt: new Date(now.getTime() - 100 * DAY).toISOString() }), now));
+  eq("warm-up order: join form, kiosk, claim, Indy+paid, Indy, old-site paying, likely real, unknown, review, Indy no", [
+    rules.trustRank({ consentSource: "join_form" }),
+    rules.trustRank({ consentSource: "kiosk" }),
+    rules.trustRank({ consentSource: "claim" }),
+    rules.trustRank({ consentSource: "indy_yes", legacyPlus: true }),
+    rules.trustRank({ consentSource: "indy_yes", legacyPlus: false }),
+    rules.trustRank({ consentSource: "old_site_import", legacyPlus: true }),
+    rules.trustRank({ consentSource: "old_site_import", importGroup: "likely_real" }),
+    rules.trustRank({ consentSource: "unknown" }),
+    rules.trustRank({ consentSource: "old_site_import", importGroup: "review" }),
+    rules.trustRank({ consentSource: "indy_no" }),
+  ], [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+}
+
+// ===================== 2. prefs, pause, dormant =====================
+{
+  const now = new Date();
+  const lineup = { id: "c", kind: "lineup", category: "lineup", automation: null };
+  eq("prefs: category off -> excluded", rules.hardFilter(facts({ prefs: { lineup: false, alerts: true, events: true, offers: true, rewards: true } }), lineup, now), "pref_off");
+  eq("prefs: paused -> excluded", rules.hardFilter(facts({ pausedUntil: new Date(now.getTime() + DAY).toISOString() }), lineup, now), "paused");
+  eq("prefs: a pause that ended doesn't count", rules.hardFilter(facts({ pausedUntil: new Date(now.getTime() - DAY).toISOString() }), lineup, now), null);
+  eq("prefs: dormant -> excluded", rules.hardFilter(facts({ engagement: "dormant" }), lineup, now), "dormant");
+  eq("prefs: ...except from \"Still want these?\"", rules.hardFilter(facts({ engagement: "dormant" }), { id: "r", kind: "reconfirm", category: "account", automation: "reconfirm" }, now), null);
+  eq("prefs: email off -> excluded", rules.hardFilter(facts({ emailOptIn: false }), lineup, now), "opted_out");
+  eq("prefs: a malformed address is left out (it would fail the whole batch)", rules.hardFilter(facts({ email: "sam@example" }), lineup, now), "bad_address");
+}
+
+// ===================== 3. suppression by hash =====================
+{
+  check("hash: case and spaces don't matter", hash.hashEmail("  Sam@Example.COM ") === hash.hashEmail("sam@example.com"));
+  check("hash: 64 hex characters, no address in it", /^[0-9a-f]{64}$/.test(hash.hashEmail("sam@example.com")));
+  await consent.suppressHash(hash.hashEmail("gone@example.com"), "hard_bounce");
+  await consent.suppressHash(hash.hashEmail("gone@example.com"), "manual");
+  eq("suppression: a weaker reason doesn't replace a hard bounce", db.email_suppressions.find((s) => s.email_hash === hash.hashEmail("gone@example.com")).reason, "hard_bounce");
+  check("suppression: stored without any address", !JSON.stringify(db.email_suppressions).includes("@"));
+}
+
+// ===================== 4. holdout =====================
+{
+  const campaign = randomUUID();
+  const ids = Array.from({ length: 10000 }, () => randomUUID());
+  const held = ids.filter((id) => hash.isHeldOut(id, campaign, 10)).length;
+  check("holdout: about 10% of 10,000", held > 850 && held < 1150, String(held));
+  check("holdout: the same answer every time", ids.slice(0, 200).every((id) => hash.isHeldOut(id, campaign, 10) === hash.isHeldOut(id, campaign, 10)));
+  check("holdout: 0% holds nobody", ids.every((id) => !hash.isHeldOut(id, campaign, 0)));
+}
+
+// ===================== tokens and headers =====================
+{
+  const memberId = randomUUID();
+  const sendId = randomUUID();
+  const t = tokens.sealEmailToken({ memberId, sendId });
+  check("token: 66 characters of base64url", /^[A-Za-z0-9_-]{66}$/.test(t ?? ""), t);
+  eq("token: opens to the same member and send", tokens.openEmailToken(t), { memberId, sendId });
+  eq("token: without a send", tokens.openEmailToken(tokens.sealEmailToken({ memberId, sendId: null })), { memberId, sendId: null });
+  let tampered = 0;
+  const raw = Buffer.from(t, "base64url");
+  for (let i = 0; i < raw.length; i++) {
+    const b = Buffer.from(raw);
+    b[i] ^= 1;
+    if (tokens.openEmailToken(b.toString("base64url")) === null) tampered++;
+  }
+  eq("token: flipping any bit breaks it", tampered, raw.length);
+  eq("token: junk opens to null", [tokens.openEmailToken(""), tokens.openEmailToken(null), tokens.openEmailToken("x".repeat(66)), tokens.openEmailToken(`${t}A`)], [null, null, null, null]);
+  const saved = process.env.EMAIL_TOKEN_SECRET;
+  process.env.EMAIL_TOKEN_SECRET = randomBytes(32).toString("base64url");
+  eq("token: another secret doesn't open it", tokens.openEmailToken(t), null);
+  delete process.env.EMAIL_TOKEN_SECRET;
+  eq("token: no secret, no tokens (so nothing can go without an unsubscribe link)", tokens.sealEmailToken({ memberId, sendId }), null);
+  process.env.EMAIL_TOKEN_SECRET = saved;
+  const h = tokens.listUnsubscribeHeaders(t);
+  eq("headers: List-Unsubscribe is our one-click address in angle brackets", h["List-Unsubscribe"], `<${SITE_URL}/api/email/unsubscribe?t=${t}>`);
+  eq("headers: List-Unsubscribe-Post is RFC 8058's exact value", h["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click");
+  check("headers: no address in either", !JSON.stringify(h).includes("@"));
+  check("prefs link carries #all for Unsubscribe", tokens.preferencesUrl(t, "all").endsWith(`/email/preferences?t=${t}#all`));
+}
+
+// ===================== 8. MPLC lint and rendering =====================
+const films = [
+  { movieId: "m-new", title: "The Incomer", posterUrl: null, rating: "R", runtime: 110, archive: false, showtimes: [{ id: randomUUID(), startsAt: cdt("2026-10-16", "19:00").toISOString() }] },
+  { movieId: "m-old", title: "The Texas Chain Saw Massacre", posterUrl: null, rating: "R", runtime: 83, archive: true, showtimes: [{ id: randomUUID(), startsAt: cdt("2026-10-16", "23:59").toISOString() }] },
+];
+const data = { range: { start: "2026-10-13", days: 7 }, films, happenings: [{ id: randomUUID(), title: "Horror trivia", note: "Teams of six", startsAt: cdt("2026-10-13", "19:00").toISOString() }], menuItems: [] };
+const links = { preferencesUrl: `${SITE_URL}/email/preferences?t=TOKEN`, unsubscribeUrl: `${SITE_URL}/email/preferences?t=TOKEN#all`, href: (u) => u };
+const recipient = { firstName: "Sam", consentSource: "indy_yes", tier: "Insiders", hasLogin: false, email: null, claimUrl: null };
+{
+  const restricted = ["The Texas Chain Saw Massacre", "Jaws", "It"];
+  const base = { preheader: "One showing", bodyTexts: [], primaryButtons: 1, plainFilmTitles: [], restrictedTitles: restricted, htmlBytes: 1000 };
+  check("lint: an archive title in the subject is refused", lintMod.lintCampaign({ ...base, subject: "Tonight: the texas chain-saw massacre!" }).errors.length === 1);
+  check("lint: ...and in the preview text", lintMod.lintCampaign({ ...base, subject: "Tonight", preheader: "Jaws at midnight" }).errors.length === 1);
+  check("lint: a word that merely contains a title isn't flagged", lintMod.lintCampaign({ ...base, subject: "Jawsome deals" }).errors.length === 0);
+  check("lint: a very short title only warns", lintMod.lintCampaign({ ...base, subject: "It is trivia night" }).errors.length === 0 && lintMod.lintCampaign({ ...base, subject: "It is trivia night" }).warnings.some((w) => w.includes('"It"')));
+  check("lint: an archive film in a plain card is refused", lintMod.lintCampaign({ ...base, subject: "Hi", plainFilmTitles: [{ title: "Jaws", archive: true }] }).errors.length === 1);
+  check("lint: over 100 KB is refused, over 90 KB warns", lintMod.lintCampaign({ ...base, subject: "Hi", htmlBytes: 101 * 1024 }).errors.length === 1 && lintMod.lintCampaign({ ...base, subject: "Hi", htmlBytes: 95 * 1024 }).warnings.length === 1);
+  check("lint: ALL CAPS, two !, two main buttons and no preview text warn", lintMod.lintCampaign({ ...base, subject: "DON'T MISS OUT NOW!!", preheader: "", primaryButtons: 2 }).warnings.length === 4);
+
+  const lineup = { kind: "lineup", category: "lineup", subject: "", preheader: "", content: { lineup: { start: "2026-10-13", days: 7, skipMovieIds: [], skipHappeningIds: [] }, blocks: [{ t: "paragraph", text: "Hi {first name}," }, { t: "lineup" }, { t: "signoff" }] } };
+  const r = render.renderCampaign(lineup, data, recipient, links);
+  check("render: the default subject names only this year's titles", r.subject.includes("The Incomer") && !r.subject.includes("Chain Saw"));
+  check("render: the default preview text has no archive title", !r.preheader.includes("Chain Saw"));
+  const archiveAt = r.html.indexOf("From the film archive");
+  check("render: the archive film is only inside the archive section, after its note", archiveAt > 0 && r.html.indexOf("Texas Chain Saw") > archiveAt && r.html.indexOf(render.ARCHIVE_NOTE.slice(0, 40)) > archiveAt);
+  check("render: every email has the street address", r.html.includes("715 E Broadway") && r.html.includes("Joplin, MO 64801") && r.text.includes("715 E Broadway"));
+  check("render: ...and the unsubscribe and preferences links, in HTML and text", r.html.includes(`${SITE_URL}/email/preferences?t=TOKEN#all`) && r.text.includes("Unsubscribe: ") && r.html.includes("Email preferences"));
+  check("render: the CAN-SPAM ad line on marketing, not on account email", r.html.includes("A promotional email from Royale Cinema Lounge") && !render.renderCampaign({ ...lineup, kind: "invite", category: "account" }, data, recipient, links).html.includes("A promotional email"));
+  check("render: no view-in-browser or forward link", !/view (it )?in (your )?browser|forward to a friend/i.test(r.html));
+  check("render: the first name fills in, and the house event gets a calendar link", r.html.includes("Hi Sam,") && r.html.includes("/api/calendar/"));
+  const card = render.renderCampaign({ kind: "alert", category: "alerts", subject: "Tonight", preheader: "x", content: { blocks: [{ t: "filmCard", movieId: "m-old" }] } }, data, recipient, links);
+  check("render: an archive film in a film card still lands in the archive section", card.html.indexOf("From the film archive") > 0 && card.html.indexOf("From the film archive") < card.html.indexOf("Texas Chain Saw") && card.meta.containsArchive);
+  const evil = render.renderCampaign({ kind: "announcement", category: "events", subject: "Hi {first name}", preheader: "", content: { blocks: [{ t: "paragraph", text: "<script>alert(1)</script>" }, { t: "button", label: "Go", link: "javascript:alert(1)" }] } }, data, { ...recipient, firstName: format.firstNameOf('<b>Sam</b> "x"') }, links);
+  check("render: typed text is escaped and odd links become the showtimes page", !evil.html.includes("<script>alert") && !evil.html.includes("javascript:") && evil.html.includes(`${SITE_URL}/showtimes`));
+  eq("first name: stripped of markup, capitalised, 'there' when missing", [format.firstNameOf("SAM jones"), format.firstNameOf("<i>"), format.firstNameOf("Removed member"), format.applyFirstName("Hi {first name},", null), format.applyFirstName("{first name}, it's your week.", null)], ["Sam", "I", null, "Hi there,", "It's your week."]);
+}
+
+// ===================== 5. sending: batches, retries, idempotency =====================
+const mkMember = (i, over = {}) => {
+  const m = { id: randomUUID(), name: `Member ${i}`, email: `member${i}@example.com`, tier: "Insiders", email_opt_in: true, erased_at: null, created_at: "2026-09-25T12:00:00Z", legacy_user_id: 1000 + i, auth_user_id: null, phone: "(417) 555-0100", ...over };
+  db.members.push(m);
+  return m;
+};
+const mkCampaign = (over = {}) => {
+  const c = {
+    id: randomUUID(),
+    kind: "event",
+    automation: null,
+    category: "events",
+    name: "Trivia",
+    subject: "Trivia, two Tuesdays",
+    preheader: "7 PM",
+    content: { blocks: [{ t: "paragraph", text: "Hi {first name}" }, { t: "button", label: "See it", link: "/showtimes" }, { t: "signoff" }] },
+    audience: { include: [{ r: "all" }] },
+    holdout_pct: 0,
+    status: "scheduled",
+    scheduled_for: null,
+    send_key: null,
+    lineup_start: null,
+    contains_archive: false,
+    links: [],
+    recipients: null,
+    held_out: null,
+    excluded: {},
+    locked_until: null,
+    error: null,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    sent_at: null,
+    ...over,
+  };
+  db.email_campaigns.push(c);
+  return c;
+};
+setLineup({ films, happenings: [] });
+{
+  const members = Array.from({ length: 5 }, (_, i) => mkMember(i));
+  db.member_email_prefs.push({ member_id: members[1].id, lineup: true, alerts: true, events: false, offers: true, rewards: true, consent_source: "indy_yes", engagement: "active" });
+  db.email_suppressions.push({ email_hash: hash.hashEmail(members[2].email), reason: "complaint", first_at: new Date().toISOString(), last_at: new Date().toISOString() });
+  const c = mkCampaign();
+  resend.acceptThenFail = 1; // Resend takes the batch, but the answer is lost
+  const r1 = await sender.runCampaign(c.id, Date.now() + 30_000);
+  const mine = () => db.email_sends.filter((s) => s.campaign_id === c.id);
+  eq("send: 3 of 5 go (events off and a complaint are left out)", mine().filter((s) => s.resend_email_id).length, 3);
+  eq("send: a lost answer is retried with the same key: Resend sent 3, not 6", resend.sent.length, 3);
+  eq("send: one batch", resend.batches, 1);
+  eq("send: the campaign is sent", [r1.status, db.email_campaigns.find((x) => x.id === c.id).status], ["sent", "sent"]);
+  eq("send: exclusions counted by reason", Object.entries(db.email_campaigns.find((x) => x.id === c.id).excluded).sort(), [["pref_off", 1], ["suppressed", 1]]);
+  const item = resend.sent[0];
+  check("send: each email has the one-click headers, reply-to and tags", item.headers["List-Unsubscribe-Post"] === "List-Unsubscribe=One-Click" && item.reply_to === "info@royalecinemajoplin.com" && item.tags.some((t) => t.name === "send"));
+  check("send: links are tracked through our own /e/ route", item.html.includes(`${SITE_URL}/e/`) && !item.html.includes('href="https://rcl-app.vercel.app/showtimes"'));
+  check("send: one person per email, never a list in To", resend.sent.every((e) => e.to.length === 1));
+  await sender.runCampaign(c.id, Date.now() + 30_000);
+  eq("send: running it again sends nothing more", resend.sent.length, 3);
+
+  // A batch that failed outright is retried later with the same key, once.
+  const c2 = mkCampaign({ name: "Second", kind: "invite", category: "account" }); // account email: no caps
+  resend.failNext = 2;
+  await sender.runCampaign(c2.id, Date.now() + 30_000);
+  // Account email ignores category choices, so 4 (only the complaint is left out).
+  eq("send: after two failures the same batch goes once", [resend.batches, db.email_sends.filter((s) => s.campaign_id === c2.id && s.resend_email_id).length], [2, 4]);
+  check("send: the batch's key is <campaign>:<batch>", [...resend.keys.keys()].includes(`${c2.id}:1`));
+
+  // Two runs at once: only one takes the lease.
+  const c3 = mkCampaign({ name: "Third", kind: "reconfirm", category: "account" });
+  const before = resend.sent.length;
+  const [a, b] = await Promise.all([sender.runCampaign(c3.id, Date.now() + 30_000), sender.runCampaign(c3.id, Date.now() + 30_000)]);
+  eq("send: two runs at once, one works (the other finds it taken)", [a.ran, b.ran].filter(Boolean).length, 1);
+  check("send: ...and nobody gets it twice", resend.sent.length - before === 4 && new Set(resend.sent.slice(before).map((e) => e.to[0])).size === 4, String(resend.sent.length - before));
+
+  // The kill switch.
+  process.env.EMAIL_SENDING_ENABLED = "false";
+  const c4 = mkCampaign({ name: "Blocked" });
+  const r4 = await sender.runCampaign(c4.id, Date.now() + 30_000);
+  eq("kill switch: nothing goes, the campaign stays scheduled with a reason", [r4.ran, db.email_campaigns.find((x) => x.id === c4.id).status, !!db.email_campaigns.find((x) => x.id === c4.id).error], [false, "scheduled", true]);
+  process.env.EMAIL_SENDING_ENABLED = "true";
+  process.env.EMAIL_FROM = "Royale <onboarding@resend.dev>";
+  check("kill switch: a @resend.dev sender refuses list email", !sender.sendingGate().ok);
+  process.env.EMAIL_FROM = "Royale Cinema Lounge <hello@royalecinemajoplin.com>";
+  db.email_campaigns.splice(db.email_campaigns.findIndex((x) => x.id === c4.id), 1);
+
+  // A double "Schedule" with the same send key.
+  const draft = mkCampaign({ name: "Draft", status: "draft" });
+  const key = randomUUID();
+  const day = new Date(Date.now() + 3 * DAY).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const s1 = await actions.scheduleCampaign(draft.id, { when: "at", date: day, time: "10:30", sendKey: key });
+  const s2 = await actions.scheduleCampaign(draft.id, { when: "at", date: day, time: "10:30", sendKey: key });
+  check("schedule: a double click with the same key reports the first", s1.ok && s2.ok && /Already/.test(s2.message ?? ""), JSON.stringify([s1, s2]));
+  const s3 = await actions.scheduleCampaign(draft.id, { when: "at", date: day, time: "10:30", sendKey: randomUUID() });
+  check("schedule: a second, different request is refused (already scheduled)", !s3.ok);
+  const archiveDraft = mkCampaign({ name: "Bad", status: "draft", subject: "Tonight: The Texas Chain Saw Massacre" });
+  db.movies.push({ id: "m-old", title: "The Texas Chain Saw Massacre", release_year: 1974 }, { id: "m-new", title: "The Incomer", release_year: new Date().getFullYear() });
+  const s4 = await actions.scheduleCampaign(archiveDraft.id, { when: "at", date: day, time: "10:30", sendKey: randomUUID() });
+  check("schedule: an archive title in the subject blocks scheduling", !s4.ok && /archive title/.test(s4.error ?? ""), JSON.stringify(s4));
+}
+
+// ===================== 6. one-click unsubscribe =====================
+{
+  const m = mkMember(90);
+  const c = mkCampaign({ name: "Unsub test", status: "sent" });
+  const sendId = randomUUID();
+  const later = randomUUID();
+  db.email_sends.push({ id: sendId, campaign_id: c.id, member_id: m.id, status: "delivered", unsubscribed_at: null, created_at: new Date().toISOString() });
+  db.email_sends.push({ id: later, campaign_id: mkCampaign({ name: "Later", status: "sending" }).id, member_id: m.id, status: "scheduled", resend_email_id: "re_later", deliver_at: new Date(Date.now() + DAY).toISOString(), created_at: new Date().toISOString() });
+  const t = tokens.sealEmailToken({ memberId: m.id, sendId });
+  const req = (method, token, body) => {
+    const url = `${SITE_URL}/api/email/unsubscribe?t=${token}`;
+    const r = new Request(url, { method, ...(body ? { body, headers: { "content-type": "application/x-www-form-urlencoded" } } : {}) });
+    return Object.assign(r, { nextUrl: new URL(url) });
+  };
+  const g = await unsubRoute.GET(req("GET", t));
+  check("unsubscribe: GET never unsubscribes (it goes to the preference page)", g.status === 303 && (g.headers.get("location") ?? "").includes("/email/preferences?t=") && db.members.find((x) => x.id === m.id).email_opt_in === true);
+  const bad = Buffer.from(t, "base64url");
+  bad[20] ^= 1;
+  const b = await unsubRoute.POST(req("POST", bad.toString("base64url"), "List-Unsubscribe=One-Click"));
+  check("unsubscribe: a tampered token gets 200 and changes nothing", b.status === 200 && db.members.find((x) => x.id === m.id).email_opt_in === true);
+  const p = await unsubRoute.POST(req("POST", t, "List-Unsubscribe=One-Click"));
+  const body = await p.text();
+  check("unsubscribe: one-click POST answers 200 with plain text, no redirect", p.status === 200 && /unsubscribed/i.test(body) && !p.headers.get("location"));
+  check("unsubscribe: email is off, and the choice is logged", db.members.find((x) => x.id === m.id).email_opt_in === false && db.email_consent_log.some((l) => l.member_id === m.id && l.action === "opt_out" && l.source === "one_click"));
+  check("unsubscribe: stamped on the email it came from", !!db.email_sends.find((s) => s.id === sendId).unsubscribed_at && db.email_events.some((e) => e.send_id === sendId && e.type === "unsubscribed"));
+  check("unsubscribe: an email scheduled for them is cancelled at Resend", resend.cancelled.includes("re_later") && db.email_sends.find((s) => s.id === later).status === "cancelled");
+  const logs = db.email_consent_log.filter((l) => l.member_id === m.id).length;
+  const again = await unsubRoute.POST(req("POST", t, "List-Unsubscribe=One-Click"));
+  check("unsubscribe: doing it again is harmless", again.status === 200 && db.email_consent_log.filter((l) => l.member_id === m.id).length === logs);
+  check("unsubscribe: category choices are kept for coming back", (db.member_email_prefs.find((x) => x.member_id === m.id)?.lineup ?? true) === true);
+}
+
+// ===================== 7. the webhook =====================
+{
+  const m = mkMember(91);
+  const c = mkCampaign({ name: "Hook test", status: "sent" });
+  const sendId = randomUUID();
+  db.email_sends.push({ id: sendId, campaign_id: c.id, member_id: m.id, status: "submitted", resend_email_id: "re_hook", delivered_at: null, opens: 0, clicks: 0, created_at: new Date().toISOString() });
+  const post = (event, { id = `msg_${randomUUID()}`, secret = WEBHOOK_SECRET, tamper = false } = {}) => {
+    const body = JSON.stringify(event);
+    const ts = String(Math.floor(Date.now() / 1000));
+    const key = Buffer.from(secret.slice(6), "base64");
+    const s = createHmac("sha256", key).update(`${id}.${ts}.${body}`).digest("base64");
+    return new Request(`${SITE_URL}/api/resend/webhook`, { method: "POST", body: tamper ? body.replace("re_hook", "re_hook2") : body, headers: { "svix-id": id, "svix-timestamp": ts, "svix-signature": `v1,${s}` } });
+  };
+  const ev = (type, extra = {}) => ({ type, created_at: new Date().toISOString(), data: { email_id: "re_hook", to: [m.email], tags: { send: sendId, kind: "event" }, ...extra } });
+  eq("webhook: a bad signature gets 400", (await hookRoute.POST(post(ev("email.delivered"), { tamper: true }))).status, 400);
+  eq("webhook: a wrong secret gets 400", (await hookRoute.POST(post(ev("email.delivered"), { secret: `whsec_${randomBytes(24).toString("base64")}` }))).status, 400);
+  check("webhook: Svix's published example still verifies", sig.verifyResendSignature('{"test": 2432232314}', { id: "msg_p5jXN8AQM9LWM0D4loKWxJek", timestamp: "1614265330", signature: "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=" }, "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw", 1614265330 * 1000));
+  const d = await hookRoute.POST(post(ev("email.delivered")));
+  check("webhook: delivered marks the send", d.status === 200 && db.email_sends.find((s) => s.id === sendId).status === "delivered");
+  const openId = `msg_${randomUUID()}`;
+  await hookRoute.POST(post(ev("email.opened"), { id: openId }));
+  await hookRoute.POST(post(ev("email.opened"), { id: openId }));
+  eq("webhook: a redelivered event (same svix-id) counts once", db.email_sends.find((s) => s.id === sendId).opens, 1);
+  check("webhook: an open is never engagement", !db.member_email_prefs.find((x) => x.member_id === m.id)?.last_engaged_at);
+  const complaintId = `msg_${randomUUID()}`;
+  const cr = await hookRoute.POST(post(ev("email.complained"), { id: complaintId }));
+  check("webhook: a complaint opts them out and suppresses the address", cr.status === 200 && db.members.find((x) => x.id === m.id).email_opt_in === false && db.email_suppressions.some((s) => s.email_hash === hash.hashEmail(m.email) && s.reason === "complaint"));
+  const logs = db.email_consent_log.length;
+  await hookRoute.POST(post(ev("email.complained"), { id: complaintId }));
+  eq("webhook: the same complaint again changes nothing", db.email_consent_log.length, logs);
+  check("webhook: nothing stored holds an address", !JSON.stringify(db.email_events).includes("@"));
+  const bounceMember = mkMember(92);
+  await hookRoute.POST(post({ type: "email.bounced", created_at: new Date().toISOString(), data: { email_id: "re_none", to: [bounceMember.email], bounce: { type: "Permanent", subType: "General", message: `550 ${bounceMember.email} does not exist` } } }));
+  check("webhook: a hard bounce on a receipt still suppresses the address (by hash)", db.email_suppressions.some((s) => s.email_hash === hash.hashEmail(bounceMember.email) && s.reason === "hard_bounce"));
+  check("webhook: the bounce message is scrubbed of addresses", !JSON.stringify(db.email_events).includes(bounceMember.email));
+  // Suppression survives an email change and the member row going away.
+  const hardHash = hash.hashEmail(bounceMember.email);
+  bounceMember.email = "new-address@example.com";
+  eq("suppression: a new address isn't suppressed", rules.hardFilter(facts({ email: bounceMember.email, suppressed: null }), { id: "x", kind: "lineup", category: "lineup", automation: null }, new Date()), null);
+  db.members.splice(db.members.indexOf(bounceMember), 1);
+  check("suppression: the old address stays blocked after the member is gone", db.email_suppressions.some((s) => s.email_hash === hardHash));
+}
+
+// ===================== 12. clicks =====================
+{
+  const m = mkMember(93);
+  const c = mkCampaign({ name: "Click test", status: "sent", links: [{ i: 0, url: `${SITE_URL}/showtimes/abc`, label: "A" }, { i: 1, url: `${SITE_URL}/membership#join`, label: "B" }, { i: 2, url: "http://evil.example.com/", label: "bad" }] });
+  const sendId = randomUUID();
+  db.email_sends.push({ id: sendId, campaign_id: c.id, member_id: m.id, status: "delivered", submitted_at: new Date(Date.now() - 10 * 60_000).toISOString(), deliver_at: null, clicks: 0, opens: 0, created_at: new Date().toISOString() });
+  const to = await clicks.handleClick(sendId, "0", "GET");
+  check("click: a known link goes to the stored address, with utm tags", to.startsWith(`${SITE_URL}/showtimes/abc?`) && to.includes("utm_medium=email"));
+  check("click: a human click is counted and is engagement", db.email_sends.find((s) => s.id === sendId).clicks === 1 && !!db.member_email_prefs.find((p) => p.member_id === m.id)?.last_engaged_at);
+  eq("click: an unknown link number goes to the showtimes page", await clicks.handleClick(sendId, "7", "GET"), clicks.FALLBACK);
+  eq("click: an unknown send goes to the showtimes page", await clicks.handleClick(randomUUID(), "0", "GET"), clicks.FALLBACK);
+  eq("click: a stored non-https link is never followed", await clicks.handleClick(sendId, "2", "GET"), clicks.FALLBACK);
+  eq("click: junk in the address goes to the showtimes page", await clicks.handleClick("../../etc", "0", "GET"), clicks.FALLBACK);
+  await clicks.handleClick(sendId, "1", "HEAD");
+  check("click: a HEAD request is a scanner", db.email_events.some((e) => e.send_id === sendId && e.suspect && e.detail.method === "HEAD") && db.email_sends.find((s) => s.id === sendId).clicks === 1);
+  // A scanner opening every link the moment it arrives.
+  const m2 = mkMember(94);
+  const send2 = randomUUID();
+  db.email_sends.push({ id: send2, campaign_id: c.id, member_id: m2.id, status: "delivered", submitted_at: new Date().toISOString(), deliver_at: null, clicks: 0, opens: 0, created_at: new Date().toISOString() });
+  const t0 = new Date();
+  await clicks.handleClick(send2, "0", "GET", t0);
+  await clicks.handleClick(send2, "1", "GET", new Date(t0.getTime() + 200));
+  const s2 = db.email_sends.find((s) => s.id === send2);
+  check("click: every link in the same second right after delivery is a scanner, and uncounted", s2.clicks === 0 && db.email_events.filter((e) => e.send_id === send2).every((e) => e.suspect));
+}
+
+// ===================== 9 & 10. static checks =====================
+{
+  const walk = (dir) => readdirSync(dir).flatMap((f) => (statSync(path.join(dir, f)).isDirectory() ? walk(path.join(dir, f)) : [path.join(dir, f)]));
+  const files = [...walk(path.join(src, "lib/email")), ...walk(path.join(src, "app/admin/email"))];
+  const offenders = files.filter((f) => readFileSync(f, "utf8").includes("legacy_accounts"));
+  eq("invariant: nothing under src/lib/email or src/app/admin/email reads legacy_accounts", offenders.map((f) => path.relative(root, f)), []);
+  check("invariant: the Indy import never reads legacy_accounts", !readFileSync(path.join(root, "scripts/import-indy-users.mjs"), "utf8").includes("legacy_accounts"));
+  const migDir = path.join(root, "supabase/migrations");
+  const erase = readFileSync(path.join(migDir, "20261001090200_erase_member_email.sql"), "utf8");
+  check("erasure: clears prefs and consent-log hashes", /delete from member_email_prefs where member_id = new\.id/.test(erase) && /update email_consent_log set email_hash = null/.test(erase));
+  check("erasure: keeps the never-mail list", !/delete from email_suppressions/i.test(erase));
+  check("erasure: the app cancels scheduled email first", readFileSync(path.join(src, "lib/member-erase.ts"), "utf8").includes("cancelPendingSends"));
+  const all = readdirSync(migDir).filter((f) => f >= "20261001090000").map((f) => readFileSync(path.join(migDir, f), "utf8")).join("\n");
+  check("invariant: no migration flips email_opt_in's default or mass-updates it", !/alter column email_opt_in set default|update members set email_opt_in|set email_opt_in\s*=\s*false/i.test(all));
+  const tables = [...all.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
+  check("migrations: RLS on every new table", tables.length >= 7 && tables.every((t) => all.includes(`alter table ${t} enable row level security`)), tables.join(","));
+  check("migrations: no client policies", !/create policy/i.test(all));
+  const sendCode = readFileSync(path.join(src, "lib/email/campaign-send.ts"), "utf8");
+  check("invariant: list email goes per person through the batch API (no broadcasts)", !/broadcast/i.test(readFileSync(path.join(src, "lib/email/resend.ts"), "utf8").replace(/^\s*\/\/.*$/gm, "")) && sendCode.includes("deliver("));
+}
+
+// ===================== 11. the Indy import (dry run, offline) =====================
+{
+  const dir = mkdtempSync(path.join(tmpdir(), "indy-check-"));
+  try {
+    const head = "id,type,first_name,last_name,email,membership_type.name,created_at,phone,email_showtimes,email_last_chance,email_promotions,email_newsletter,employee,date_of_birth";
+    const row = (id, email, yes, extra = {}) =>
+      [id, "user", "Pat", "Doe", email, extra.type ?? "Free", "2023-05-01T00:00:00Z", "417-555-0100", yes, yes, yes, yes, extra.employee ?? "false", extra.dob ?? "1990-10-19"].join(",");
+    const csv = [
+      head,
+      row(1, "member0@example.com", "true"),
+      row(2, "member1@example.com", "false"),
+      row(3, "brandnew@example.com", "true", { dob: "10/31/1985" }),
+      row(4, "brandnew2@example.com", "false"),
+      row(5, "", "true"),
+      row(6, "staff@example.com", "true", { type: "Staff" }),
+      row(7, "boss@example.com", "true", { employee: "true" }),
+      '8,user,"Pat, Jr",Doe,Member0@Example.com,Free,2023-05-01,,true,true,true,true,false,',
+    ].join("\n");
+    writeFileSync(path.join(dir, "indy.csv"), csv);
+    writeFileSync(path.join(dir, "members.json"), JSON.stringify([{ id: randomUUID(), email: "member0@example.com", indy_user_id: null, birthday: null }, { id: randomUUID(), email: "member1@example.com", indy_user_id: null, birthday: "2000-01-01" }]));
+    const out = execFileSync(process.execPath, [path.join(root, "scripts/import-indy-users.mjs"), path.join(dir, "indy.csv"), "--dry", "--members-file", path.join(dir, "members.json")], { encoding: "utf8" });
+    check("indy: the dry run prints counts only (no @ anywhere)", !out.includes("@"));
+    check("indy: matched 1 yes, 1 no; new 1 yes, 1 no", /1 said yes, 1 said no \(email left/.test(out) && /new to us: 1 said yes, 1 said no/.test(out), out);
+    check("indy: staff/owner and no-email rows skipped; a repeated email once", /2 staff\/owner, 1 with no email, 1 repeated/.test(out), out);
+    check("indy: birthdays filled only where missing (month and day)", /birthdays filled \(month and day\): 3/.test(out), out);
+    const bad = [head, row(1, "a@example.com", "true"), [9, "user", "A", "B", "b@example.com", "Free", "2023", "", "true", "false", "true", "true", "false", ""].join(",")].join("\n");
+    writeFileSync(path.join(dir, "bad.csv"), bad);
+    let stopped = false;
+    try {
+      execFileSync(process.execPath, [path.join(root, "scripts/import-indy-users.mjs"), path.join(dir, "bad.csv"), "--dry", "--members-file", path.join(dir, "members.json")], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      stopped = e.status === 1 && !String(e.stderr).includes("@");
+    }
+    check("indy: stops if a row's four email switches disagree", stopped);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+await flushAfter();
+console.log(`\n${passed} passed, ${failures} failed`);
+process.exit(failures ? 1 : 0);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import BirthdayPicker from "@/components/BirthdayPicker";
@@ -165,6 +166,9 @@ export function EmailPreference({ optIn }: { optIn: boolean }) {
       <span className="text-sm">
         <strong>Weekly lineup and member news</strong>
         <span className="block text-[var(--muted)]">What&apos;s playing each week, including the members-only classics. We&apos;ll still send receipts and account notices.</span>
+        <Link href="/account/email" className="mt-1 inline-block font-bold text-[var(--accent)] hover:underline">
+          Choose which emails, or pause them
+        </Link>
       </span>
     </label>
   );

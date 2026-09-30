@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMember } from "@/lib/member-auth";
 import { getStripe } from "@/lib/stripe";
 import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
+import { setMarketingOptIn } from "@/lib/email/consent";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
 import { birthdayFromInput } from "@/lib/visits";
@@ -125,13 +126,12 @@ export async function updateMyProfile(fields: { name: string; phone: string; tag
   return { ok: true };
 }
 
+// The master switch for marketing email (the categories and the pause are
+// on /account/email). Recorded and logged through lib/email/consent.ts.
 export async function setEmailOptIn(optIn: boolean): Promise<ProfileResult> {
   const member = await requireMember();
-  const { error } = await createAdminClient()
-    .from("members")
-    .update({ email_opt_in: optIn, email_opt_in_changed_at: new Date().toISOString() })
-    .eq("id", member.id);
-  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  const r = await setMarketingOptIn(member.id, optIn === true, "account");
+  if (!r.ok) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");
   return { ok: true };
 }

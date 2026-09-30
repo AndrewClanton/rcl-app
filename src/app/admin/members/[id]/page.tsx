@@ -4,7 +4,9 @@ import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberPurchas
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getGiftsForMember } from "@/lib/gift-membership";
 import { maskEmail, seesFullContact } from "@/lib/contact-mask";
+import { getMemberEmailPanel } from "@/lib/email/member-panel";
 import MemberDetail from "./MemberDetail";
+import EmailPanel from "./EmailPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -25,8 +27,10 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     member.erased_at ? getEraseLogEntry(id) : Promise.resolve(null),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
+  const emailPanel = member.erased_at ? null : await getMemberEmailPanel(id).catch(() => null);
 
   return (
+    <>
     <MemberDetail
       member={member}
       purchases={purchases}
@@ -37,5 +41,11 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       canEditContact={fullContact}
       eraseLog={eraseLog}
     />
+    {emailPanel && (
+      <div className="mt-6">
+        <EmailPanel memberId={member.id} panel={emailPanel} />
+      </div>
+    )}
+    </>
   );
 }
