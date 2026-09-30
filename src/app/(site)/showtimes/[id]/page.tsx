@@ -70,7 +70,15 @@ export default async function ScreeningDetailPage({
   const { id } = await params;
   const { checkout, session_id, booking_id } = await searchParams;
   const screening = await getScreeningById(id);
-  if (!screening || !isWithinPublicWindow(screening.starts_at)) notFound();
+  if (!screening) notFound();
+  // A showtime that has started (or isn't public yet) is a 404 -- except for
+  // the customer coming back from checkout. Stripe's page stays open for 30
+  // minutes, so someone who clicked Buy at 6:59 for a 7:00 show can finish
+  // paying at 7:01; they still get their confirmation and the ticket's QR
+  // code (their only copy). That's checked below; anything else is a 404.
+  const isPublic = isWithinPublicWindow(screening.starts_at);
+  const checkoutReturn = (checkout === "success" && !!session_id) || (checkout === "free" && !!booking_id);
+  if (!isPublic && !checkoutReturn) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
   const member = await getSignedInMember();
@@ -79,7 +87,8 @@ export default async function ScreeningDetailPage({
   const plus = !!member && hasPlusPerks(member);
   const freeSeat = plus && !(await memberHasBookingFor(id, member!.id));
   const me = member?.email ? { name: member.name, email: member.email, plus, freeSeat } : null;
-  const eventJsonLd = screeningEventJsonLd(screening, seatsLeft);
+  // Only a public showtime is described to search engines.
+  const eventJsonLd = isPublic ? screeningEventJsonLd(screening, seatsLeft) : null;
 
   // Never trust the ?checkout=success URL param on its own -- verify the
   // session actually shows as paid with Stripe before showing a
@@ -87,14 +96,16 @@ export default async function ScreeningDetailPage({
   // 'confirmed' in the DB; this is purely about what message to show the
   // customer who just got redirected back here.
   let paymentConfirmed = false;
+  let paidForThisShow = false;
   let paidBookingId: string | null = null;
   if (checkout === "success" && session_id) {
     try {
       const session = await getStripe().checkout.sessions.retrieve(session_id);
       paymentConfirmed = session.payment_status === "paid";
+      paidForThisShow = paymentConfirmed && session.metadata?.screening_id === id;
       // The booking it paid for, for its ticket code below (only if the
       // session was for this showing).
-      if (paymentConfirmed && session.metadata?.screening_id === id) paidBookingId = session.metadata?.booking_id ?? null;
+      if (paidForThisShow) paidBookingId = session.metadata?.booking_id ?? null;
     } catch {
       paymentConfirmed = false;
     }
@@ -113,6 +124,9 @@ export default async function ScreeningDetailPage({
       .maybeSingle();
     freeEntryConfirmed = booking?.status === "confirmed";
   }
+  // Past the start time, only a payment or booking for this very showing
+  // opens the page (a paid session for some other show doesn't).
+  if (!isPublic && !paidForThisShow && !freeEntryConfirmed) notFound();
 
   // The tickets they just got, with the QR code for the door. A paid
   // booking can still read "pending" for a moment until Stripe's webhook

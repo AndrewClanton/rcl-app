@@ -4,8 +4,11 @@ import EventBookingForm from "./EventBookingForm";
 import { PageMasthead } from "@/components/print";
 import { pageMeta } from "@/lib/seo/page-meta";
 
-// The same page for everyone (the spaces and their prices), rebuilt at most
-// every five minutes. The request form itself is sent by a Server Action.
+// The same page for everyone (the spaces and their prices), cached. Once a
+// copy is five minutes old, the next visit still gets it and sets off a
+// rebuild in the background (so on a quiet day a change to a space can take
+// two visits to show). Nothing here depends on the clock. The request form
+// itself is sent by a Server Action.
 export const revalidate = 300;
 
 export const metadata = pageMeta({

@@ -11,11 +11,14 @@ import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { DIRECTIONS_URL, SITE_DESCRIPTION } from "@/lib/site";
 import { pageMeta } from "@/lib/seo/page-meta";
 
-// The same page for everyone, rebuilt at most once a minute (and at once
-// when the schedule changes: admin/screenings/actions.ts revalidates "/").
-// What differs for Insiders+ members is switched in their browser (the
-// plus-show / plus-hide classes, see components/site/plus-hint.ts).
-export const revalidate = 60;
+// The same page for everyone, drawn per request: "Tonight", "Today" and
+// "Tomorrow" and which showings are listed (started? this year's release?)
+// depend on the clock, and a cached copy of the page could be hours old on a
+// quiet night (Next serves the old copy first and rebuilds it afterwards).
+// The database rows behind it are cached instead (getPubliclyVisibleScreenings
+// in lib/data/screenings.ts), and it reads no cookies. What differs for
+// Insiders+ members is switched in their browser (the plus-show / plus-hide
+// classes, see components/site/plus-hint.ts).
 
 export const metadata = pageMeta({
   title: { absolute: "Royale Cinema Lounge · Dine-in cinema & bar in Joplin, MO" },

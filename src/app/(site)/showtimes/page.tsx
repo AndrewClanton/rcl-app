@@ -9,11 +9,13 @@ import { PageMasthead, ProofStamp, SpecFoot } from "@/components/print";
 import PlusLink from "@/components/PlusLink";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 
-// The same listing for everyone, rebuilt at most once a minute (and at once
-// when the schedule changes: admin/screenings/actions.ts revalidates it).
-// The Insiders+ wording is switched in the member's browser (plus-show /
-// plus-hide, see components/site/plus-hint.ts).
-export const revalidate = 60;
+// The same listing for everyone, drawn per request: the day labels and which
+// showings are listed (started? this year's release?) depend on the clock,
+// and a cached copy of the page could be hours old on a quiet night. The
+// database rows behind it are cached instead (getPubliclyVisibleScreenings
+// in lib/data/screenings.ts), and it reads no cookies. The Insiders+ wording
+// is switched in the member's browser (plus-show / plus-hide, see
+// components/site/plus-hint.ts).
 
 // "Movie showtimes in Joplin" is what people actually search for, so the
 // title and description say it plainly.

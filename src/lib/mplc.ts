@@ -20,3 +20,11 @@ export function isRestrictedRelease(movie: { release_year: number | null }, now 
 export function centralYear(now = new Date()): number {
   return Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric" }).format(now));
 }
+
+// The moment the theater's year turns over (midnight Central on Jan 1, which
+// is always standard time: 06:00 UTC), in ms. Anything cached that names a
+// film must be gone by then, since that film's release year has just become
+// last year's.
+export function nextCentralYearStart(now = new Date()): number {
+  return Date.UTC(centralYear(now) + 1, 0, 1, 6);
+}

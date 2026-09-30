@@ -12,7 +12,10 @@ import { AUTH_COOKIE_SOURCE, PLUS_HINT_KEY } from "./plus-hint";
 //    are never asked about (no request at all). Checked again on each page
 //    change, since signing in or out happens without reloading the layout,
 //    but a login it already asked about in the last few minutes isn't asked
-//    again.
+//    again -- except on the account and membership pages and on a return
+//    from checkout. Joining or renewing Insiders+ doesn't change the login
+//    cookie, so without that a new member would keep seeing "Get Insiders+"
+//    (and a lapsed one the badge) for those few minutes.
 //
 // 2. The header's real height, as --site-header-h on the wrapper, which
 //    in-page jumps (the day chips on Showtimes, #insiders, #faq) use as
@@ -22,6 +25,9 @@ import { AUTH_COOKIE_SOURCE, PLUS_HINT_KEY } from "./plus-hint";
 //    fallbacks for the moment before this runs).
 
 const RECHECK_MS = 5 * 60_000;
+// Where the answer may just have changed: always asked.
+const FRESH_PATH = /^\/(?:account|membership)(?:\/|$)/;
+const FRESH_QUERY = /[?&](?:checkout|session_id)=/;
 const authCookie = new RegExp(`${AUTH_COOKIE_SOURCE}([^;]*)`, "g");
 
 type Hint = { login: string; plus: boolean; at: number };
@@ -71,7 +77,8 @@ export default function SiteHeaderSync() {
       return;
     }
     const hint = readHint();
-    if (hint && hint.login === login && Date.now() - hint.at < RECHECK_MS) {
+    const askAgain = FRESH_PATH.test(pathname) || FRESH_QUERY.test(window.location.search);
+    if (!askAgain && hint && hint.login === login && Date.now() - hint.at < RECHECK_MS) {
       setPlus(hint.plus);
       return;
     }

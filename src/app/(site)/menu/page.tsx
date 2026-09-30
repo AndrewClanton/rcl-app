@@ -5,9 +5,11 @@ import type { MenuCategory, MenuItem } from "@/lib/types";
 import { PageMasthead } from "@/components/print";
 import { pageMeta } from "@/lib/seo/page-meta";
 
-// The same page for everyone, rebuilt at most every five minutes (and at
-// once when a manager edits the menu: admin/menu/actions.ts and the
-// register's item settings revalidate "/menu").
+// The same page for everyone, cached. Once a copy is five minutes old, the
+// next visit still gets it and sets off a rebuild in the background; a
+// manager's edit throws the copy out at once (admin/menu/actions.ts and the
+// register's item settings revalidate "/menu"). Nothing here depends on the
+// clock.
 export const revalidate = 300;
 
 export const metadata = pageMeta({

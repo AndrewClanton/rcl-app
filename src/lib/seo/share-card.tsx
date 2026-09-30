@@ -22,20 +22,29 @@ const MONO = "Space Mono";
 // process.cwd()-relative reads, so Vercel's file tracing bundles them; see
 // outputFileTracingIncludes in next.config.ts).
 const ASSETS_DIR = join(process.cwd(), "src/app/admin/schedule-graphic");
-let assets: Promise<{ fonts: { name: string; data: Buffer; weight: 400 | 700; style: "normal" }[]; logo: string }> | null = null;
+type ShareAssets = { fonts: { name: string; data: Buffer; weight: 400 | 700; style: "normal" }[]; logo: string };
+let assets: Promise<ShareAssets> | null = null;
 
 export function loadShareAssets() {
-  assets ??= Promise.all([
-    readFile(join(ASSETS_DIR, "fonts/ArchivoBlack-Regular.ttf")),
-    readFile(join(ASSETS_DIR, "fonts/SpaceMono-Bold.ttf")),
-    readFile(join(ASSETS_DIR, "assets/logo.png")),
-  ]).then(([black, mono, logo]) => ({
-    fonts: [
-      { name: DISPLAY, data: black, weight: 400, style: "normal" },
-      { name: MONO, data: mono, weight: 700, style: "normal" },
-    ],
-    logo: `data:image/png;base64,${logo.toString("base64")}`,
-  }));
+  if (!assets) {
+    const loading: Promise<ShareAssets> = Promise.all([
+      readFile(join(ASSETS_DIR, "fonts/ArchivoBlack-Regular.ttf")),
+      readFile(join(ASSETS_DIR, "fonts/SpaceMono-Bold.ttf")),
+      readFile(join(ASSETS_DIR, "assets/logo.png")),
+    ]).then(([black, mono, logo]) => ({
+      fonts: [
+        { name: DISPLAY, data: black, weight: 400, style: "normal" },
+        { name: MONO, data: mono, weight: 700, style: "normal" },
+      ],
+      logo: `data:image/png;base64,${logo.toString("base64")}`,
+    }));
+    // A failed read isn't kept (it would break every card until the server
+    // restarts): the next card tries again.
+    loading.catch(() => {
+      if (assets === loading) assets = null;
+    });
+    assets = loading;
+  }
   return assets;
 }
 
