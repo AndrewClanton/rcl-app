@@ -88,6 +88,8 @@ export default function RegisterCheckins({
   const [now, setNow] = useState(0);
   const [here, setHere] = useState<HereToday[]>([]);
   const [hereOpen, setHereOpen] = useState(false);
+  // "Here today" hidden with its ×: stays hidden until someone new checks in.
+  const [hereHiddenAt, setHereHiddenAt] = useState<number | null>(null);
   // Tickets bought online for today by whoever just checked in: one tap
   // prints them, instead of scanning.
   const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
@@ -318,111 +320,134 @@ export default function RegisterCheckins({
   }, [lastSale]);
 
   const showRecent = !!recent && !member && pending.length === 0;
-  if (!pending.length && !notice && !showRecent && !here.length && !tonight) return null;
+  const showHere = here.length > 0 && pending.length === 0 && (hereHiddenAt === null || here.length > hereHiddenAt);
+  const showStack = pending.length > 0 || !!notice || showRecent || !!tonight;
+  if (!showStack && !showHere) return null;
 
   return (
-    <div className="fixed right-3 top-3 z-40 m-0 flex max-h-[calc(100dvh-1.5rem)] w-[min(23rem,calc(100vw-1.5rem))] flex-col items-end gap-2 overflow-y-auto p-1">
-      {notice && (
-        <div className="notice notice-success w-full p-2.5 text-xs shadow-lg" role="status">
-          {notice}
+    <>
+      {showHere && (
+        // Bottom right, just above the Dev note button, so it never covers
+        // the category tabs or the shift bar.
+        <div className="fixed bottom-[4.25rem] right-4 z-40 w-[min(23rem,calc(100vw-2rem))]">
+          <HereTodayPanel
+            here={here}
+            open={hereOpen}
+            onToggle={() => setHereOpen((o) => !o)}
+            onHide={() => {
+              setHereOpen(false);
+              setHereHiddenAt(here.length);
+            }}
+            current={member}
+            onAttach={(m) => {
+              onAttach(m);
+              setHereOpen(false);
+            }}
+          />
         </div>
       )}
+      {showStack && (
+        <div className="fixed right-3 top-3 z-40 m-0 flex max-h-[calc(100dvh-1.5rem)] w-[min(23rem,calc(100vw-1.5rem))] flex-col items-end gap-2 overflow-y-auto p-1">
+          {notice && (
+            <div className="notice notice-success w-full p-2.5 text-xs shadow-lg" role="status">
+              {notice}
+            </div>
+          )}
 
-      {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
+          {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
 
-      {showRecent && recent && (
-        <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
-          <MemberAvatar name={recent.member.name} url={recent.member.avatar_url} size={32} plus={recent.member.tier === "Insiders+"} />
-          <span className="min-w-0 flex-1 truncate">
-            <strong>{recent.member.name}</strong> checked in. Not on this order.
-          </span>
-          <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" onClick={() => onAttach(recent.member)}>
-            Attach
-          </button>
-          <button className="shrink-0 px-1 text-base" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={() => setRecent(null)}>
-            ×
-          </button>
-        </div>
-      )}
-
-      {pending.length > 0 && collapsed && (
-        <button
-          className="font-display rounded-full border-2 px-4 py-2 text-sm uppercase tracking-wide shadow-lg"
-          style={{ background: "var(--gold)", color: "var(--foreground)", borderColor: "var(--foreground)" }}
-          onClick={() => setCollapsed(false)}
-        >
-          {pending.length} check-in{pending.length === 1 ? "" : "s"} waiting
-        </button>
-      )}
-
-      {!collapsed &&
-        pending.map((p) => (
-          <div
-            key={p.id}
-            className="w-full overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm"
-            style={{ borderColor: "var(--foreground)", boxShadow: "5px 5px 0 var(--foreground)" }}
-          >
-            <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--foreground)" }}>
-              <span className="font-display flex-1 text-xs uppercase tracking-wide">
-                {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
+          {showRecent && recent && (
+            <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
+              <MemberAvatar name={recent.member.name} url={recent.member.avatar_url} size={32} plus={recent.member.tier === "Insiders+"} />
+              <span className="min-w-0 flex-1 truncate">
+                <strong>{recent.member.name}</strong> checked in. Not on this order.
               </span>
-              <span className="text-[11px]">{ago(Math.max(0, now - p.at))}</span>
-              <button className="text-[11px] font-bold underline" onClick={() => setCollapsed(true)}>
-                Later
+              <button className="btn-primary shrink-0 !px-3 !py-1.5 !text-xs" onClick={() => onAttach(recent.member)}>
+                Attach
+              </button>
+              <button className="shrink-0 px-1 text-base" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={() => setRecent(null)}>
+                ×
               </button>
             </div>
+          )}
 
-            <div className="space-y-2 p-3">
-              {!p.card && !p.error && <div style={{ color: "var(--muted)" }}>Looking them up…</div>}
+          {pending.length > 0 && collapsed && (
+            <button
+              className="font-display rounded-full border-2 px-4 py-2 text-sm uppercase tracking-wide shadow-lg"
+              style={{ background: "var(--gold)", color: "var(--foreground)", borderColor: "var(--foreground)" }}
+              onClick={() => setCollapsed(false)}
+            >
+              {pending.length} check-in{pending.length === 1 ? "" : "s"} waiting
+            </button>
+          )}
 
-              {p.card?.kind === "known" && (
-                <KnownCard
-                  card={p.card}
-                  current={member}
-                  hasOrder={hasOrder}
-                  working={p.working}
-                  onConfirm={(m, addToOrder) => confirm(p, m, p.card?.kind === "known" && p.card.fresh === true, null, addToOrder)}
-                  onDecline={() => decline(p)}
-                />
-              )}
+          {!collapsed &&
+            pending.map((p) => (
+              <div
+                key={p.id}
+                className="w-full overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm"
+                style={{ borderColor: "var(--foreground)", boxShadow: "5px 5px 0 var(--foreground)" }}
+              >
+                <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--foreground)" }}>
+                  <span className="font-display flex-1 text-xs uppercase tracking-wide">
+                    {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
+                  </span>
+                  <span className="text-[11px]">{ago(Math.max(0, now - p.at))}</span>
+                  <button className="text-[11px] font-bold underline" onClick={() => setCollapsed(true)}>
+                    Later
+                  </button>
+                </div>
 
-              {p.card?.kind === "new" && (
-                <NewCard
-                  card={p.card}
-                  current={member}
-                  hasOrder={hasOrder}
-                  working={p.working}
-                  onCreate={(addToOrder) => create(p, null, addToOrder)}
-                  onAttachExisting={(id) => create(p, id, true)}
-                  onCancel={() => decline(p)}
-                />
-              )}
+                <div className="space-y-2 p-3">
+                  {!p.card && !p.error && <div style={{ color: "var(--muted)" }}>Looking them up…</div>}
 
-              {p.error && (
-                <>
-                  <div className="text-xs" style={{ color: "var(--danger-text)" }}>
-                    {p.error}
-                  </div>
-                  {!p.card && (
-                    <div className="flex gap-2">
-                      <button className="btn-secondary flex-1 !py-1.5 !text-xs" disabled={p.working} onClick={() => load(p.id, p.ref)}>
-                        Retry
-                      </button>
-                      <button className="btn-secondary flex-1 !py-1.5 !text-xs" disabled={p.working} onClick={() => decline(p)}>
-                        Dismiss
-                      </button>
-                    </div>
+                  {p.card?.kind === "known" && (
+                    <KnownCard
+                      card={p.card}
+                      current={member}
+                      hasOrder={hasOrder}
+                      working={p.working}
+                      onConfirm={(m, addToOrder) => confirm(p, m, p.card?.kind === "known" && p.card.fresh === true, null, addToOrder)}
+                      onDecline={() => decline(p)}
+                    />
                   )}
-                </>
-              )}
-            </div>
-          </div>
-        ))}
 
-      {here.length > 0 && pending.length === 0 && (
-        <HereTodayPanel here={here} open={hereOpen} onToggle={() => setHereOpen((o) => !o)} current={member} onAttach={(m) => onAttach(m)} />
+                  {p.card?.kind === "new" && (
+                    <NewCard
+                      card={p.card}
+                      current={member}
+                      hasOrder={hasOrder}
+                      working={p.working}
+                      onCreate={(addToOrder) => create(p, null, addToOrder)}
+                      onAttachExisting={(id) => create(p, id, true)}
+                      onCancel={() => decline(p)}
+                    />
+                  )}
+
+                  {p.error && (
+                    <>
+                      <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+                        {p.error}
+                      </div>
+                      {!p.card && (
+                        <div className="flex gap-2">
+                          <button className="btn-secondary flex-1 !py-1.5 !text-xs" disabled={p.working} onClick={() => load(p.id, p.ref)}>
+                            Retry
+                          </button>
+                          <button className="btn-secondary flex-1 !py-1.5 !text-xs" disabled={p.working} onClick={() => decline(p)}>
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+
+        </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -479,18 +504,24 @@ function TonightTickets({
 // "Here today": everyone checked in this business day, newest first, with
 // big faces and names, so staff can greet regulars by name and put someone
 // on an order when they buy later.
-function HereTodayPanel({ here, open, onToggle, current, onAttach }: { here: HereToday[]; open: boolean; onToggle: () => void; current: PosMember | null; onAttach: (m: PosMember) => void }) {
+function HereTodayPanel({
+  here,
+  open,
+  onToggle,
+  onHide,
+  current,
+  onAttach,
+}: {
+  here: HereToday[];
+  open: boolean;
+  onToggle: () => void;
+  onHide: () => void;
+  current: PosMember | null;
+  onAttach: (m: PosMember) => void;
+}) {
+  // Sits at the bottom of the screen, so the list opens upward, above the bar.
   return (
-    <div className="w-full overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
-      <button className="flex w-full items-center gap-2 px-3 py-2 text-left" style={{ background: "var(--foreground)", color: "var(--gold)" }} onClick={onToggle} aria-expanded={open}>
-        <span className="font-display flex-1 text-xs uppercase tracking-wide">Here today · {here.length}</span>
-        <span className="flex -space-x-2">
-          {here.slice(0, 5).map((h) => (
-            <MemberAvatar key={h.member.id} name={h.member.name} url={h.member.avatar_url} size={24} />
-          ))}
-        </span>
-        <span aria-hidden="true">{open ? "▲" : "▼"}</span>
-      </button>
+    <div className="flex w-full flex-col overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
       {open && (
         <ul className="max-h-[60dvh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
           {here.map((h) => (
@@ -517,6 +548,20 @@ function HereTodayPanel({ here, open, onToggle, current, onAttach }: { here: Her
           ))}
         </ul>
       )}
+      <div className="flex items-center" style={{ background: "var(--foreground)", color: "var(--gold)" }}>
+        <button className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left" onClick={onToggle} aria-expanded={open}>
+          <span className="font-display flex-1 text-xs uppercase tracking-wide">Here today · {here.length}</span>
+          <span className="flex -space-x-2">
+            {here.slice(0, 5).map((h) => (
+              <MemberAvatar key={h.member.id} name={h.member.name} url={h.member.avatar_url} size={24} />
+            ))}
+          </span>
+          <span aria-hidden="true">{open ? "▼" : "▲"}</span>
+        </button>
+        <button className="shrink-0 px-3 py-2 text-base leading-none" aria-label="Hide Here today until someone new checks in" onClick={onHide}>
+          ×
+        </button>
+      </div>
     </div>
   );
 }
