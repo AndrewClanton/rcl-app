@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { PRIVATE_CHANNEL, realtimeReady } from "@/lib/supabase/realtime";
-import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
+import { PRIVATE_CHANNEL, subscribePrivate } from "@/lib/supabase/realtime";
+import type { Board, PrepTicket } from "@/lib/data/prepTickets";
 import { reprintOrderTicket, setItemReady } from "./actions";
 
 function timeAgo(iso: string) {
@@ -13,13 +14,27 @@ function timeAgo(iso: string) {
   return `${minutes} min ago`;
 }
 
+// How long after the last change the board reloads its tickets. A sale or a
+// tab save arrives as a burst (the order, then its lines; a tab save today
+// puts every line in again and takes the old rows out), and this takes the
+// whole burst in one reload.
+const RELOAD_AFTER_MS = 400;
+
 // Shared by /display/kitchen, /display/bar and /display/prep (both at once)
-// -- same board, filtered to a prep station or not. Real-time via Supabase (order_items INSERT/UPDATE),
-// and interactive: tapping an item marks it ready, which also broadcasts to
-// every other tablet watching the same board (another kitchen screen, or
-// the customer-facing display if it's ever extended to show prep status).
+// -- same board, filtered to a prep station or not. Paid orders and open
+// tabs, live from Supabase (order_items inserts, updates and deletes, and
+// order changes), and interactive: tapping an item marks it ready, which
+// every other tablet watching sees too.
 export default function PrepTicketBoard({ title, station, initialTickets }: { title: string; station: Board; initialTickets: PrepTicket[] }) {
+  const router = useRouter();
   const [tickets, setTickets] = useState(initialTickets);
+  // A reload (router.refresh() below) re-renders the page on the server,
+  // which hands in a fresh list: that replaces what's on screen.
+  const [loaded, setLoaded] = useState(initialTickets);
+  if (initialTickets !== loaded) {
+    setLoaded(initialTickets);
+    setTickets(initialTickets);
+  }
   const [connected, setConnected] = useState(false);
   const [, forceTick] = useState(0);
   // "Reprint ticket" on a card: which order is printing, and how it went.
@@ -38,97 +53,60 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
 
   useEffect(() => {
     const supabase = createClient();
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Which station a new line goes to, its order and whether it's a tab
+    // add-on are worked out on the server (lib/data/prepTickets.ts), so a
+    // change reloads the page's tickets rather than guessing here.
+    const reload = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => router.refresh(), RELOAD_AFTER_MS);
+    };
 
-    // Wait for the browser client's own session to hydrate before
-    // subscribing -- subscribing first connects as anonymous and RLS
-    // silently drops every row (channel still reports SUBSCRIBED).
-    realtimeReady(supabase).then(() => {
-      if (cancelled) return;
-      channel = supabase
-        .channel(`prep-tickets-${station}`, PRIVATE_CHANNEL)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "order_items" },
-          async (payload) => {
-            const row = payload.new as {
-              id: string;
-              order_id: string;
-              name: string;
-              quantity: number;
-              modifiers: string[];
-              ready: boolean;
-              ready_at: string | null;
-              created_at: string;
-              is_event: boolean;
-              is_alcohol: boolean;
-              menu_item_id: string | null;
-            };
-            if (row.is_event) return;
-            const [{ data: order }, categoryKey] = await Promise.all([
-              supabase.from("orders").select("order_number, order_name, status").eq("id", row.order_id).single(),
-              row.menu_item_id
-                ? supabase
-                    .from("menu_items")
-                    .select("category:menu_categories(key)")
-                    .eq("id", row.menu_item_id)
-                    .single()
-                    .then((res) => (res.data?.category as unknown as { key: string } | null)?.key ?? null)
-                : Promise.resolve(null),
-            ]);
-            if (!order || order.status !== "completed") return;
-
-            const rowStation: Station | null = categoryKey
-              ? KITCHEN_CATEGORIES.has(categoryKey)
-                ? "kitchen"
-                : BAR_CATEGORIES.has(categoryKey)
-                  ? "bar"
-                  : null
-              : row.is_alcohol
-                ? "bar"
-                : "kitchen";
-            if (!rowStation || (station !== "all" && rowStation !== station)) return;
-
-            setTickets((prev) =>
-              [
-                {
-                  id: row.id,
-                  order_id: row.order_id,
-                  name: row.name,
-                  quantity: row.quantity,
-                  modifiers: row.modifiers,
-                  ready: row.ready,
-                  ready_at: row.ready_at,
-                  created_at: row.created_at,
-                  order_number: order.order_number,
-                  order_name: order.order_name,
-                  station: rowStation,
-                },
-                ...prev,
-              ].slice(0, 60)
-            );
-          }
-        )
-        .on(
-          "postgres_changes",
-          { event: "UPDATE", schema: "public", table: "order_items" },
-          (payload) => {
-            const row = payload.new as { id: string; ready: boolean; ready_at: string | null };
-            setTickets((prev) => prev.map((t) => (t.id === row.id ? { ...t, ready: row.ready, ready_at: row.ready_at } : t)));
-          }
-        )
-        .subscribe((status) => setConnected(status === "SUBSCRIBED"));
+    const channel = supabase
+      .channel(`prep-tickets-${station}`, PRIVATE_CHANNEL)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "order_items" }, (payload) => {
+        // Movie tickets never show here.
+        if (!(payload.new as { is_event?: boolean }).is_event) reload();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "order_items" }, (payload) => {
+        // Marked ready (here or on another screen), or the line was changed.
+        const row = payload.new as Pick<PrepTicket, "id" | "name" | "quantity" | "modifiers" | "ready" | "ready_at">;
+        setTickets((prev) =>
+          prev.some((t) => t.id === row.id)
+            ? prev.map((t) =>
+                t.id === row.id ? { ...t, name: row.name, quantity: row.quantity, modifiers: row.modifiers ?? [], ready: row.ready, ready_at: row.ready_at } : t
+              )
+            : prev
+        );
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "order_items" }, (payload) => {
+        // A line taken off a tab, or a cancelled tab. A delete carries only
+        // the row's id. The reload fills the space it leaves.
+        const id = (payload.old as { id?: string }).id;
+        if (!id) return;
+        setTickets((prev) => prev.filter((t) => t.id !== id));
+        reload();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "orders" }, () => {
+        // A tab renamed or paid, or a sale refunded or voided: its card
+        // changes or leaves.
+        reload();
+      });
+    const leave = subscribePrivate(supabase, channel, (status) => {
+      setConnected(status === "SUBSCRIBED");
+      // Joined, or back after a dropped connection: catch up on anything
+      // that changed while this screen wasn't listening.
+      if (status === "SUBSCRIBED") reload();
     });
 
     const interval = setInterval(() => forceTick((t) => t + 1), 15000);
 
     return () => {
-      cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      leave();
+      clearTimeout(timer);
       clearInterval(interval);
     };
-  }, [station]);
+  }, [station, router]);
 
   function toggleReady(item: PrepTicket) {
     const next = !item.ready;
@@ -171,9 +149,9 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                     {timeAgo(items[0].created_at)}
                   </span>
                 </div>
-                {items[0].order_name && (
+                {(items[0].tab || items[0].order_name) && (
                   <div className="mb-2 text-sm font-semibold" style={{ color: "var(--accent)" }}>
-                    {items[0].order_name}
+                    {items[0].tab ? (items[0].order_name ? `Tab: ${items[0].order_name}` : "Tab") : items[0].order_name}
                   </div>
                 )}
                 <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -208,6 +186,14 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                             style={item.station === "bar" ? { background: "var(--gold)", color: "var(--gold-foreground)" } : { background: "var(--foreground)", color: "var(--background)" }}
                           >
                             {item.station === "bar" ? "Bar" : "Kitchen"}
+                          </span>
+                        )}
+                        {item.add_on && (
+                          <span
+                            className="mr-1.5 rounded px-1 py-px align-middle text-[10px] font-bold uppercase tracking-wide"
+                            style={{ background: "var(--accent)", color: "var(--accent-foreground)" }}
+                          >
+                            Add-on
                           </span>
                         )}
                         <span className="text-sm font-medium" style={item.ready ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>
@@ -245,6 +231,3 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
     </div>
   );
 }
-
-const KITCHEN_CATEGORIES = new Set(["grub"]);
-const BAR_CATEGORIES = new Set(["beer", "wine", "cocktails", "shots", "spirits", "caffe", "rad"]);

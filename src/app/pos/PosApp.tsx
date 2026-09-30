@@ -430,6 +430,9 @@ export default function PosApp({
     const supabase = createClient();
     const channel = supabase.channel(registerTopic, PRIVATE_CHANNEL);
     registerChannelRef.current = channel;
+    // The customer screen can send on this topic too (it has to, to ask),
+    // so 'request-state' is the one thing the register takes from it, and
+    // its payload is ignored: the answer is only ever the register's cart.
     channel
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });

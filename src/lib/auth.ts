@@ -69,9 +69,10 @@ export async function requireDisplayScreen(returnTo: string): Promise<StaffSessi
 }
 
 // requireDisplayScreen() for the Server Actions a display screen itself
-// calls (the customer screen's check-in). Only for actions safe to hand an
-// unattended screen: nothing that returns member details or touches sales,
-// staff or money -- those stay behind assertStaff().
+// calls (the customer screen's check-in, and making a new regular's account
+// there). Only for actions safe to hand an unattended screen: nothing that
+// returns member details or touches sales, staff or money -- those stay
+// behind assertStaff().
 export async function assertDisplayScreen(): Promise<StaffSession> {
   const session = await getEmployeeSession();
   if (!session) throw new Error("Not authorized");
