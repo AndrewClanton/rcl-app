@@ -75,7 +75,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         <span className="ctag ctag-yellow">Request sent</span>
         <h2 className="font-display mt-3 text-2xl">We&apos;ll be in touch.</h2>
         <p className="mt-2 text-[15px]">
-          Estimated total {money(result)}. We&apos;ll email {organizerEmail} to confirm the details and arrange your deposit.
+          Estimated total {money(result)}, plus Missouri sales tax. We&apos;ll email {organizerEmail} to confirm the details and arrange your deposit.
         </p>
       </div>
     );
@@ -196,6 +196,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         <div className="border-t-2 border-dashed border-[var(--border)] px-4 py-4">
           <div className="label-xs !mb-0.5">Estimated total</div>
           <div className="font-display text-3xl leading-none tabular-nums">{money(estimate)}</div>
+          <div className="mt-1 text-sm font-bold">plus Missouri sales tax</div>
           <p className="mt-2 text-sm text-[var(--muted)]">Nothing is charged now. We&apos;ll confirm the details and arrange a deposit by email.</p>
           {error && <div className="mt-3 text-sm font-bold text-[var(--danger-text)]">{error}</div>}
           <button className="btn-primary mt-4 w-full px-5 py-3 text-base" disabled={!canSubmit || submitting} onClick={handleSubmit}>
