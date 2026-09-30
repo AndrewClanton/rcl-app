@@ -7,6 +7,7 @@ import { slugify } from "@/lib/slugify";
 import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import { logOpsChange } from "@/lib/ops/changes";
+import { putBackOnSale } from "@/lib/ops/outages";
 
 // All writes here use the service-role client and bypass RLS. Menu tables
 // are public-read (see the initial migration); write access is gated by
@@ -193,6 +194,18 @@ export async function updateItem(
 // is the first screen that sets it.
 export async function setItemHidden(id: string, hidden: boolean): Promise<Result> {
   return updateItem(id, { active: !hidden });
+}
+
+// Puts an 86'd item ("Ran out" on the register) back on sale. What ran out
+// stays on the register's shopping list until someone marks it bought.
+export async function clearItemOut(id: string): Promise<Result> {
+  const { staff, no } = await signedInManager();
+  if (no) return no;
+  if (typeof id !== "string" || !UUID.test(id)) return { ok: false, error: "That item isn't on the menu anymore." };
+  const r = await putBackOnSale(id.toLowerCase(), staff.employeeId);
+  if (!r.ok) return r;
+  revalidate();
+  return { ok: true };
 }
 
 // An item that has ever been rung up can't be deleted: order_items.menu_item_id

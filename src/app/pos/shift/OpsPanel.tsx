@@ -82,7 +82,7 @@ export default function OpsPanel({
               }}
             />
           )}
-          {tab === "shopping" && <ShoppingListTab closing={closing} onFinishClosing={onFinishClosing} />}
+          {tab === "shopping" && <ShoppingListTab me={me} closing={closing} onFinishClosing={onFinishClosing} onChanged={onChanged} />}
           {tab === "history" && <HistoryTab />}
           {tab === "reminders" && <RemindersTab me={me} staff={staff} onChanged={onChanged} />}
         </div>

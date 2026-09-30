@@ -23,10 +23,19 @@ const writeDraft = (d: Record<string, number>) => {
   } catch {}
 };
 
+// "7:52 PM", or "Mon 7:52 PM" when it wasn't today.
+const outTime = (iso: string) => {
+  const opts = { timeZone: "America/Chicago" } as const;
+  const sameDay = new Date(iso).toLocaleDateString("en-US", opts) === new Date().toLocaleDateString("en-US", opts);
+  return new Date(iso).toLocaleString("en-US", { ...opts, ...(sameDay ? {} : { weekday: "short" as const }), hour: "numeric", minute: "2-digit" });
+};
+
 export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift | null; closing: boolean; onSubmitted: () => void }) {
   const api = useOpsApi();
   const [items, setItems] = useState<ParItem[] | null>(null);
   const [last, setLast] = useState<Record<string, number>>({});
+  // Par lines reported "Ran out" and not bought yet, with when.
+  const [outs, setOuts] = useState<Record<string, string>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [area, setArea] = useState<string>("");
   const [editing, setEditing] = useState(false);
@@ -39,6 +48,7 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
       .then((d) => {
         setItems(d.items);
         setLast(d.last);
+        setOuts(d.outs ?? {});
         setCounts(readDraft());
         setArea((a) => a || d.items.find((i) => i.active)?.area || "");
       })
@@ -51,6 +61,7 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
         if (!alive) return;
         setItems(d.items);
         setLast(d.last);
+        setOuts(d.outs ?? {});
         setCounts(readDraft());
         setArea(d.items.find((i) => i.active)?.area ?? "");
       })
@@ -151,6 +162,11 @@ export default function ParCountTab({ me, closing, onSubmitted }: { me: OnShift 
                         {i.source ? ` · ${i.source}` : ""}
                         {last[i.id] !== undefined ? ` · last count ${qtyLabel(last[i.id])}` : ""}
                       </div>
+                      {outs[i.id] && (
+                        <div className="text-xs font-bold" style={{ color: "var(--danger-text)" }}>
+                          Reported out at {outTime(outs[i.id])}
+                        </div>
+                      )}
                       {low && (
                         <div className="text-xs font-bold" style={{ color: "var(--warn-text)" }}>
                           Below par: get {qtyLabel(Math.round((i.par_qty! - v!) * 100) / 100)}

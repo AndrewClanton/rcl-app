@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { businessDayWindow, centralToIso, shiftDate } from "@/lib/ops/time";
+import { businessDay, businessDayWindow, centralToIso, shiftDate } from "@/lib/ops/time";
 import { getDayReport, type DayReport } from "./reports";
 
 // The end-of-day email to the admins: how the business day went, how that
@@ -22,6 +22,8 @@ export interface DailyDigest {
   good: string[];
   next: { label: string; items: { time: string; text: string }[] };
   newMembers: number;
+  // "Ran out" reports made that day (false alarms left out).
+  ranOut: { what: string; time: string; by: string | null; status: string; bought: boolean }[];
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -128,6 +130,35 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     if (count) watch.push(`${count} new dev note${count === 1 ? "" : "s"} to review in the back office.`);
   });
 
+  // ---------- ran out (the register's "Ran out" button) ----------
+  const ranOut = await safely([] as DailyDigest["ranOut"], async () => {
+    const [{ data, error }, { data: people }] = await Promise.all([
+      supabase
+        .from("stock_outages")
+        .select("label, reported_at, reported_by, resolved_at, resolved_by, resolution")
+        .gte("reported_at", start)
+        .lt("reported_at", end)
+        .order("reported_at"),
+      supabase.from("employees").select("id, name"),
+    ]);
+    if (error) return [];
+    const first = new Map((people ?? []).map((p) => [p.id as string, (p.name as string).split(" ")[0]]));
+    const who = (id: string | null) => (id ? (first.get(id) ?? null) : null);
+    return (data ?? [])
+      .filter((o) => o.resolution !== "mistake")
+      .map((o) => {
+        const by = who(o.resolved_by as string | null);
+        const at = o.resolved_at ? clock(o.resolved_at as string) : "";
+        const status =
+          o.resolution === "bought" ? `Bought ${at}${by ? ` (${by})` : ""}` : o.resolution === "found" ? `Found more ${at}${by ? ` (${by})` : ""}` : "Not bought yet";
+        return { what: o.label as string, time: clock(o.reported_at as string), by: who(o.reported_by as string | null), status, bought: o.resolution === "bought" };
+      });
+  });
+  await safely(undefined, async () => {
+    const { data } = await supabase.from("stock_outages").select("label, reported_at").is("resolved_at", null).lt("reported_at", start).order("reported_at");
+    if (data?.length) watch.push(`Still out from an earlier day: ${data.map((o) => `${o.label} (since ${dayLabel(businessDay(new Date(o.reported_at as string)).date, { weekday: "short", month: "short", day: "numeric" })})`).join(", ")}. It's at the top of the register's shopping list.`);
+  });
+
   // ---------- good news ----------
   const full = showings.filter((s) => s.capacity > 0 && s.sold / s.capacity >= 0.8);
   for (const s of full) good.push(`${s.title} at ${s.time} was ${Math.round((s.sold / s.capacity) * 100)}% full (${s.sold}/${s.capacity}).`);
@@ -189,5 +220,6 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     good,
     next: { label: dayLabel(nextDate), items: items.map(({ time, text }) => ({ time, text })) },
     newMembers,
+    ranOut,
   };
 }

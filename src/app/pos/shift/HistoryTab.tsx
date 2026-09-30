@@ -118,18 +118,32 @@ export default function HistoryTab() {
       </section>
 
       <section>
-        <h2 className="font-display mb-3 text-xl">Changes to the lists</h2>
+        <h2 className="font-display mb-3 text-xl">Changes and ran-outs</h2>
         {h.changes.length === 0 ? (
           <p className="text-sm" style={{ color: "var(--muted)" }}>
             No changes yet.
           </p>
         ) : (
           <ul className="space-y-1.5 text-sm">
-            {h.changes.map((c, i) => (
-              <li key={i}>
-                <span style={{ color: "var(--muted)" }}>{when(c.at)}</span> · {c.byName ?? "Someone"} {c.action} {c.summary}
-              </li>
-            ))}
+            {h.changes.map((c, i) => {
+              // "Ran out" entries read as a sentence with who in brackets:
+              // "Ran out of Hot dog buns (Andrew) · stopped Hot dog (regular)".
+              if (c.entity === "outage" || c.entity === "menu_item") {
+                const [head, ...rest] = c.summary.split(" · ");
+                return (
+                  <li key={i}>
+                    <span style={{ color: "var(--muted)" }}>{when(c.at)}</span> ·{" "}
+                    <strong style={c.action === "reported" ? { color: "var(--accent)" } : undefined}>{head}</strong> ({c.byName ?? "someone"})
+                    {rest.length > 0 && <span style={{ color: "var(--muted)" }}> · {rest.join(" · ")}</span>}
+                  </li>
+                );
+              }
+              return (
+                <li key={i}>
+                  <span style={{ color: "var(--muted)" }}>{when(c.at)}</span> · {c.byName ?? "Someone"} {c.action} {c.summary}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

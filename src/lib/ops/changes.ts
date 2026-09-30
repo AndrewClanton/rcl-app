@@ -2,14 +2,15 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // The shift tools' change log (ops_changes): who added, changed, removed or
-// restored a task, par sheet line or reminder. The register's History tab
-// reads it. Lives here, not in ops-actions.ts, so other screens that edit
-// the par sheet (the recipe editor) log the same way without it becoming a
-// server action anyone could call.
+// restored a task, par sheet line or reminder, and "Ran out" reports (an
+// outage reported or resolved, a menu item back on sale). The register's
+// History tab reads it. Lives here, not in ops-actions.ts, so other screens
+// that edit the par sheet (the recipe editor) log the same way without it
+// becoming a server action anyone could call.
 export async function logOpsChange(
-  entity: "task" | "par_item" | "reminder",
+  entity: "task" | "par_item" | "reminder" | "outage" | "menu_item",
   entityId: string | null,
-  action: "added" | "changed" | "removed" | "restored",
+  action: "added" | "changed" | "removed" | "restored" | "reported" | "resolved",
   summary: string,
   by: string | null,
 ) {

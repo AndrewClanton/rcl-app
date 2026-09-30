@@ -86,6 +86,64 @@ export interface ShiftStatus {
   // Today's staff schedule, by person: "4:00 PM–10:00 PM".
   scheduled: Record<string, string>;
   lastCount: { id: string; at: string; byName: string | null; below: number } | null;
+  // Menu items 86'd right now, and how many "Ran out" reports are open.
+  outs: RegisterOut[];
+  ranOut: number;
+}
+
+// ---------- "Ran out" (86 it) ----------
+
+export type OutageResolution = "bought" | "found" | "mistake";
+
+// A menu item the register shouldn't sell right now.
+export interface RegisterOut {
+  itemId: string;
+  reason: string; // "Out of hot dog buns"
+  since: string;
+  outageId: string | null;
+  // What ran out ("Hot dog buns"), while that report is still open.
+  what: string | null;
+}
+
+// An open "Ran out" report, for the shopping list.
+export interface OpenOutage {
+  id: string;
+  parItemId: string | null;
+  name: string;
+  area: string | null;
+  source: string | null;
+  parQty: number | null;
+  unit: string | null;
+  note: string | null;
+  reportedAt: string;
+  byName: string | null;
+  stopped: string[]; // menu item names still 86'd because of it
+}
+
+// What the "Ran out" sheet picks from.
+export interface RanOutOptions {
+  parItems: Pick<ParItem, "id" | "area" | "section" | "name" | "par_qty" | "unit" | "source">[];
+  menu: { id: string; name: string; category: string; outSince: string | null }[];
+  // Par line id → menu items whose recipe uses it.
+  recipeUses: Record<string, string[]>;
+  // Par line id → its open report.
+  open: Record<string, { at: string; byName: string | null }>;
+}
+
+export const OUT_LABEL_MAX = 80;
+export const OUT_NOTE_MAX = 300;
+export const OUT_ITEMS_MAX = 40;
+
+// "Hot dog buns" → "hot dog buns", for the middle of a sentence. A leading
+// capital stays on an acronym ("SF vanilla").
+export function midSentence(what: string): string {
+  const w = what.trim();
+  return w.length > 1 && w[1] === w[1].toLowerCase() ? w[0].toLowerCase() + w.slice(1) : w;
+}
+
+// "Hot dog buns" → "Out of hot dog buns"
+export function outReason(what: string): string {
+  return `Out of ${midSentence(what)}`;
 }
 
 export interface ParItem {
