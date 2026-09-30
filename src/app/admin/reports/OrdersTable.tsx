@@ -27,60 +27,94 @@ export default function OrdersTable({ orders, emptyText = "No orders this day." 
 
   if (orders.length === 0) return <p className="text-sm text-[var(--muted)]">{emptyText}</p>;
 
+  const refundButton = (o: DayOrder, big = false) =>
+    o.status === "completed" ? (
+      <button
+        className={`rounded-full border border-[var(--border)] hover:border-[var(--foreground)] ${big ? "px-3 py-1.5 text-sm" : "px-2.5 py-0.5 text-xs"}`}
+        onClick={() => {
+          setDone(null);
+          setChoosing(o);
+        }}
+      >
+        Refund
+      </button>
+    ) : (
+      <span className="text-xs capitalize">{o.status}</span>
+    );
+
   return (
-    <div className="overflow-x-auto">
+    <div>
       {done && <div className="notice notice-success mb-3 !p-3 text-sm">{done}</div>}
-      <table className="w-full min-w-[640px] text-sm tabular-nums">
-        <thead>
-          <tr className="text-left text-xs text-[var(--muted)]">
-            <th className="pb-1 pr-2 font-medium">#</th>
-            <th className="pb-1 pr-2 font-medium">Time</th>
-            <th className="pb-1 pr-2 font-medium">Cashier</th>
-            <th className="pb-1 pr-2 font-medium">Items</th>
-            <th className="pb-1 pr-2 font-medium">Paid</th>
-            <th className="pb-1 pr-2 text-right font-medium">Tip</th>
-            <th className="pb-1 pr-2 text-right font-medium">Total</th>
-            <th className="pb-1" />
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => {
-            const off = o.status !== "completed";
-            return (
-              <tr key={o.id} className={`border-t border-[var(--border)] ${off ? "text-[var(--muted)]" : ""}`}>
-                <td className="py-1 pr-2">{o.orderNumber}</td>
-                <td className="whitespace-nowrap py-1 pr-2">{time(o.at)}</td>
-                <td className="py-1 pr-2">{o.cashier ?? "—"}</td>
-                <td className="max-w-[18rem] truncate py-1 pr-2" title={o.items}>
-                  {o.name && <span className="font-medium">{o.name}: </span>}
-                  {o.items}
-                </td>
-                <td className="py-1 pr-2 capitalize">{o.method ?? "—"}</td>
-                <td className="py-1 pr-2 text-right">{o.tip > 0 ? money(o.tip) : ""}</td>
-                <td className={`py-1 pr-2 text-right font-medium ${off ? "line-through" : ""}`}>
-                  {money(o.total)}
-                  {o.refunded > 0 && !off && <div className="text-xs font-normal text-[var(--danger-text)]">−{money(o.refunded)} refunded</div>}
-                </td>
-                <td className="py-1 text-right">
-                  {o.status === "completed" ? (
-                    <button
-                      className="rounded border border-[var(--border)] px-2 py-0.5 text-xs hover:border-[var(--accent)]"
-                      onClick={() => {
-                        setDone(null);
-                        setChoosing(o);
-                      }}
-                    >
-                      Refund
-                    </button>
-                  ) : (
-                    <span className="text-xs capitalize">{o.status}</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+
+      {/* Phones: one card per order. */}
+      <ul className="divide-y divide-[var(--border)] sm:hidden">
+        {orders.map((o) => {
+          const off = o.status !== "completed";
+          return (
+            <li key={o.id} className={`py-3 ${off ? "text-[var(--muted)]" : ""}`}>
+              <div className="flex items-baseline gap-2">
+                <span className="font-semibold">#{o.orderNumber}</span>
+                <span className="text-xs text-[var(--muted)]">
+                  {time(o.at)}
+                  {o.cashier ? ` · ${o.cashier}` : ""}
+                  {o.method ? ` · ${o.method}` : ""}
+                </span>
+                <span className={`ml-auto font-semibold tabular-nums ${off ? "line-through" : ""}`}>{money(o.total)}</span>
+              </div>
+              <p className="mt-0.5 line-clamp-2 text-sm">
+                {o.name && <span className="font-medium">{o.name}: </span>}
+                {o.items}
+              </p>
+              <div className="mt-1.5 flex items-center gap-3 text-xs">
+                {o.tip > 0 && <span className="text-[var(--muted)]">Tip {money(o.tip)}</span>}
+                {o.refunded > 0 && !off && <span className="text-[var(--danger-text)]">−{money(o.refunded)} refunded</span>}
+                <span className="ml-auto">{refundButton(o, true)}</span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      {/* Wider screens: a table. */}
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full min-w-[640px] text-sm tabular-nums">
+          <thead>
+            <tr className="text-left text-xs text-[var(--muted)]">
+              <th className="pb-1.5 pr-2 font-medium">#</th>
+              <th className="pb-1.5 pr-2 font-medium">Time</th>
+              <th className="pb-1.5 pr-2 font-medium">Cashier</th>
+              <th className="pb-1.5 pr-2 font-medium">Items</th>
+              <th className="pb-1.5 pr-2 font-medium">Paid</th>
+              <th className="pb-1.5 pr-2 text-right font-medium">Tip</th>
+              <th className="pb-1.5 pr-2 text-right font-medium">Total</th>
+              <th className="pb-1.5" />
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((o) => {
+              const off = o.status !== "completed";
+              return (
+                <tr key={o.id} className={`border-t border-[var(--border)] ${off ? "text-[var(--muted)]" : ""}`}>
+                  <td className="py-1.5 pr-2">{o.orderNumber}</td>
+                  <td className="whitespace-nowrap py-1.5 pr-2">{time(o.at)}</td>
+                  <td className="py-1.5 pr-2">{o.cashier ?? "—"}</td>
+                  <td className="max-w-[18rem] truncate py-1.5 pr-2" title={o.items}>
+                    {o.name && <span className="font-medium">{o.name}: </span>}
+                    {o.items}
+                  </td>
+                  <td className="py-1.5 pr-2 capitalize">{o.method ?? "—"}</td>
+                  <td className="py-1.5 pr-2 text-right">{o.tip > 0 ? money(o.tip) : ""}</td>
+                  <td className={`py-1.5 pr-2 text-right font-medium ${off ? "line-through" : ""}`}>
+                    {money(o.total)}
+                    {o.refunded > 0 && !off && <div className="text-xs font-normal text-[var(--danger-text)]">−{money(o.refunded)} refunded</div>}
+                  </td>
+                  <td className="py-1.5 text-right">{refundButton(o)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {choosing && (
         <RefundChooser

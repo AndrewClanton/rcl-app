@@ -214,6 +214,32 @@ body {
     mask-image: linear-gradient(100deg, transparent, black);
     opacity: 0.35;
   }
+
+  /* Reports charts: one ink, in steps off the paper (src/app/admin/reports/ui.tsx). */
+  .rpt-bar-strong {
+    background: var(--foreground);
+  }
+  .rpt-bar-mid {
+    background: color-mix(in srgb, var(--foreground) 55%, var(--surface));
+  }
+  .rpt-bar {
+    background: color-mix(in srgb, var(--foreground) 28%, var(--surface));
+  }
+  .rpt-bar-light {
+    background: color-mix(in srgb, var(--foreground) 12%, var(--surface));
+  }
+}
+
+/* Printing a report (Reports -> Box office -> Print): black on white, no
+   back-office chrome. Screens mark what to leave off with print:hidden. */
+@media print {
+  @page {
+    margin: 0.5in;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
 }
 
 /*

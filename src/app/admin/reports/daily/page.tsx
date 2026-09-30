@@ -29,10 +29,10 @@ export default async function DailyEmailPage({ searchParams }: { searchParams: P
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Link href="/admin/reports" className="text-sm text-[var(--muted)] hover:underline">
-          ← Reports
+        <Link href={`/admin/reports${date === businessDay().date ? "" : `?date=${date}`}`} className="text-sm text-[var(--muted)] hover:underline">
+          ← Day
         </Link>
-        <h1 className="mr-2 text-lg font-semibold">Daily email</h1>
+        <h2 className="mr-2 text-lg font-semibold">Daily email</h2>
         <Link href={`/admin/reports/daily?date=${shiftDate(date, -1)}`} className="chip !px-2.5 !py-1 !text-sm" aria-label="Previous day">
           ◀
         </Link>
