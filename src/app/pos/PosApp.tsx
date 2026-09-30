@@ -40,6 +40,8 @@ import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
+import CardNoticeBanner from "./CardNotice";
+import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
 import {
   completeOrder,
@@ -206,6 +208,9 @@ export default function PosApp({
     null
   );
   const [toast, setToast] = useState<string | null>(null);
+  // What the last card sale's card did: points found by the card, a card
+  // newly linked, and so on (CardNotice.tsx). `key` starts it fresh per sale.
+  const [cardNotice, setCardNotice] = useState<{ key: number; notice: CardNotice } | null>(null);
   const devices = useDeviceSettings();
   // Where this register prints: its station's printer through the website,
   // or straight to a printer IP (Devices).
@@ -726,8 +731,9 @@ export default function PosApp({
     const allTip = order.tip ?? 0;
     const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
     let orderNumber: number;
+    let card: CardNotice | null;
     try {
-      ({ orderNumber } = await completeOrder(order));
+      ({ orderNumber, card } = await completeOrder(order));
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
@@ -744,11 +750,16 @@ export default function PosApp({
       return false;
     }
     keepUnsavedSale(null);
+    // A sale with nothing to say about its card leaves the last notice up
+    // (it names its order, and goes when its 2 minutes are up), so a quick
+    // cash sale next doesn't take away the last card sale's Undo.
+    if (card) setCardNotice({ key: Date.now(), notice: card });
     const receipt: ReceiptData = {
       orderNumber,
       at: new Date().toISOString(),
       cashier: employees.find((e) => e.id === order.employeeId)?.name ?? null,
-      member: sale.memberName,
+      // Nobody attached but the card found them: their first name only.
+      member: sale.memberName ?? (card?.kind === "matched" ? card.firstName : null),
       orderName: order.orderName.trim() || null,
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
       subtotal: order.totals.subtotal,
@@ -953,6 +964,7 @@ export default function PosApp({
               {toast}
             </div>
           )}
+          {cardNotice && <CardNoticeBanner key={cardNotice.key} notice={cardNotice.notice} onClose={() => setCardNotice(null)} />}
           {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
             <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
               <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>

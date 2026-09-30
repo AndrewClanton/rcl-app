@@ -205,6 +205,12 @@ export const HELP_TOPICS = {
     body:
       "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a confirmed check-in, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
   },
+  "card-linked-points": {
+    title: "Points by card, when nobody's attached",
+    area: "Register: members and the door",
+    body:
+      "When a member pays by card with their account on the order, that card is linked to them, so a later card sale with nobody attached still earns them the points. The register says so right after the sale (\"23 points to Sarah · Visa •••• 4242\"), with an Undo for when it isn't their card: it works for 2 minutes on that register, and after that a manager undoes it on the member's page. A card linked to two accounts (a family card) never picks on its own; the register asks who's paying. We keep only the card type, its last four digits and Stripe's code for the card, never the number, and members can remove a card on their account.",
+  },
   "door-scanner": {
     title: "Scanning tickets and member cards",
     area: "Register: members and the door",

@@ -65,6 +65,11 @@ export default async function PrivacyPage() {
             amounts, tips and taxes, and whether you paid by cash or card.
           </li>
           <li>
+            <strong>Linked cards:</strong> when you pay by card with your account attached, we remember that card&apos;s type, last four digits and
+            Stripe fingerprint (a code from Stripe that recognizes the same card again), never the card number, so you still get your points if you
+            pay with it and forget to sign in, and you can remove it anytime on your account&apos;s Profile tab.
+          </li>
+          <li>
             <strong>Points:</strong> every point you earn or use, and any adjustment, with the reason.
           </li>
           <li>

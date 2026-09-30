@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkManagerPin } from "@/lib/manager-pin";
 import type { ApprovalResult } from "@/lib/pin-rules";
@@ -11,6 +12,8 @@ import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
+import { settleSaleCard } from "@/lib/member-cards";
+import { cardLabel, type CardNotice } from "@/lib/card-match";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -179,8 +182,37 @@ export type CompleteOrderInput = DraftFields & {
   draftOrderId?: string | null;
 };
 
-export async function completeOrder(params: CompleteOrderInput): Promise<{ orderNumber: number }> {
-  await assertStaff();
+// A card sale's card, once the sale is saved: linked to the member on it,
+// or finding the sale's member (lib/member-cards.ts). Best-effort and quick:
+// it never fails the sale, and if Stripe is slow the register moves on after
+// 2.5 seconds while the rest finishes in the background (the points still
+// land; the register just doesn't show them).
+const CARD_WAIT_MS = 2500;
+
+async function settleCard(args: Parameters<typeof settleSaleCard>[0]): Promise<CardNotice | null> {
+  const work = settleSaleCard(args).catch((e) => {
+    console.error("card points failed", args.orderId, e);
+    return null;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), CARD_WAIT_MS);
+  });
+  const first = await Promise.race([work, late]);
+  clearTimeout(timer);
+  if (first !== "late") return first;
+  try {
+    after(() => work.then(() => undefined));
+  } catch {
+    // Not inside a request: the work carries on by itself.
+  }
+  return null;
+}
+
+export type CompleteOrderResult = { orderNumber: number; card: CardNotice | null };
+
+export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
+  const staff = await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
 
   const supabase = createAdminClient();
@@ -216,11 +248,16 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
   const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
   const orderForPayment = async () => {
     if (!paymentIntentId) return null;
-    const { data } = await supabase.from("orders").select("order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
-    return data?.[0] ? Number(data[0].order_number) : null;
+    const { data } = await supabase.from("orders").select("id, order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+    return data?.[0] ? { id: data[0].id as string, orderNumber: Number(data[0].order_number) } : null;
   };
+  // The card step, also for a sale saved on an earlier try whose answer
+  // never reached the register: it's safe to repeat (nothing is linked or
+  // paid twice), and shows the register what it missed.
+  const cardFor = (orderId: string) =>
+    paymentIntentId ? settleCard({ orderId, paymentIntentId, cashierId: params.employeeId || null, staffEmployeeId: staff.employeeId }) : Promise.resolve(null);
   const already = await orderForPayment();
-  if (already !== null) return { orderNumber: already };
+  if (already !== null) return { orderNumber: already.orderNumber, card: await cardFor(already.id) };
 
   let orderId: string;
   let orderNumber: number;
@@ -237,7 +274,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
     const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId).in("status", ["draft", "held", "tab"]).select("id");
     if (updateErr) throw updateErr;
     if (!closed?.length) {
-      if ((await orderForPayment()) !== null) return { orderNumber };
+      const paid = await orderForPayment();
+      if (paid !== null) return { orderNumber, card: await cardFor(paid.id) };
       throw new Error("This tab was already closed. Check Reports before taking payment again.");
     }
     await saveSaleItems(supabase, orderId, params.lines);
@@ -254,7 +292,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
       // Lost a race with a repeat of this same card payment (the database
       // allows one order per payment): the other call saved it.
       const saved = orderErr.code === "23505" ? await orderForPayment() : null;
-      if (saved !== null) return { orderNumber: saved };
+      if (saved !== null) return { orderNumber: saved.orderNumber, card: await cardFor(saved.id) };
       throw orderErr;
     }
     orderId = order.id;
@@ -299,8 +337,11 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
     "now",
   );
 
+  // Last, so nothing above waits on Stripe.
+  const card = await cardFor(orderId);
+
   revalidate();
-  return { orderNumber };
+  return { orderNumber, card };
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------
@@ -514,6 +555,9 @@ export interface RecentOrder {
   name: string | null;
   cashier: string | null;
   member: string | null;
+  // The member was found by the card that paid, not attached by staff.
+  memberByCard: boolean;
+  cardLabel: string | null; // the card that paid, e.g. "Visa •••• 4242"
   method: string | null;
   cash: number;
   card: number;
@@ -531,7 +575,7 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
   const { data, error } = await createAdminClient()
     .from("orders")
     .select(
-      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
+      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, member_source, card_brand, card_last4, card_wallet, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
     )
     .in("status", ["completed", "refunded", "voided"])
     .not("completed_at", "is", null)
@@ -556,6 +600,10 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     tax: number;
     tip: number;
     total: number;
+    member_source: string | null;
+    card_brand: string | null;
+    card_last4: string | null;
+    card_wallet: string | null;
     employee: { name: string } | null;
     member: { name: string } | null;
     items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; screening_id: string | null }[];
@@ -568,6 +616,8 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     name: o.tab_name || o.order_name || null,
     cashier: o.employee?.name ?? null,
     member: o.member?.name ?? null,
+    memberByCard: o.member_source === "card" && !!o.member,
+    cardLabel: o.card_brand || o.card_last4 || o.card_wallet ? cardLabel({ brand: o.card_brand, last4: o.card_last4, wallet: o.card_wallet }) : null,
     method: o.payment_method,
     cash: Number(o.payment_cash_amount ?? 0),
     card: Number(o.payment_card_amount ?? 0),

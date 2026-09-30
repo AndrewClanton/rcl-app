@@ -7,6 +7,7 @@ import { applyPoints } from "@/lib/points";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
+import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -44,7 +45,11 @@ export async function POST(request: NextRequest) {
     if (session.mode === "subscription") {
       // Insiders+ signup. customer.subscription.updated/deleted below keep
       // the member in step with the subscription after this.
-      await activatePlusFromCheckout(session);
+      const plusMemberId = await activatePlusFromCheckout(session);
+      // The subscription's card is theirs: linked, so paying with it at the
+      // bar earns their points even when nobody attaches them. Never fails
+      // the webhook.
+      await linkPlusCard(plusMemberId, session);
     } else {
       const bookingId = session.metadata?.booking_id;
       if (bookingId) {
@@ -71,6 +76,14 @@ export async function POST(request: NextRequest) {
             note: `${booking.quantity} ticket${booking.quantity === 1 ? "" : "s"}, bought online`,
           });
         }
+        // The card that paid: linked to the member if they were signed in,
+        // or, with nobody on the booking, finding the member it belongs to
+        // (lib/member-cards.ts). Never fails the webhook.
+        await settleBookingCard({
+          bookingId,
+          paymentIntentId: typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id,
+          signedInMemberId: session.metadata?.signed_in_member,
+        });
       }
 
       const boothReservationId = session.metadata?.booth_reservation_id;

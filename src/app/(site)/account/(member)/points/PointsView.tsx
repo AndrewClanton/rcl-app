@@ -3,18 +3,22 @@ import type { LedgerEntry } from "@/lib/data/member-account";
 import type { VisitSummary } from "@/lib/visits-server";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { VISIT_POINTS } from "@/lib/visits";
+import { CARD_UNDO_NOTE } from "@/lib/card-match";
 import { dateShort, points } from "../format";
 import { Empty, Panel, SpecPanel } from "../ui";
 import { BadgeCabinet, StreakPanel } from "./Badges";
 
-function describe(l: LedgerEntry): { title: string; href: string | null } {
-  const receipt = l.orderId ? `/account/purchases/order/${l.orderId}` : l.bookingId ? `/account/purchases/ticket/${l.bookingId}` : null;
+// notTheirs: sales found by a card that turned out not to be theirs (an
+// Undo at the register): no receipt link, since the sale isn't theirs.
+function describe(l: LedgerEntry, notTheirs: Set<string>): { title: string; href: string | null } {
+  const receipt = l.orderId ? (notTheirs.has(l.orderId) ? null : `/account/purchases/order/${l.orderId}`) : l.bookingId ? `/account/purchases/ticket/${l.bookingId}` : null;
   switch (l.reason) {
     case "purchase":
       return { title: `Earned on ${l.note ?? "a purchase"}`, href: receipt };
     case "redeem":
       return { title: `Used for ${l.note ?? `$${REWARD_VALUE} off`}`, href: receipt };
     case "refund":
+      if (l.note === CARD_UNDO_NOTE) return { title: "Taken back: not your card", href: null };
       return { title: "Purchase refunded", href: receipt };
     case "welcome_bonus":
       return { title: l.note ?? "Welcome bonus", href: null };
@@ -33,6 +37,7 @@ export default function PointsView({ balance, ledger, visits, birthday }: { bala
   const earned = ledger.filter((l) => l.delta > 0 && l.reason !== "opening_balance").reduce((s, l) => s + l.delta, 0);
   // (Math.abs: no redemptions would otherwise show as "-0".)
   const used = Math.abs(ledger.filter((l) => l.reason === "redeem").reduce((s, l) => s + l.delta, 0));
+  const notTheirs = new Set(ledger.filter((l) => l.reason === "refund" && l.note === CARD_UNDO_NOTE && l.orderId).map((l) => l.orderId as string));
 
   return (
     <div className="space-y-10">
@@ -89,7 +94,7 @@ export default function PointsView({ balance, ledger, visits, birthday }: { bala
               </thead>
               <tbody>
                 {ledger.map((l) => {
-                  const d = describe(l);
+                  const d = describe(l, notTheirs);
                   return (
                     <tr key={l.id} className="border-t border-[var(--border)]">
                       <td className="spec-code whitespace-nowrap px-4 py-3">{dateShort(l.createdAt)}</td>

@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { boothDate, boothWindow } from "@/lib/booth-time";
 import { bookingNumber } from "@/lib/door-tickets";
 import { businessDay } from "@/lib/ops/time";
+import { cardLabel } from "@/lib/card-match";
+import { stripeKeyMode } from "@/lib/stripe";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -425,6 +427,40 @@ export async function getPointsLedger(memberId: string, limit = 300): Promise<Le
     createdAt: l.created_at,
     orderId: l.order_id,
     bookingId: l.booking_id,
+  }));
+}
+
+// ---------- linked cards ----------
+
+// The cards linked to their account (lib/member-cards.ts), ones they or
+// staff removed left out. Only what's needed to show them: never the
+// fingerprint. On the real site, a test card linked while trying the
+// register out (it can never earn anything there) isn't shown either.
+export interface MyLinkedCard {
+  id: string;
+  label: string; // "Visa •••• 4242"
+  wallet: boolean; // a phone or watch, which counts as its own card
+  source: string; // register | online | plus
+  linkedAt: string;
+  lastUsedAt: string | null;
+}
+
+export async function getMyLinkedCards(memberId: string): Promise<MyLinkedCard[]> {
+  let query = createAdminClient()
+    .from("member_cards")
+    .select("id, brand, last4, wallet, source, created_at, last_used_at")
+    .eq("member_id", memberId)
+    .is("removed_at", null);
+  if (stripeKeyMode() === "live") query = query.eq("livemode", true);
+  const { data, error } = await query.order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((c) => ({
+    id: c.id,
+    label: cardLabel({ brand: c.brand, last4: c.last4, wallet: c.wallet }),
+    wallet: !!c.wallet && c.wallet !== "link",
+    source: c.source,
+    linkedAt: c.created_at,
+    lastUsedAt: c.last_used_at,
   }));
 }
 

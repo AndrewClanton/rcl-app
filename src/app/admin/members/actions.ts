@@ -3,7 +3,7 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff, assertStaff, assertAdmin } from "@/lib/auth";
+import { requireStaff, assertStaff, assertAdmin, assertManager } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
@@ -143,6 +143,67 @@ export async function adjustMemberPoints(id: string, newBalance: number, note?: 
   if (delta) await applyPoints({ memberId: id, delta, reason: "adjustment", note: note?.trim() || "Adjusted by staff", by: staff.employeeId });
   revalidate();
   revalidatePath(`/admin/members/${id}`);
+}
+
+// ---------- linked cards (lib/member-cards.ts) ----------
+
+// Takes a card off a member: it stops finding them, and isn't linked to
+// them again on its own. Any staff.
+export async function unlinkMemberCard(memberId: string, cardId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  const { data, error } = await createAdminClient()
+    .from("member_cards")
+    .update({ removed_at: new Date().toISOString(), removed_by: staff.employeeId })
+    .eq("id", cardId)
+    .eq("member_id", memberId)
+    .is("removed_at", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't unlink it. Try again." };
+  if (!data?.length) return { ok: false, error: "That card was already unlinked." };
+  revalidatePath(`/admin/members/${memberId}`);
+  return { ok: true };
+}
+
+// Puts back a card that was unlinked (by mistake, or the member asks for
+// it back). A removed card is never linked again on its own, so this is the
+// only way back. Managers and up.
+export async function relinkMemberCard(memberId: string, cardId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertManager();
+  const supabase = createAdminClient();
+  const { data: member } = await supabase.from("members").select("erased_at").eq("id", memberId).maybeSingle();
+  if (!member || member.erased_at) return { ok: false, error: "This member's personal info was removed." };
+  const { data, error } = await supabase
+    .from("member_cards")
+    .update({ removed_at: null, removed_by: null, removed_by_member: false })
+    .eq("id", cardId)
+    .eq("member_id", memberId)
+    .not("removed_at", "is", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't link it again. Try again." };
+  if (!data?.length) return { ok: false, error: "That card is already linked." };
+  revalidatePath(`/admin/members/${memberId}`);
+  return { ok: true };
+}
+
+// A sale the card found them for, but it wasn't their card. The register
+// can undo it for 2 minutes; after that it's here, managers and up. The
+// points come back off through their points history, the sale goes back to
+// having no member, and the card isn't linked to them anymore.
+export async function undoCardMatchInBackOffice(memberId: string, orderId: string): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  const staff = await assertManager();
+  const supabase = createAdminClient();
+  const { data: order } = await supabase.from("orders").select("member_id, member_source").eq("id", orderId).maybeSingle();
+  if (!order || order.member_id !== memberId || order.member_source !== "card") return { ok: false, error: "That sale isn't matched to this member by card anymore." };
+  const { data: taken, error } = await supabase.rpc("undo_card_match", { p_order: orderId, p_by: staff.employeeId });
+  if (error) {
+    console.error("card match undo failed", orderId, error.message);
+    return { ok: false, error: "Couldn't undo it. Try again." };
+  }
+  if (taken === null) return { ok: false, error: "That sale isn't matched to this member by card anymore." };
+  revalidate();
+  revalidatePath(`/admin/members/${memberId}`);
+  const n = Math.round(Number(taken));
+  return { ok: true, message: `Undone: ${n} point${n === 1 ? "" : "s"} taken back, and the card isn't linked to them anymore.` };
 }
 
 // Removes a member's personal info on request (see /data-deletion): cancels

@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/lib/types";
-import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
+import type { EraseLogEntry, MemberCard, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
 import GiftCard from "./GiftCard";
@@ -14,13 +14,27 @@ import type { HelpTopicKey } from "@/lib/help/topics";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import ConfirmModal from "@/components/ConfirmModal";
+import { firstName } from "@/lib/card-match";
 import { approvalText } from "@/lib/pin-rules";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { giftEndsWithoutRenewal, plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
 import { birthdayToInput } from "@/lib/visits";
 import BirthdayPicker from "@/components/BirthdayPicker";
-import { createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, saveMemberDetails, setMemberRate, updateMember } from "../actions";
+import {
+  createMemberBillingPortalLink,
+  createMemberCardLink,
+  eraseMemberPersonalInfo,
+  grantFreeMembership,
+  revokeFreeMembership,
+  saveMemberDetails,
+  setMemberRate,
+  relinkMemberCard,
+  undoCardMatchInBackOffice,
+  unlinkMemberCard,
+  updateMember,
+} from "../actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -35,6 +49,8 @@ export default function MemberDetail({
   gifts,
   canEditContact,
   eraseLog,
+  cards,
+  canUndoCardMatch,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -46,6 +62,10 @@ export default function MemberDetail({
   // and are shown, not edited.
   canEditContact: boolean;
   eraseLog: EraseLogEntry | null;
+  cards: MemberCard[];
+  // Managers and up can undo a sale the card found this member for, and
+  // link a removed card again.
+  canUndoCardMatch: boolean;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -80,7 +100,7 @@ export default function MemberDetail({
             </p>
           )}
         </div>
-        <PurchaseHistoryCard purchases={purchases} />
+        <PurchaseHistoryCard memberId={member.id} purchases={purchases} canUndoCardMatch={false} />
       </div>
     );
   }
@@ -99,10 +119,11 @@ export default function MemberDetail({
       <div className="space-y-6">
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
         <BillingCard member={member} />
+        <LinkedCardsCard member={member} cards={cards} canRelink={canUndoCardMatch} />
         <GiftCard member={member} gifts={gifts} />
       </div>
       <div className="xl:col-span-2">
-        <PurchaseHistoryCard purchases={purchases} />
+        <PurchaseHistoryCard memberId={member.id} purchases={purchases} canUndoCardMatch={canUndoCardMatch} />
       </div>
       <div className="xl:col-span-2">
         <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
@@ -559,15 +580,19 @@ function BillingCard({ member }: { member: Member }) {
   );
 }
 
-function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
+function PurchaseHistoryCard({ memberId, purchases, canUndoCardMatch }: { memberId: string; purchases: MemberPurchase[]; canUndoCardMatch: boolean }) {
   const router = useRouter();
   const [refundTarget, setRefundTarget] = useState<MemberPurchase | null>(null);
   const [refunded, setRefunded] = useState<string | null>(null);
+  const [undoTarget, setUndoTarget] = useState<MemberPurchase | null>(null);
+  const [undoError, setUndoError] = useState<string | null>(null);
+  const [undoing, startUndo] = useTransition();
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Purchase history</h2>
       {refunded && <div className="notice notice-success mb-3 !p-3 text-sm">{refunded}</div>}
+      {undoError && <div className="notice notice-warn mb-3 !p-3 text-sm">{undoError}</div>}
       {purchases.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">No purchases on file for this member.</p>
       ) : (
@@ -583,8 +608,18 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
               <span className="text-[var(--muted)]">{money(p.total)}</span>
               <span className="text-xs text-[var(--muted)]">
                 {new Date(p.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                {p.paymentMethod ? ` · ${p.paymentMethod}` : ""}
+                {p.paymentMethod ? ` · ${p.cardLabel && p.paymentMethod === "card" ? p.cardLabel : p.paymentMethod}` : ""}
               </span>
+              {p.byCard && (
+                <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]" title="Nobody was attached at the register, so the card that paid found this member">
+                  Found by card
+                </span>
+              )}
+              {p.byCard && canUndoCardMatch && p.status === "completed" && (
+                <button className="rounded border border-[var(--border)] px-2 py-1 text-xs" disabled={undoing} onClick={() => setUndoTarget(p)}>
+                  Not their card
+                </button>
+              )}
               {p.status === "refunded" ? (
                 <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]">Refunded</span>
               ) : p.total > 0 ? (
@@ -613,6 +648,105 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
             router.refresh();
           }}
         />
+      )}
+
+      {undoTarget && (
+        <ConfirmModal
+          title="Not their card?"
+          description={`${undoTarget.label} was put on this member because ${undoTarget.cardLabel ?? "the card"} that paid is linked to them. This takes its points back off their account, takes them off the sale, and unlinks that card from them.`}
+          confirmLabel="Take it back"
+          danger
+          onCancel={() => setUndoTarget(null)}
+          onConfirm={() => {
+            const target = undoTarget;
+            setUndoTarget(null);
+            setUndoError(null);
+            startUndo(async () => {
+              const r = await undoCardMatchInBackOffice(memberId, target.id).catch(() => ({ ok: false as const, error: "Couldn't undo it. Try again." }));
+              if (!r.ok) setUndoError(r.error);
+              else setRefunded(`${target.label}: ${r.message}`);
+              router.refresh();
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// The cards linked to this member (lib/member-cards.ts): paying with one
+// earns their points even when nobody attaches them at the register. Any
+// staff can unlink one; it then stops finding them and isn't linked to
+// them again on its own. A manager can link a removed one again.
+function LinkedCardsCard({ member, cards, canRelink }: { member: Member; cards: MemberCard[]; canRelink: boolean }) {
+  const [pending, run, error] = useRefreshingAction();
+  const active = cards.filter((c) => !c.removedAt);
+  const removed = cards.filter((c) => c.removedAt);
+  const day = (d: string) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+  const how = (c: MemberCard) =>
+    c.source === "online" ? "buying tickets online" : c.source === "plus" ? "from their Insiders+ billing" : `at the register${c.linkedBy ? ` (${c.linkedBy})` : ""}`;
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="mb-1 text-lg font-semibold">
+        Linked cards <InfoTip topic="card-linked-points" />
+      </h2>
+      <p className="mb-3 text-sm text-[var(--muted)]">
+        A sale paid with one of these, with nobody attached, goes on {firstName(member.name)}&apos;s account with its points. We keep the
+        card type and last four digits only.
+        {member.link_cards === false && <strong> They turned card linking off, so these aren&apos;t used.</strong>}
+      </p>
+      {active.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">No cards linked. A card links when they pay by card with their account attached.</p>
+      ) : (
+        <ul className="divide-y divide-[var(--border)]">
+          {active.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+              <span className="font-semibold">{c.label}</span>
+              {c.test && <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]">Test card</span>}
+              <span className="text-xs text-[var(--muted)]">
+                Linked {day(c.linkedAt)} {how(c)}
+                {c.lastUsedAt ? ` · last used ${day(c.lastUsedAt)}` : ""}
+                {` · ${c.sales} sale${c.sales === 1 ? "" : "s"}`}
+                {c.wallet ? " · a phone or watch (its own card)" : ""}
+              </span>
+              <button className="ml-auto rounded border border-[var(--border)] px-2 py-1 text-xs disabled:opacity-50" disabled={pending} onClick={() => run(() => unlinkMemberCard(member.id, c.id), { quiet: true })}>
+                Unlink
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
+      {removed.length > 0 && (
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-[var(--muted)]">
+            {removed.length} removed card{removed.length === 1 ? "" : "s"} (not linked again on their own)
+          </summary>
+          <ul className="mt-2 space-y-1 text-xs text-[var(--muted)]">
+            {removed.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-center gap-2">
+                <span>
+                  {c.label}: removed {day(c.removedAt as string)}
+                  {c.removedByMember ? " by the member" : c.removedBy ? ` by ${c.removedBy}` : ""}
+                </span>
+                {canRelink && (
+                  <button
+                    className="rounded border border-[var(--border)] px-2 py-0.5 text-xs disabled:opacity-50"
+                    disabled={pending}
+                    title={c.removedByMember ? "They removed it themselves: only link it again if they ask" : undefined}
+                    onClick={() => {
+                      if (c.removedByMember && !window.confirm(`${firstName(member.name)} removed ${c.label} from their account themselves. Link it again only if they asked. Link it again?`)) return;
+                      run(() => relinkMemberCard(member.id, c.id), { quiet: true });
+                    }}
+                  >
+                    Link again
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );

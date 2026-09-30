@@ -136,6 +136,36 @@ export async function setEmailOptIn(optIn: boolean): Promise<ProfileResult> {
   return { ok: true };
 }
 
+// ---------- linked cards (lib/member-cards.ts) ----------
+
+// Takes a card off their account: it stops earning them points without
+// signing in, and isn't linked to them again on its own. Only their own.
+export async function removeMyCard(cardId: string): Promise<ProfileResult> {
+  const member = await requireMember();
+  if (typeof cardId !== "string" || !cardId) return { ok: false, error: "Couldn't remove it. Try again." };
+  const { data, error } = await createAdminClient()
+    .from("member_cards")
+    .update({ removed_at: new Date().toISOString(), removed_by_member: true })
+    .eq("id", cardId)
+    .eq("member_id", member.id)
+    .is("removed_at", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't remove it. Try again." };
+  if (!data?.length) return { ok: false, error: "That card isn't linked to your account anymore." };
+  revalidatePath("/account/profile");
+  return { ok: true };
+}
+
+// Their switch for linking cards at all. Off: no new cards are linked, and
+// the ones already linked stop finding them.
+export async function setCardLinking(on: boolean): Promise<ProfileResult> {
+  const member = await requireMember();
+  const { error } = await createAdminClient().from("members").update({ link_cards: !!on }).eq("id", member.id);
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account/profile");
+  return { ok: true };
+}
+
 // Copies the photo from their Google account into our own storage (so it
 // keeps working if they change it on Google).
 export async function importGooglePhoto(): Promise<ProfileResult> {

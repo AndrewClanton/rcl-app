@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { contactForRole } from "@/lib/contact-mask";
 import type { CommunityProgram, EmployeeRole, Member } from "@/lib/types";
+import { cardLabel } from "@/lib/card-match";
 
 const MEMBER_SELECT =
   "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name), erased_by_staff:employees!members_erased_by_fkey(name)";
@@ -102,6 +103,10 @@ export interface MemberPurchase {
   paymentMethod: string | null;
   stripePaymentIntentId: string | null;
   createdAt: string;
+  // The card that paid a register sale ("Visa •••• 4242"), and whether the
+  // member was found by it rather than attached by staff.
+  cardLabel?: string | null;
+  byCard?: boolean;
 }
 
 // Unified purchase history (POS/web orders + ticket bookings) for a single
@@ -112,7 +117,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
   const [{ data: orders, error: ordersErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
     supabase
       .from("orders")
-      .select("id, order_number, total, status, payment_method, stripe_payment_intent_id, created_at, items:order_items(quantity)")
+      .select("id, order_number, total, status, payment_method, stripe_payment_intent_id, created_at, member_source, card_brand, card_last4, card_wallet, items:order_items(quantity)")
       .eq("member_id", memberId)
       .in("status", ["completed", "refunded"])
       .order("created_at", { ascending: false }),
@@ -138,6 +143,8 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
       paymentMethod: o.payment_method,
       stripePaymentIntentId: o.stripe_payment_intent_id,
       createdAt: o.created_at,
+      cardLabel: o.card_brand || o.card_last4 || o.card_wallet ? cardLabel({ brand: o.card_brand, last4: o.card_last4, wallet: o.card_wallet }) : null,
+      byCard: o.member_source === "card",
     };
   });
 
@@ -156,4 +163,72 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
   });
 
   return [...orderItems, ...bookingItems].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+// ---------- linked cards (lib/member-cards.ts) ----------
+
+// A member's linked cards for their page in Back office: the ones in use,
+// then the ones removed (by them or by staff), with who linked each and how
+// many of the member's sales it paid. Never the fingerprint.
+export interface MemberCard {
+  id: string;
+  label: string; // "Visa •••• 4242"
+  wallet: boolean;
+  source: string; // register | online | plus
+  linkedAt: string;
+  linkedBy: string | null; // the cashier, for a register link
+  lastUsedAt: string | null;
+  sales: number;
+  test: boolean; // a test-mode card (from trying things out)
+  removedAt: string | null;
+  removedByMember: boolean;
+  removedBy: string | null;
+}
+
+export async function getMemberCards(memberId: string): Promise<MemberCard[]> {
+  const supabase = createAdminClient();
+  const [{ data, error }, { data: sales }] = await Promise.all([
+    supabase
+      .from("member_cards")
+      .select(
+        "id, fingerprint, livemode, brand, last4, wallet, source, created_at, last_used_at, removed_at, removed_by_member, linked_by_staff:employees!member_cards_linked_by_fkey(name), removed_by_staff:employees!member_cards_removed_by_fkey(name)",
+      )
+      .eq("member_id", memberId)
+      .order("created_at", { ascending: false }),
+    supabase.from("orders").select("card_fingerprint").eq("member_id", memberId).eq("status", "completed").not("card_fingerprint", "is", null),
+  ]);
+  if (error) throw error;
+  const count = new Map<string, number>();
+  for (const s of sales ?? []) count.set(s.card_fingerprint as string, (count.get(s.card_fingerprint as string) ?? 0) + 1);
+  type Row = {
+    id: string;
+    fingerprint: string;
+    livemode: boolean;
+    brand: string | null;
+    last4: string | null;
+    wallet: string | null;
+    source: string;
+    created_at: string;
+    last_used_at: string | null;
+    removed_at: string | null;
+    removed_by_member: boolean;
+    linked_by_staff: { name: string } | null;
+    removed_by_staff: { name: string } | null;
+  };
+  return ((data ?? []) as unknown as Row[])
+    .map((c) => ({
+      id: c.id,
+      label: cardLabel({ brand: c.brand, last4: c.last4, wallet: c.wallet }),
+      wallet: !!c.wallet && c.wallet !== "link",
+      source: c.source,
+      linkedAt: c.created_at,
+      linkedBy: c.linked_by_staff?.name ?? null,
+      lastUsedAt: c.last_used_at,
+      sales: count.get(c.fingerprint) ?? 0,
+      test: !c.livemode,
+      removedAt: c.removed_at,
+      removedByMember: c.removed_by_member,
+      removedBy: c.removed_by_staff?.name ?? null,
+    }))
+    .sort((a, b) => Number(!!a.removedAt) - Number(!!b.removedAt));
 }
