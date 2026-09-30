@@ -395,18 +395,6 @@ export function MenuTile({
   );
 }
 
-// A category's small round photo, on its tab (or beside a subcategory's
-// heading). Left out if it won't load.
-export function RoundPhoto({ url, size, className = "" }: { url: string; size: number; className?: string }) {
-  const [broken, setBroken] = useState<string | null>(null);
-  if (broken === url) return null;
-  return (
-    <span className={`relative shrink-0 overflow-hidden rounded-full ${className}`} style={{ width: size, height: size, background: "var(--surface-hover)" }}>
-      <Image src={url} alt="" fill sizes={`${size}px`} className="object-cover" onError={() => setBroken(url)} />
-    </span>
-  );
-}
-
 // Tapping an 86'd button: sell it anyway, or it's back. When it's the last
 // item that report stopped, It's back asks whether more was bought, so the
 // shopping list doesn't send someone out for it again.

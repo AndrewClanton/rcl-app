@@ -7,6 +7,10 @@ import { openApproval, sealApproval } from "@/lib/approval-token";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logOpsChange } from "@/lib/ops/changes";
 import { isRowId, jpegFromForm, NOT_THERE, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { approvePicture, defaultQuery, storeFoundPicture } from "@/lib/menu-pictures/found";
+import { findCandidates, toView } from "@/lib/menu-pictures/sources";
+import { cleanQuery } from "@/lib/menu-pictures/query";
+import type { PictureResult, SearchResult } from "@/lib/menu-pictures/shared";
 
 // The register's item settings: press and hold a menu button. The register
 // iPad is signed in with a shared login, so the settings open only after a
@@ -60,6 +64,34 @@ export async function uploadItemPhoto(token: string, itemId: string, formData: F
   if (!r.ok) return r;
   revalidate();
   return { ok: true, url: r.url };
+}
+
+// Free-to-use pictures for the button, to browse with ◀ ▶: what the item's
+// name suggests, or the words typed in. Only the credits come back; the
+// previews load from our own server (/api/menu-pictures/preview).
+export async function findItemPictures(token: string, itemId: string, query: string | null): Promise<SearchResult> {
+  if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
+  const q = cleanQuery(query) || (await defaultQuery("item", itemId));
+  if (!q) return NOT_THERE as { ok: false; error: string };
+  const { candidates, complete } = await findCandidates(q);
+  if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
+  return { ok: true, query: q, candidates: candidates.map(toView) };
+}
+
+// The one on screen: downloaded to our server and put on the button.
+export async function pickItemPicture(token: string, itemId: string, query: string, index: number, page: string | null): Promise<PictureResult> {
+  if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
+  const r = await storeFoundPicture("item", itemId, query, index, page, true);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// A picture that was found automatically, looked at and kept.
+export async function keepItemPicture(token: string, itemId: string): Promise<PictureResult> {
+  if (!(await approved(token))) return EXPIRED as { ok: false; error: string };
+  const r = await approvePicture("item", itemId);
+  if (r.ok) revalidate();
+  return r;
 }
 
 // Back to the label tile.

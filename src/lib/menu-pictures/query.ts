@@ -19,7 +19,8 @@ const SIZE_WORDS = /^(regular|reg|small|sm|medium|med|large|lg|personal|kids?|mi
 
 // Whole-name matches first (lowercased, sizes already dropped).
 const HOUSE: Record<string, string> = {
-  "$5 special": "popcorn and soda",
+  // Names are cleaned before they're looked up here, and that drops the "$".
+  "5 special": "popcorn and soda",
   "butter beer": "butterbeer drink",
   butterbeer: "butterbeer drink",
   "well shot": "shot glass",

@@ -1,153 +1,58 @@
 "use client";
 
-import { useRef, useState, useSyncExternalStore } from "react";
-import Image from "next/image";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { removeMenuPhoto, uploadMenuPhoto } from "./actions";
-import type { PhotoTarget } from "@/lib/menu-pictures/shared";
+import { findMenuPictures, keepMenuPicture, pickMenuPicture, removeMenuPhoto, uploadMenuPhoto } from "./actions";
+import MenuPicture from "@/components/menu/MenuPicture";
+import PicturePicker from "@/components/menu/PicturePicker";
+import { usePhotoUpload } from "@/components/menu/usePhotoUpload";
+import { useTouchScreen } from "@/lib/menu-pictures/photo-file";
+import { creditLine, isFound, type PhotoTarget, type PictureState } from "@/lib/menu-pictures/shared";
 
-// The product photo for a register button (an item) or tab (a category):
-// its thumbnail, and for managers Take photo / Choose photo / Remove.
+// The picture on a register button (an item) or tab (a category): its
+// thumbnail (the label tile when there's no photo), and for managers Find a
+// picture (free-to-use ones, ◀ ▶), Take photo / Choose photo, and Remove.
+// A picture that was found automatically and hasn't been looked at yet says
+// so, with Keep one tap away (or the Photo walk does them all in a row).
 //
-// Photos are squared (cut from the middle) and shrunk to a 480px JPEG here
-// in the browser before they go up, so the register loads them fast and a
-// 12-megapixel phone photo never has to cross the network.
-
-const OUT_SIZE = 480;
-const MAX_BYTES = 2_000_000;
-const CANT_OPEN = "This browser can't open that photo (iPhone photos are sometimes HEIC). Try a JPEG or a screenshot of it.";
-const UPLOAD_FAILED = "The photo didn't upload. Check the connection and try again.";
-
-class PhotoError extends Error {}
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = document.createElement("img");
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new PhotoError(CANT_OPEN));
-    img.src = src;
-  });
-}
-
-function canvasOf(size: number) {
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new PhotoError("This browser can't resize photos. Try a different browser.");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  return { canvas, ctx };
-}
-
-// An <img> draws the photo the right way up (browsers apply the camera's
-// rotation tag), so it's decoded that way rather than with createImageBitmap.
-async function squareJpeg(file: File): Promise<Blob> {
-  if (file.type && !file.type.startsWith("image/")) throw new PhotoError("That file isn't a photo. Choose a photo.");
-  const url = URL.createObjectURL(file);
-  const made: HTMLCanvasElement[] = [];
-  try {
-    const img = await loadImage(url);
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
-    const side = Math.min(w, h);
-    if (!side) throw new PhotoError(CANT_OPEN);
-    const target = Math.min(OUT_SIZE, side);
-
-    // A big photo is halved a step at a time on the way down: one big jump
-    // leaves it jagged.
-    let source: CanvasImageSource = img;
-    let crop = { x: (w - side) / 2, y: (h - side) / 2, side };
-    let size = side;
-    do {
-      size = Math.max(target, Math.round(size / 2));
-      const { canvas, ctx } = canvasOf(size);
-      made.push(canvas);
-      // White behind a see-through PNG (a JPEG can't be see-through).
-      if (size === target) {
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0, 0, size, size);
-      }
-      ctx.drawImage(source, crop.x, crop.y, crop.side, crop.side, 0, 0, size, size);
-      source = canvas;
-      crop = { x: 0, y: 0, side: size };
-    } while (size > target);
-
-    const blob = await new Promise<Blob | null>((resolve) => (source as HTMLCanvasElement).toBlob(resolve, "image/jpeg", 0.85));
-    if (!blob || blob.type !== "image/jpeg") throw new PhotoError("This browser couldn't make a JPEG of that photo. Try a different photo or a screenshot.");
-    if (blob.size > MAX_BYTES) throw new PhotoError("That photo is still over 2 MB after shrinking. Try a different one.");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(url);
-    // Frees the canvases' memory right away (older iPads run short).
-    for (const c of made) c.width = c.height = 0;
-  }
-}
-
-// Take photo (straight to the camera) only makes sense on a phone or tablet.
-function subscribeCoarse(onChange: () => void) {
-  const query = window.matchMedia("(pointer: coarse)");
-  query.addEventListener?.("change", onChange);
-  return () => query.removeEventListener?.("change", onChange);
-}
-function useTouchScreen() {
-  return useSyncExternalStore(
-    subscribeCoarse,
-    () => window.matchMedia("(pointer: coarse)").matches,
-    () => false,
-  );
-}
-
+// Photos are squared and shrunk to a 480px JPEG in the browser before they
+// go up (lib/menu-pictures/photo-file.ts); found ones are downloaded by the
+// server. Either way the file lives in our own bucket.
 export default function MenuPhoto({
   target,
   id,
   name,
-  url,
+  picture,
+  category,
+  parent,
   canEdit,
   size = 56,
 }: {
   target: PhotoTarget;
   id: string;
   name: string;
-  url: string | null | undefined;
+  picture: PictureState;
+  category?: string | null;
+  parent?: string | null;
   canEdit: boolean;
   size?: number;
 }) {
   const router = useRouter();
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const libraryRef = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState<"upload" | "remove" | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const touch = useTouchScreen();
+  const [finding, setFinding] = useState(false);
+  const [busy, setBusy] = useState<"remove" | "keep" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const photo = usePhotoUpload((form) => uploadMenuPhoto(target, id, form), () => router.refresh());
 
-  if (!canEdit && !url) return null;
+  const url = picture.image_url;
+  const credit = creditLine(picture.image_source, picture.image_credit);
+  const unchecked = !!url && isFound(picture.image_source) && !picture.image_approved_at;
 
-  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    setBusy("upload");
+  async function act(what: "remove" | "keep", fn: () => Promise<{ ok: true } | { ok: false; error: string }>) {
+    setBusy(what);
     setError(null);
     try {
-      const blob = await squareJpeg(file);
-      const form = new FormData();
-      form.set("photo", blob, "photo.jpg");
-      const r = await uploadMenuPhoto(target, id, form);
-      if (!r.ok) setError(r.error);
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof PhotoError ? err.message : UPLOAD_FAILED);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function remove() {
-    if (!confirm(`Take the photo off "${name}"?`)) return;
-    setBusy("remove");
-    setError(null);
-    try {
-      const r = await removeMenuPhoto(target, id);
+      const r = await fn();
       if (!r.ok) setError(r.error);
       router.refresh();
     } catch {
@@ -157,19 +62,13 @@ export default function MenuPhoto({
     }
   }
 
+  const working = busy ?? (photo.busy ? "upload" : null);
   const thumb = (
-    <div
-      className="relative shrink-0 overflow-hidden rounded-md border border-[var(--border)] bg-[var(--surface-hover)]"
-      style={{ width: size, height: size }}
-    >
-      {url ? (
-        <Image src={url} alt={`${name} photo`} fill sizes={`${size}px`} className="object-cover" />
-      ) : (
-        <div className="flex h-full items-center justify-center px-1 text-center text-[10px] leading-tight text-[var(--muted)]">No photo</div>
-      )}
-      {busy && (
+    <div className="relative shrink-0 overflow-hidden rounded-md border border-[var(--border)]" style={{ width: size, height: size }} title={credit ?? undefined}>
+      <MenuPicture url={url} name={name} category={category} parent={parent} sizes={`${size}px`} small className="h-full w-full" />
+      {working && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-[10px] font-bold text-white">
-          {busy === "upload" ? "Uploading…" : "Removing…"}
+          {working === "upload" ? "Uploading…" : working === "keep" ? "Saving…" : "Removing…"}
         </div>
       )}
     </div>
@@ -182,29 +81,59 @@ export default function MenuPhoto({
       {thumb}
       <div className="flex min-w-0 flex-col items-start gap-1">
         <div className="flex flex-wrap gap-1">
+          <button type="button" className={`${button} font-bold`} disabled={!!working} onClick={() => setFinding(true)}>
+            Find picture
+          </button>
           {touch && (
-            <button type="button" className={button} disabled={!!busy} onClick={() => cameraRef.current?.click()}>
+            <button type="button" className={button} disabled={!!working} onClick={photo.takePhoto}>
               Take photo
             </button>
           )}
-          <button type="button" className={button} disabled={!!busy} onClick={() => libraryRef.current?.click()}>
+          <button type="button" className={button} disabled={!!working} onClick={photo.choosePhoto}>
             Choose photo
           </button>
           {/* Holds its space with no photo, so rows of these line up. */}
           <button
             type="button"
             className={`${button} text-[var(--danger-text)] ${url ? "" : "invisible"}`}
-            disabled={!!busy || !url}
+            disabled={!!working || !url}
             aria-hidden={!url}
-            onClick={remove}
+            onClick={() => {
+              if (confirm(`Take the picture off "${name}"? It shows its label tile instead.`)) void act("remove", () => removeMenuPhoto(target, id));
+            }}
           >
             Remove
           </button>
         </div>
-        {error && <div className="max-w-xs text-xs text-[var(--danger-text)]">{error}</div>}
+        {unchecked && (
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="rounded-full border border-[var(--warn-border)] px-1.5 py-0.5 text-[var(--warn-text)]">Found automatically</span>
+            <button type="button" className="font-bold underline disabled:opacity-40" disabled={!!working} onClick={() => act("keep", () => keepMenuPicture(target, id))}>
+              Keep it
+            </button>
+          </div>
+        )}
+        {(error || photo.error) && <div className="max-w-xs text-xs text-[var(--danger-text)]">{error || photo.error}</div>}
       </div>
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onFile} />
-      <input ref={libraryRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+      {photo.inputs}
+      {finding && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-3 sm:p-8" role="dialog" aria-modal="true" aria-label={`Find a picture for ${name}`}>
+          <div className="card w-full max-w-md shadow-2xl">
+            <div className="eyebrow">Find a picture</div>
+            <h2 className="mb-3 font-display text-2xl leading-tight">{name}</h2>
+            <PicturePicker
+              current={picture}
+              find={(q) => findMenuPictures(target, id, q)}
+              pick={(q, i, page) => pickMenuPicture(target, id, q, i, page)}
+              onPicked={() => {
+                setFinding(false);
+                router.refresh();
+              }}
+              onCancel={() => setFinding(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

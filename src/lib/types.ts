@@ -1,3 +1,5 @@
+import type { PictureCredit, PictureSource } from "./menu-pictures/shared";
+
 export type ModifierType = "single" | "multi";
 export type EventPriceMode = "deposit" | "full";
 export type OrderSource = "pos" | "web";
@@ -65,9 +67,16 @@ export interface MenuItem {
   out_since?: string | null;
   out_note?: string | null;
   out_outage_id?: string | null;
-  // Product photo on its register button (public "menu-photos" Storage
-  // URL, set on the Menu page). None: the button is name and price only.
+  // The picture on its register button: always a file in our public
+  // "menu-photos" bucket (a photo someone took, or a free one the server
+  // found and stored), else its label tile. Where it came from and its
+  // credit: lib/menu-pictures/shared.ts (PictureState).
   image_url?: string | null;
+  image_source?: PictureSource | null;
+  image_credit?: PictureCredit | null;
+  image_query?: string | null;
+  image_index?: number | null;
+  image_approved_at?: string | null;
   modifier_groups: ModifierGroup[];
 }
 
@@ -79,6 +88,11 @@ export interface MenuCategory {
   sort_order: number;
   // Small round photo on its register tab (or beside a subcategory heading).
   image_url?: string | null;
+  image_source?: PictureSource | null;
+  image_credit?: PictureCredit | null;
+  image_query?: string | null;
+  image_index?: number | null;
+  image_approved_at?: string | null;
   items: MenuItem[];
   subcategories: MenuCategory[];
 }

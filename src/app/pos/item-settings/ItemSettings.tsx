@@ -9,11 +9,13 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import LabelTile from "@/components/menu/LabelTile";
 import MenuPicture from "@/components/menu/MenuPicture";
 import { usePhotoUpload } from "@/components/menu/usePhotoUpload";
+import PicturePicker from "@/components/menu/PicturePicker";
+import { creditLine, isFound, pictureOf, type PictureState } from "@/lib/menu-pictures/shared";
 import { useTouchScreen } from "@/lib/menu-pictures/photo-file";
 import { useOpsApi } from "../shift/api";
 import { dropOut, refreshOuts, useRanOut } from "../shift/ran-out-store";
 import { holdHandlers, type HoldHandlers } from "./press-hold";
-import { saveItemDetails, showItemLabelTile, unlockItemSettings, uploadItemPhoto, type ItemDetails } from "./actions";
+import { findItemPictures, keepItemPicture, pickItemPicture, saveItemDetails, showItemLabelTile, unlockItemSettings, uploadItemPhoto, type ItemDetails } from "./actions";
 
 // Press and hold a register button for that item's settings: its picture,
 // name, price, whether it's on the register, and OUT / back in stock. The
@@ -31,7 +33,7 @@ interface Snapshot {
   name: string;
   price: number;
   active: boolean;
-  imageUrl: string | null;
+  picture: PictureState;
   category: string | null; // its section (Beer) or category (Food)
   parent: string | null; // the category a section is in (Alcohol)
   out: RegisterOut | null;
@@ -83,7 +85,7 @@ export function ItemSettingsProvider({ children }: { children: ReactNode }) {
         name: item.name,
         price: Number(item.price),
         active: item.active !== false,
-        imageUrl: item.image_url ?? null,
+        picture: pictureOf(item),
         category: section ?? category?.label ?? null,
         parent: section ? (category?.label ?? null) : null,
         out,
@@ -139,15 +141,16 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmLabel, setConfirmLabel] = useState(false);
+  const [picking, setPicking] = useState(false);
 
   // OUT as the register sees it now (the shift bar keeps it current).
   const out = useMemo(() => (ranOut.loaded ? (ranOut.outs.find((o) => o.itemId === item.id) ?? null) : item.out), [ranOut, item]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !picking && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, picking]);
 
   function done(message: string) {
     setSaved(message);
@@ -158,7 +161,7 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
   const photo = usePhotoUpload(
     (form) => uploadItemPhoto(token, item.id, form),
     (r) => {
-      setItem((i) => ({ ...i, imageUrl: r.url }));
+      setItem((i) => ({ ...i, picture: pictureOf({ image_url: r.url, image_source: "upload", image_approved_at: new Date().toISOString() }) }));
       done("Photo saved. It's on the button now.");
     },
   );
@@ -200,6 +203,8 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
   const nameChanged = name.replace(/\s+/g, " ").trim() !== item.name;
   const priceChanged = price.trim() !== "" && Number.isFinite(priceValue) && Math.round(priceValue * 100) !== Math.round(item.price * 100);
   const anyBusy = !!busy || photo.busy;
+  const credit = creditLine(item.picture.image_source, item.picture.image_credit);
+  const unchecked = !!item.picture.image_url && isFound(item.picture.image_source) && !item.picture.image_approved_at;
   const row = "flex flex-wrap items-center gap-2";
 
   return (
@@ -218,24 +223,72 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
           </button>
         </div>
 
+        {picking ? (
+          <section className="mx-auto max-w-md">
+            <div className="label-xs">Find a picture</div>
+            <PicturePicker
+              current={item.picture}
+              find={(q) => findItemPictures(token, item.id, q)}
+              pick={(q, i, page) => pickItemPicture(token, item.id, q, i, page)}
+              onPicked={(p) => {
+                setItem((i) => ({ ...i, picture: p }));
+                setPicking(false);
+                done("Picture saved. It's on the button now.");
+              }}
+              onCancel={() => setPicking(false)}
+            />
+          </section>
+        ) : (
         <div className="grid gap-5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
           {/* Picture */}
           <section>
             <div className="label-xs">Picture on the button</div>
             <div className="relative aspect-square w-full max-w-60 overflow-hidden rounded-lg border" style={{ borderColor: "var(--border)" }}>
-              <MenuPicture url={item.imageUrl} name={item.name} category={item.category} parent={item.parent} sizes="240px" className="h-full w-full" />
+              <MenuPicture url={item.picture.image_url} name={item.name} category={item.category} parent={item.parent} sizes="240px" className="h-full w-full" />
               {photo.busy && <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm font-bold text-white">Uploading…</div>}
             </div>
+            {credit && (
+              <p className="mt-1 max-w-60 text-[11px] leading-snug" style={{ color: "var(--muted)" }}>
+                {credit}
+              </p>
+            )}
+            {unchecked && (
+              <div className="mt-2 flex max-w-60 flex-wrap items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1" style={{ color: "var(--muted)" }}>
+                  Found automatically. Right picture?
+                </span>
+                <button
+                  className="btn-secondary min-h-11 !px-3"
+                  disabled={anyBusy}
+                  onClick={() =>
+                    run(
+                      "keep",
+                      async () => {
+                        const r = await keepItemPicture(token, item.id);
+                        if (r.ok) setItem((i) => ({ ...i, picture: r.picture }));
+                        return r;
+                      },
+                      "Kept.",
+                    )
+                  }
+                >
+                  Keep it
+                </button>
+              </div>
+            )}
             <div className="mt-2 grid max-w-60 gap-2">
+              <button className="btn-primary min-h-12 !text-base" disabled={anyBusy} onClick={() => setPicking(true)}>
+                {item.picture.image_url ? "Find a better picture" : "Find a picture"}
+              </button>
               {touch && (
-                <button className="btn-primary min-h-12 !text-base" disabled={anyBusy} onClick={photo.takePhoto}>
+                <button className="btn-secondary min-h-12 !text-base" disabled={anyBusy} onClick={photo.takePhoto}>
                   Take photo
                 </button>
               )}
-              <button className={`${touch ? "btn-secondary" : "btn-primary"} min-h-12 !text-base`} disabled={anyBusy} onClick={photo.choosePhoto}>
+              <button className="btn-secondary min-h-12 !text-base" disabled={anyBusy} onClick={photo.choosePhoto}>
                 Choose photo
               </button>
-              {item.imageUrl &&
+              {item.picture.image_url &&
                 (confirmLabel ? (
                   <div className="flex gap-2">
                     <button
@@ -247,14 +300,14 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
                           "label",
                           async () => {
                             const r = await showItemLabelTile(token, item.id);
-                            if (r.ok) setItem((i) => ({ ...i, imageUrl: null }));
+                            if (r.ok) setItem((i) => ({ ...i, picture: pictureOf({ image_source: "label" }) }));
                             return r;
                           },
-                          "Photo taken off. The button shows its label.",
+                          "Picture taken off. The button shows its label.",
                         );
                       }}
                     >
-                      Take the photo off
+                      Take the picture off
                     </button>
                     <button className="min-h-12 px-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => setConfirmLabel(false)}>
                       Keep
@@ -389,6 +442,7 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
             </section>
           </div>
         </div>
+        )}
 
         {(error || photo.error || saved) && (
           <p className="mt-4 text-sm font-bold" style={{ color: error || photo.error ? "var(--danger-text)" : "var(--success-text)" }} role="status">

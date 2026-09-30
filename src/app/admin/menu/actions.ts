@@ -8,8 +8,12 @@ import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import { logOpsChange } from "@/lib/ops/changes";
 import { putBackOnSale } from "@/lib/ops/outages";
-import { deleteStoredPhotos, jpegFromForm, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
-import type { PhotoTarget } from "@/lib/menu-pictures/shared";
+import { after } from "next/server";
+import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { approvePicture, defaultQuery, fillMissingPictures, storeFoundPicture, type FillReport } from "@/lib/menu-pictures/found";
+import { findCandidates, toView } from "@/lib/menu-pictures/sources";
+import { cleanQuery } from "@/lib/menu-pictures/query";
+import type { PhotoTarget, PictureResult, SearchResult } from "@/lib/menu-pictures/shared";
 
 // All writes here use the service-role client and bypass RLS. Menu tables
 // are public-read (see the initial migration); write access is gated by
@@ -172,9 +176,11 @@ export async function addItem(categoryId: string, name: string, price: number, i
   if (!(price >= 0)) return { ok: false, error: "Enter a price of $0.00 or more." };
   const supabase = createAdminClient();
   const { count } = await supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("category_id", categoryId);
-  const { error } = await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 });
+  const { data: added, error } = await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 }).select("id").maybeSingle();
   const f = failed(error, "add that item");
   if (f) return f;
+  // Its picture follows in a few seconds (the label tile until then).
+  findPictureLater("item", added?.id as string | undefined);
   revalidate();
   return { ok: true };
 }
@@ -260,6 +266,64 @@ export async function removeMenuPhoto(target: PhotoTarget, id: string): Promise<
   if (!r.ok) return r;
   revalidate();
   return { ok: true };
+}
+
+// ---------- found pictures ----------
+// Free-to-use pictures (lib/menu-pictures/): browse with ◀ ▶, pick one and
+// the server downloads it into our own bucket. The same as the register's
+// item settings, for categories too, and for managers signed in here.
+
+export async function findMenuPictures(target: PhotoTarget, id: string, query: string | null): Promise<SearchResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  if (!photoTable(target)) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
+  const q = cleanQuery(query) || (await defaultQuery(target, id));
+  if (!q) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
+  const { candidates, complete } = await findCandidates(q);
+  if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
+  return { ok: true, query: q, candidates: candidates.map(toView) };
+}
+
+export async function pickMenuPicture(target: PhotoTarget, id: string, query: string, index: number, page: string | null): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await storeFoundPicture(target, id, query, index, page, true);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// Checked on the Photo walk: the picture found automatically is right.
+export async function keepMenuPicture(target: PhotoTarget, id: string): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await approvePicture(target, id);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// Find pictures for everything: a few at a time (each search waits its turn
+// with the free services), so the page can show progress and call again.
+// `skip` is what couldn't be filled on earlier rounds.
+export async function fillMenuPictures(skip: string[]): Promise<{ ok: true; report: FillReport } | { ok: false; error: string }> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const report = await fillMissingPictures({ limit: 6, skip: Array.isArray(skip) ? skip.slice(0, 500) : [] });
+  if (report.lines.some((l) => l.ok)) revalidate();
+  return { ok: true, report };
+}
+
+// A new item gets a picture on its own, once the page has its
+// answer: found and put on unapproved, for the Photo walk. Never fails the
+// add: without one, the button shows its label tile.
+function findPictureLater(target: PhotoTarget, id: string | undefined) {
+  if (!id) return;
+  after(async () => {
+    try {
+      await fillMissingPictures({ only: { target, id } });
+    } catch (e) {
+      console.error("menu: no picture found for the new", target, e);
+    }
+  });
 }
 
 // ---------- modifier groups & options ----------

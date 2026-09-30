@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { PHOTO_TARGETS, type PhotoTarget } from "./shared";
+import { PHOTO_TARGETS, type PhotoTarget, type PictureCredit, type PictureSource } from "./shared";
 
 // Where menu photos live, and putting one on a register button (an item) or
 // tab (a category), or taking it off. Shared by Back office → Menu and the
@@ -65,7 +65,21 @@ export async function jpegFromForm(formData: unknown): Promise<{ ok: true; jpeg:
   return { ok: true, jpeg };
 }
 
-export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+// Where a stored picture came from. A photo someone took or chose is an
+// "upload" (a person picked it, so it counts as approved, and it's never
+// replaced automatically); a found one keeps its credit, its search and its
+// place in the results, and is approved only when a manager keeps it.
+export interface PictureMeta {
+  source: Exclude<PictureSource, "label">;
+  credit: PictureCredit | null;
+  query: string | null;
+  index: number | null;
+  approved: boolean;
+}
+
+const UPLOAD: PictureMeta = { source: "upload", credit: null, query: null, index: null, approved: true };
+
+export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer, meta: PictureMeta = UPLOAD): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   const table = photoTable(target);
   if (!table || !isRowId(id)) return NOT_THERE as { ok: false; error: string };
   const supabase = createAdminClient();
@@ -90,7 +104,17 @@ export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer):
 
   // Saved only over the photo that was there when this started: if someone
   // else changed it meanwhile, theirs stays (and its file isn't deleted).
-  const update = supabase.from(table).update({ image_url: url }).eq("id", key);
+  const update = supabase
+    .from(table)
+    .update({
+      image_url: url,
+      image_source: meta.source,
+      image_credit: meta.credit,
+      image_query: meta.query,
+      image_index: meta.index,
+      image_approved_at: meta.approved ? new Date().toISOString() : null,
+    })
+    .eq("id", key);
   const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
   if (error || !saved?.length) {
     await deleteStoredPhotos(supabase, [url]);
@@ -101,7 +125,10 @@ export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer):
   return { ok: true, url };
 }
 
-// Back to the label tile.
+// Back to the label tile, on purpose: recorded as the label, approved, so
+// finding pictures for everything leaves it alone.
+const LABEL_FIELDS = { image_url: null, image_source: "label", image_credit: null, image_query: null, image_index: null };
+
 export async function removePhoto(target: PhotoTarget, id: string): Promise<Result> {
   const table = photoTable(target);
   if (!table || !isRowId(id)) return NOT_THERE;
@@ -114,8 +141,13 @@ export async function removePhoto(target: PhotoTarget, id: string): Promise<Resu
   }
   if (!row) return NOT_THERE;
   const old = (row.image_url as string | null) ?? null;
-  if (!old) return { ok: true };
-  const { data: saved, error } = await supabase.from(table).update({ image_url: null }).eq("id", key).eq("image_url", old).select("id");
+  const fields = { ...LABEL_FIELDS, image_approved_at: new Date().toISOString() };
+  if (!old) {
+    const { error } = await supabase.from(table).update(fields).eq("id", key).is("image_url", null);
+    if (error) console.error("menu: label tile not saved", error);
+    return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
+  }
+  const { data: saved, error } = await supabase.from(table).update(fields).eq("id", key).eq("image_url", old).select("id");
   if (error) {
     console.error("menu: photo not removed", error);
     return { ok: false, error: "Couldn't remove that photo. Try again." };
