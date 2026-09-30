@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
 import { startReaderPayment, checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
+import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 
 // Split is hidden: it recorded the card part as paid without ever sending it
@@ -164,6 +165,7 @@ export default function PaymentModal({
   readerId,
   tipEligible,
   tabCard = null,
+  tabName = "Tab",
   onConfirm,
   onCancel,
 }: {
@@ -171,11 +173,15 @@ export default function PaymentModal({
   readerId: string | null; // this register's card reader, or null if none is set up
   tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
   tabCard?: { tabId: string; label: string } | null; // the tab's card on file, charged without a tap
+  tabName?: string;
   onConfirm: (payment: CheckoutPayment, note?: string) => void; // note: shown to staff with the sale
   onCancel: () => void;
 }) {
   const [splitOpen, setSplitOpen] = useState(false);
   const [onFile, setOnFile] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  // Charging the card on file has no tap, so no reader tip screen: the tip is
+  // asked here first (what they wrote on the slip, or told the bartender).
+  const [onFileTipOpen, setOnFileTipOpen] = useState(false);
   const [cashOpen, setCashOpen] = useState(false);
   const [voucherOpen, setVoucherOpen] = useState(false);
   // Paper vouchers applied so far; cash or card covers the rest (`due`).
@@ -271,15 +277,19 @@ export default function PaymentModal({
     }
   }
 
-  // The tab's saved card: charged for what's due (tip included), no tap needed.
-  async function handleCardOnFile() {
+  // The tab's saved card: charged for what's due plus the tip asked just
+  // before (TipModal), no tap needed.
+  async function handleCardOnFile(tipAmount: number) {
+    setOnFileTipOpen(false);
     if (!tabCard || onFile.busy) return;
+    const tipCents = Math.max(0, Math.round(tipAmount * 100));
     setOnFile({ busy: true, error: null });
-    const r = await chargeTabCard(tabCard.tabId, Math.round(due * 100)).catch(() => ({ ok: false as const, error: "Couldn't reach Stripe. Try again." }));
+    const r = await chargeTabCard(tabCard.tabId, Math.round(due * 100) + tipCents).catch(() => ({ ok: false as const, error: "Couldn't reach Stripe. Try again." }));
     if (!r.ok) return setOnFile({ busy: false, error: r.error });
     if (confirmedRef.current) return;
     confirmedRef.current = true;
-    onConfirm({ method: "card", cash: 0, card: r.amountCents / 100, stripePaymentIntentId: r.paymentIntentId, ...withVoucher });
+    // Like a reader sale: the card amount is everything charged, tip included.
+    onConfirm({ method: "card", cash: 0, card: r.amountCents / 100, stripePaymentIntentId: r.paymentIntentId, tip: tipCents / 100, ...withVoucher });
   }
 
   async function handleCancelReader() {
@@ -302,6 +312,10 @@ export default function PaymentModal({
     // answer): keep watching rather than offer a second charge.
     setReader({ state: "waiting", paymentIntentId, message: "Cancel didn't go through. Wait for the reader, or tap Cancel again." });
     watchReaderPayment(paymentIntentId);
+  }
+
+  if (onFileTipOpen) {
+    return <TipModal subtotal={tipEligible ?? due} tabName={tabName} onConfirm={handleCardOnFile} onCancel={() => setOnFileTipOpen(false)} />;
   }
 
   if (cashOpen) {
@@ -395,7 +409,7 @@ export default function PaymentModal({
 
         {tabCard && !splitOpen && (
           <div className="mt-4">
-            <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={handleCardOnFile}>
+            <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={() => setOnFileTipOpen(true)}>
               {onFile.busy ? "Charging..." : `Charge card on file · ${tabCard.label}`}
             </button>
             {onFile.error && (

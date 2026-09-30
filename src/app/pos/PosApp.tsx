@@ -592,7 +592,9 @@ export default function PosApp({
         return;
       }
     }
-    if (activeTabId) {
+    // A tab closed with a tap on the reader gets the reader's own tip screen,
+    // like any card sale. Only a register with no reader still asks here.
+    if (activeTabId && !readerId) {
       setTipOpen(true);
     } else {
       continueAfterTip(0);
@@ -1163,8 +1165,9 @@ export default function PosApp({
         <PaymentModal
           total={totals.total + tip}
           readerId={readerId}
-          tipEligible={activeTabId ? null : totals.total - totals.tax}
+          tipEligible={tip > 0 ? null : totals.total - totals.tax}
           tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
+          tabName={activeTab?.order_name ?? "Tab"}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}
         />
