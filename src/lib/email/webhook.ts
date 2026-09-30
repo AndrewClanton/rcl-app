@@ -2,14 +2,17 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { exactEmail } from "@/lib/email-match";
 import { hashEmail } from "./hash";
-import { logAddressEvent, logMemberEvent, setMarketingOptIn, suppressHash } from "./consent";
+import { scrubAddresses } from "./format";
+import { cancelPendingSends, logAddressEvent, logMemberEvent, setMarketingOptIn, suppressHash } from "./consent";
 import { enforceGuardrails } from "./campaign-send";
 
 // What Resend tells us about each email it handled (the webhook at
 // /api/resend/webhook): delivered, bounced, complained, opened, failed,
-// suppressed, delayed. Each event is recorded once (by its svix-id, so a
-// re-delivered event changes nothing), matched to its email_sends row by
-// Resend's email id (or the "send" tag), and:
+// suppressed, delayed. Each event is recorded by its svix-id and marked
+// processed only once everything it does is done: a re-delivered event that
+// was handled changes nothing, and one whose handling failed partway (a
+// database error) is handled again in full. It's matched to its email_sends
+// row by Resend's email id (or the "send" tag), and:
 //   - a hard bounce puts the address on the never-mail list;
 //   - three soft bounces, at least a week apart, do too;
 //   - a spam complaint puts the address on the list and turns that
@@ -35,8 +38,7 @@ export interface ResendEvent {
   };
 }
 
-const ADDRESS = /[^\s<>@"'(),;:]+@[^\s<>@"'(),;:]+/g;
-export const scrub = (s: string | undefined | null) => (s ?? "").replace(ADDRESS, "[address]").slice(0, 300);
+export const scrub = scrubAddresses;
 
 function tagValue(tags: NonNullable<ResendEvent["data"]>["tags"], name: string): string | null {
   if (!tags) return null;
@@ -67,7 +69,8 @@ export interface WebhookOutcome {
   effect: string | null;
 }
 
-// Throws on a database error, so the route answers 500 and Resend retries.
+// Throws on a database error, so the route answers 500 and Resend retries;
+// the retry does the whole thing again (every step is safe to repeat).
 export async function handleResendEvent(event: ResendEvent, svixId: string, now = new Date()): Promise<WebhookOutcome> {
   const admin = createAdminClient();
   const type = SHORT[event.type ?? ""] ?? (event.type ?? "unknown").replace(/^email\./, "").slice(0, 40);
@@ -83,14 +86,23 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
     ...(tagValue(d.tags, "kind") ? { kind: tagValue(d.tags, "kind") } : {}),
   };
 
-  // 1. Once per svix-id.
+  // 1. Once per svix-id: recorded now, marked processed at the end.
   const { data: inserted, error: insErr } = await admin
     .from("email_events")
     .upsert({ svix_id: svixId, type, resend_email_id: d.email_id ?? null, detail, occurred_at: occurred }, { onConflict: "svix_id", ignoreDuplicates: true })
     .select("id");
   if (insErr) throw new Error(`event not saved: ${insErr.message}`);
-  if (!inserted?.length) return { duplicate: true, type, matched: false, effect: null };
-  const eventId = inserted[0].id as string;
+  let eventId: string;
+  let again = false;
+  if (inserted?.length) eventId = inserted[0].id as string;
+  else {
+    const { data: prior, error: priorErr } = await admin.from("email_events").select("id, processed_at").eq("svix_id", svixId).maybeSingle();
+    if (priorErr) throw new Error("event lookup failed");
+    if (!prior || prior.processed_at) return { duplicate: true, type, matched: false, effect: null };
+    // Seen before, but its handling didn't finish: do it again.
+    eventId = prior.id as string;
+    again = true;
+  }
 
   // 2. Which email this was.
   let send: { id: string; member_id: string | null; status: string; delivered_at: string | null } | null = null;
@@ -106,7 +118,10 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
     send = data;
     if (send && d.email_id) await admin.from("email_sends").update({ resend_email_id: d.email_id }).eq("id", send.id).is("resend_email_id", null);
   }
-  if (send) await admin.from("email_events").update({ send_id: send.id }).eq("id", eventId);
+  if (send) {
+    const { error } = await admin.from("email_events").update({ send_id: send.id }).eq("id", eventId);
+    if (error) throw new Error("event link failed");
+  }
 
   const setSend = async (fields: Record<string, unknown>, onlyFrom?: string[]) => {
     if (!send) return;
@@ -139,8 +154,12 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
           await suppressHash(toHash, "hard_bounce", scrub(d.bounce?.subType));
           effect = "suppressed (hard bounce)";
           const ids = await membersFor();
-          if (ids.length) for (const id of ids) await logMemberEvent(id, "hard_bounce", "webhook", { sub_type: d.bounce?.subType ?? null });
-          else if (to) await logAddressEvent(to, "hard_bounce", "webhook");
+          for (const id of ids) {
+            // Anything else waiting to go to that address stops too.
+            await cancelPendingSends(id, "Address bounced");
+            await logMemberEvent(id, "hard_bounce", "webhook", { sub_type: d.bounce?.subType ?? null });
+          }
+          if (!ids.length && to) await logAddressEvent(to, "hard_bounce", "webhook");
         }
       } else {
         await setSend({ bounce_type: d.bounce?.type ?? "Transient" });
@@ -157,6 +176,7 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
       if (toHash) await suppressHash(toHash, "complaint");
       const ids = await membersFor();
       for (const id of ids) {
+        // A member removed since is already off the list (setMarketingOptIn says so).
         const r = await setMarketingOptIn(id, false, "webhook", { at: null, detail: { reason: "complaint", kind: tagValue(d.tags, "kind") } });
         if (!r.ok) throw new Error(r.error);
         await logMemberEvent(id, "complaint", "webhook", { kind: tagValue(d.tags, "kind") });
@@ -167,7 +187,8 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
       break;
     }
     case "opened":
-      if (send) {
+      // Not counted again on a retry (it may have been counted the first time).
+      if (send && !again) {
         const { error } = await admin.rpc("email_bump_send", { p_send: send.id, p_what: "open", p_at: occurred });
         if (error) throw new Error("open not counted");
       }
@@ -184,6 +205,8 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
       // sent, delayed, scheduled: recorded above, nothing to change.
       break;
   }
+  const { error: doneErr } = await admin.from("email_events").update({ processed_at: new Date().toISOString() }).eq("id", eventId);
+  if (doneErr) throw new Error("event not marked processed");
   return { duplicate: false, type, matched: !!send, effect };
 }
 

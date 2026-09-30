@@ -5,7 +5,7 @@ import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/p
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
-import { allowFromConnection, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import { setMarketingOptIn } from "@/lib/email/consent";
 import { memberJoined } from "@/lib/email/automations";
 
@@ -18,7 +18,14 @@ import { memberJoined } from "@/lib/email/automations";
 // reaches the client in every environment.
 export type SignupResult = { ok: true } | { ok: false; error: string };
 
-export async function submitMembershipSignup(fields: { name: string; email: string; phone: string; emailOptIn?: boolean }): Promise<SignupResult> {
+export async function submitMembershipSignup(fields: {
+  name: string;
+  email: string;
+  phone: string;
+  emailOptIn?: boolean;
+  formToken?: string | null;
+  honeypot?: string | null;
+}): Promise<SignupResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
   if (!name) return { ok: false, error: "Enter your name." };
@@ -26,6 +33,12 @@ export async function submitMembershipSignup(fields: { name: string; email: stri
   // A cap per connection, so a script can't fill Members with sign-ups (or
   // use the "already exists" answer to test which emails are members).
   if (!(await allowFromConnection("membership"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
+  // And the free paths' bot check (a hidden field, a signed page-opened
+  // stamp): a free sign-up now gets a welcome email straight away, so a bot
+  // filling this with strangers' addresses would have us emailing them (the
+  // old site collected about 11,000 of those).
+  const notHuman = checkHuman("membership", fields);
+  if (notHuman) return { ok: false, error: notHuman };
 
   const supabase = createAdminClient();
 

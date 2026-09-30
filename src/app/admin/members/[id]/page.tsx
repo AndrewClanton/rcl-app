@@ -27,7 +27,9 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     member.erased_at ? getEraseLogEntry(id) : Promise.resolve(null),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
-  const emailPanel = member.erased_at ? null : await getMemberEmailPanel(id).catch(() => null);
+  // Cashiers get the on/off switch only; the email history, engagement and
+  // never-mail reason are for staff who see full contact details.
+  const emailPanel = member.erased_at ? null : await getMemberEmailPanel(id, { detail: fullContact }).catch(() => null);
 
   return (
     <>

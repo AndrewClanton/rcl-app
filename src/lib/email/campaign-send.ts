@@ -1,20 +1,21 @@
 import "server-only";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { issueEmailClaimLinks } from "@/lib/member-claim";
 import { CAMPAIGN_COLUMNS, shapeOf, type CampaignRow, type FrozenLink } from "./campaign";
 import { loadFacts, queueSends, resolveAudience } from "./audience";
-import { firstNameOf } from "./format";
+import { firstNameOf, scrubAddresses } from "./format";
 import { hashEmail } from "./hash";
 import { lintCampaign, type LintResult } from "./lint";
 import { renderCampaign, type CampaignInput, type RenderData, type Recipient, type RenderLinks } from "./render";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
-import { deliver, type OutgoingEmail } from "./resend";
-import { looksDeliverable } from "./rules";
+import { cancelEmail, deliver, type OutgoingEmail, type ResendResult } from "./resend";
+import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
 import { sendEmail } from "./send";
 import { nextSendSlot } from "./timing";
 import { emailTokensReady, listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "./tokens";
-import type { ConsentSource, PrefCategory } from "./types";
+import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, type Category, type ConsentSource, type PrefCategory, type SendRecord, type SendStatus } from "./types";
 
 // Sending a campaign to its list, per person, through Resend's batch API.
 //
@@ -25,18 +26,45 @@ import type { ConsentSource, PrefCategory } from "./types";
 // only one run works on it at a time and a run that died is taken over
 // after the lease runs out. It works out who gets it (audience.ts) once,
 // saves those people as 'queued' email_sends rows, freezes the campaign's
-// links, then hands them to Resend 100 at a time. Each batch carries the
-// Idempotency-Key "<campaign>:<batch number>", and a batch that was
-// numbered but never confirmed is retried with the same key and the same
-// email, so a retry, a double click or a crashed run never sends twice.
+// links, then hands them to Resend 100 at a time.
+//
+// At hand-over, not just when queued, each email is checked again: the
+// person still wants it, it arrives inside the send window (9 AM to 7 PM
+// Central, Monday to Saturday; a row whose time has passed moves to the next
+// open slot and goes with scheduled_at), and it still fits the caps against
+// what they've had since. Automated emails more than 2 days late are dropped.
+// Between batches the run checks the campaign is still going, no guardrail
+// has tripped and sending is still on, and stops if not.
+//
+// Each batch carries an Idempotency-Key ("<campaign>:<batch>:<stamp>",
+// saved on its rows), and a batch that was numbered but never confirmed is
+// retried with the same key, so a retry, a double click or a crashed run
+// never sends twice. Resend remembers a key for 24 hours, so a batch still
+// unconfirmed after 20 hours is never sent again: its rows are marked
+// "handed over, outcome unknown" (the webhook fills in what happened).
+// Resend refusing a batch outright (an odd address) splits it: each email
+// goes alone under its own key, and only the ones refused are marked failed.
 //
 // Nothing goes to a list unless EMAIL_SENDING_ENABLED is "true", the
 // sender is on a verified domain (not @resend.dev), and EMAIL_TOKEN_SECRET
 // is set (no unsubscribe link, no email). Spam complaints or hard bounces
-// running too high pause everything until an admin looks (guardrails).
+// running too high pause everything until an admin looks (guardrails), and
+// call back email already waiting at Resend for later. Turning
+// EMAIL_SENDING_ENABLED off stops new hand-overs at once, but email Resend
+// already holds for later is only called back on the next cron run; "Stop
+// all sending" on the Email page calls it back at once.
 
 export const LEASE_SECONDS = 300;
 export const BATCH_SIZE = 100;
+const HOUR = 3_600_000;
+// Resend keeps an Idempotency-Key for 24 hours; past this, a batch whose
+// answer was lost is never sent again (it may already have gone).
+export const RETRY_SAME_KEY_HOURS = 20;
+// An automated email that couldn't go within 2 days of being queued (the
+// switch was off, sending was paused) is dropped: a late welcome or
+// birthday is worse than none.
+export const AUTOMATION_MAX_AGE_HOURS = 48;
+export const UNSURE = "Handed to Resend over 20 hours ago with no answer. Not sent again, in case it went (Resend only remembers a batch for 24 hours).";
 
 export function replyTo(): string {
   return process.env.EMAIL_REPLY_TO?.trim() || "info@royalecinemajoplin.com";
@@ -115,21 +143,156 @@ export async function guardrailPause(): Promise<{ at: string; reason: string } |
   return v?.at ? { at: v.at, reason: v.reason ?? "" } : null;
 }
 
-// Checked before every run and after every webhook batch: over the line,
-// every scheduled campaign pauses and nothing goes to a list until an
-// admin resumes it.
-export async function enforceGuardrails(now = new Date()): Promise<GuardrailStatus> {
-  const g = await guardrailStatus(now);
-  if (!g.tripped) return g;
+// Stops every list email until an admin resumes (the guardrail, or "Stop
+// all sending"): the pause flag, and every scheduled or sending campaign
+// paused. Returns true if it wasn't already paused.
+export async function pauseAllSending(reason: string, opts: { byEmployee?: string | null; prefix?: "Guardrail" | "Stopped"; now?: Date } = {}): Promise<boolean> {
   const admin = createAdminClient();
-  if (!(await guardrailPause())) {
-    await admin.from("email_settings").upsert({ key: "guardrail_pause", value: { at: now.toISOString(), reason: g.reason }, updated_at: now.toISOString() }, { onConflict: "key" });
+  const now = opts.now ?? new Date();
+  const fresh = !(await guardrailPause());
+  if (fresh) {
+    const { error } = await admin
+      .from("email_settings")
+      .upsert({ key: "guardrail_pause", value: { at: now.toISOString(), reason }, updated_at: now.toISOString(), ...(opts.byEmployee ? { updated_by: opts.byEmployee } : {}) }, { onConflict: "key" });
+    if (error) throw new Error("Couldn't pause sending.");
   }
   await admin
     .from("email_campaigns")
-    .update({ status: "paused", error: `Guardrail: ${g.reason} An admin needs to look before anything else goes out.`, updated_at: now.toISOString() })
+    .update({ status: "paused", error: `${opts.prefix ?? "Guardrail"}: ${reason} An admin needs to look before anything else goes out.`, updated_at: now.toISOString() })
     .in("status", ["scheduled", "sending"]);
+  return fresh;
+}
+
+// Work that shouldn't hold up the answer (a webhook): after the response
+// when there is one, otherwise right away.
+function inBackground(label: string, task: () => Promise<unknown>) {
+  const run = () => task().catch((e) => console.error(`${label}:`, e instanceof Error ? e.message : e));
+  try {
+    after(run);
+  } catch {
+    void run();
+  }
+}
+
+// Checked before every run and after every bounce or complaint: over the
+// line, every scheduled campaign pauses, nothing goes to a list until an
+// admin resumes it, and email already waiting at Resend for later is called
+// back (in the background, the first time it trips; the cron does that
+// itself, so it passes recall: false).
+export async function enforceGuardrails(now = new Date(), opts: { recall?: boolean } = {}): Promise<GuardrailStatus> {
+  const g = await guardrailStatus(now);
+  if (!g.tripped) return g;
+  const fresh = await pauseAllSending(g.reason ?? "Complaints or bounces ran too high.", { prefix: "Guardrail", now });
+  if (fresh && opts.recall !== false) inBackground("email recall", () => recallScheduledSends(`Guardrail: ${g.reason}`, { pause: true }));
   return g;
+}
+
+// ---------- calling back email waiting at Resend ----------
+export interface RecallResult {
+  recalled: number;
+  failed: number; // Resend wouldn't cancel it (usually: it had already gone)
+  left: number; // not reached before the deadline; run it again
+}
+
+// Email handed to Resend with scheduled_at that's still ahead is cancelled
+// there and put back in the queue (so a resume sends it, if it's still in
+// time and within the caps). Soonest first. Resend takes one cancel at a
+// time (about 5 a second here), so a big list can take more than one go.
+// One-off emails with anything called back are paused (`pause`), or put
+// back to scheduled (sending switched off: they go once it's back on).
+export async function recallScheduledSends(reason: string, opts: { pause: boolean; deadline?: number } = { pause: true }): Promise<RecallResult> {
+  const admin = createAdminClient();
+  const deadline = opts.deadline ?? Date.now() + 200_000;
+  const out: RecallResult = { recalled: 0, failed: 0, left: 0 };
+  const soon = new Date(Date.now() + 60_000).toISOString();
+  const rows: { id: string; campaign_id: string; resend_email_id: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin
+      .from("email_sends")
+      .select("id, campaign_id, resend_email_id, deliver_at")
+      .eq("status", "scheduled")
+      .gt("deliver_at", soon)
+      .order("deliver_at")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error("Couldn't read the email waiting at Resend.");
+    rows.push(...((data ?? []) as typeof rows));
+    if ((data ?? []).length < 1000) break;
+  }
+  const touched = new Set<string>();
+  for (let i = 0; i < rows.length; i++) {
+    if (Date.now() > deadline) {
+      out.left = rows.length - i;
+      break;
+    }
+    const r = rows[i];
+    const c = r.resend_email_id ? await cancelEmail(r.resend_email_id) : null;
+    if (!c?.ok) {
+      out.failed++;
+      continue;
+    }
+    const { error } = await admin
+      .from("email_sends")
+      .update({ status: "queued", resend_email_id: null, batch_no: null, batch_key: null, batch_at: null, submitted_at: null, error: `Called back from Resend. ${reason}`.slice(0, 300) })
+      .eq("id", r.id)
+      .eq("status", "scheduled");
+    if (error) {
+      out.failed++;
+      continue;
+    }
+    out.recalled++;
+    touched.add(r.campaign_id);
+  }
+  if (touched.size) {
+    const at = new Date().toISOString();
+    const note = opts.pause ? `${reason} Email waiting at Resend was called back; resume to send the rest.` : `${reason} Email waiting at Resend was called back; it goes once sending is back on.`;
+    await admin
+      .from("email_campaigns")
+      .update({ status: opts.pause ? "paused" : "scheduled", error: note, updated_at: at })
+      .in("id", [...touched])
+      .neq("kind", "automation")
+      .in("status", ["sent", "scheduled", "sending"]);
+  }
+  return out;
+}
+
+// One email's sends that haven't gone: queued ones are cancelled here, and
+// ones waiting at Resend for later are cancelled there (soonest first,
+// until the deadline; `left` says how many are still waiting).
+export async function stopCampaignSends(campaignId: string, why: string, deadline = Date.now() + 200_000): Promise<{ atResend: number; couldnt: number; left: number }> {
+  const admin = createAdminClient();
+  await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("campaign_id", campaignId).eq("status", "queued");
+  const later: { id: string; resend_email_id: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin
+      .from("email_sends")
+      .select("id, resend_email_id, deliver_at")
+      .eq("campaign_id", campaignId)
+      .eq("status", "scheduled")
+      .gt("deliver_at", new Date(Date.now() + 30_000).toISOString())
+      .order("deliver_at")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error("Couldn't read what's waiting at Resend.");
+    later.push(...((data ?? []) as typeof later));
+    if ((data ?? []).length < 1000) break;
+  }
+  const out = { atResend: 0, couldnt: 0, left: 0 };
+  for (let i = 0; i < later.length; i++) {
+    if (Date.now() > deadline) {
+      out.left = later.length - i;
+      break;
+    }
+    const s = later[i];
+    const r = s.resend_email_id ? await cancelEmail(s.resend_email_id) : null;
+    if (!r?.ok) {
+      out.couldnt++;
+      continue;
+    }
+    await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("id", s.id).eq("status", "scheduled");
+    out.atResend++;
+  }
+  return out;
 }
 
 // ---------- the lease ----------
@@ -241,8 +404,11 @@ interface QueuedRow {
   member_id: string | null;
   deliver_at: string | null;
   batch_no: number | null;
+  batch_key: string | null;
+  batch_at: string | null;
   created_at: string;
 }
+const ROW_COLUMNS = "id, member_id, deliver_at, batch_no, batch_key, batch_at, created_at";
 
 interface MemberRow {
   id: string;
@@ -252,6 +418,9 @@ interface MemberRow {
   auth_user_id: string | null;
   email_opt_in: boolean | null;
   erased_at: string | null;
+  created_at: string;
+  legacy_user_id: number | null;
+  indy_user_id: string | null;
 }
 
 interface PrefsRow {
@@ -281,70 +450,202 @@ function stillWanted(c: CampaignRow, m: MemberRow | undefined, p: PrefsRow | und
   return { ok: true };
 }
 
-async function ticketSpend(memberIds: string[]): Promise<Map<string, { n: number; spend: number }>> {
+// When a queued email may arrive: its planned time, or now if that's
+// passed, moved into the send window (9 AM to 7 PM Central, Monday to
+// Saturday) if it's outside it.
+export function effectiveDeliverAt(deliverAt: string | null, now: Date): Date {
+  const planned = deliverAt ? Date.parse(deliverAt) : NaN;
+  return nextSendSlot(Number.isFinite(planned) && planned > now.getTime() ? new Date(planned) : now);
+}
+
+// Tickets bought in the last 30 days and what was actually paid for them:
+// a register ticket counts only the share of its order paid in money
+// (trivia vouchers are prizes), and one vouchers covered isn't counted.
+export async function ticketSpend(memberIds: string[], now = new Date()): Promise<Map<string, { n: number; spend: number }>> {
   const out = new Map<string, { n: number; spend: number }>();
   if (!memberIds.length) return out;
-  const { data } = await createAdminClient()
+  const admin = createAdminClient();
+  const { data } = await admin
     .from("bookings")
-    .select("member_id, quantity, unit_price")
+    .select("member_id, quantity, unit_price, order_id")
     .in("member_id", memberIds)
     .eq("status", "confirmed")
     .gt("unit_price", 0)
-    .gte("created_at", new Date(Date.now() - 30 * 86_400_000).toISOString());
-  for (const b of data ?? []) {
+    .gte("created_at", new Date(now.getTime() - 30 * 86_400_000).toISOString());
+  const bookings = (data ?? []) as { member_id: string; quantity: number; unit_price: number; order_id: string | null }[];
+  const orderIds = [...new Set(bookings.map((b) => b.order_id).filter((x): x is string => !!x))];
+  const share = new Map<string, number>();
+  if (orderIds.length) {
+    const { data: orders } = await admin.from("orders").select("id, total, tip, payment_voucher_amount").in("id", orderIds);
+    for (const o of (orders ?? []) as { id: string; total: number; tip: number | null; payment_voucher_amount: number | null }[]) share.set(o.id, paidShare(o));
+  }
+  for (const b of bookings) {
+    // An order we couldn't read counts as unpaid: never claim money we can't see.
+    const s = b.order_id ? (share.get(b.order_id) ?? 0) : 1;
+    if (!(s > 0)) continue;
+    const q = Number(b.quantity) || 0;
     const cur = out.get(b.member_id) ?? { n: 0, spend: 0 };
-    cur.n += Number(b.quantity) || 0;
-    cur.spend += (Number(b.quantity) || 0) * (Number(b.unit_price) || 0);
+    cur.n += q;
+    cur.spend += Math.round(q * (Number(b.unit_price) || 0) * s * 100) / 100;
     out.set(b.member_id, cur);
   }
   return out;
 }
 
+// What each of these members has had (or has waiting) lately, for checking
+// the caps again at hand-over. `skip`: the rows being handed over now.
+type CampaignBits = { kind: CampaignKind; automation: Automation | null; category: Category; alert: string | null };
+async function recentSends(memberIds: string[], skip: Set<string>, shapes: Map<string, CampaignBits>, now: Date): Promise<Map<string, SendRecord[]>> {
+  const out = new Map<string, SendRecord[]>();
+  if (!memberIds.length) return out;
+  const admin = createAdminClient();
+  const since = new Date(now.getTime() - 75 * 86_400_000).toISOString();
+  const rows: { id: string; member_id: string; campaign_id: string; status: SendStatus; deliver_at: string | null; submitted_at: string | null; created_at: string; first_clicked_at: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin
+      .from("email_sends")
+      .select("id, member_id, campaign_id, status, deliver_at, submitted_at, created_at, first_clicked_at")
+      .in("member_id", memberIds)
+      .in("status", [...SENT_STATUSES])
+      .gte("created_at", since)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error("Couldn't read who's had what lately.");
+    rows.push(...((data ?? []) as typeof rows));
+    if ((data ?? []).length < 1000) break;
+  }
+  const missing = [...new Set(rows.map((r) => r.campaign_id))].filter((id) => !shapes.has(id));
+  if (missing.length) {
+    const { data, error } = await admin.from("email_campaigns").select("id, kind, automation, category, alert:content->>alert").in("id", missing);
+    if (error) throw new Error("Couldn't read the other emails.");
+    for (const c of (data ?? []) as { id: string; kind: CampaignKind; automation: Automation | null; category: Category; alert?: string | null; content?: { alert?: string | null } }[]) {
+      shapes.set(c.id, { kind: c.kind, automation: c.automation, category: c.category, alert: c.alert ?? c.content?.alert ?? null });
+    }
+  }
+  for (const r of rows) {
+    if (skip.has(r.id)) continue;
+    const c = shapes.get(r.campaign_id);
+    if (!c) continue;
+    const list = out.get(r.member_id) ?? [];
+    list.push({ c: r.campaign_id, t: r.deliver_at ?? r.submitted_at ?? r.created_at, k: c.kind, a: c.automation, g: c.category, x: c.alert, s: r.status, ck: !!r.first_clicked_at });
+    out.set(r.member_id, list);
+  }
+  return out;
+}
+
+// Is this run still wanted? Checked before every batch.
+async function stopReason(c: CampaignRow): Promise<string | null> {
+  const gate = sendingGate();
+  if (!gate.ok) return gate.reason;
+  if (await guardrailPause()) return "Paused by a guardrail.";
+  const { data, error } = await createAdminClient().from("email_campaigns").select("status").eq("id", c.id).maybeSingle();
+  if (error) return "Couldn't check the email is still going.";
+  const want = c.kind === "automation" ? "active" : "sending";
+  if (!data || data.status !== want) return `The email is ${data?.status ?? "gone"} now.`;
+  return null;
+}
+
+// How Resend's refusal reads: `unknown` (it may have got it: the network,
+// a 5xx, another request with the key still going), `later` (nothing was
+// taken, and trying again soon won't help: a rate limit or used-up quota,
+// a bad key, an unverified sender), or `bad_item` (nothing was taken, and
+// something in the emails is wrong: an odd address).
+type Refusal = "unknown" | "later" | "bad_item";
+const SYSTEMIC = new Set(["invalid_from_address", "invalid_access", "missing_api_key", "invalid_api_key", "restricted_api_key", "invalid_idempotency_key", "daily_quota_exceeded", "monthly_quota_exceeded", "rate_limit_exceeded"]);
+function refusal(r: Extract<ResendResult<unknown>, { ok: false }>): Refusal {
+  if (r.status === 0 || r.status >= 500 || r.status < 400) return "unknown";
+  if (r.status === 409) return "unknown";
+  if (r.status === 401 || r.status === 403 || r.status === 429 || SYSTEMIC.has(r.name ?? "")) return "later";
+  return "bad_item";
+}
+
 export interface DeliverResult {
   submitted: number;
   cancelled: number;
+  failed: number; // refused by Resend, one by one (an odd address)
+  unsure: number; // handed over long ago with no answer; not sent again
   batches: number;
   done: boolean; // nothing left queued for this campaign
   error: string | null;
+  stopped: string | null; // the campaign was paused or cancelled, or sending stopped, mid-run
 }
 
 // Hands this campaign's queued sends to Resend, 100 at a time, until none
-// are left, the deadline comes, or Resend refuses.
+// are due, the deadline comes, the campaign stops, or Resend refuses.
 export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: number, now = new Date()): Promise<DeliverResult> {
   const admin = createAdminClient();
   const from = process.env.EMAIL_FROM?.trim() ?? "";
-  const result: DeliverResult = { submitted: 0, cancelled: 0, batches: 0, done: false, error: null };
+  const result: DeliverResult = { submitted: 0, cancelled: 0, failed: 0, unsure: 0, batches: 0, done: false, error: null, stopped: null };
   const href = (sendId: string) => trackedLinks(c.links ?? [], sendId);
   const input = asInput(c);
+  const shape: CampaignShape = shapeOf(c);
+  const shapes = new Map<string, CampaignBits>([[c.id, { kind: c.kind, automation: c.automation, category: c.category, alert: c.content?.alert ?? null }]]);
   const needsSpend = (c.content?.blocks ?? []).some((b) => b.t === "ticketSpend");
   const needsClaim = (c.content?.blocks ?? []).some((b) => b.t === "claim");
-  const horizon = new Date(now.getTime() + scheduleAheadMs()).toISOString();
   let failures = 0;
 
+  // A late welcome or birthday is worse than none.
+  if (c.kind === "automation") {
+    const { count } = await admin
+      .from("email_sends")
+      .update({ status: "cancelled", error: `Couldn't go within ${AUTOMATION_MAX_AGE_HOURS / 24} days of being queued, so it was dropped` }, { count: "exact" })
+      .eq("campaign_id", c.id)
+      .eq("status", "queued")
+      .is("batch_key", null)
+      .lt("created_at", new Date(now.getTime() - AUTOMATION_MAX_AGE_HOURS * HOUR).toISOString());
+    result.cancelled += count ?? 0;
+  }
+
+  const mark = async (marks: Record<string, unknown>[]) => {
+    for (let i = 0; i < 3; i++) {
+      const { error } = await admin.rpc("email_mark_submitted", { p_rows: marks });
+      if (!error) return true;
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+    return false;
+  };
+  const unnumber = (ids: string[]) => admin.from("email_sends").update({ batch_no: null, batch_key: null, batch_at: null }).in("id", ids).eq("status", "queued");
+
   while (Date.now() < deadline) {
+    const stop = await stopReason(c);
+    if (stop) {
+      result.stopped = stop;
+      break;
+    }
+    const t = new Date();
+    const horizon = t.getTime() + scheduleAheadMs();
+
     // A batch that was numbered but never confirmed (a crash, a timeout)
     // goes again first, with the same key.
     let rows: QueuedRow[] = [];
-    const { data: stuck } = await admin
-      .from("email_sends")
-      .select("id, member_id, deliver_at, batch_no, created_at")
-      .eq("campaign_id", c.id)
-      .eq("status", "queued")
-      .not("batch_no", "is", null)
-      .order("batch_no")
-      .order("id")
-      .limit(BATCH_SIZE);
+    let key: string;
+    const { data: stuck, error: stuckErr } = await admin.from("email_sends").select(ROW_COLUMNS).eq("campaign_id", c.id).eq("status", "queued").not("batch_key", "is", null).order("batch_key").order("id").limit(BATCH_SIZE);
+    if (stuckErr) {
+      result.error = "Couldn't read the queue.";
+      break;
+    }
     if (stuck?.length) {
-      const first = stuck[0].batch_no;
-      rows = (stuck as QueuedRow[]).filter((r) => r.batch_no === first);
+      key = stuck[0].batch_key as string;
+      rows = (stuck as QueuedRow[]).filter((r) => r.batch_key === key);
+      const firstTry = Date.parse(rows[0].batch_at ?? rows[0].created_at);
+      if (t.getTime() - firstTry > RETRY_SAME_KEY_HOURS * HOUR) {
+        // Resend no longer knows this key: sending again could send twice.
+        const ok = await mark(rows.map((r) => ({ id: r.id, resend_email_id: null, status: "submitted", submitted_at: r.batch_at ?? t.toISOString(), deliver_at: r.deliver_at, error: UNSURE })));
+        if (!ok) {
+          result.error = "Couldn't save the queue.";
+          break;
+        }
+        result.unsure += rows.length;
+        continue;
+      }
     } else {
       const { data: fresh, error } = await admin
         .from("email_sends")
-        .select("id, member_id, deliver_at, batch_no, created_at")
+        .select(ROW_COLUMNS)
         .eq("campaign_id", c.id)
         .eq("status", "queued")
-        .is("batch_no", null)
-        .or(`deliver_at.is.null,deliver_at.lte."${horizon}"`)
+        .is("batch_key", null)
+        .or(`deliver_at.is.null,deliver_at.lte."${new Date(horizon).toISOString()}"`)
         .order("id")
         .limit(BATCH_SIZE);
       if (error) {
@@ -356,27 +657,52 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         result.done = (count ?? 0) === 0;
         break;
       }
+      // The send window, again at hand-over: a row whose time has passed
+      // (a list that ran long, a resume, a switch turned back on) moves to
+      // the next open slot, and waits for a later run if that's too far off.
+      const moved = new Map<string, string[]>();
+      const due: QueuedRow[] = [];
+      for (const r of fresh as QueuedRow[]) {
+        const at = effectiveDeliverAt(r.deliver_at, t);
+        if (!r.deliver_at || Math.abs(at.getTime() - Date.parse(r.deliver_at)) > 60_000 || at.getTime() > horizon) {
+          const iso = at.toISOString();
+          moved.set(iso, [...(moved.get(iso) ?? []), r.id]);
+          r.deliver_at = iso;
+        }
+        if (at.getTime() <= horizon) due.push(r);
+      }
+      for (const [iso, ids] of moved) {
+        const { error: movErr } = await admin.from("email_sends").update({ deliver_at: iso }).in("id", ids).eq("status", "queued").is("batch_key", null);
+        if (movErr) {
+          result.error = "Couldn't save the queue.";
+          return result;
+        }
+      }
+      if (!due.length) continue;
       const { data: top } = await admin.from("email_sends").select("batch_no").eq("campaign_id", c.id).not("batch_no", "is", null).order("batch_no", { ascending: false }).limit(1);
       const batchNo = (top?.[0]?.batch_no ?? 0) + 1;
+      // Saved on the rows, so a retry uses the same key; the stamp keeps a
+      // re-formed batch from ever reusing a key Resend has seen.
+      key = `${c.id}:${batchNo}:${t.getTime().toString(36)}`;
       const { data: numbered } = await admin
         .from("email_sends")
-        .update({ batch_no: batchNo })
+        .update({ batch_no: batchNo, batch_key: key, batch_at: t.toISOString() })
         .in(
           "id",
-          fresh.map((r) => r.id),
+          due.map((r) => r.id),
         )
-        .is("batch_no", null)
+        .is("batch_key", null)
         .eq("status", "queued")
-        .select("id, member_id, deliver_at, batch_no, created_at");
+        .select(ROW_COLUMNS);
       rows = ((numbered ?? []) as QueuedRow[]).sort((a, b) => a.id.localeCompare(b.id));
       if (!rows.length) continue;
     }
     const batchNo = rows[0].batch_no as number;
 
     // Who they are now.
-    const ids = rows.map((r) => r.member_id).filter((x): x is string => !!x);
+    const ids = [...new Set(rows.map((r) => r.member_id).filter((x): x is string => !!x))];
     const [{ data: members }, { data: prefs }] = await Promise.all([
-      admin.from("members").select("id, name, email, tier, auth_user_id, email_opt_in, erased_at").in("id", ids),
+      admin.from("members").select("id, name, email, tier, auth_user_id, email_opt_in, erased_at, created_at, legacy_user_id, indy_user_id").in("id", ids),
       admin.from("member_email_prefs").select("member_id, lineup, alerts, events, offers, rewards, paused_until, consent_source, engagement").in("member_id", ids),
     ]);
     const byId = new Map(((members ?? []) as MemberRow[]).map((m) => [m.id, m]));
@@ -384,8 +710,15 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     const hashes = [...byId.values()].filter((m) => m.email).map((m) => hashEmail(m.email as string));
     const { data: sup } = hashes.length ? await admin.from("email_suppressions").select("email_hash").in("email_hash", hashes) : { data: [] as { email_hash: string }[] };
     const suppressed = new Set((sup ?? []).map((s) => s.email_hash));
+    let had: Map<string, SendRecord[]>;
+    try {
+      had = await recentSends(ids, new Set(rows.map((r) => r.id)), shapes, t);
+    } catch (e) {
+      result.error = e instanceof Error ? e.message : "Couldn't check the caps.";
+      return result;
+    }
     const [spend, claims] = await Promise.all([
-      needsSpend ? ticketSpend(ids) : Promise.resolve(new Map<string, { n: number; spend: number }>()),
+      needsSpend ? ticketSpend(ids, t) : Promise.resolve(new Map<string, { n: number; spend: number }>()),
       needsClaim ? issueEmailClaimLinks(rows.filter((r) => r.member_id).map((r) => ({ memberId: r.member_id as string, sendId: r.id, queuedAt: r.created_at }))) : Promise.resolve(new Map<string, string>()),
     ]);
 
@@ -394,13 +727,26 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     for (const r of rows) {
       const m = r.member_id ? byId.get(r.member_id) : undefined;
       const p = r.member_id ? prefById.get(r.member_id) : undefined;
-      const verdict = stillWanted(c, m, p, !!m?.email && suppressed.has(hashEmail(m.email)), now);
+      const verdict = stillWanted(c, m, p, !!m?.email && suppressed.has(hashEmail(m.email)), t);
       if (!verdict.ok) {
         await admin.from("email_sends").update({ status: verdict.status, error: verdict.why }).eq("id", r.id).eq("status", "queued");
         result.cancelled++;
         continue;
       }
       const member = m as MemberRow;
+      const at = effectiveDeliverAt(r.deliver_at, t);
+      // The caps, against what they've had (or have waiting) now, at the
+      // time it will actually arrive.
+      const theirs = had.get(member.id) ?? [];
+      const cap = capCheck(theirs, shape, at, { createdAt: member.created_at, imported: (member.legacy_user_id ?? null) !== null || !!member.indy_user_id });
+      if (cap) {
+        await admin.from("email_sends").update({ status: "cancelled", error: `Held back when it was due: ${EXCLUSION_LABEL[cap]}` }).eq("id", r.id).eq("status", "queued");
+        result.cancelled++;
+        continue;
+      }
+      // Two of the same automation for one person in one batch: one goes.
+      theirs.push({ c: c.id, t: at.toISOString(), k: c.kind, a: c.automation, g: c.category, x: shape.alert ?? null, s: "scheduled", ck: false });
+      had.set(member.id, theirs);
       const token = sealEmailToken({ memberId: member.id, sendId: r.id });
       if (!token) {
         result.error = "EMAIL_TOKEN_SECRET isn't set, so there's no unsubscribe link. Nothing more was sent.";
@@ -423,7 +769,7 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         unsubscribeUrl: preferencesUrl(token, "all"),
         href: (url) => track(url),
       });
-      const later = r.deliver_at && Date.parse(r.deliver_at) > now.getTime() + 60_000 ? new Date(r.deliver_at).toISOString() : undefined;
+      const later = at.getTime() > Date.now() + 60_000 ? at.toISOString() : undefined;
       items.push({
         from,
         to: [(member.email as string).trim()],
@@ -443,19 +789,72 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     }
     if (!items.length) continue;
 
-    const sent = await deliver(items, `${c.id}:${batchNo}`);
-    const at = new Date().toISOString();
+    const markAccepted = (list: { row: QueuedRow; item: OutgoingEmail; id: string | null }[], note: string | null) => {
+      const at = new Date().toISOString();
+      return mark(
+        list.map(({ row, item, id }) => ({
+          id: row.id,
+          resend_email_id: id,
+          // Waiting at Resend for later, so an unsubscribe can still stop it.
+          status: item.scheduled_at ? "scheduled" : "submitted",
+          submitted_at: at,
+          deliver_at: item.scheduled_at ?? at,
+          error: note,
+        })),
+      );
+    };
+
+    // Each alone, under its own key (after Resend refused the batch
+    // outright, so it took none of them).
+    if (key.endsWith(":split")) {
+      let taken = 0;
+      let halt: string | null = null;
+      const refused: { row: QueuedRow; why: string }[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const one = await deliver([items[i]], `${key}:${itemRows[i].id}`);
+        if (one.ok || (one.status === 409 && one.name === "invalid_idempotent_request")) {
+          if (!(await markAccepted([{ row: itemRows[i], item: items[i], id: one.ok ? one.data[0] || null : null }], one.ok ? null : "Handed over earlier; Resend's id wasn't saved."))) {
+            result.error = "Resend took an email but saving that failed. The next run finishes it (nothing is sent twice).";
+            return result;
+          }
+          taken++;
+          continue;
+        }
+        const kind = refusal(one);
+        if (kind === "bad_item") {
+          refused.push({ row: itemRows[i], why: scrubAddresses(one.error) || "Resend refused it." });
+          continue;
+        }
+        // Stop here. The ones not tried yet (and this one, when Resend
+        // surely didn't take it) go again later under a new key; one that
+        // may have gone keeps its own key, so a retry can't send it twice.
+        await unnumber(itemRows.slice(kind === "later" ? i : i + 1).map((r) => r.id));
+        halt = `Resend didn't accept an email in batch ${batchNo}: ${scrubAddresses(one.error)}`;
+        break;
+      }
+      if (!halt && !taken && refused.length > 1) {
+        // Every one refused: it's the email or the setup, not the addresses.
+        await unnumber(refused.map((x) => x.row.id));
+        result.error = `Resend refused every email in batch ${batchNo}: ${refused[0].why}`;
+        return result;
+      }
+      // Only the ones refused are marked; everyone else carries on.
+      for (const x of refused) {
+        await admin.from("email_sends").update({ status: "failed", error: `Resend refused it: ${x.why}`.slice(0, 300) }).eq("id", x.row.id).eq("status", "queued");
+      }
+      result.submitted += taken;
+      result.failed += refused.length;
+      result.batches++;
+      if (halt) {
+        result.error = halt;
+        return result;
+      }
+      continue;
+    }
+
+    const sent = await deliver(items, key);
     if (sent.ok) {
-      const marks = itemRows.map((r, i) => ({
-        id: r.id,
-        resend_email_id: sent.data[i] || null,
-        status: items[i].scheduled_at ? "scheduled" : "submitted",
-        submitted_at: at,
-        deliver_at: items[i].scheduled_at ?? at,
-        error: null,
-      }));
-      const { error } = await admin.rpc("email_mark_submitted", { p_rows: marks });
-      if (error) {
+      if (!(await markAccepted(itemRows.map((row, i) => ({ row, item: items[i], id: sent.data[i] || null })), null))) {
         // Resend has them; the next run re-sends the same batch under the
         // same key and Resend answers with the same ids, without sending.
         result.error = "Resend took a batch but saving the result failed. The next run finishes it (nothing is sent twice).";
@@ -467,18 +866,42 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       continue;
     }
     if (sent.status === 409 && sent.name === "invalid_idempotent_request") {
-      // Resend already took this batch number earlier with slightly
-      // different content (data changed between the two tries). It went;
-      // we just don't have the ids. Webhooks still find them by tag.
-      const marks = itemRows.map((r) => ({ id: r.id, resend_email_id: null, status: "submitted", submitted_at: at, deliver_at: r.deliver_at ?? at, error: "Handed over earlier; Resend's id wasn't saved." }));
-      await admin.rpc("email_mark_submitted", { p_rows: marks });
+      // Resend already took this key earlier with slightly different
+      // content (data changed between the two tries). It went; we just
+      // don't have the ids. Webhooks still find them by tag.
+      if (!(await markAccepted(itemRows.map((row, i) => ({ row, item: items[i], id: null })), "Handed over earlier; Resend's id wasn't saved."))) {
+        result.error = "Couldn't save the queue.";
+        return result;
+      }
       result.submitted += items.length;
       continue;
     }
+    const kind = refusal(sent);
+    if (kind === "bad_item") {
+      // Nothing was taken. Send them one by one, so one odd address can't
+      // hold up everyone behind it.
+      const splitKey = `${key}:split`;
+      const { error: splitErr } = await admin.from("email_sends").update({ batch_key: splitKey }).in("id", itemRows.map((r) => r.id)).eq("status", "queued");
+      if (splitErr) {
+        result.error = "Couldn't save the queue.";
+        return result;
+      }
+      continue;
+    }
+    if (kind === "later") {
+      // Nothing was taken: these go again on a later run, under a new key.
+      await unnumber(itemRows.map((r) => r.id));
+      if (sent.status === 429 && sent.name !== "daily_quota_exceeded" && sent.name !== "monthly_quota_exceeded") {
+        // Only busy: the rest go on the next run (nothing to fix).
+        result.stopped = "Resend asked us to slow down. The rest go on the next run.";
+        return result;
+      }
+      result.error = `Resend didn't accept batch ${batchNo}: ${scrubAddresses(sent.error)}`;
+      return result;
+    }
     failures++;
-    const retryable = sent.status === 0 || sent.status >= 500 || (sent.status === 429 && sent.name !== "daily_quota_exceeded" && sent.name !== "monthly_quota_exceeded");
-    if (!retryable || failures >= 3) {
-      result.error = `Resend didn't accept batch ${batchNo}: ${sent.error}`;
+    if (failures >= 3) {
+      result.error = `Resend didn't answer for batch ${batchNo}: ${scrubAddresses(sent.error)} It goes again (same key) on the next run.`;
       return result;
     }
   }
@@ -494,6 +917,16 @@ export interface RunResult {
   cancelled: number;
   status: string;
   note: string | null;
+}
+
+function runNote(r: DeliverResult): string | null {
+  const bits = [
+    r.error,
+    r.stopped ? `Stopped: ${r.stopped}` : null,
+    r.failed ? `${r.failed} refused by Resend (see each member's email history).` : null,
+    r.unsure ? `${r.unsure} were handed to Resend over 20 hours ago with no answer and weren't sent again.` : null,
+  ].filter(Boolean);
+  return bits.length ? bits.join(" ") : null;
 }
 
 // One campaign, start to finish (or until the deadline). The dispatcher
@@ -516,27 +949,39 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
     c = await prepareCampaign(c, data, now);
     const r = await deliverQueued(c, data, deadline, now);
     const iso = new Date().toISOString();
+    const note = runNote(r);
     let status: string = c.status;
     if (c.kind === "automation") {
-      await admin.from("email_campaigns").update({ locked_until: null, error: r.error, updated_at: iso }).eq("id", id);
+      await admin.from("email_campaigns").update({ locked_until: null, error: note, updated_at: iso }).eq("id", id);
+    } else if (r.stopped) {
+      // Paused, cancelled or stopped from elsewhere: leave that as it is.
+      // (Sending switched off mid-run: back to scheduled, to go later.)
+      await admin.from("email_campaigns").update({ status: "scheduled", locked_until: null, error: r.stopped, updated_at: iso }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
+      status = (await getCampaign(id))?.status ?? "scheduled";
     } else if (r.error) {
       status = "paused";
-      await admin.from("email_campaigns").update({ status, locked_until: null, error: r.error, updated_at: iso }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ status, locked_until: null, error: note, updated_at: iso }).eq("id", id).eq("status", "sending");
     } else if (r.done) {
       status = "sent";
-      await admin.from("email_campaigns").update({ status, locked_until: null, error: null, sent_at: iso, updated_at: iso }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ status, locked_until: null, error: note, sent_at: iso, updated_at: iso }).eq("id", id).eq("status", "sending");
     } else {
       status = "scheduled";
-      await admin.from("email_campaigns").update({ status, locked_until: null, error: null, updated_at: iso }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ status, locked_until: null, error: note, updated_at: iso }).eq("id", id).eq("status", "sending");
     }
-    return { id, name: c.name, ran: true, submitted: r.submitted, cancelled: r.cancelled, status, note: r.error };
+    return { id, name: c.name, ran: true, submitted: r.submitted, cancelled: r.cancelled, status, note };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Something went wrong.";
-    await admin
-      .from("email_campaigns")
-      .update(c.kind === "automation" ? { locked_until: null, error: msg } : { status: "scheduled", locked_until: null, error: msg })
-      .eq("id", id);
-    return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: c.kind === "automation" ? c.status : "scheduled", note: msg };
+    if (c.kind === "automation") {
+      await admin.from("email_campaigns").update({ locked_until: null, error: msg }).eq("id", id);
+    } else {
+      // Only a run still in progress goes back to the queue: an exception
+      // must never undo a cancel or a pause made meanwhile.
+      await admin.from("email_campaigns").update({ status: "scheduled", locked_until: null, error: msg }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
+    }
+    const statusNow = c.kind === "automation" ? c.status : ((await getCampaign(id))?.status ?? "scheduled");
+    return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: statusNow, note: msg };
   }
 }
 

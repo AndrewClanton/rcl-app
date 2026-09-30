@@ -175,7 +175,9 @@ export function looksDeliverable(email: string | null | undefined): boolean {
 //   - tonight alerts at most 2 in 30 days, offers 1 in 30, the Insiders+
 //     upsell 1 in 60.
 // `at` is when this email would arrive, so a send already scheduled for
-// later today counts too.
+// later today counts too. A one-off email's own row doesn't count against
+// itself; an automation's earlier sends do (last month's upsell, say), so
+// the sender leaves out the very row it's checking.
 export const CAP = {
   gapHours: 20,
   week: { days: 7, max: 2 },
@@ -204,7 +206,7 @@ function isWelcome(a: Automation | null) {
 export function capCheck(sends: SendRecord[], c: CampaignShape, at: Date, member: { createdAt: string; imported: boolean }): Exclusion | null {
   if (c.category === "account") return null;
   const t = at.getTime();
-  const marketing = sends.filter((s) => s.c !== c.id && SENT_STATUSES.has(s.s) && s.g !== "account");
+  const marketing = sends.filter((s) => (c.kind === "automation" || s.c !== c.id) && SENT_STATUSES.has(s.s) && s.g !== "account");
   const times = (list: SendRecord[]) => list.map((s) => Date.parse(s.t)).filter(Number.isFinite);
 
   if (times(marketing).some((x) => Math.abs(x - t) < CAP.gapHours * HOUR)) return "cap_day";
@@ -223,6 +225,17 @@ export function capCheck(sends: SendRecord[], c: CampaignShape, at: Date, member
     if (!fitsWindow(times(marketing.filter((s) => s.k === "offer" || s.a === "plus_upsell")), t, CAP.offer.days, CAP.offer.max)) return "cap_kind";
   }
   return null;
+}
+
+// ---------- money ----------
+// The share of an order that was paid in money: trivia vouchers are prizes,
+// not money coming in, and a tip isn't a sale. 1 for a fully paid order, 0
+// for one vouchers covered. (member_email_facts does the same in SQL.)
+export function paidShare(o: { total: number | string | null; tip?: number | string | null; payment_voucher_amount?: number | string | null }): number {
+  const goods = (Number(o.total) || 0) - (Number(o.tip) || 0);
+  if (!(goods > 0)) return 0;
+  const paid = goods - (Number(o.payment_voucher_amount) || 0);
+  return Math.max(0, Math.min(1, paid / goods));
 }
 
 // ---------- warm-up order ----------

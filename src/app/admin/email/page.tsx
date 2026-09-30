@@ -4,9 +4,11 @@ import PageHeader from "@/components/admin/PageHeader";
 import { getOverview, type CampaignSummary } from "@/lib/email/reports";
 import { CONSENT_LABEL, KIND_LABEL, type ConsentSource } from "@/lib/email/types";
 import { whenLabel } from "@/lib/email/format";
-import { NewEmailButtons, ResumeSending } from "./OverviewControls";
+import { NewEmailButtons, ResumeSending, StopSending } from "./OverviewControls";
 
 export const dynamic = "force-dynamic";
+// "Stop all sending" calls back email waiting at Resend inside the action.
+export const maxDuration = 300;
 
 // Back office -> Email: how the list is doing, what's next, and how the
 // last emails did. Managers and up; sending rights are checked by each
@@ -94,6 +96,16 @@ export default async function EmailPage() {
         </div>
       )}
       {!o.gate.ok && <p className="notice notice-warn text-sm">Not sending to lists yet: {o.gate.reason}</p>}
+      {admin && !o.paused_by_guardrail && (
+        <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Emergency stop</summary>
+          <p className="my-2 text-[var(--muted)]">
+            Pauses every email to a list and calls back what Resend is holding for later. Switching EMAIL_SENDING_ENABLED off in Vercel only stops new
+            hand-overs until the next morning run; this is immediate.
+          </p>
+          <StopSending />
+        </details>
+      )}
 
       <section className="grid gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -183,7 +195,7 @@ export default async function EmailPage() {
                   <th className="py-1 pr-3 font-normal">Complaints</th>
                   <th className="py-1 pr-3 font-normal">Came in</th>
                   <th className="py-1 pr-3 font-normal">Tickets</th>
-                  <th className="py-1 font-normal">Spent after</th>
+                  <th className="py-1 font-normal" title="Online tickets plus register orders, without tips or trivia vouchers">Paid after</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">

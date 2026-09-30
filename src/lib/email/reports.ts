@@ -9,6 +9,10 @@ import type { ConsentSource } from "./types";
 // The numbers on Back office -> Email. Counts only: who got what, person by
 // person, lives on each member's own page.
 
+// PostgREST puts .in() lists in the request address; 150 ids keeps it well
+// under the gateway's limit.
+const IN_CHUNK = 150;
+
 export interface Outcome {
   grp: "sent" | "held_out";
   recipients: number;
@@ -18,8 +22,9 @@ export interface Outcome {
   came_in_after_click: number;
   tickets: number;
   tickets_after_click: number;
-  ticket_revenue: number;
-  order_total: number;
+  ticket_revenue: number; // online tickets (register tickets are in order_total)
+  order_total: number; // register orders, minus tips and what trivia vouchers paid
+  voucher_total: number; // what trivia vouchers paid (prizes, no money in)
   now_plus: number;
   unsubscribes: number;
   complaints: number;
@@ -38,7 +43,7 @@ export async function campaignOutcomes(c: CampaignRow): Promise<{ sent: Outcome 
   const windowDays = outcomeWindowDays(c);
   const { data, error } = await createAdminClient().rpc("email_campaign_outcomes", { p_campaign: c.id, p_days: windowDays });
   if (error) return { sent: null, heldOut: null, windowDays };
-  const rows = ((data ?? []) as Outcome[]).map((r) => ({ ...r, ticket_revenue: Number(r.ticket_revenue) || 0, order_total: Number(r.order_total) || 0 }));
+  const rows = ((data ?? []) as Outcome[]).map((r) => ({ ...r, ticket_revenue: Number(r.ticket_revenue) || 0, order_total: Number(r.order_total) || 0, voucher_total: Number(r.voucher_total) || 0 }));
   return { sent: rows.find((r) => r.grp === "sent") ?? null, heldOut: rows.find((r) => r.grp === "held_out") ?? null, windowDays };
 }
 
@@ -139,7 +144,7 @@ export async function getOverview(): Promise<Overview> {
 // ---------- one campaign in detail ----------
 export interface CampaignDetail {
   summary: CampaignSummary;
-  funnel: { queued: number; heldOut: number; submitted: number; delivered: number; opened: number; clicked: number; bounced: number; complained: number; unsubscribed: number; cancelled: number; failed: number };
+  funnel: { queued: number; heldOut: number; submitted: number; waitingAtResend: number; delivered: number; opened: number; clicked: number; bounced: number; complained: number; unsubscribed: number; cancelled: number; failed: number };
   topLinks: { i: number; label: string; url: string; clicks: number; people: number }[];
   byCohort: { cohort: string; sent: number; delivered: number; clicked: number }[];
   clicksByDay: { day: string; clicks: number }[];
@@ -162,19 +167,21 @@ const COHORT: Record<string, string> = {
 
 export async function getCampaignDetail(c: CampaignRow): Promise<CampaignDetail> {
   const admin = createAdminClient();
-  const sends: { id: string; member_id: string | null; status: string; delivered_at: string | null; first_opened_at: string | null; first_clicked_at: string | null; unsubscribed_at: string | null; complained_at: string | null; bounce_type: string | null; created_at: string }[] = [];
+  const sends: { id: string; member_id: string | null; status: string; deliver_at: string | null; delivered_at: string | null; first_opened_at: string | null; first_clicked_at: string | null; unsubscribed_at: string | null; complained_at: string | null; bounce_type: string | null; created_at: string }[] = [];
   for (let from = 0; ; from += 1000) {
     const { data } = await admin
       .from("email_sends")
-      .select("id, member_id, status, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, complained_at, bounce_type, created_at")
+      .select("id, member_id, status, deliver_at, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, complained_at, bounce_type, created_at")
       .eq("campaign_id", c.id)
       .order("id")
       .range(from, from + 999);
     sends.push(...((data ?? []) as typeof sends));
     if ((data ?? []).length < 1000) break;
   }
-  const funnel = { queued: 0, heldOut: 0, submitted: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, unsubscribed: 0, cancelled: 0, failed: 0 };
+  const funnel = { queued: 0, heldOut: 0, submitted: 0, waitingAtResend: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, unsubscribed: 0, cancelled: 0, failed: 0 };
+  const nowMs = Date.now();
   for (const s of sends) {
+    if (s.status === "scheduled" && s.deliver_at && Date.parse(s.deliver_at) > nowMs) funnel.waitingAtResend++;
     if (s.status === "held_out") funnel.heldOut++;
     else if (s.status === "queued") funnel.queued++;
     else if (s.status === "cancelled" || s.status === "suppressed") funnel.cancelled++;
@@ -188,17 +195,20 @@ export async function getCampaignDetail(c: CampaignRow): Promise<CampaignDetail>
     if (s.unsubscribed_at) funnel.unsubscribed++;
   }
 
-  // Cohorts by where each person's yes came from (counts only).
+  // Cohorts by where each person's yes came from (counts only). The ids
+  // go in the request address, so 150 at a time keeps it short enough.
   const memberIds = [...new Set(sends.map((s) => s.member_id).filter((x): x is string => !!x))];
   const consent = new Map<string, string>();
-  for (let i = 0; i < memberIds.length; i += 500) {
-    const { data } = await admin.from("member_email_prefs").select("member_id, consent_source").in("member_id", memberIds.slice(i, i + 500));
+  let cohortsKnown = true;
+  for (let i = 0; i < memberIds.length; i += IN_CHUNK) {
+    const { data, error } = await admin.from("member_email_prefs").select("member_id, consent_source").in("member_id", memberIds.slice(i, i + IN_CHUNK));
+    if (error) cohortsKnown = false;
     for (const p of data ?? []) consent.set(p.member_id, p.consent_source);
   }
   const cohorts = new Map<string, { sent: number; delivered: number; clicked: number }>();
   for (const s of sends) {
     if (s.status === "held_out" || s.status === "cancelled" || s.status === "suppressed" || s.status === "queued") continue;
-    const k = COHORT[consent.get(s.member_id ?? "") ?? "unknown"] ?? "Not recorded";
+    const k = cohortsKnown ? (COHORT[consent.get(s.member_id ?? "") ?? "unknown"] ?? "Not recorded") : "Couldn't read";
     const cur = cohorts.get(k) ?? { sent: 0, delivered: 0, clicked: 0 };
     cur.sent++;
     if (s.delivered_at) cur.delivered++;
@@ -206,11 +216,25 @@ export async function getCampaignDetail(c: CampaignRow): Promise<CampaignDetail>
     cohorts.set(k, cur);
   }
 
-  const { data: clicks } = await admin.from("email_events").select("send_id, link_index, occurred_at, suspect").eq("type", "clicked").in("send_id", sends.map((s) => s.id).slice(0, 5000)).limit(20000);
+  // This email's clicks, found through their send (a join, so no long list
+  // of ids goes in the request address), a page at a time.
+  const clicks: { send_id: string; link_index: number | null; occurred_at: string; suspect: boolean }[] = [];
+  for (let from = 0; from < 20_000; from += 1000) {
+    const { data, error } = await admin
+      .from("email_events")
+      .select("send_id, link_index, occurred_at, suspect, email_sends!inner(campaign_id)")
+      .eq("type", "clicked")
+      .eq("email_sends.campaign_id", c.id)
+      .order("id")
+      .range(from, from + 999);
+    if (error) break;
+    clicks.push(...((data ?? []) as unknown as typeof clicks));
+    if ((data ?? []).length < 1000) break;
+  }
   const byLink = new Map<number, { clicks: number; people: Set<string> }>();
   const byDay = new Map<string, number>();
   let suspectClicks = 0;
-  for (const e of (clicks ?? []) as { send_id: string; link_index: number | null; occurred_at: string; suspect: boolean }[]) {
+  for (const e of clicks) {
     if (e.suspect) {
       suspectClicks++;
       continue;

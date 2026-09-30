@@ -34,6 +34,10 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
   // They ticked "email me the weekly lineup" on the join form. Only ever
   // switches it on: leaving the box empty isn't a request to unsubscribe.
   const optIn = session.metadata?.email_opt_in === "1";
+  // Only an unticked box ("0") starts a new member with email off. A
+  // checkout with no answer at all (one started before the box existed)
+  // keeps the default: members stay opted in.
+  const optedOut = session.metadata?.email_opt_in === "0";
   const turnOnEmail = async (id: string) => {
     if (!optIn) return;
     await setMarketingOptIn(id, true, "checkout").catch(() => null);
@@ -50,7 +54,7 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
   }
   const { data: made, error } = await supabase
     .from("members")
-    .insert({ name, email, phone: session.metadata?.pending_phone || null, points: 0, ...memberFields, ...(optIn ? {} : { email_opt_in: false }) })
+    .insert({ name, email, phone: session.metadata?.pending_phone || null, points: 0, ...memberFields, ...(optedOut ? { email_opt_in: false } : {}) })
     .select("id")
     .single();
   if (made) {

@@ -94,17 +94,21 @@ export function parseFacts(r: FactsRow): MemberFacts {
   };
 }
 
-// Every live member with an email, a page (1,000) at a time. `memberId`
+// Every live member with an email, a page (1,000) at a time, each page
+// starting after the last member id of the one before (so someone joining
+// mid-scan can't shift a page and make us skip a person). `memberId`
 // narrows it to one person.
 export async function loadFacts(opts: { memberId?: string } = {}): Promise<MemberFacts[]> {
   const admin = createAdminClient();
   const out: MemberFacts[] = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const { data, error } = await admin.rpc("member_email_facts", { p_offset: offset, p_limit: PAGE, p_member: opts.memberId ?? null });
+  let after: string | null = null;
+  for (;;) {
+    const { data, error } = await admin.rpc("member_email_facts", { p_offset: 0, p_limit: PAGE, p_member: opts.memberId ?? null, p_after: after });
     if (error) throw new Error(`Couldn't read the members list (${error.message}).`);
     const rows = (data ?? []) as FactsRow[];
     out.push(...rows.map(parseFacts));
     if (rows.length < PAGE || opts.memberId) break;
+    after = rows[rows.length - 1].member_id;
   }
   return out;
 }

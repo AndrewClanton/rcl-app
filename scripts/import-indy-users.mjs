@@ -1,23 +1,29 @@
-// Imports the Indy ticketing system's customer export (2022-2025) for email
-// marketing: who said yes to Royale email in their own words, their
-// birthday (month and day only), and the Indy-era people who never had an
-// account with us. Prints counts only: never a name, email or phone.
+// A DRY RUN ONLY preview of the Indy ticketing system's customer export
+// (2022-2025): how many rows match a member, how many would be new, how many
+// birthdays (month and day) would fill in. Prints counts only: never a
+// name, email or phone. It writes nothing, anywhere.
 //
-// Members stay opted in. This never turns anyone's email off:
-//   - matched to a member, said yes: consent source 'indy_yes' (their own
-//     words), with the date they joined Indy;
-//   - matched to a member, said no: recorded as 'indy_no' (it only moves
-//     them to the back of the warm-up order); their email setting is NOT
-//     changed. Whether to honor these "no"s is Andrew's call (plan A10 #1);
-//   - not a member yet: added as a free Insider, with email on if they said
-//     yes and off if they said no (a new account, nobody switched off).
+// The real Indy import comes from its own branch, with a review screen in
+// the Back office: nothing reaches members until a person has looked at it
+// and approved it there. That importer replaces this script. It must:
+//   - create every Indy person opted in (Andrew's decision: Indy "no"
+//     answers are ignored, everyone from Indy is on the list); a "no" is
+//     kept only as information (consent source 'indy_no', which puts them
+//     at the back of the warm-up order), never as email off;
+//   - never overwrite a consent source already recorded for a member
+//     (account, join form, kiosk, checkout, old-site import);
+//   - check email_suppressions (by address hash) and the erased-member
+//     record before adding anyone, so nobody who was removed or asked us to
+//     stop comes back;
+//   - write only the rows approved on the review screen.
 // Staff and owner rows, and rows with no email, are skipped.
 //
-// Idempotent on members.indy_user_id (Indy's id): run it again and nothing
-// changes twice. Never reads the old-site holding table.
+// Reads members (id, email, indy_user_id, birthday) with the service-role
+// key from .env.local, or from a file. Never reads the old-site holding
+// table.
 //
 // Usage:
-//   node scripts/import-indy-users.mjs <indy-users.csv> [--dry]
+//   node scripts/import-indy-users.mjs <indy-users.csv> --dry
 //   node scripts/import-indy-users.mjs <csv> --dry --members-file <json>   (offline: members from a file, for the check script)
 import { readFileSync } from "node:fs";
 
@@ -27,11 +33,11 @@ const membersFileAt = args.indexOf("--members-file");
 const MEMBERS_FILE = membersFileAt >= 0 ? args[membersFileAt + 1] : null;
 const csvPath = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--members-file");
 if (!csvPath) {
-  console.error("Usage: node scripts/import-indy-users.mjs <indy-users.csv> [--dry]");
+  console.error("Usage: node scripts/import-indy-users.mjs <indy-users.csv> --dry");
   process.exit(1);
 }
-if (MEMBERS_FILE && !DRY) {
-  console.error("--members-file only works with --dry.");
+if (!DRY) {
+  console.error("This script only previews (--dry). The Indy import runs from the Back office review screen (its own branch), so nothing reaches members unreviewed.");
   process.exit(1);
 }
 
@@ -188,7 +194,8 @@ for (const r of rows) {
     counts[yes ? "new_yes" : "new_no"]++;
     if (birthday) counts.birthdays_filled++;
     const name = [r.first_name, r.last_name].map((s) => (s ?? "").trim()).filter(Boolean).join(" ") || "Indy guest";
-    inserts.push({ indyId, yes, birthday, createdAt, row: { name, email: r.email.trim(), phone: formatPhone(r.phone), tier: "Insiders", points: 0, email_opt_in: yes, email_opt_in_changed_at: yes ? new Date().toISOString() : null, indy_user_id: indyId, birthday } });
+    // Everyone from Indy joins with email on; their "no" is information only.
+    inserts.push({ indyId, yes, birthday, createdAt, row: { name, email: r.email.trim(), phone: formatPhone(r.phone), tier: "Insiders", points: 0, email_opt_in: true, indy_user_id: indyId, birthday } });
   }
 }
 
@@ -196,55 +203,10 @@ function report(prefix) {
   console.log(`${prefix}Indy rows: ${counts.rows}`);
   console.log(`  skipped: ${counts.skipped_staff} staff/owner, ${counts.skipped_no_email} with no email, ${counts.skipped_duplicate_in_file} repeated emails`);
   console.log(`  already members: ${counts.matched_yes} said yes, ${counts.matched_no} said no (email left as it is)`);
-  console.log(`  new to us: ${counts.new_yes} said yes, ${counts.new_no} said no`);
+  console.log(`  new to us: ${counts.new_yes} said yes, ${counts.new_no} said no (all would join with email on; a "no" is kept as information only)`);
   console.log(`  birthdays filled (month and day): ${counts.birthdays_filled}`);
   console.log(`  already imported before: ${counts.already_imported}`);
 }
 
-if (DRY) {
-  report("DRY RUN. Nothing was changed.\n");
-  process.exit(0);
-}
-
-// ---------- write ----------
-let failed = 0;
-const logRows = [];
-for (const u of updates) {
-  const patch = { ...(u.setIndy ? { indy_user_id: u.indyId } : {}), ...(u.birthday ? { birthday: u.birthday } : {}) };
-  if (Object.keys(patch).length) {
-    const { error } = await supabase.from("members").update(patch).eq("id", u.memberId);
-    if (error) {
-      failed++;
-      continue;
-    }
-  }
-  const { data: had } = await supabase.from("email_consent_log").select("id").eq("member_id", u.memberId).eq("source", "indy_import").limit(1);
-  if (had?.length) continue;
-  const { error: pErr } = await supabase
-    .from("member_email_prefs")
-    .upsert({ member_id: u.memberId, consent_source: u.yes ? "indy_yes" : "indy_no", consent_at: u.createdAt, updated_at: new Date().toISOString() }, { onConflict: "member_id" });
-  if (pErr) {
-    failed++;
-    continue;
-  }
-  logRows.push({ member_id: u.memberId, action: "import", source: "indy_import", detail: { indy: u.yes ? "yes" : "no" } });
-}
-for (const n of inserts) {
-  const { data, error } = await supabase.from("members").insert(n.row).select("id").single();
-  if (error) {
-    // Already there (a re-run, or someone joined meanwhile): leave it.
-    if (error.code !== "23505") failed++;
-    continue;
-  }
-  await supabase.from("member_email_prefs").upsert({ member_id: data.id, consent_source: n.yes ? "indy_yes" : "indy_no", consent_at: n.createdAt }, { onConflict: "member_id" });
-  logRows.push({ member_id: data.id, action: n.yes ? "opt_in" : "import", source: "indy_import", detail: { indy: n.yes ? "yes" : "no", new_member: true } });
-}
-for (let i = 0; i < logRows.length; i += 500) {
-  const { error } = await supabase.from("email_consent_log").insert(logRows.slice(i, i + 500));
-  if (error) failed++;
-}
-report("Done.\n");
-if (failed) {
-  console.log(`  ${failed} writes failed; run it again to finish (it skips what's done).`);
-  process.exit(1);
-}
+// Nothing below here: the review-screen importer does the writing.
+report("DRY RUN. Nothing was changed.\n");

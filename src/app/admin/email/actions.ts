@@ -5,17 +5,30 @@ import { assertAdmin, assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "@/lib/email/campaign";
-import { asInput, dryRun, getCampaign, guardrailPause, lintStored, runCampaign, sendTestEmail, sendingGate } from "@/lib/email/campaign-send";
-import { cancelEmail } from "@/lib/email/resend";
+import {
+  asInput,
+  dryRun,
+  getCampaign,
+  guardrailPause,
+  lintStored,
+  pauseAllSending,
+  recallScheduledSends,
+  runCampaign,
+  scheduleAheadMs,
+  sendTestEmail,
+  sendingGate,
+  stopCampaignSends,
+} from "@/lib/email/campaign-send";
 import { hashEmail } from "@/lib/email/hash";
-import { suppressHash } from "@/lib/email/consent";
+import { cancelPendingSends, suppressHash } from "@/lib/email/consent";
+import { exactEmail } from "@/lib/email-match";
 import { loadRenderData } from "@/lib/email/render-data";
 import { queueSends, resolveAudience } from "@/lib/email/audience";
 import { getCampaignDetail, waveProblem } from "@/lib/email/reports";
 import { rangeLabel } from "@/lib/email/format";
 import { lineupStarter, STARTERS } from "@/lib/email/templates";
 import { looksDeliverable } from "@/lib/email/rules";
-import { centralDateTime, nextLineupSlot, nextSendSlot } from "@/lib/email/timing";
+import { centralDateTime, centralParts, nextLineupSlot, nextSendSlot } from "@/lib/email/timing";
 import { AUTOMATIONS, KIND_CATEGORY, PREF_CATEGORIES, type Audience, type Automation, type Category, type Exclusion } from "@/lib/email/types";
 import type { CampaignContent, RenderData } from "@/lib/email/render";
 import type { LintResult } from "@/lib/email/lint";
@@ -236,38 +249,46 @@ export async function scheduleCampaign(id: string, input: ScheduleInput): Promis
     revalidate(id);
     return { ok: true, message: `Scheduled for ${whenText}${moved}, but it won't go until this is fixed: ${gate.reason}` };
   }
-  if (input.when === "now" && slot.getTime() - Date.now() < 5 * 60_000) {
+  // Due today: handed to Resend now, with scheduled_at, so it arrives at the
+  // time chosen. The email cron may run only once a morning, so a time
+  // later today would otherwise slip to tomorrow. A later day goes on that
+  // morning's run, so its showtimes and its list are as fresh as they can be.
+  const today = centralParts(new Date()).date;
+  if (centralParts(slot).date === today && slot.getTime() - Date.now() <= scheduleAheadMs()) {
     const r = await runCampaign(id, Date.now() + 240_000);
     revalidate(id);
     if (r.note && r.status === "paused") return { ok: false, error: r.note };
-    return { ok: true, message: `${r.submitted} handed to Resend${r.status === "sent" ? ". All done." : ". The rest follow on the next run."}` };
+    const rest = r.status === "sent" ? "" : " The rest follow on the next run.";
+    if (slot.getTime() - Date.now() > 5 * 60_000) return { ok: true, message: `Scheduled for ${whenText}${moved}: ${r.submitted} handed to Resend to arrive then.${rest}` };
+    return { ok: true, message: `${r.submitted} handed to Resend.${rest || " All done."}` };
   }
   revalidate(id);
-  return { ok: true, message: `Scheduled for ${whenText}${moved}.` };
+  return { ok: true, message: `Scheduled for ${whenText}${moved}. It's handed to Resend on that morning's run.` };
 }
 
-// Stops a scheduled or paused email: queued sends are cancelled, and any
-// already handed to Resend for later are cancelled there.
-export async function cancelCampaign(id: string): Promise<Result<{ stopped: number }>> {
+// Stops an email that hasn't all gone: queued sends are cancelled, and any
+// already handed to Resend for later are cancelled there. That includes an
+// email that reads "sent" because every send was handed over for later
+// (a scheduled time today), and one stopped before that didn't finish.
+export async function cancelCampaign(id: string): Promise<Result<{ stopped: number; left: number }>> {
   await assertAdmin();
   const c = await getCampaign(id);
-  if (!c) return { ok: false, error: "No such email." };
-  if (!["draft", "scheduled", "paused", "sending"].includes(c.status)) return { ok: false, error: "It's already gone out." };
+  if (!c || c.kind === "automation") return { ok: false, error: "No such email." };
   const admin = createAdminClient();
-  await admin.from("email_campaigns").update({ status: "cancelled", locked_until: null, updated_at: new Date().toISOString() }).eq("id", id);
-  await admin.from("email_sends").update({ status: "cancelled", error: "Email cancelled" }).eq("campaign_id", id).eq("status", "queued");
-  const { data: later } = await admin.from("email_sends").select("id, resend_email_id, deliver_at").eq("campaign_id", id).eq("status", "scheduled").gt("deliver_at", new Date().toISOString());
-  let stopped = 0;
-  for (const s of later ?? []) {
-    if (!s.resend_email_id) continue;
-    const r = await cancelEmail(s.resend_email_id);
-    if (r.ok) {
-      await admin.from("email_sends").update({ status: "cancelled", error: "Email cancelled" }).eq("id", s.id);
-      stopped++;
-    }
+  if (!["draft", "scheduled", "paused", "sending"].includes(c.status)) {
+    const { count } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", id).eq("status", "scheduled").gt("deliver_at", new Date().toISOString());
+    if (!count) return { ok: false, error: "It's already gone out." };
   }
+  if (c.status !== "sent") await admin.from("email_campaigns").update({ status: "cancelled", locked_until: null, updated_at: new Date().toISOString() }).eq("id", id);
+  let r: { atResend: number; couldnt: number; left: number };
+  try {
+    r = await stopCampaignSends(id, "Email cancelled", Date.now() + 240_000);
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't stop it." };
+  }
+  if (c.status === "sent") await admin.from("email_campaigns").update({ status: "cancelled", error: "Stopped after it was handed to Resend; what had already gone can't be taken back.", updated_at: new Date().toISOString() }).eq("id", id);
   revalidate(id);
-  return { ok: true, stopped };
+  return { ok: true, stopped: r.atResend, left: r.left };
 }
 
 export async function unscheduleCampaign(id: string): Promise<Result> {
@@ -288,6 +309,18 @@ export async function resumeCampaign(id: string): Promise<Result> {
   if (await guardrailPause()) return { ok: false, error: "Sending is paused by a guardrail. Resume sending on the Email page first." };
   const { error } = await createAdminClient().from("email_campaigns").update({ status: "scheduled", error: null, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "paused");
   if (error) return { ok: false, error: "Couldn't resume it." };
+  // Due today (its time, or the next open slot, is today): carry on now,
+  // inside the send window and with the caps checked again, rather than
+  // waiting for tomorrow morning's run.
+  const c = await getCampaign(id);
+  const planned = c?.scheduled_for && Date.parse(c.scheduled_for) > Date.now() ? new Date(c.scheduled_for) : new Date();
+  const slot = nextSendSlot(planned);
+  if (c && sendingGate().ok && centralParts(slot).date === centralParts(new Date()).date) {
+    const r = await runCampaign(id, Date.now() + 240_000);
+    revalidate(id);
+    if (r.note && r.status === "paused") return { ok: false, error: r.note };
+    return { ok: true };
+  }
   revalidate(id);
   return { ok: true };
 }
@@ -301,8 +334,28 @@ export async function resumeAllSending(reason: string): Promise<Result> {
   await admin.from("email_settings").delete().eq("key", "guardrail_pause");
   await admin.from("email_settings").upsert({ key: "guardrail_resumed", value: { at: new Date().toISOString(), reason: why.slice(0, 300) }, updated_by: staff.employeeId, updated_at: new Date().toISOString() }, { onConflict: "key" });
   await admin.from("email_campaigns").update({ status: "scheduled", error: null }).eq("status", "paused").like("error", "Guardrail:%");
+  await admin.from("email_campaigns").update({ status: "scheduled", error: null }).eq("status", "paused").like("error", "Stopped:%");
   revalidate();
   return { ok: true };
+}
+
+// The emergency stop: nothing more goes to a list until an admin resumes
+// (the same pause a guardrail sets), and email already handed to Resend for
+// later is called back, soonest first. EMAIL_SENDING_ENABLED=false alone
+// only stops new hand-overs until the next cron run; this is immediate.
+export async function stopAllSending(reason: string): Promise<Result<{ recalled: number; failed: number; left: number }>> {
+  const staff = await assertAdmin();
+  const why = String(reason ?? "").trim().slice(0, 200);
+  if (why.length < 5) return { ok: false, error: "Say why (a few words)." };
+  try {
+    await pauseAllSending(why, { byEmployee: staff.employeeId, prefix: "Stopped" });
+    const r = await recallScheduledSends(`Stopped: ${why}`, { pause: true, deadline: Date.now() + 240_000 });
+    revalidate();
+    return { ok: true, ...r };
+  } catch (e) {
+    revalidate();
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't stop sending." };
+  }
 }
 
 // ---------- the warm-up tool ----------
@@ -361,11 +414,15 @@ export async function sendNextWave(id: string, size: number, override: string | 
 export async function setAutomationOn(automation: string, on: boolean): Promise<Result> {
   await assertAdmin();
   if (!(AUTOMATIONS as readonly string[]).includes(automation)) return { ok: false, error: "No such automation." };
-  const { error } = await createAdminClient()
+  const { data, error } = await createAdminClient()
     .from("email_campaigns")
     .update({ status: on ? "active" : "off", updated_at: new Date().toISOString() })
-    .eq("automation", automation as Automation);
+    .eq("automation", automation as Automation)
+    .select("id");
   if (error) return { ok: false, error: "Couldn't change it." };
+  // Switched off: what it had waiting stops too, so switching it back on
+  // later can't send a pile of stale welcomes or birthdays.
+  if (!on) for (const row of data ?? []) await stopCampaignSends(row.id as string, "Automation switched off").catch(() => null);
   revalidatePath("/admin/email/automations");
   return { ok: true };
 }
@@ -386,6 +443,9 @@ export async function blockAddress(email: string, note: string): Promise<Result>
   if (!looksDeliverable(e)) return { ok: false, error: "That doesn't look like an email address." };
   try {
     await suppressHash(hashEmail(e), "manual", String(note ?? "").replace(/[^\s<>@"'(),;:]+@[^\s<>@"'(),;:]+/g, "[address]").slice(0, 200) || null);
+    // Anything already waiting to go to that address stops too.
+    const { data: members } = await createAdminClient().from("members").select("id").ilike("email", exactEmail(e)).is("erased_at", null);
+    for (const m of members ?? []) await cancelPendingSends(m.id as string, "Address blocked");
   } catch {
     return { ok: false, error: "Couldn't save it." };
   }

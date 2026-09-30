@@ -9,6 +9,7 @@ const REASON: Record<string, string> = {
   complaint: "on the list: they marked an email as spam. Only they can turn email back on, from their account or an email link.",
   soft_bounce_repeat: "on the list: it kept bouncing.",
   resend_suppressed: "on the list: Resend refused it.",
+  unsubscribed: "on the list: they had unsubscribed before their account was removed. Only they can turn email back on, from their account or an email link.",
   manual: "on the list: blocked by hand.",
 };
 

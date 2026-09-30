@@ -3,6 +3,11 @@
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
+// Any email address in a message from Resend or a mailbox (bounce text,
+// an error) becomes "[address]", so nothing we store holds one.
+const ADDRESS = /[^\s<>@"'(),;:]+@[^\s<>@"'(),;:]+/g;
+export const scrubAddresses = (s: string | undefined | null) => (s ?? "").replace(ADDRESS, "[address]").slice(0, 300);
+
 // The first name we greet someone by ("Hi Sam,"). Anything that could read
 // as markup or a template tag is stripped, and a name typed all in capitals
 // or all in lower case gets a capital first letter only. Null when there's

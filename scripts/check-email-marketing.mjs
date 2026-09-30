@@ -372,7 +372,7 @@ setLineup({ films, happenings: [] });
   await sender.runCampaign(c2.id, Date.now() + 30_000);
   // Account email ignores category choices, so 4 (only the complaint is left out).
   eq("send: after two failures the same batch goes once", [resend.batches, db.email_sends.filter((s) => s.campaign_id === c2.id && s.resend_email_id).length], [2, 4]);
-  check("send: the batch's key is <campaign>:<batch>", [...resend.keys.keys()].includes(`${c2.id}:1`));
+  check("send: the batch's key is <campaign>:<batch>:<stamp>, the same on the retry", [...resend.keys.keys()].filter((k) => k.startsWith(`${c2.id}:1:`)).length === 1);
 
   // Two runs at once: only one takes the lease.
   const c3 = mkCampaign({ name: "Third", kind: "reconfirm", category: "account" });
@@ -407,6 +407,195 @@ setLineup({ films, happenings: [] });
   check("schedule: an archive title in the subject blocks scheduling", !s4.ok && /archive title/.test(s4.error ?? ""), JSON.stringify(s4));
 }
 
+// ===================== 5b. hand-over: window, caps, age, lost answers, odd addresses, stops =====================
+const mkQueued = (c, m, over = {}) => {
+  const row = {
+    id: randomUUID(),
+    campaign_id: c.id,
+    member_id: m.id,
+    status: "queued",
+    dedupe_key: null,
+    deliver_at: new Date().toISOString(),
+    batch_no: null,
+    batch_key: null,
+    batch_at: null,
+    resend_email_id: null,
+    submitted_at: null,
+    delivered_at: null,
+    first_opened_at: null,
+    opens: 0,
+    first_clicked_at: null,
+    last_clicked_at: null,
+    clicks: 0,
+    bounced_at: null,
+    bounce_type: null,
+    complained_at: null,
+    unsubscribed_at: null,
+    error: null,
+    created_at: new Date().toISOString(),
+    ...over,
+  };
+  db.email_sends.push(row);
+  return row;
+};
+const automations = await load("lib/email/automations.ts");
+{
+  const eff = (planned, now) => sender.effectiveDeliverAt(planned, now).toISOString();
+  eq("hand-over: Tuesday's 10:30 email still queued at Wednesday's 8 AM run goes Wednesday 10:30, not at 8", eff(cdt("2026-10-13", "10:30").toISOString(), cdt("2026-10-14", "08:00")), cdt("2026-10-14", "10:30").toISOString());
+  eq("hand-over: Saturday 6:55 PM's leftovers wait for Monday 10:30 (never Sunday)", eff(cdt("2026-10-17", "18:55").toISOString(), cdt("2026-10-17", "19:10")), cdt("2026-10-19", "10:30").toISOString());
+  eq("hand-over: a time still ahead stays as it is", eff(cdt("2026-10-15", "15:00").toISOString(), cdt("2026-10-15", "09:00")), cdt("2026-10-15", "15:00").toISOString());
+
+  // A row whose time passed days ago (a paused list, a switch turned back on).
+  const m = mkMember(100);
+  const c = mkCampaign({ name: "Stale", recipients: 1 });
+  const row = mkQueued(c, m, { deliver_at: new Date(Date.now() - 3 * DAY).toISOString() });
+  const before = resend.sent.length;
+  await sender.runCampaign(c.id, Date.now() + 30_000);
+  const item = resend.sent.slice(before).find((e) => e.tags.some((t) => t.value === row.id));
+  const lands = item?.scheduled_at ? new Date(item.scheduled_at) : new Date();
+  check("hand-over: an old queued row still arrives inside 9 AM to 7 PM, Monday to Saturday", !!item && timing.inSendWindow(lands), JSON.stringify(item?.scheduled_at ?? null));
+  check("hand-over: ...and its deliver_at becomes the real arrival time (so the caps see it)", Date.parse(db.email_sends.find((s) => s.id === row.id).deliver_at) >= Date.now() - 5 * 60_000);
+
+  // The caps, again at hand-over: another email reached them 2 hours ago.
+  const m2 = mkMember(101);
+  const other = mkCampaign({ name: "Earlier today", status: "sent" });
+  mkQueued(other, m2, { status: "delivered", deliver_at: new Date(Date.now() - 2 * HOUR).toISOString(), submitted_at: new Date(Date.now() - 2 * HOUR).toISOString() });
+  const capped = mkCampaign({ name: "Capped at hand-over", recipients: 1 });
+  const cappedRow = mkQueued(capped, m2, { deliver_at: new Date(Date.now() - DAY).toISOString() });
+  const before2 = resend.sent.length;
+  await sender.runCampaign(capped.id, Date.now() + 30_000);
+  const cr = db.email_sends.find((s) => s.id === cappedRow.id);
+  check("hand-over: the caps are checked again against what they've had since: held back, not sent", cr.status === "cancelled" && /Held back/.test(cr.error ?? "") && resend.sent.length === before2, JSON.stringify(cr));
+
+  const upsell = { id: "U", kind: "automation", category: "offers", automation: "plus_upsell" };
+  const upsellSent = { c: "U", t: new Date(Date.now() - 30 * DAY).toISOString(), k: "automation", a: "plus_upsell", g: "offers", x: null, s: "delivered", ck: false };
+  eq("caps: an automation's own earlier send counts (the upsell's 1 in 60 days)", rules.capCheck([upsellSent], upsell, new Date(), { createdAt: "2026-01-01T00:00:00Z", imported: true }), "cap_kind");
+  eq("upsell: someone held back stays held back (not a new held-back row every day)", automations.automationKey("plus_upsell", facts({ sends: [{ ...upsellSent, s: "held_out" }] }), new Date(), "2026-10-15"), null);
+
+  // An automated email days late is dropped.
+  const m3 = mkMember(102);
+  const bday = mkCampaign({ name: "Birthday", kind: "automation", automation: "birthday", category: "rewards", status: "active" });
+  const old = mkQueued(bday, m3, { dedupe_key: "birthday:2026", created_at: new Date(Date.now() - 3 * DAY).toISOString() });
+  const before3 = resend.sent.length;
+  await sender.runCampaign(bday.id, Date.now() + 30_000);
+  check("automation: a birthday email queued 3 days ago is dropped, not sent late", db.email_sends.find((s) => s.id === old.id).status === "cancelled" && resend.sent.length === before3);
+
+  // Welcome while sending is switched off: nothing queues.
+  const w = mkCampaign({ name: "Welcome", kind: "automation", automation: "welcome_1", category: "rewards", status: "active" });
+  const m4 = mkMember(112);
+  process.env.EMAIL_SENDING_ENABLED = "false";
+  const queued = await automations.queueWelcome(m4.id);
+  process.env.EMAIL_SENDING_ENABLED = "true";
+  check("welcome: nothing queues while sending is off (so switching it on can't fire days-old welcomes)", queued === false && !db.email_sends.some((s) => s.campaign_id === w.id));
+  w.status = "off";
+}
+{
+  // A batch Resend may have taken, unconfirmed for over 20 hours.
+  const m = mkMember(103);
+  const c = mkCampaign({ name: "Lost answer", recipients: 1 });
+  const row = mkQueued(c, m, { batch_no: 1, batch_key: `${c.id}:1:old`, batch_at: new Date(Date.now() - 21 * HOUR).toISOString(), deliver_at: new Date(Date.now() - 21 * HOUR).toISOString() });
+  const before = resend.sent.length;
+  const r = await sender.runCampaign(c.id, Date.now() + 30_000);
+  const s = db.email_sends.find((x) => x.id === row.id);
+  check("idempotency: a batch unconfirmed for over 20 hours isn't sent again (Resend forgets a key after 24)", resend.sent.length === before && s.status === "submitted" && s.error === sender.UNSURE, JSON.stringify(s));
+  check("idempotency: ...and the Back office says so", /20 hours/.test(r.note ?? "") && /20 hours/.test(db.email_campaigns.find((x) => x.id === c.id).error ?? ""));
+}
+{
+  // One address Resend refuses (422) in a batch.
+  const good = [mkMember(104), mkMember(105)];
+  const bad = mkMember(106, { email: "reject-me@example.com" });
+  const c = mkCampaign({ name: "Odd address", kind: "invite", category: "account", recipients: 3 });
+  for (const m of [...good, bad]) mkQueued(c, m);
+  const before = resend.sent.length;
+  const r = await sender.runCampaign(c.id, Date.now() + 30_000);
+  const st = (m) => db.email_sends.find((s) => s.campaign_id === c.id && s.member_id === m.id);
+  check("split: one address Resend refuses doesn't block the batch: the others go, one by one", resend.sent.length - before === 2 && good.every((m) => ["submitted", "scheduled"].includes(st(m).status)), JSON.stringify(good.map((m) => st(m).status)));
+  check("split: only the refused one is marked failed, and the email isn't paused", st(bad).status === "failed" && r.status === "sent", JSON.stringify([st(bad).status, r.status, r.note]));
+  check("split: the stored refusal holds no address", !(st(bad).error ?? "").includes("@"));
+  check("split: each one alone went under its own key", [...resend.keys.keys()].filter((k) => k.startsWith(`${c.id}:`) && k.includes(":split:")).length === 2);
+}
+{
+  // Paused from elsewhere mid-run: no more batches.
+  const ms = Array.from({ length: 120 }, (_, i) => mkMember(200 + i));
+  const c = mkCampaign({ name: "Stopped mid-run", kind: "invite", category: "account", recipients: 120 });
+  for (const m of ms) mkQueued(c, m);
+  resend.onBatch = () => {
+    db.email_campaigns.find((x) => x.id === c.id).status = "paused";
+    resend.onBatch = null;
+  };
+  const before = resend.sent.length;
+  await sender.runCampaign(c.id, Date.now() + 60_000);
+  const left = db.email_sends.filter((s) => s.campaign_id === c.id && s.status === "queued").length;
+  check("stop: a campaign paused mid-run gets no more batches (100 went, 20 wait)", resend.sent.length - before === 100 && left === 20 && db.email_campaigns.find((x) => x.id === c.id).status === "paused", JSON.stringify([resend.sent.length - before, left]));
+}
+{
+  // Calling back email waiting at Resend (a guardrail, "Stop all sending").
+  const m = mkMember(107);
+  const c = mkCampaign({ name: "Waiting at Resend", status: "sent" });
+  const row = mkQueued(c, m, { status: "scheduled", resend_email_id: "re_waiting", batch_no: 1, batch_key: "k", deliver_at: new Date(Date.now() + 3 * HOUR).toISOString() });
+  const r = await sender.recallScheduledSends("Guardrail: test.", { pause: true });
+  const s = db.email_sends.find((x) => x.id === row.id);
+  check("recall: email waiting at Resend is cancelled there and put back in the queue", resend.cancelled.includes("re_waiting") && s.status === "queued" && !s.resend_email_id && !s.batch_key && r.recalled >= 1, JSON.stringify(r));
+  check("recall: its email is paused until an admin resumes", db.email_campaigns.find((x) => x.id === c.id).status === "paused");
+  const stop = await actions.stopAllSending("Testing the stop");
+  check("stop all: sets the pause every run checks", stop.ok && !!(await sender.guardrailPause()));
+  const resumed = await actions.resumeAllSending("Checked the test");
+  check("stop all: resuming clears it", resumed.ok && !(await sender.guardrailPause()));
+}
+{
+  // Scheduling a time later today hands it over now, set to arrive then.
+  const nowC = timing.centralParts(new Date());
+  const m = mkMember(108);
+  db.member_email_prefs.push({ member_id: m.id, lineup: true, alerts: true, events: true, offers: true, rewards: true, consent_source: "staff", engagement: "active" });
+  const c = mkCampaign({ name: "Tonight", status: "draft", kind: "invite", category: "account", audience: { include: [{ r: "consent", v: ["staff"] }] } });
+  const mine = () => resend.sent.filter((e) => e.tags.some((t) => t.name === "campaign" && t.value === c.id));
+  if (nowC.weekday !== "Sun" && nowC.minutes < 17 * 60) {
+    const r = await actions.scheduleCampaign(c.id, { when: "at", date: nowC.date, time: "18:30", sendKey: randomUUID() });
+    check("schedule: a time later today goes to Resend now, set to arrive then (a once-a-day cron would miss it)", r.ok && mine().length === 1 && mine()[0].scheduled_at === timing.centralDateTime(nowC.date, "18:30").toISOString(), JSON.stringify([r, mine()[0]?.scheduled_at]));
+  } else {
+    const day = timing.centralParts(new Date(Date.now() + 3 * DAY)).date;
+    const r = await actions.scheduleCampaign(c.id, { when: "at", date: day, time: "10:30", sendKey: randomUUID() });
+    check("schedule: a later day waits for that morning's run", r.ok && mine().length === 0 && /morning/.test(r.message ?? ""), JSON.stringify(r));
+  }
+}
+{
+  // Trivia vouchers are prizes, not money spent.
+  const m = mkMember(110);
+  const at = new Date(Date.now() - 2 * DAY).toISOString();
+  const allVoucher = { id: randomUUID(), total: 10, tip: 0, payment_voucher_amount: 10 };
+  const halfVoucher = { id: randomUUID(), total: 22, tip: 2, payment_voucher_amount: 10 };
+  db.orders.push(allVoucher, halfVoucher);
+  db.bookings.push(
+    { id: randomUUID(), member_id: m.id, quantity: 1, unit_price: 10, order_id: allVoucher.id, status: "confirmed", created_at: at },
+    { id: randomUUID(), member_id: m.id, quantity: 2, unit_price: 10, order_id: halfVoucher.id, status: "confirmed", created_at: at },
+    { id: randomUUID(), member_id: m.id, quantity: 1, unit_price: 8, order_id: null, status: "confirmed", created_at: at },
+  );
+  eq("vouchers: 'you bought N tickets ($X)' leaves out a voucher-paid ticket and counts half of a half-voucher order", (await sender.ticketSpend([m.id])).get(m.id), { n: 3, spend: 18 });
+  eq("vouchers: the paid share of an order (tips aside)", [rules.paidShare(allVoucher), rules.paidShare(halfVoucher), rules.paidShare({ total: 30, tip: 5, payment_voucher_amount: 0 })], [0, 0.5, 1]);
+  const mig = readFileSync(path.join(root, "supabase/migrations/20261001090000_email_marketing.sql"), "utf8");
+  const factsSql = mig.slice(mig.indexOf("function public.member_email_facts"), mig.indexOf("function public.email_claim_campaign"));
+  check("vouchers: member facts give a voucher-paid register ticket 'p' 0, so it's not a paid ticket", /payment_voucher_amount/.test(factsSql) && /left join orders o on o\.id = bk\.order_id/.test(factsSql));
+  check("vouchers: 'came in after' money leaves out vouchers and tips, counts each ticket once, and shows vouchers apart", /voucher_total numeric/.test(mig) && /filter \(where wb\.order_id is null\)/.test(mig) && /o\.total - coalesce\(o\.tip, 0\) - coalesce\(o\.payment_voucher_amount, 0\)/.test(mig));
+}
+{
+  // Only the person, proven, can lift a spam complaint.
+  const m = mkMember(109, { email_opt_in: false });
+  const h = hash.hashEmail(m.email);
+  db.email_suppressions.push({ email_hash: h, reason: "complaint", first_at: new Date().toISOString(), last_at: new Date().toISOString() });
+  await consent.setMarketingOptIn(m.id, true, "join_form");
+  check("consent: an address typed on the public join form can't lift a spam complaint", db.email_suppressions.some((s) => s.email_hash === h));
+  await consent.setMarketingOptIn(m.id, true, "account");
+  check("consent: ...the person signed in to their account can", !db.email_suppressions.some((s) => s.email_hash === h));
+
+  // Turning one kind off stops that kind already waiting at Resend.
+  const p = mkMember(111);
+  const later = new Date(Date.now() + 5 * HOUR).toISOString();
+  const ev = mkQueued(mkCampaign({ name: "Events later", status: "sent" }), p, { status: "scheduled", resend_email_id: "re_ev_later", deliver_at: later });
+  const li = mkQueued(mkCampaign({ name: "Lineup later", status: "sent", kind: "lineup", category: "lineup" }), p, { status: "scheduled", resend_email_id: "re_li_later", deliver_at: later });
+  await consent.updatePrefs(p.id, { events: false }, "prefs_page");
+  check("prefs: turning events off cancels an events email waiting at Resend, not the lineup", resend.cancelled.includes("re_ev_later") && !resend.cancelled.includes("re_li_later") && db.email_sends.find((s) => s.id === ev.id).status === "cancelled" && db.email_sends.find((s) => s.id === li.id).status === "scheduled");
+}
+
 // ===================== 6. one-click unsubscribe =====================
 {
   const m = mkMember(90);
@@ -437,6 +626,15 @@ setLineup({ films, happenings: [] });
   const again = await unsubRoute.POST(req("POST", t, "List-Unsubscribe=One-Click"));
   check("unsubscribe: doing it again is harmless", again.status === 200 && db.email_consent_log.filter((l) => l.member_id === m.id).length === logs);
   check("unsubscribe: category choices are kept for coming back", (db.member_email_prefs.find((x) => x.member_id === m.id)?.lineup ?? true) === true);
+  const gone = mkMember(97);
+  const goneToken = tokens.sealEmailToken({ memberId: gone.id, sendId: null });
+  gone.erased_at = new Date().toISOString();
+  check("unsubscribe: a member removed since gets 200 (nothing left to email), not an error to retry forever", (await unsubRoute.POST(req("POST", goneToken, "List-Unsubscribe=One-Click"))).status === 200);
+  const secret = process.env.EMAIL_TOKEN_SECRET;
+  delete process.env.EMAIL_TOKEN_SECRET;
+  const noSecret = await unsubRoute.POST(req("POST", t, "List-Unsubscribe=One-Click"));
+  process.env.EMAIL_TOKEN_SECRET = secret;
+  check("unsubscribe: with no EMAIL_TOKEN_SECRET it answers 500 instead of pretending it worked", noSecret.status === 500);
 }
 
 // ===================== 7. the webhook =====================
@@ -470,6 +668,27 @@ setLineup({ films, happenings: [] });
   await hookRoute.POST(post(ev("email.complained"), { id: complaintId }));
   eq("webhook: the same complaint again changes nothing", db.email_consent_log.length, logs);
   check("webhook: nothing stored holds an address", !JSON.stringify(db.email_events).includes("@"));
+  // A complaint whose handling fails partway (a database error) is applied
+  // in full when Resend sends it again, not dropped as a duplicate.
+  const m2 = mkMember(95);
+  const send2 = randomUUID();
+  db.email_sends.push({ id: send2, campaign_id: c.id, member_id: m2.id, status: "delivered", resend_email_id: "re_hook_b", delivered_at: new Date().toISOString(), opens: 0, clicks: 0, created_at: new Date().toISOString() });
+  const ev2 = { type: "email.complained", created_at: new Date().toISOString(), data: { email_id: "re_hook_b", to: [m2.email], tags: { send: send2, kind: "event" } } };
+  const id2 = `msg_${randomUUID()}`;
+  const table = db.email_suppressions;
+  db.email_suppressions = undefined;
+  const first = await hookRoute.POST(post(ev2, { id: id2 }));
+  db.email_suppressions = table;
+  const second = await hookRoute.POST(post(ev2, { id: id2 }));
+  check("webhook: a complaint that failed partway (500) is applied in full on Resend's retry", first.status === 500 && second.status === 200 && db.members.find((x) => x.id === m2.id).email_opt_in === false && db.email_suppressions.some((s) => s.email_hash === hash.hashEmail(m2.email) && s.reason === "complaint"), JSON.stringify([first.status, second.status]));
+  // A complaint about someone removed since: nothing to switch off, not a 500.
+  const m3 = mkMember(96);
+  const send3 = randomUUID();
+  db.email_sends.push({ id: send3, campaign_id: c.id, member_id: m3.id, status: "delivered", resend_email_id: "re_hook_c", delivered_at: new Date().toISOString(), opens: 0, clicks: 0, created_at: new Date().toISOString() });
+  const m3Email = m3.email;
+  m3.erased_at = new Date().toISOString();
+  const cr3 = await hookRoute.POST(post({ type: "email.complained", created_at: new Date().toISOString(), data: { email_id: "re_hook_c", to: [m3Email], tags: { send: send3 } } }));
+  check("webhook: a complaint about a member removed since still suppresses the address, and answers 200", cr3.status === 200 && db.email_suppressions.some((s) => s.email_hash === hash.hashEmail(m3Email)));
   const bounceMember = mkMember(92);
   await hookRoute.POST(post({ type: "email.bounced", created_at: new Date().toISOString(), data: { email_id: "re_none", to: [bounceMember.email], bounce: { type: "Permanent", subType: "General", message: `550 ${bounceMember.email} does not exist` } } }));
   check("webhook: a hard bounce on a receipt still suppresses the address (by hash)", db.email_suppressions.some((s) => s.email_hash === hash.hashEmail(bounceMember.email) && s.reason === "hard_bounce"));
@@ -520,6 +739,10 @@ setLineup({ films, happenings: [] });
   check("erasure: clears prefs and consent-log hashes", /delete from member_email_prefs where member_id = new\.id/.test(erase) && /update email_consent_log set email_hash = null/.test(erase));
   check("erasure: keeps the never-mail list", !/delete from email_suppressions/i.test(erase));
   check("erasure: the app cancels scheduled email first", readFileSync(path.join(src, "lib/member-erase.ts"), "utf8").includes("cancelPendingSends"));
+  check("erasure: someone who had unsubscribed goes on the never-mail list (hashed), so no import brings them back", /'unsubscribed'/.test(erase) && /old\.email_opt_in = false/.test(erase) && /insert into email_suppressions/.test(erase));
+  check("erasure: their emails' webhook events lose the address hash too", /detail - 'to_hash'/.test(erase));
+  check("join form: the free sign-up has the hidden-field and timing bot check", /checkHuman\("membership"/.test(readFileSync(path.join(src, "app/(site)/membership/actions.ts"), "utf8")));
+  check("privacy: says an unsubscribed address is kept (hashed) only once the account is deleted", /unsubscribed and then ask us to delete your account/.test(readFileSync(path.join(src, "app/(site)/privacy/page.tsx"), "utf8").replace(/\s+/g, " ")));
   const all = readdirSync(migDir).filter((f) => f >= "20261001090000").map((f) => readFileSync(path.join(migDir, f), "utf8")).join("\n");
   check("invariant: no migration flips email_opt_in's default or mass-updates it", !/alter column email_opt_in set default|update members set email_opt_in|set email_opt_in\s*=\s*false/i.test(all));
   const tables = [...all.matchAll(/create table if not exists (\w+)/g)].map((m) => m[1]);
@@ -563,6 +786,16 @@ setLineup({ films, happenings: [] });
       stopped = e.status === 1 && !String(e.stderr).includes("@");
     }
     check("indy: stops if a row's four email switches disagree", stopped);
+    let refused = false;
+    try {
+      execFileSync(process.execPath, [path.join(root, "scripts/import-indy-users.mjs"), path.join(dir, "indy.csv"), "--members-file", path.join(dir, "members.json")], { encoding: "utf8", stdio: "pipe" });
+    } catch (e) {
+      refused = e.status === 1 && /review screen/.test(String(e.stderr));
+    }
+    check("indy: without --dry it refuses (the import runs from the review screen, on its own branch)", refused);
+    const indySrc = readFileSync(path.join(root, "scripts/import-indy-users.mjs"), "utf8");
+    check("indy: the script has no write calls at all", !/\.(insert|update|upsert|delete)\(/.test(indySrc));
+    check("indy: everyone from Indy would join with email on (a 'no' is information only)", /email_opt_in: true/.test(indySrc) && !/email_opt_in: yes/.test(indySrc));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

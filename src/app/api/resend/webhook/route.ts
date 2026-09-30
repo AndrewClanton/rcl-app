@@ -11,8 +11,12 @@ import { handleResendEvent, type ResendEvent } from "@/lib/email/webhook";
 // Resend signs each request (Svix); RESEND_WEBHOOK_SECRET is the signing
 // secret from the webhook's page in Resend. The raw body is verified before
 // anything is parsed. A database error answers 500, so Resend sends the
-// event again later; a re-sent event is recognized by its svix-id.
+// event again later, and that retry is handled in full: an event only
+// counts as done (by its svix-id) once everything it does has been saved.
 export const dynamic = "force-dynamic";
+// A tripped guardrail calls back email waiting at Resend after the answer
+// has gone (after()), which can take a few minutes on a big list.
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
   const secret = process.env.RESEND_WEBHOOK_SECRET;

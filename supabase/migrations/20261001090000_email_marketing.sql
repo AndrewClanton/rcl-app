@@ -13,6 +13,11 @@
 -- Additive and safe to run twice. Server-only, like the rest: RLS on every
 -- table with no client policies; functions are security definer, for
 -- service_role only.
+--
+-- Adding members.indy_user_id takes a brief exclusive lock on members.
+-- Apply outside service hours; if something holds members open, this fails
+-- after 5 seconds instead of queueing the register behind it (run it again).
+set local lock_timeout = '5s';
 
 -- ---------- who wants what ----------
 -- The categories, the pause, where consent came from and engagement. A
@@ -53,14 +58,20 @@ create table if not exists email_consent_log (
 create index if not exists email_consent_log_member_idx on email_consent_log (member_id, at desc);
 
 -- Never mail these addresses. Hashes only: no address is stored. Survives
--- email changes and erasure.
+-- email changes and erasure. 'unsubscribed' is written when a member who
+-- had unsubscribed is removed (20261001090200), so a later import, kiosk or
+-- join form can't bring the address back onto the list; only the person
+-- saying yes again on our site (their account, or an email's link) lifts it.
 create table if not exists email_suppressions (
   email_hash text primary key,
-  reason text not null check (reason in ('hard_bounce','complaint','soft_bounce_repeat','resend_suppressed','manual')),
+  reason text not null,
   first_at timestamptz not null default now(),
   last_at timestamptz not null default now(),
   note text
 );
+alter table email_suppressions drop constraint if exists email_suppressions_reason_check;
+alter table email_suppressions add constraint email_suppressions_reason_check
+  check (reason in ('hard_bounce','complaint','soft_bounce_repeat','resend_suppressed','manual','unsubscribed'));
 
 -- ---------- campaigns ----------
 -- One row per one-off email (lineup, event, alert, offer, invite,
@@ -114,6 +125,8 @@ create table if not exists email_sends (
     'bounced','complained','failed','cancelled','suppressed')),
   resend_email_id text unique,
   batch_no int,
+  batch_key text,                          -- the Idempotency-Key it went to Resend under
+  batch_at timestamptz,                    -- first handed over (Resend keeps a key 24 hours)
   tier_at_send text,                       -- 'Insiders' / 'Insiders+', for "now Insiders+" in the results
   submitted_at timestamptz,                -- handed to Resend
   deliver_at timestamptz,                  -- scheduled_at, when used
@@ -128,14 +141,20 @@ create table if not exists email_sends (
 );
 alter table email_sends add column if not exists tier_at_send text;
 alter table email_sends add column if not exists last_clicked_at timestamptz;
+alter table email_sends add column if not exists batch_key text;
+alter table email_sends add column if not exists batch_at timestamptz;
 -- One-off campaigns: one row per person. Automations (the same campaign row
 -- all year) repeat by dedupe key instead: 'birthday:2026', then 'birthday:2027'.
 create unique index if not exists email_sends_one_per_campaign on email_sends (campaign_id, member_id) where dedupe_key is null;
 create unique index if not exists email_sends_dedupe on email_sends (member_id, dedupe_key) where dedupe_key is not null;
 create index if not exists email_sends_member_recent on email_sends (member_id, submitted_at desc);
 create index if not exists email_sends_campaign_status on email_sends (campaign_id, status);
-create index if not exists email_sends_campaign_batch on email_sends (campaign_id, batch_no) where status = 'queued';
+create index if not exists email_sends_campaign_batch on email_sends (campaign_id, batch_key) where status = 'queued';
 create index if not exists email_sends_delivered_idx on email_sends (delivered_at) where delivered_at is not null;
+-- The guardrail counts and the recall of email waiting at Resend.
+create index if not exists email_sends_complained_idx on email_sends (complained_at) where complained_at is not null;
+create index if not exists email_sends_hard_bounce_idx on email_sends (bounced_at) where bounce_type = 'Permanent';
+create index if not exists email_sends_scheduled_idx on email_sends (deliver_at) where status = 'scheduled';
 
 -- Webhook events and first-party clicks. Resend deliveries are deduped by svix-id.
 create table if not exists email_events (
@@ -148,10 +167,19 @@ create table if not exists email_events (
   suspect boolean not null default false,  -- click that looks like a mail scanner
   detail jsonb not null default '{}',      -- scrubbed: never an email address
   occurred_at timestamptz not null,
-  received_at timestamptz not null default now()
+  received_at timestamptz not null default now(),
+  -- A Resend event counts as handled only once this is set, so an event
+  -- whose handling failed partway is handled again when Resend re-sends it.
+  processed_at timestamptz
 );
+alter table email_events add column if not exists processed_at timestamptz;
 create index if not exists email_events_send_idx on email_events (send_id, type);
 create index if not exists email_events_received_idx on email_events (received_at desc);
+create index if not exists email_events_bounce_hash_idx on email_events ((detail->>'to_hash')) where type = 'bounced';
+
+-- For "came in after" and the member facts: orders and guest bookings by person.
+create index if not exists orders_member_completed_idx on orders (member_id, completed_at) where status = 'completed' and member_id is not null;
+create index if not exists bookings_guest_email_idx on bookings (lower(customer_email), created_at) where member_id is null;
 
 -- A few switches for the sender, by key. 'guardrail_pause' ({at, reason}):
 -- complaints or hard bounces ran too high, so nothing goes to a list until
@@ -193,14 +221,21 @@ alter table email_settings enable row level security;
 
 -- ---------- facts about each member, for choosing who gets an email ----------
 -- One row per live member with an email, a page at a time (1,000 max), in
--- member id order. p_member narrows it to one person (the welcome email).
--- The app filters these in TypeScript (src/lib/email/audience.ts).
+-- member id order: p_after is the last member id of the previous page
+-- (keyset paging, so someone joining mid-scan can't shift a page and be
+-- skipped). p_member narrows it to one person (the welcome email). The app
+-- filters these in TypeScript (src/lib/email/audience.ts).
 --
 -- A visit day means what frequent_members() means (a completed order with
 -- them on it, or a confirmed ticket for a screening that has started), plus
 -- a check-in (member_visits), counted by business date (4 a.m. to 4 a.m.
 -- Central). Arrays cover the last 180 days so any "within N days" works.
-create or replace function public.member_email_facts(p_offset int default 0, p_limit int default 1000, p_member uuid default null)
+--
+-- Tickets carry what was actually paid ('p'): a register ticket paid with
+-- trivia vouchers (prizes, not money) counts only the share of its order
+-- paid in cash or card, so a voucher-only ticket is 'p' 0, not a paid ticket.
+drop function if exists public.member_email_facts(int, int, uuid);
+create or replace function public.member_email_facts(p_offset int default 0, p_limit int default 1000, p_member uuid default null, p_after uuid default null)
 returns table (
   member_id uuid,
   email text,
@@ -255,6 +290,7 @@ as $$
     from members mb
     where mb.erased_at is null and mb.email is not null and btrim(mb.email) <> ''
       and (p_member is null or mb.id = p_member)
+      and (p_after is null or mb.id > p_after)
     order by mb.id
     offset greatest(coalesce(p_offset, 0), 0)
     limit least(greatest(coalesce(p_limit, 1000), 1), 1000)
@@ -280,12 +316,27 @@ as $$
     from v cross join k left join movies mo on mo.id = v.movie_id
     group by v.member_id
   ),
-  tk as (
-    select m.id as member_id,
-      jsonb_agg(jsonb_build_object('d', b.created_at, 'q', b.quantity, 'p', b.unit_price)) as list
-    from m join bookings b on (b.member_id = m.id or (b.member_id is null and lower(b.customer_email) = lower(m.email)))
+  -- Their bookings, and guest checkouts under their address (two equi-joins,
+  -- so each can use its index).
+  bk as (
+    select m.id as member_id, b.created_at, b.quantity, b.unit_price, b.order_id
+    from m join bookings b on b.member_id = m.id
     where b.status = 'confirmed' and b.created_at > now() - interval '180 days'
-    group by m.id
+    union all
+    select m.id, b.created_at, b.quantity, b.unit_price, b.order_id
+    from m join bookings b on b.member_id is null and lower(b.customer_email) = lower(m.email)
+    where b.status = 'confirmed' and b.created_at > now() - interval '180 days'
+  ),
+  tk as (
+    select bk.member_id,
+      jsonb_agg(jsonb_build_object('d', bk.created_at, 'q', bk.quantity, 'p',
+        case when o.id is null then bk.unit_price
+             else coalesce(round(bk.unit_price
+                    * greatest(o.total - coalesce(o.tip, 0) - coalesce(o.payment_voucher_amount, 0), 0)
+                    / nullif(o.total - coalesce(o.tip, 0), 0), 2), 0)
+        end)) as list
+    from bk left join orders o on o.id = bk.order_id
+    group by bk.member_id
   ),
   od as (
     select o.member_id,
@@ -350,7 +401,10 @@ as $$
     coalesce(p.offers, true),
     coalesce(p.rewards, true),
     p.paused_until,
-    coalesce(p.consent_source, 'unknown'),
+    -- Linked to the old site after the backfill ran (no prefs row yet, or
+    -- one made later with the default): still an old-site import.
+    case when coalesce(p.consent_source, 'unknown') = 'unknown' and m.legacy_user_id is not null then 'old_site_import'
+         else coalesce(p.consent_source, 'unknown') end,
     p.import_group,
     coalesce(p.engagement, 'active'),
     p.reconfirm_sent_at,
@@ -546,6 +600,15 @@ $$;
 -- window (tickets matched by member, or by email for a guest checkout),
 -- the same after a click, and unsubscribes and complaints. It says "came
 -- in after", never "because of".
+--
+-- Money is money that came in, each dollar once:
+--   ticket_revenue: online tickets only (a register ticket is a line in its
+--     order, so it's counted in order_total instead);
+--   order_total: register orders, minus tips and minus what trivia
+--     vouchers paid (prizes, not money in);
+--   voucher_total: what vouchers paid, shown on its own.
+-- A voucher-paid visit still counts as "came in".
+drop function if exists public.email_campaign_outcomes(uuid, int);
 create or replace function public.email_campaign_outcomes(p_campaign uuid, p_days int)
 returns table (
   grp text,
@@ -558,6 +621,7 @@ returns table (
   tickets_after_click int,
   ticket_revenue numeric,
   order_total numeric,
+  voucher_total numeric,
   now_plus int,
   unsubscribes int,
   complaints int
@@ -593,15 +657,26 @@ as $$
     ) x on true
     group by w.id
   ),
-  tk as (
-    select w.id as send_id, sum(b.quantity) as q, sum(b.quantity * b.unit_price) as amt, max(b.created_at) as last_at
-    from w join bookings b
-      on (b.member_id = w.member_id or (b.member_id is null and w.m_email is not null and lower(b.customer_email) = lower(w.m_email)))
+  wb as (
+    select w.id as send_id, b.quantity, b.unit_price, b.order_id, b.created_at
+    from w join bookings b on b.member_id = w.member_id
     where b.status = 'confirmed' and b.created_at >= w.t0 and b.created_at < w.t1
-    group by w.id
+    union all
+    select w.id, b.quantity, b.unit_price, b.order_id, b.created_at
+    from w join bookings b on b.member_id is null and w.m_email is not null and lower(b.customer_email) = lower(w.m_email)
+    where b.status = 'confirmed' and b.created_at >= w.t0 and b.created_at < w.t1
+  ),
+  tk as (
+    select wb.send_id, sum(wb.quantity) as q,
+      coalesce(sum(wb.quantity * wb.unit_price) filter (where wb.order_id is null), 0) as amt,
+      max(wb.created_at) as last_at
+    from wb
+    group by wb.send_id
   ),
   od as (
-    select w.id as send_id, sum(o.total) as total
+    select w.id as send_id,
+      sum(greatest(o.total - coalesce(o.tip, 0) - coalesce(o.payment_voucher_amount, 0), 0)) as paid,
+      sum(coalesce(o.payment_voucher_amount, 0)) as vouchers
     from w join orders o on o.member_id = w.member_id
     where o.status = 'completed' and o.completed_at >= w.t0 and o.completed_at < w.t1
     group by w.id
@@ -616,7 +691,8 @@ as $$
     coalesce(sum(tk.q), 0)::int,
     coalesce(sum(tk.q) filter (where w.first_clicked_at is not null and tk.last_at >= w.first_clicked_at), 0)::int,
     coalesce(sum(tk.amt), 0),
-    coalesce(sum(od.total), 0),
+    coalesce(sum(od.paid), 0),
+    coalesce(sum(od.vouchers), 0),
     (count(*) filter (where w.tier_at_send = 'Insiders' and w.m_tier = 'Insiders+'))::int,
     count(w.unsubscribed_at)::int,
     count(w.complained_at)::int
@@ -629,14 +705,14 @@ $$;
 
 -- Server-only plumbing: Supabase grants new public functions to anon and
 -- authenticated by default.
-revoke execute on function public.member_email_facts(int, int, uuid) from public, anon, authenticated;
+revoke execute on function public.member_email_facts(int, int, uuid, uuid) from public, anon, authenticated;
 revoke execute on function public.email_claim_campaign(uuid, int) from public, anon, authenticated;
 revoke execute on function public.email_queue_sends(uuid, jsonb) from public, anon, authenticated;
 revoke execute on function public.email_mark_submitted(jsonb) from public, anon, authenticated;
 revoke execute on function public.email_bump_send(uuid, text, timestamptz) from public, anon, authenticated;
 revoke execute on function public.email_refresh_engagement() from public, anon, authenticated;
 revoke execute on function public.email_campaign_outcomes(uuid, int) from public, anon, authenticated;
-grant execute on function public.member_email_facts(int, int, uuid) to service_role;
+grant execute on function public.member_email_facts(int, int, uuid, uuid) to service_role;
 grant execute on function public.email_claim_campaign(uuid, int) to service_role;
 grant execute on function public.email_queue_sends(uuid, jsonb) to service_role;
 grant execute on function public.email_mark_submitted(jsonb) to service_role;

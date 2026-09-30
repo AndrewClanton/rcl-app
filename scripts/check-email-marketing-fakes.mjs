@@ -302,9 +302,9 @@ const RPC = {
     return { data: s.member_id, error: null };
   },
   member_genre_days: () => ({ data: [], error: null }),
-  member_email_facts({ p_offset = 0, p_limit = 1000, p_member = null }) {
+  member_email_facts({ p_offset = 0, p_limit = 1000, p_member = null, p_after = null }) {
     const members = db.members
-      .filter((m) => !m.erased_at && m.email && (!p_member || m.id === p_member))
+      .filter((m) => !m.erased_at && m.email && (!p_member || m.id === p_member) && (!p_after || m.id > p_after))
       .sort((a, b) => cmp(a.id, b.id))
       .slice(p_offset, p_offset + p_limit);
     const rows = members.map((m) => {
@@ -375,7 +375,10 @@ export function createAdminClient() {
 }
 
 // ---------------- Resend REST API ----------------
-export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0 };
+// An address containing "reject" is refused (422), the way Resend refuses
+// a malformed `to`: the whole batch, or that one email alone. onBatch runs
+// after each accepted batch (to change things mid-run).
+export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, onBatch: null };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 export async function fakeFetch(url, init = {}) {
@@ -399,10 +402,12 @@ export async function fakeFetch(url, init = {}) {
       return json(500, { name: "application_error", message: "boom" });
     }
     const items = JSON.parse(init.body);
+    if (items.some((it) => it.to.some((t) => t.includes("reject")))) return json(422, { name: "validation_error", message: "Invalid `to` field. The email address needs to follow the `email@example.com` format." });
     const response = { data: items.map(() => ({ id: `re_${randomUUID()}` })) };
     resend.batches++;
     items.forEach((it, i) => resend.sent.push({ ...it, id: response.data[i].id }));
     if (key) resend.keys.set(key, { bodyHash, response });
+    if (resend.onBatch) await resend.onBatch(items);
     if (resend.acceptThenFail > 0) {
       resend.acceptThenFail--;
       return json(502, { name: "application_error", message: "lost on the way back" });

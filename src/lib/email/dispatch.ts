@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "./campaign";
 import { loadFacts } from "./audience";
-import { enforceGuardrails, guardrailPause, runCampaign, scheduleAheadMs, sendingGate, settleStuck, type RunResult } from "./campaign-send";
+import { enforceGuardrails, guardrailPause, recallScheduledSends, runCampaign, scheduleAheadMs, sendingGate, settleStuck, type RecallResult, type RunResult } from "./campaign-send";
 import { draftWeeklyLineup, ensureAutomations, isMonday, queueAutomation } from "./automations";
 import { priorityOf } from "./types";
 
@@ -19,11 +19,14 @@ import { priorityOf } from "./types";
 //      use up each person's caps first. Automations queue today's sends
 //      once a day; their queued sends go out on every run.
 // Email that arrives later than this run is handed to Resend now with
-// scheduled_at, so Tuesday's lineup still lands at 10:30.
+// scheduled_at, so Tuesday's lineup still lands at 10:30. When sending is
+// switched off or paused, email Resend already holds for later is called
+// back instead.
 
 export interface CronSummary {
   daily: Record<string, unknown> | null;
   blocked: string | null;
+  recall?: RecallResult | null; // email called back from Resend while blocked
   runs: RunResult[];
   queued: Record<string, number>;
 }
@@ -53,11 +56,16 @@ export async function runEmailCron(deadline: number, now = new Date()): Promise<
     summary.blocked = gate.reason;
     // Say why on anything that's waiting, so the Back office shows it.
     await createAdminClient().from("email_campaigns").update({ error: gate.reason }).eq("status", "scheduled");
+    // Switched off: email already handed to Resend for later is called back
+    // too (it goes again once sending is back on, if still in time).
+    summary.recall = await recallScheduledSends(`Sending is switched off: ${gate.reason}`, { pause: false, deadline }).catch(() => null);
     return summary;
   }
-  const g = await enforceGuardrails(now);
-  if (g.tripped || (await guardrailPause())) {
-    summary.blocked = g.reason ?? "Paused by a guardrail until an admin resumes sending.";
+  const g = await enforceGuardrails(now, { recall: false });
+  const pause = g.tripped ? null : await guardrailPause();
+  if (g.tripped || pause) {
+    summary.blocked = g.reason ?? pause?.reason ?? "Paused by a guardrail until an admin resumes sending.";
+    summary.recall = await recallScheduledSends(`Guardrail: ${summary.blocked}`, { pause: true, deadline }).catch(() => null);
     return summary;
   }
 

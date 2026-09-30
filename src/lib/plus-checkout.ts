@@ -52,7 +52,9 @@ export async function createPlusCheckout(p: {
       pending_phone: p.phone ?? "",
       price_tier: p.priceTier,
       billing_interval: interval,
-      ...(p.emailOptIn ? { email_opt_in: "1" } : {}),
+      // "1" or "0" from the join form's box; left out when there was no
+      // box (a signed-in member upgrading), so nothing changes for them.
+      ...(typeof p.emailOptIn === "boolean" ? { email_opt_in: p.emailOptIn ? "1" : "0" } : {}),
     },
   });
   return session.url;

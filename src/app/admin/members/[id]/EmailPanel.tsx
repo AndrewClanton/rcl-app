@@ -14,6 +14,7 @@ const SUPPRESSION: Record<string, string> = {
   complaint: "They marked one of our emails as spam. Only they can turn email back on, from their account or an email link.",
   soft_bounce_repeat: "Their mailbox kept refusing our email. Marketing email is off for this address.",
   resend_suppressed: "Our email service refused this address (it bounced or complained elsewhere).",
+  unsubscribed: "They had unsubscribed before an account with this address was removed. Only they can turn email back on, from their account or an email link.",
   manual: "Blocked by hand in Back office → Email.",
 };
 
@@ -51,7 +52,7 @@ export default function EmailPanel({ memberId, panel }: { memberId: string; pane
             </span>
           </label>
           {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
-          {panel.suppression && <p className="notice notice-warn mt-3 text-sm">On the never-mail list since {day(panel.suppression.firstAt)}. {SUPPRESSION[panel.suppression.reason] ?? ""}</p>}
+          {panel.detail && panel.suppression && <p className="notice notice-warn mt-3 text-sm">On the never-mail list since {day(panel.suppression.firstAt)}. {SUPPRESSION[panel.suppression.reason] ?? ""}</p>}
           <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
             {PREF_CATEGORIES.map((c) => (
               <span key={c} className={`rounded-full border px-2 py-0.5 ${panel.prefs[c] ? "border-[var(--foreground)]" : "border-[var(--border)] text-[var(--muted)] line-through"}`}>
@@ -59,12 +60,14 @@ export default function EmailPanel({ memberId, panel }: { memberId: string; pane
               </span>
             ))}
           </div>
+          {panel.detail && (
           <p className="mt-2 text-xs text-[var(--muted)]">
             {panel.pausedUntil ? `Paused until ${day(panel.pausedUntil)}. ` : ""}
             {panel.engagement === "dormant" ? "Gone quiet: never clicked or came in after \"Still want these?\", so no marketing email. Coming in wakes them up. " : ""}
             {panel.engagement === "reconfirm_sent" ? "Was asked \"Still want these?\". " : ""}
             {panel.lastEngagedAt ? `Last clicked or came in ${day(panel.lastEngagedAt)}.` : "No clicks or visits recorded yet."}
           </p>
+          )}
           {panel.recent.length > 0 && (
             <table className="mt-3 w-full text-sm">
               <thead>

@@ -8,7 +8,9 @@ import { runEmailCron } from "@/lib/email/dispatch";
 // for anything that should arrive later today (lib/email/dispatch.ts).
 //
 // With CRON_SECRET set in Vercel, only Vercel's own call gets through.
-// Nothing goes to a list unless EMAIL_SENDING_ENABLED is "true".
+// Nothing goes to a list unless EMAIL_SENDING_ENABLED is "true"; while it
+// isn't (or a guardrail has paused sending), each run calls back email
+// already handed to Resend for later.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
@@ -23,6 +25,7 @@ export async function GET(req: NextRequest) {
     const summary = await runEmailCron(deadline);
     return NextResponse.json({
       blocked: summary.blocked,
+      recall: summary.recall ?? null,
       daily: summary.daily,
       queued: summary.queued,
       runs: summary.runs.map((r) => ({ id: r.id, ran: r.ran, submitted: r.submitted, cancelled: r.cancelled, status: r.status, note: r.note })),

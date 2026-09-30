@@ -14,6 +14,7 @@ const REASONS: Record<string, string> = {
   complaint: "Marked us as spam",
   soft_bounce_repeat: "Kept bouncing",
   resend_suppressed: "Refused by Resend",
+  unsubscribed: "Unsubscribed, then account removed",
   manual: "Blocked by hand",
 };
 

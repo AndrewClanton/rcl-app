@@ -37,10 +37,15 @@ const CONSENT_FOR: Partial<Record<ConsentWriteSource, ConsentSource>> = {
   staff: "staff",
 };
 
-// A person saying yes again themselves, on our site, clears a complaint or
-// a manual block on their address. Staff can't do this for them, and a
-// hard bounce only clears when the address changes.
-const SELF_SERVE: ReadonlySet<ConsentWriteSource> = new Set(["account", "prefs_page", "join_form"]);
+// A person saying yes again themselves, on our site, clears a complaint, a
+// manual block or an "unsubscribed, then removed" entry on their address.
+// Only where the address is proven theirs: signed in to their account (whose
+// email they can't change there), or the signed link from one of our emails.
+// Not the join form, the kiosk or checkout, where anyone can type anyone's
+// address. Staff can't do this for them, and a hard bounce only clears when
+// the address changes.
+const SELF_SERVE: ReadonlySet<ConsentWriteSource> = new Set(["account", "prefs_page"]);
+const LIFTED_BY_SELF_SERVE = ["complaint", "manual", "unsubscribed"];
 
 export type ConsentResult = { ok: true; changed: boolean } | { ok: false; error: string };
 
@@ -121,13 +126,21 @@ async function upsertPrefs(memberId: string, fields: Record<string, unknown>) {
   if (error) throw new Error("Couldn't save the email settings.");
 }
 
-// Anything queued here or scheduled at Resend for this member stops. A
-// scheduled email Resend already sent can't be stopped, and that's fine.
-export async function cancelPendingSends(memberId: string, why: string): Promise<number> {
+// Anything queued here or scheduled at Resend for this member stops (only
+// the given kinds of email, when `categories` is passed). A scheduled email
+// Resend already sent can't be stopped, and that's fine.
+export async function cancelPendingSends(memberId: string, why: string, categories?: readonly string[]): Promise<number> {
   const admin = createAdminClient();
-  const { data: rows } = await admin.from("email_sends").select("id, status, resend_email_id, deliver_at").eq("member_id", memberId).in("status", ["queued", "scheduled"]);
+  const { data: found } = await admin.from("email_sends").select("id, status, resend_email_id, deliver_at, campaign_id").eq("member_id", memberId).in("status", ["queued", "scheduled"]);
+  let rows = found ?? [];
+  if (categories && rows.length) {
+    const ids = [...new Set(rows.map((r) => r.campaign_id as string))];
+    const { data: camps } = await admin.from("email_campaigns").select("id, category").in("id", ids);
+    const wanted = new Set(((camps ?? []) as { id: string; category: string }[]).filter((c) => categories.includes(c.category)).map((c) => c.id));
+    rows = rows.filter((r) => wanted.has(r.campaign_id as string));
+  }
   let n = 0;
-  for (const s of rows ?? []) {
+  for (const s of rows) {
     if (s.status === "scheduled" && s.resend_email_id) {
       if (!s.deliver_at || Date.parse(s.deliver_at) <= Date.now()) continue;
       const r = await cancelEmail(s.resend_email_id);
@@ -141,9 +154,11 @@ export async function cancelPendingSends(memberId: string, why: string): Promise
 
 // The strongest reason wins: a hard bounce also stops receipts; the rest
 // only stop marketing.
-const REASON_RANK: Record<string, number> = { hard_bounce: 5, complaint: 4, soft_bounce_repeat: 3, resend_suppressed: 2, manual: 1 };
+const REASON_RANK: Record<string, number> = { hard_bounce: 5, complaint: 4, soft_bounce_repeat: 3, resend_suppressed: 2, manual: 1, unsubscribed: 0 };
 
-export async function suppressHash(emailHash: string, reason: "hard_bounce" | "complaint" | "soft_bounce_repeat" | "resend_suppressed" | "manual", note?: string | null) {
+export type SuppressionReason = "hard_bounce" | "complaint" | "soft_bounce_repeat" | "resend_suppressed" | "manual" | "unsubscribed";
+
+export async function suppressHash(emailHash: string, reason: SuppressionReason, note?: string | null) {
   const admin = createAdminClient();
   const { data: existing } = await admin.from("email_suppressions").select("reason").eq("email_hash", emailHash).maybeSingle();
   const now = new Date().toISOString();
@@ -174,7 +189,9 @@ export async function setMarketingOptIn(
   const admin = createAdminClient();
   const { data: m, error } = await admin.from("members").select("id, email, email_opt_in, email_opt_in_changed_at, erased_at").eq("id", memberId).maybeSingle();
   if (error) return { ok: false, error: "Couldn't read the member." };
-  if (!m || m.erased_at) return { ok: false, error: "That member isn't here anymore." };
+  // Removed (or never there): nothing to switch off, which is what an
+  // unsubscribe or a complaint wants. Switching on needs a member.
+  if (!m || m.erased_at) return on ? { ok: false, error: "That member isn't here anymore." } : { ok: true, changed: false };
   if (opts.at && m.email_opt_in_changed_at && Date.parse(m.email_opt_in_changed_at) > Date.parse(opts.at)) return { ok: true, changed: false };
 
   const was = m.email_opt_in !== false;
@@ -206,7 +223,7 @@ export async function setMarketingOptIn(
       byEmployee: opts.byEmployee ?? null,
     });
     if (on && SELF_SERVE.has(source) && m.email) {
-      await admin.from("email_suppressions").delete().eq("email_hash", hashEmail(m.email)).in("reason", ["complaint", "manual"]);
+      await admin.from("email_suppressions").delete().eq("email_hash", hashEmail(m.email)).in("reason", LIFTED_BY_SELF_SERVE);
     }
     if (!on) await cancelPendingSends(memberId, source === "webhook" ? "Complained" : "Unsubscribed");
   } catch (e) {
@@ -236,9 +253,10 @@ export async function updatePrefs(memberId: string, next: Partial<Record<PrefCat
     const now = new Date().toISOString();
     await upsertPrefs(memberId, { ...fields, last_engaged_at: now, engagement: "active" });
     await log({ memberId, action: "prefs", source, detail: fields });
-    if (fields.lineup === false && fields.alerts === false && fields.events === false && fields.offers === false && fields.rewards === false) {
-      await cancelPendingSends(memberId, "Every kind of email turned off");
-    }
+    // Whatever kind was just turned off stops, even if it's already waiting
+    // at Resend (the preference page saves one kind at a time).
+    const off = PREF_CATEGORIES.filter((c) => fields[c] === false);
+    if (off.length) await cancelPendingSends(memberId, off.length === PREF_CATEGORIES.length ? "Every kind of email turned off" : "Turned this kind of email off", off);
     return { ok: true, changed: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't save." };

@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { allowAttempt } from "@/lib/rate-limit";
 import { setMarketingOptIn } from "@/lib/email/consent";
-import { openEmailToken, PREFERENCES_PATH } from "@/lib/email/tokens";
+import { emailTokensReady, openEmailToken, PREFERENCES_PATH } from "@/lib/email/tokens";
 
 // One-click unsubscribe (RFC 8058), the address in every marketing email's
 // List-Unsubscribe header: Gmail's and Yahoo's own "Unsubscribe" button
@@ -12,7 +12,10 @@ import { openEmailToken, PREFERENCES_PATH } from "@/lib/email/tokens";
 // category choices are kept, so turning email back on restores them),
 // cancels anything already scheduled for them, and answers 200 with a
 // short plain-text line. Safe to repeat. A bad token gets the same 200
-// (nothing is revealed) and is only logged.
+// (nothing is revealed) and is only logged, and so does a member who has
+// since been removed (there is nothing left to email). With no
+// EMAIL_TOKEN_SECRET no token can open, so that answers 500 and logs loudly
+// rather than pretending every unsubscribe worked.
 //
 // The preference page's "Unsubscribe from all marketing emails" button
 // posts here too (form mode) and comes back to the page.
@@ -28,6 +31,10 @@ function connection(req: NextRequest) {
 }
 
 async function unsubscribe(token: string | null): Promise<boolean> {
+  if (!emailTokensReady()) {
+    console.error("unsubscribe: EMAIL_TOKEN_SECRET is missing, so no unsubscribe link can work. Set it in Vercel now.");
+    throw new Error("EMAIL_TOKEN_SECRET missing");
+  }
   const t = openEmailToken(token);
   if (!t) {
     console.warn("unsubscribe: a token that didn't open");

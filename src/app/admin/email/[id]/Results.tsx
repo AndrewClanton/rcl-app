@@ -35,11 +35,11 @@ export default function Results({ detail, canSend, campaignId, status, kind }: {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">How it did</h2>
-        <CampaignActions id={campaignId} status={status} kind={kind} canSend={canSend} />
+        <CampaignActions id={campaignId} status={status} kind={kind} canSend={canSend} waitingAtResend={f.waitingAtResend} />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Handed to Resend" value={f.submitted} sub={`${f.queued} waiting · ${f.cancelled} stopped`} />
+        <Stat label="Handed to Resend" value={f.submitted} sub={`${f.waitingAtResend ? `${f.waitingAtResend} held at Resend for later · ` : ""}${f.queued} waiting · ${f.cancelled} stopped · ${f.failed} refused`} />
         <Stat label="Delivered" value={f.delivered} sub={pct(f.delivered, f.submitted)} />
         <Stat label="Opened (rough)" value={f.opened} sub="Apple Mail opens everything" />
         <Stat label="Clicked" value={f.clicked} sub={`${pct(f.clicked, f.delivered)} of delivered`} />
@@ -51,10 +51,11 @@ export default function Results({ detail, canSend, campaignId, status, kind }: {
         <h3 className="font-semibold">Came in after</h3>
         <p className="mb-3 text-xs text-[var(--muted)]">
           Checked in, had a ticket or ordered within {detail.summary.windowDays} days of the email. This says what came after, not what the email caused.
+          Money is what was paid: tips and trivia vouchers (prizes, not money in) are left out, and each ticket is counted once.
           {h ? " The held-back group is a random slice that didn't get it: the difference is the honest lift." : ""}
         </p>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="text-right text-xs text-[var(--muted)]">
                 <th className="py-1 pr-3 text-left font-normal" />
@@ -62,8 +63,9 @@ export default function Results({ detail, canSend, campaignId, status, kind }: {
                 <th className="py-1 pr-3 font-normal">Came in</th>
                 <th className="py-1 pr-3 font-normal">…after a click</th>
                 <th className="py-1 pr-3 font-normal">Tickets</th>
-                <th className="py-1 pr-3 font-normal">Ticket $</th>
-                <th className="py-1 pr-3 font-normal">Bar & kitchen $</th>
+                <th className="py-1 pr-3 font-normal">Online tickets $</th>
+                <th className="py-1 pr-3 font-normal">Register $ (tickets, bar, kitchen)</th>
+                <th className="py-1 pr-3 font-normal">Trivia vouchers (no money in)</th>
                 <th className="py-1 font-normal">Now Insiders+</th>
               </tr>
             </thead>
@@ -83,6 +85,7 @@ export default function Results({ detail, canSend, campaignId, status, kind }: {
                     <td className="py-1.5 pr-3 text-right tabular-nums">{o.tickets}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{money(o.ticket_revenue)}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{money(o.order_total)}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{money(o.voucher_total)}</td>
                     <td className="py-1.5 text-right tabular-nums">{o.now_plus}</td>
                   </tr>
                 ) : null,

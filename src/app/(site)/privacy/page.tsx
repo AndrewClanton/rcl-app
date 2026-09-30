@@ -167,9 +167,10 @@ export default async function PrivacyPage() {
           from the purchase records we&apos;re required to keep. See <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">Deleting your data</Link>.
         </p>
         <p>
-          If you unsubscribe, an email bounces, or you mark one of our emails as spam, we keep a scrambled (hashed) copy of the address on a
-          &ldquo;never email&rdquo; list. It can&apos;t be turned back into your address, and we keep it even if you delete your account, so you&apos;re
-          never emailed again by mistake.
+          If an email to you bounces, or you mark one of our emails as spam, we keep a scrambled (hashed) copy of the address on a &ldquo;never
+          email&rdquo; list. If you&apos;ve unsubscribed and then ask us to delete your account, your address goes on that list the same way. It
+          can&apos;t be turned back into your address, and we keep it after your account is deleted, so you&apos;re never sent our member emails again
+          by mistake.
         </p>
       </section>
 

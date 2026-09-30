@@ -80,6 +80,9 @@ export function automationKey(a: Automation, f: MemberFacts, now: Date, today: s
       return null;
     }
     case "plus_upsell":
+      // Someone in the held-back group stays held back for the 60 days the
+      // cap covers, rather than getting a new held-back row every day.
+      if (f.sends.some((s) => s.a === "plus_upsell" && s.s === "held_out" && daysSinceIso(s.t, now) < 60)) return null;
       return `plus_upsell:${today}`;
     case "winback_45": {
       if (!f.lastVisitOn || f.lastVisitOn > addDays(today, -45) || f.lastVisitOn <= addDays(today, -90)) return null;
@@ -159,6 +162,9 @@ export function memberJoined(memberId: string): void {
 }
 
 export async function queueWelcome(memberId: string, now = new Date()): Promise<boolean> {
+  // Sending off (the kill switch, no sender): nothing queues, so turning it
+  // back on can never fire a pile of days-old welcomes.
+  if (!sendingGate().ok) return false;
   const row = await getAutomation("welcome_1");
   if (!row || row.status !== "active") return false;
   const facts = await loadFacts({ memberId });
@@ -169,7 +175,7 @@ export async function queueWelcome(memberId: string, now = new Date()): Promise<
     { at, now, facts, dedupeKey: () => "welcome_1" },
   );
   const n = await queueSends(row.id, resolved, at);
-  if (n > 0 && sendingGate().ok) await runCampaign(row.id, Date.now() + 45_000, now);
+  if (n > 0) await runCampaign(row.id, Date.now() + 45_000, now);
   return n > 0;
 }
 

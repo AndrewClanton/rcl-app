@@ -7,9 +7,12 @@ import type { ConsentSource, Engagement, PrefCategory, SendStatus } from "./type
 // A member's email marketing record, for the Email panel on their Back
 // office page: the master switch, where their yes came from, the
 // categories, a pause, engagement, whether their address is on the
-// never-mail list (checked by hash), and their last 10 emails.
+// never-mail list (checked by hash), and their last 10 emails. Staff who
+// don't see full contact details (cashiers) get the switch only: `detail`
+// false, and the history, engagement and never-mail reason aren't loaded.
 
 export interface MemberEmailPanel {
+  detail: boolean;
   hasEmail: boolean;
   optIn: boolean;
   optInChangedAt: string | null;
@@ -23,22 +26,25 @@ export interface MemberEmailPanel {
   recent: { name: string; status: SendStatus; at: string | null; delivered: boolean; opened: boolean; clicked: boolean; unsubscribed: boolean }[];
 }
 
-export async function getMemberEmailPanel(memberId: string): Promise<MemberEmailPanel | null> {
+export async function getMemberEmailPanel(memberId: string, opts: { detail: boolean }): Promise<MemberEmailPanel | null> {
   const admin = createAdminClient();
   const { data: m } = await admin.from("members").select("email, email_opt_in, email_opt_in_changed_at, erased_at").eq("id", memberId).maybeSingle();
   if (!m || m.erased_at) return null;
   const [p, sup, sends] = await Promise.all([
     getPrefs(memberId),
-    m.email ? admin.from("email_suppressions").select("reason, first_at").eq("email_hash", hashEmail(m.email)).maybeSingle() : Promise.resolve({ data: null }),
-    admin
-      .from("email_sends")
-      .select("status, submitted_at, deliver_at, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, created_at, campaign:email_campaigns(name)")
-      .eq("member_id", memberId)
-      .order("created_at", { ascending: false })
-      .limit(10),
+    opts.detail && m.email ? admin.from("email_suppressions").select("reason, first_at").eq("email_hash", hashEmail(m.email)).maybeSingle() : Promise.resolve({ data: null }),
+    opts.detail
+      ? admin
+          .from("email_sends")
+          .select("status, submitted_at, deliver_at, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, created_at, campaign:email_campaigns(name)")
+          .eq("member_id", memberId)
+          .order("created_at", { ascending: false })
+          .limit(10)
+      : Promise.resolve({ data: [] }),
   ]);
   const s = sup.data as { reason: string; first_at: string } | null;
   return {
+    detail: opts.detail,
     hasEmail: !!m.email,
     optIn: m.email_opt_in !== false,
     optInChangedAt: m.email_opt_in_changed_at,
@@ -46,8 +52,8 @@ export async function getMemberEmailPanel(memberId: string): Promise<MemberEmail
     consentAt: p.consentAt,
     prefs: { lineup: p.lineup, alerts: p.alerts, events: p.events, offers: p.offers, rewards: p.rewards },
     pausedUntil: p.pausedUntil && Date.parse(p.pausedUntil) > Date.now() ? p.pausedUntil : null,
-    engagement: p.engagement,
-    lastEngagedAt: p.lastEngagedAt,
+    engagement: opts.detail ? p.engagement : "active",
+    lastEngagedAt: opts.detail ? p.lastEngagedAt : null,
     suppression: s ? { reason: s.reason, firstAt: s.first_at } : null,
     recent: ((sends.data ?? []) as unknown as {
       status: SendStatus;
