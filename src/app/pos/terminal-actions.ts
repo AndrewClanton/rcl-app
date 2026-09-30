@@ -109,3 +109,102 @@ export async function cancelReaderPayment(paymentIntentId: string, readerId: str
   if (readerId) await stripe.terminal.readers.cancelAction(readerId).catch(() => {});
   await stripe.paymentIntents.cancel(paymentIntentId).catch(() => {});
 }
+
+// ---------- tip on the reader, for a tab's card on file ----------
+// Charging a tab's saved card has no tap, so the reader never shows its own
+// tip screen. Instead the reader asks with an on-screen question (Stripe's
+// collect_inputs): 15/20/25% of the pre-tax tab total or "Other amount"
+// (then a number pad, whole dollars), with "No tip" as the skip button
+// (Stripe allows 4 choices). The register
+// polls readTipAnswer, then charges the card on file with the tip.
+
+export type TipChoice = "p15" | "p20" | "p25" | "other" | "none";
+
+function dollars(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+export async function askTipOnReader(readerId: string, tipBaseCents: number, dueCents: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertStaff();
+  if (!(tipBaseCents >= 0) || !(dueCents > 0) || !Number.isFinite(tipBaseCents) || !Number.isFinite(dueCents)) return { ok: false, error: "Nothing to charge." };
+  try {
+    await assertReader(readerId);
+    const pct = (p: number) => Math.round(tipBaseCents * p);
+    await getStripe().terminal.readers.collectInputs(readerId, {
+      inputs: [
+        {
+          type: "selection",
+          // Stripe allows 4 choices, so "No tip" is the skip button.
+          required: false,
+          custom_text: { title: "Add a tip?", description: `Your tab: ${dollars(dueCents)}\nPaying with the card on file.`, skip_button: "No tip" },
+          selection: {
+            choices: [
+              { id: "p15", style: "primary", text: `15% · ${dollars(pct(0.15))}` },
+              { id: "p20", style: "primary", text: `20% · ${dollars(pct(0.2))}` },
+              { id: "p25", style: "primary", text: `25% · ${dollars(pct(0.25))}` },
+              { id: "other", style: "secondary", text: "Other amount" },
+            ],
+          },
+        },
+      ],
+      metadata: { purpose: "tab_tip" },
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: readerError(e) };
+  }
+}
+
+export async function askCustomTipOnReader(readerId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  await assertStaff();
+  try {
+    await assertReader(readerId);
+    await getStripe().terminal.readers.collectInputs(readerId, {
+      inputs: [
+        {
+          type: "numeric",
+          required: true,
+          custom_text: { title: "Tip amount", description: "Whole dollars, e.g. 5", submit_button: "Add tip" },
+        },
+      ],
+      metadata: { purpose: "tab_tip_custom" },
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: readerError(e) };
+  }
+}
+
+// What the customer picked, once they have. "waiting" until then.
+export async function readTipAnswer(
+  readerId: string,
+): Promise<{ status: "waiting" } | { status: "failed"; message: string } | { status: "done"; choice: TipChoice | null; numeric: string | null }> {
+  await assertStaff();
+  try {
+    const reader = await getStripe().terminal.readers.retrieve(readerId);
+    if ("deleted" in reader && reader.deleted) return { status: "failed", message: "That card reader isn't registered anymore." };
+    const action = reader.action;
+    if (!action || action.type !== "collect_inputs") return { status: "failed", message: "The reader moved on before the customer answered." };
+    if (action.status === "in_progress") return { status: "waiting" };
+    if (action.status === "failed") return { status: "failed", message: action.failure_message || "The reader stopped waiting (no answer for 2 minutes)." };
+    const input = action.collect_inputs?.inputs?.[0];
+    if (input?.skipped) return { status: "done", choice: "none", numeric: null };
+    const id = input?.selection?.id ?? null;
+    const choice = id && ["p15", "p20", "p25", "other", "none"].includes(id) ? (id as TipChoice) : null;
+    const numeric = input?.numeric?.value ?? null;
+    return { status: "done", choice, numeric };
+  } catch (e) {
+    return { status: "failed", message: readerError(e) };
+  }
+}
+
+export async function cancelReaderQuestion(readerId: string): Promise<void> {
+  await assertStaff();
+  if (readerId) await getStripe().terminal.readers.cancelAction(readerId).catch(() => {});
+}
+
+function readerError(e: unknown): string {
+  if (e instanceof UserFacingError) return e.message;
+  const m = e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string" ? (e as { message: string }).message : null;
+  return m ?? "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.";
+}

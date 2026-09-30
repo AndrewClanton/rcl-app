@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
-import { startReaderPayment, checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
+import { startReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
 import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
@@ -182,6 +182,11 @@ export default function PaymentModal({
   // Charging the card on file has no tap, so no reader tip screen: the tip is
   // asked here first (what they wrote on the slip, or told the bartender).
   const [onFileTipOpen, setOnFileTipOpen] = useState(false);
+  // The tip question on the reader, for the card on file (no tap, so the
+  // reader's own tip screen never appears).
+  const [readerTip, setReaderTip] = useState<{ phase: "asking" | "custom" | "failed"; message?: string } | null>(null);
+  const tipPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tipAskRef = useRef(0);
   const [cashOpen, setCashOpen] = useState(false);
   const [voucherOpen, setVoucherOpen] = useState(false);
   // Paper vouchers applied so far; cash or card covers the rest (`due`).
@@ -277,8 +282,71 @@ export default function PaymentModal({
     }
   }
 
-  // The tab's saved card: charged for what's due plus the tip asked just
-  // before (TipModal), no tap needed.
+  const tipBaseCents = Math.round((tipEligible ?? due) * 100);
+
+  function stopTipPoll() {
+    tipAskRef.current += 1;
+    if (tipPollRef.current) clearTimeout(tipPollRef.current);
+    tipPollRef.current = null;
+  }
+
+  useEffect(() => () => {
+    if (tipPollRef.current) clearTimeout(tipPollRef.current);
+  }, []);
+
+  // "Charge card on file": ask the customer on the reader. No reader on
+  // this register: ask here instead.
+  async function startCardOnFile() {
+    if (!tabCard || onFile.busy) return;
+    if (!readerId) return setOnFileTipOpen(true);
+    stopTipPoll();
+    const ask = tipAskRef.current;
+    setReaderTip({ phase: "asking" });
+    const r = await askTipOnReader(readerId, tipBaseCents, Math.round(due * 100)).catch(() => ({ ok: false as const, error: "Couldn't reach the card reader." }));
+    if (ask !== tipAskRef.current) return;
+    if (!r.ok) return setReaderTip({ phase: "failed", message: r.error });
+    pollTip(ask, "asking");
+  }
+
+  function pollTip(ask: number, phase: "asking" | "custom") {
+    const check = async () => {
+      if (ask !== tipAskRef.current || !readerId) return;
+      const a = await readTipAnswer(readerId).catch(() => ({ status: "waiting" as const }));
+      if (ask !== tipAskRef.current) return;
+      if (a.status === "waiting") {
+        tipPollRef.current = setTimeout(check, 1200);
+        return;
+      }
+      if (a.status === "failed") return setReaderTip({ phase: "failed", message: a.message });
+      if (phase === "custom") {
+        const dollars = parseInt(String(a.numeric ?? "").replace(/[^0-9]/g, ""), 10);
+        if (!Number.isFinite(dollars) || dollars < 0 || dollars > 1000) return setReaderTip({ phase: "failed", message: "That tip didn't come through as a number. Try again, or enter it here." });
+        setReaderTip(null);
+        return handleCardOnFile(dollars);
+      }
+      if (a.choice === "other") {
+        setReaderTip({ phase: "custom" });
+        const r = await askCustomTipOnReader(readerId).catch(() => ({ ok: false as const, error: "Couldn't reach the card reader." }));
+        if (ask !== tipAskRef.current) return;
+        if (!r.ok) return setReaderTip({ phase: "failed", message: r.error });
+        return pollTip(ask, "custom");
+      }
+      const pct = a.choice === "p15" ? 0.15 : a.choice === "p20" ? 0.2 : a.choice === "p25" ? 0.25 : 0;
+      setReaderTip(null);
+      return handleCardOnFile(Math.round(tipBaseCents * pct) / 100);
+    };
+    tipPollRef.current = setTimeout(check, 1200);
+  }
+
+  async function cancelReaderTip(enterHere: boolean) {
+    stopTipPoll();
+    if (readerId) await cancelReaderQuestion(readerId).catch(() => {});
+    setReaderTip(null);
+    if (enterHere) setOnFileTipOpen(true);
+  }
+
+  // The tab's saved card: charged for what's due plus the tip (from the
+  // reader, or TipModal here), no tap needed.
   async function handleCardOnFile(tipAmount: number) {
     setOnFileTipOpen(false);
     if (!tabCard || onFile.busy) return;
@@ -312,6 +380,58 @@ export default function PaymentModal({
     // answer): keep watching rather than offer a second charge.
     setReader({ state: "waiting", paymentIntentId, message: "Cancel didn't go through. Wait for the reader, or tap Cancel again." });
     watchReaderPayment(paymentIntentId);
+  }
+
+  if (readerTip) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="card w-full max-w-xs text-center shadow-2xl">
+          {readerTip.phase === "failed" ? (
+            <>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                The reader didn&apos;t get a tip
+              </h3>
+              <p className="mt-2 text-sm" style={{ color: "var(--danger-text)" }}>
+                {readerTip.message}
+              </p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button className="btn-primary" onClick={() => void startCardOnFile()}>
+                  Ask on the reader again
+                </button>
+                <button className="btn-secondary" onClick={() => void cancelReaderTip(true)}>
+                  Enter the tip here
+                </button>
+                <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => void cancelReaderTip(false)}>
+                  Back
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                {readerTip.phase === "custom" ? "Customer is typing a tip" : "Customer is picking a tip"}
+              </h3>
+              <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                On the card reader. Then {tabCard?.label ?? "the card on file"} is charged {money(due)} plus the tip.
+              </p>
+              {onFile.error && (
+                <p className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
+                  {onFile.error}
+                </p>
+              )}
+              <div className="mt-4 flex flex-col gap-2">
+                <button className="btn-secondary" onClick={() => void cancelReaderTip(true)}>
+                  Enter the tip here instead
+                </button>
+                <button className="text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => void cancelReaderTip(false)}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   if (onFileTipOpen) {
@@ -409,7 +529,7 @@ export default function PaymentModal({
 
         {tabCard && !splitOpen && (
           <div className="mt-4">
-            <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={() => setOnFileTipOpen(true)}>
+            <button className="btn-primary w-full py-3 text-base" disabled={onFile.busy} onClick={() => void startCardOnFile()}>
               {onFile.busy ? "Charging..." : `Charge card on file · ${tabCard.label}`}
             </button>
             {onFile.error && (
