@@ -35,6 +35,9 @@ const client = new Client({
   ssl: { rejectUnauthorized: false },
 });
 
+// A migration's `raise notice` lines (what a data fix created or skipped).
+client.on("notice", (n) => console.log(`  notice: ${n.message}`));
+
 await client.connect();
 try {
   for (const file of files) {

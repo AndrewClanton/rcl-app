@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, centralToIso } from "@/lib/ops/time";
+import { finishTodo, removeTodo, reopenTodo } from "@/lib/ops/outages";
 import { centralLocal } from "@/lib/hours";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -129,21 +130,23 @@ export async function addTodo(input: { title: string; details: string; assigneeI
   return { ok: true };
 }
 
+// Mark done, or Reopen. A restock to-do from "Ran out" is done when it's
+// bought: that closes its report and puts what it stopped back on sale.
 export async function setTodoDoneFromOffice(id: string, done: boolean): Promise<Result> {
   const staff = await assertManager();
-  await createAdminClient()
-    .from("staff_todos")
-    .update(done ? { done_at: new Date().toISOString(), done_by: staff.employeeId } : { done_at: null, done_by: null })
-    .eq("id", id);
+  if (typeof id !== "string" || !UUID.test(id)) return { ok: false, error: "That to-do isn't there any more. Reload the page." };
+  const r = done ? await finishTodo(id.toLowerCase(), staff.employeeId) : await reopenTodo(id.toLowerCase());
   revalidate();
-  return { ok: true };
+  if (done && r.ok) revalidatePath("/admin/menu");
+  return r.ok ? { ok: true } : r;
 }
 
 export async function deleteTodo(id: string): Promise<Result> {
   await assertManager();
-  await createAdminClient().from("staff_todos").delete().eq("id", id);
+  if (typeof id !== "string" || !UUID.test(id)) return { ok: false, error: "That to-do isn't there any more. Reload the page." };
+  const r = await removeTodo(id.toLowerCase());
   revalidate();
-  return { ok: true };
+  return r;
 }
 
 // ---------- schedule ----------

@@ -15,9 +15,13 @@ async function saved(p: Promise<{ ok: true } | { ok: false; error: string }>) {
 
 const due = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const stamp = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+const CLOSED_AS = { bought: "bought", found: "found some", mistake: "false alarm" } as const;
 
 // One-off jobs: "Caleb: update the Now Playing movies by Friday". They show
 // on the register for that person (or for whoever's on shift) until done.
+// "Ran out" on the register adds restock ones for the managers ("Buy Hot
+// dog buns at Walmart"): Bought it closes the report and puts what it
+// stopped back on sale.
 export default function TodoManager({ team, todos }: { team: TeamMember[]; todos: Todo[] }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -93,32 +97,38 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
             {open.map((t) => (
               <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{t.title}</div>
+                  <div className="font-medium">
+                    {t.outageId && <span className="bo-badge bo-badge-warn mr-1.5 align-middle">Ran out</span>}
+                    {t.title}
+                  </div>
                   <div className="text-xs text-[var(--muted)]">
-                    For {t.assigneeName ?? "whoever's on shift"}
+                    {t.forManagers ? "For the managers" : `For ${t.assigneeName ?? "whoever's on shift"}`}
                     {t.dueDate && ` · due ${due(t.dueDate)}`}
-                    {t.createdByName && ` · from ${t.createdByName}`}
+                    {t.createdByName && !t.outageId && ` · from ${t.createdByName}`}
                     {t.details && ` · ${t.details}`}
                   </div>
                 </div>
                 <button
-                  className="rounded border border-[var(--border)] px-2 py-1 text-xs"
+                  className={t.outageId ? "btn-primary min-h-11 !px-3 !py-1 text-xs" : "rounded border border-[var(--border)] px-2 py-1 text-xs"}
+                  title={t.outageId ? "Closes the Ran out report and puts what it stopped back on sale" : undefined}
                   onClick={async () => {
                     await saved(setTodoDoneFromOffice(t.id, true));
                     router.refresh();
                   }}
                 >
-                  Mark done
+                  {t.outageId ? "Bought it" : "Mark done"}
                 </button>
-                <button
-                  className="text-xs text-[var(--danger-text)] hover:underline"
-                  onClick={async () => {
-                    await saved(deleteTodo(t.id));
-                    router.refresh();
-                  }}
-                >
-                  Remove
-                </button>
+                {!t.outageId && (
+                  <button
+                    className="text-xs text-[var(--danger-text)] hover:underline"
+                    onClick={async () => {
+                      await saved(deleteTodo(t.id));
+                      router.refresh();
+                    }}
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -134,17 +144,21 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
             {done.map((t) => (
               <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-[var(--muted)]">
                 <span className="min-w-0 flex-1">
-                  <span className="line-through">{t.title}</span> · {t.doneByName ?? "someone"}, {t.doneAt ? stamp(t.doneAt) : ""}
+                  <span className="line-through">{t.title}</span>
+                  {t.closedAs && ` (${CLOSED_AS[t.closedAs]})`} · {t.doneByName ?? "someone"}, {t.doneAt ? stamp(t.doneAt) : ""}
                 </span>
-                <button
-                  className="text-xs hover:underline"
-                  onClick={async () => {
-                    await saved(setTodoDoneFromOffice(t.id, false));
-                    router.refresh();
-                  }}
-                >
-                  Reopen
-                </button>
+                {/* A restock to-do closed with its report; if it's out again, it gets reported again. */}
+                {!t.outageId && (
+                  <button
+                    className="text-xs hover:underline"
+                    onClick={async () => {
+                      await saved(setTodoDoneFromOffice(t.id, false));
+                      router.refresh();
+                    }}
+                  >
+                    Reopen
+                  </button>
+                )}
               </div>
             ))}
           </div>

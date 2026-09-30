@@ -26,6 +26,13 @@ export interface Todo {
   createdAt: string;
   doneAt: string | null;
   doneByName: string | null;
+  // For every manager, admin and owner rather than one person.
+  forManagers: boolean;
+  // A restock to-do from "Ran out": done means bought, which closes the
+  // report. `closedAs` is how the report was closed (bought, found some,
+  // false alarm), once it is.
+  outageId: string | null;
+  closedAs: "bought" | "found" | "mistake" | null;
 }
 
 export interface ScheduledShift {
@@ -53,7 +60,13 @@ export async function getTodos(doneDays = 14): Promise<Todo[]> {
   const since = new Date(Date.now() - doneDays * 86_400_000).toISOString();
   const [n, { data }] = await Promise.all([
     names(),
-    supabase.from("staff_todos").select("*").or(`done_at.is.null,done_at.gte."${since}"`).order("done_at", { ascending: false, nullsFirst: true }).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
+    supabase
+      .from("staff_todos")
+      .select("*, outage:stock_outages(resolution)")
+      .or(`done_at.is.null,done_at.gte."${since}"`)
+      .order("done_at", { ascending: false, nullsFirst: true })
+      .order("due_date", { ascending: true, nullsFirst: false })
+      .order("created_at"),
   ]);
   return (data ?? []).map((t) => ({
     id: t.id,
@@ -66,6 +79,9 @@ export async function getTodos(doneDays = 14): Promise<Todo[]> {
     createdAt: t.created_at,
     doneAt: t.done_at,
     doneByName: t.done_by ? (n.get(t.done_by) ?? null) : null,
+    forManagers: t.audience === "managers",
+    outageId: t.outage_id ?? null,
+    closedAs: (t.outage as { resolution: Todo["closedAs"] } | null)?.resolution ?? null,
   }));
 }
 

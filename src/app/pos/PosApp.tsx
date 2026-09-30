@@ -10,6 +10,7 @@ import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
 import TabCardModal from "./TabCardModal";
+import InfoTip from "@/components/help/InfoTip";
 import { useOnShift } from "./shift/on-shift-store";
 import { publishCashier, useRanOut } from "./shift/ran-out-store";
 import { ItemOutDialog, MenuTile, RoundPhoto } from "./shift/RanOut";
@@ -876,6 +877,7 @@ export default function PosApp({
                   + Card
                 </button>
               ))}
+            {activeTab && <InfoTip topic="tab-card-on-file" className="!mx-0" />}
             <input className="input min-w-0 flex-1 !py-2" placeholder="Order / guest name" value={orderName} onChange={(e) => setOrderName(e.target.value)} />
           </div>
           {tabSaveIssue && tabSaveIssue.tabId === activeTabId && (

@@ -38,6 +38,41 @@ const stem = (w: string) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss"
 const keyWords = (text: string | null | undefined) => [...new Set(words(text).filter((w) => w.length >= 3 && !SKIP.has(w)).map(stem))];
 const sameWord = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 5 && editDistance(a, b, 1) <= 1);
 
+// What a sold thing is made around: a hot dog needs its bun, a pizza its
+// crust, popcorn its kernels. Anything else in the par line's name (sauce,
+// cheese, oil, bags, cups) makes it a different thing, so it isn't matched.
+const PARTS = new Set(["bun", "crust", "dough", "kernel", "shell", "tortilla", "patty", "pattie", "roll", "cone", "wrap"]);
+// A size or serving, not what the item is: "Pizza (slice)", "Large popcorn".
+const SERVING = new Set(["small", "medium", "large", "regular", "personal", "kid", "kids", "slice", "whole", "single", "double", "jumbo", "mini"]);
+const nameWords = (text: string) => [...new Set(words(text).map(stem))];
+
+// Menu items that plainly are what ran out, or are made around it, sure
+// enough to start ticked: the item's name, less the size ("Hot dog
+// (regular)" → hot dog), is all in the par line's name, and whatever else
+// the par line says is only the part it's made with.
+//   Hot dogs, Hot dog buns → Hot dog (regular)
+//   Pizza crust → Pizza (slice), Pizza (large)
+//   Popcorn kernels → Popcorn (small), (personal), (large)
+// but Pizza sauce, Popping oil or Cheese match nothing. The par line's
+// section counts too ("Buns" in Hot dogs), a small typo is forgiven, and
+// every match can still be unticked.
+export function strongMenuMatches(what: string, section: string | null, menu: MenuOpt[]): MenuOpt[] {
+  const tries = [nameWords(what), ...(section ? [nameWords(`${section} ${what}`)] : [])];
+  return menu.filter((m) => {
+    const base = nameWords(m.name.replace(/\([^)]*\)/g, " ")).filter((w) => !SERVING.has(w));
+    if (base.length === 0) return false;
+    return tries.some((mine) => {
+      const used = new Set<string>();
+      for (const b of base) {
+        const hit = mine.find((w) => !used.has(w) && sameWord(w, b));
+        if (!hit) return false;
+        used.add(hit);
+      }
+      return mine.every((w) => used.has(w) || PARTS.has(w));
+    });
+  });
+}
+
 // Menu items that look like they need what ran out, by name: "Hot dog buns"
 // (Concessions › Hot dogs) → "Hot dog (regular)". Offered, not ticked: two
 // words in common, or the item's only word ("Popcorn" for popcorn kernels).

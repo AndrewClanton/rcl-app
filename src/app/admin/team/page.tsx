@@ -23,7 +23,7 @@ type Params = { view?: string; week?: string; period?: string };
 const HEADINGS = {
   schedule: { title: "Schedule", purpose: "Who's working when, week by week. The register's Start shift list puts the day's scheduled people first." },
   timesheets: { title: "Hours & timesheets", purpose: "Hours worked, from Start shift and End shift on the register, next to what was scheduled." },
-  todos: { title: "To-dos", purpose: "Give someone a task. It shows on the register while they're on shift." },
+  todos: { title: "To-dos", purpose: "Give someone a task. It shows on the register while they're on shift. Ran out reports land here too, for the managers to restock." },
 } as const;
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<Params> }) {

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOpsApi } from "./api";
-import type { OnShift, ShiftStatus } from "@/lib/ops/shared";
+import { isManagerRole, type OnShift, type ShiftStatus, type ShiftTodo } from "@/lib/ops/shared";
 import OpsPanel, { type OpsTab } from "./OpsPanel";
 import { publishOnShift } from "./on-shift-store";
 import BoothsToday from "./BoothsToday";
@@ -52,7 +52,7 @@ const writeSnoozed = (m: Record<string, number>) => {
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 
-export default function ShiftBar({ staff }: { staff: { id: string; name: string }[] }) {
+export default function ShiftBar({ staff, signedInRole }: { staff: { id: string; name: string; role: string }[]; signedInRole: string }) {
   const api = useOpsApi();
   const [status, setStatus] = useState<ShiftStatus | null>(null);
   const [meShift, setMeShift] = useState<string | null>(null);
@@ -100,11 +100,19 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   const me: OnShift | null = status?.onShift.find((o) => o.shiftId === meShift) ?? null;
   const reminders = (status?.reminders ?? []).filter((r) => !snoozed[`${r.reminderId}:${r.occurrence}`]);
   const tasksLeft = status?.tasks.filter((t) => !t.done).length ?? 0;
+  const { cashierId } = useRanOut();
+  // A manager (or above) is here: signed in on this iPad, or the person on
+  // shift using it, or the register's cashier. Only then does the bar show
+  // the managers' to-dos and how much has run out: the cashier can't go
+  // shopping mid-shift, so they only see OUT on the menu buttons.
+  const roleOf = (id: string | null | undefined) => (id ? staff.find((s) => s.id === id)?.role : undefined);
+  const managerHere = isManagerRole(signedInRole) || isManagerRole(roleOf(me?.employeeId)) || isManagerRole(roleOf(cashierId));
   // To-dos from Back office → Team: the ones for whoever's on shift, and the
-  // ones for anybody who's on right now (labelled with their name).
+  // ones for anybody who's on right now (labelled with their name). The
+  // managers' ones (restocking what ran out) only while a manager's here.
   const onShiftIds = new Set((status?.onShift ?? []).map((o) => o.employeeId));
-  const todos = (status?.todos ?? []).filter((t) => !t.assigneeId || onShiftIds.size === 0 || onShiftIds.has(t.assigneeId));
-  const [justDone, setJustDone] = useState<{ id: string; title: string } | null>(null);
+  const todos = (status?.todos ?? []).filter((t) => (t.forManagers ? managerHere : !t.assigneeId || onShiftIds.size === 0 || onShiftIds.has(t.assigneeId)));
+  const [justDone, setJustDone] = useState<{ id: string; title: string; note: string | null; undo: boolean } | null>(null);
   // Assigned training for whoever's on shift, opened in a window over the register.
   const training = status?.training ?? [];
   const [trainingOpen, setTrainingOpen] = useState<{ slug: string; employeeId: string; name: string } | null>(null);
@@ -112,7 +120,6 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
   // "Ran out": reported by the register's cashier, else whoever's using this iPad.
   const [ranOutOpen, setRanOutOpen] = useState(false);
   const [ranOutSaved, setRanOutSaved] = useState<string | null>(null);
-  const { cashierId } = useRanOut();
   const reporterId = cashierId ?? me?.employeeId ?? null;
   const reporterName = reporterId ? (staff.find((s) => s.id === reporterId)?.name ?? status?.onShift.find((o) => o.employeeId === reporterId)?.name ?? null) : null;
   const reporterShift = status?.onShift.find((o) => o.employeeId === reporterId)?.shiftId ?? me?.shiftId ?? null;
@@ -139,6 +146,20 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
     setPanel(null);
     setEndOpen(false);
     await refresh();
+  }
+
+  async function todoDone(t: ShiftTodo) {
+    setTodoError(null);
+    // A to-do for Caleb is done by Caleb, whoever's tapping. A restock one
+    // (Bought it) by whoever's at the register, like Ran out itself.
+    const by = t.assigneeId ?? (t.outageId ? reporterId : me?.employeeId) ?? null;
+    const r = await api.setTodoDone(t.id, by).catch(() => null);
+    if (!r || !r.ok) return setTodoError(`"${t.title}" didn't save. Tap ${t.outageId ? "Bought it" : "Done"} again.`);
+    // Buying it closes its Ran out report: what it stopped is back on sale.
+    const back = r.restock?.back ?? [];
+    setJustDone({ id: t.id, title: t.title, note: back.length ? `Back on sale: ${back.join(", ")}.` : null, undo: !t.outageId });
+    setTimeout(() => setJustDone((j) => (j?.id === t.id ? null : j)), t.outageId ? 10_000 : 6000);
+    refresh();
   }
 
   return (
@@ -199,7 +220,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
             <button className="btn-secondary min-h-11 whitespace-nowrap !px-3 !py-1.5 text-sm" onClick={() => setPanel({ tab: "shopping" })}>
               Shopping
               {status?.lastCount && status.lastCount.below > 0 && <span className="ml-1.5 text-xs">({status.lastCount.below})</span>}
-              {!!status?.ranOut && (
+              {managerHere && !!status?.ranOut && (
                 <span className="ml-1.5 rounded-full px-1.5 text-xs text-white" style={{ background: "var(--accent)" }}>
                   {status.ranOut} out
                 </span>
@@ -301,18 +322,26 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
               <>
                 <span className="flex-1">
                   Done: <strong>{justDone.title}</strong>
+                  {justDone.note && <span className="block">{justDone.note}</span>}
                 </span>
-                <button
-                  className="min-h-11 px-3 font-bold underline"
-                  onClick={async () => {
-                    const id = justDone.id;
-                    setJustDone(null);
-                    await api.undoTodoDone(id).catch(() => null);
-                    refresh();
-                  }}
-                >
-                  Undo
-                </button>
+                {/* A restock to-do closed its Ran out report too, so it has no Undo. */}
+                {justDone.undo ? (
+                  <button
+                    className="min-h-11 px-3 font-bold underline"
+                    onClick={async () => {
+                      const id = justDone.id;
+                      setJustDone(null);
+                      await api.undoTodoDone(id).catch(() => null);
+                      refresh();
+                    }}
+                  >
+                    Undo
+                  </button>
+                ) : (
+                  <button className="min-h-11 px-3 font-bold underline" onClick={() => setJustDone(null)}>
+                    OK
+                  </button>
+                )}
               </>
             )
           )}
@@ -331,7 +360,9 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                 style={{ background: "var(--foreground)", borderColor: "var(--foreground)", color: "var(--background)" }}
                 role="status"
               >
-                <span className="rounded bg-[var(--gold)] px-1.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--gold-foreground)]">To-do</span>
+                <span className="rounded bg-[var(--gold)] px-1.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--gold-foreground)]">
+                  {t.outageId ? "Restock" : t.forManagers ? "Managers" : "To-do"}
+                </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-bold">
                     {t.assigneeName ? `${t.assigneeName}: ` : ""}
@@ -339,7 +370,8 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                   </div>
                   <div className="text-sm opacity-80">
                     {[
-                      t.fromName && `From ${t.fromName}`,
+                      // A restock to-do's details already say who reported it.
+                      t.fromName && !t.outageId && `From ${t.fromName}`,
                       overdue ? "Overdue" : dueToday ? "Due today" : t.dueDate && `Due ${new Date(`${t.dueDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`,
                       t.details,
                     ]
@@ -350,17 +382,9 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
                 <button
                   className="min-h-11 rounded-lg border-2 px-4 py-2 text-sm font-bold"
                   style={{ borderColor: "currentColor" }}
-                  onClick={async () => {
-                    setTodoError(null);
-                    // A to-do for Caleb is done by Caleb, whoever's tapping.
-                    const r = await api.setTodoDone(t.id, t.assigneeId ?? me?.employeeId ?? null).catch(() => null);
-                    if (!r || !r.ok) return setTodoError(`"${t.title}" didn't save. Tap Done again.`);
-                    setJustDone({ id: t.id, title: t.title });
-                    setTimeout(() => setJustDone((j) => (j?.id === t.id ? null : j)), 6000);
-                    refresh();
-                  }}
+                  onClick={() => todoDone(t)}
                 >
-                  Done
+                  {t.outageId ? "Bought it" : "Done"}
                 </button>
               </div>
             );
@@ -469,6 +493,7 @@ export default function ShiftBar({ staff }: { staff: { id: string; name: string 
         <OpsPanel
           tab={panel.tab}
           closing={!!panel.closing}
+          manager={managerHere}
           me={me}
           status={status}
           staff={staff}

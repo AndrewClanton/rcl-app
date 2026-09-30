@@ -22,6 +22,7 @@ const TABS: { id: OpsTab; label: string }[] = [
 export default function OpsPanel({
   tab,
   closing,
+  manager,
   me,
   status,
   staff,
@@ -32,6 +33,8 @@ export default function OpsPanel({
 }: {
   tab: OpsTab;
   closing: boolean;
+  // A manager's using the register: the shopping list shows what ran out.
+  manager: boolean;
   me: OnShift | null;
   status: ShiftStatus | null;
   staff: { id: string; name: string }[];
@@ -90,7 +93,9 @@ export default function OpsPanel({
               }}
             />
           )}
-          {tab === "shopping" && <ShoppingListTab me={me} closing={closing} justCounted={justCounted} onFinishClosing={onFinishClosing} onChanged={onChanged} />}
+          {tab === "shopping" && (
+            <ShoppingListTab me={me} manager={manager} closing={closing} justCounted={justCounted} onFinishClosing={onFinishClosing} onChanged={onChanged} />
+          )}
           {tab === "history" && <HistoryTab />}
           {tab === "reminders" && <RemindersTab me={me} staff={staff} onChanged={onChanged} />}
         </div>

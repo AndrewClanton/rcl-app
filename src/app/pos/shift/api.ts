@@ -29,7 +29,7 @@ export type OpsApi = Pick<
   | "getOpsHistory"
   | "markBoothCardPrinted"
 > &
-  Pick<typeof ranOut, "getRanOutOptions" | "reportOutage" | "getOpenOutages" | "resolveOutage" | "markItemBack">;
+  Pick<typeof ranOut, "getRanOutOptions" | "reportOutage" | "getOpenOutages" | "resolveOutage" | "markItemBack" | "getRaiseParHints">;
 
 export const OpsApiContext = createContext<OpsApi>({ ...actions, ...ranOut });
 export const useOpsApi = () => useContext(OpsApiContext);

@@ -1,5 +1,7 @@
 "use client";
 
+import InfoTip from "@/components/help/InfoTip";
+
 // Download the box office report as a spreadsheet (by movie, or one row per
 // showing), or print it. The rows come ready-made from the page.
 
@@ -29,6 +31,7 @@ export default function BoxOfficeActions({ name, byMovie, byShowing }: { name: s
       <button className={button} disabled={empty} onClick={() => download(`${name}_by-movie.csv`, byMovie)}>
         CSV by movie
       </button>
+      <InfoTip topic="box-office-csv" className="!mx-0" />
       <button className={button} disabled={empty} onClick={() => download(`${name}_by-showing.csv`, byShowing)}>
         CSV by showing
       </button>

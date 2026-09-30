@@ -235,7 +235,7 @@ export const HELP_TOPICS = {
     title: "Ran out (86 it)",
     area: "Register: shift tools",
     body:
-      "Ran out is for something that runs out mid-shift. Pick what ran out, tick the menu items that need it, and save: those buttons show OUT on the register, and it goes to the top of the shopping list. Tapping an OUT button lets you sell it anyway or mark it back. When it's back, say whether more was bought, so the shopping list knows.",
+      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does. The managers get a to-do to buy more (\"Buy Hot dog buns at Walmart\"), with a nudge to raise the par if it keeps happening, and when one marks it Bought it, everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-count": {
@@ -256,7 +256,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself: first what ran out mid-shift, then everything under par on the latest counts, grouped by the store it's bought at. Nobody types it up. When something's bought, mark it Bought so it drops off; Found more or False alarm clears a Ran out report without buying anything.",
+      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. Bought it (here, or on the manager's to-do) clears a Ran out report and puts its menu items back on sale; Found some or False alarm clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {
@@ -366,7 +366,7 @@ export const HELP_TOPICS = {
     title: "Fixing a forgotten clock-out",
     area: "Team and staff",
     body:
-      "If someone forgets End shift, their shift keeps running and their hours come out wrong. A manager fixes it in Team → Timesheets: set the real end (or start) time and say why. Every fix is kept with the times before and after, and the shift is marked edited, so the hours can always be checked.",
+      "If someone forgets End shift, that shift stays open and counts as 0 hours until it's fixed. The register stops showing them as on shift at 4 AM, and their next Start shift begins a new shift instead of carrying on the old one. A manager fixes the old one in Team → Timesheets: set the real end (or start) time and say why. Every fix is kept with the times before and after, and the shift is marked edited.",
   },
   "staff-roles": {
     title: "Staff roles",

@@ -8,6 +8,8 @@ import { getDashboardSummary, type DashboardSummary } from "@/lib/data/reports";
 import { getTicketCounts } from "@/lib/data/screenings";
 import { getTimesheet, thisWeek } from "@/lib/data/team";
 import { getTrainingOverview } from "@/lib/training/data";
+import { getOftenOut } from "@/lib/ops/outages";
+import type { OftenOut } from "@/lib/ops/shared";
 import type { PinStatus } from "@/lib/data/employees";
 import type { EmployeeRole } from "@/lib/types";
 
@@ -73,7 +75,8 @@ export const getSignals = cache(async (role: EmployeeRole): Promise<Signals> => 
       ? quietly(async () => {
           const [list, onShift] = await Promise.all([
             db.from("printers").select("name, last_seen_at, poll_interval_seconds").eq("active", true),
-            count(db.from("shifts").select("id", { count: "exact", head: true }).is("ended_at", null)),
+            // Someone on shift today (not a forgotten clock-out from before).
+            count(db.from("shifts").select("id", { count: "exact", head: true }).is("ended_at", null).gte("started_at", new Date(dayStart).toISOString())),
           ]);
           if (list.error) throw list.error;
           const offline = list.data.filter((p) => !isOnline(p.last_seen_at as string | null, p.poll_interval_seconds as number)).map((p) => p.name as string);
@@ -157,6 +160,10 @@ export interface TodayBoard {
   onShift: { name: string; since: string }[] | null;
   hours: { mine: number; onNowSince: string | null; team: number | null } | null;
   trainingOverdue: number | null; // managers only
+  // Managers only: open to-dos for the managers ("Buy Hot dog buns at
+  // Walmart", from Ran out), and par lines that keep running out.
+  managerTodos: { id: string; title: string; createdAt: string }[] | null;
+  oftenOut: OftenOut[] | null;
 }
 
 export async function getTodayBoard(staff: { employeeId: string; role: EmployeeRole }): Promise<TodayBoard> {
@@ -166,7 +173,9 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
   const manager = hasManagerAccess(staff.role);
 
   const shifts = quietly(async () => {
-    const { data, error } = await db.from("shifts").select("employee_id, started_at, employee:employees(name)").is("ended_at", null).order("started_at");
+    // Started today and not ended: a forgotten clock-out from an earlier day
+    // isn't someone on now (Team → Timesheets flags those).
+    const { data, error } = await db.from("shifts").select("employee_id, started_at, employee:employees(name)").is("ended_at", null).gte("started_at", win.start).order("started_at");
     if (error) throw error;
     return (data as unknown as { employee_id: string; started_at: string; employee: { name: string } | null }[]).map((s) => ({
       employeeId: s.employee_id,
@@ -175,7 +184,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     }));
   });
 
-  const [summary, shows, houseEvents, events, booths, onShift, sheet, training] = await Promise.all([
+  const [summary, shows, houseEvents, events, booths, onShift, sheet, training, managerTodos, oftenOut] = await Promise.all([
     quietly(getDashboardSummary),
     quietly(async () => {
       const { data, error } = await db
@@ -235,6 +244,14 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     shifts,
     quietly(() => getTimesheet(thisWeek())),
     manager ? quietly(getTrainingOverview) : null,
+    manager
+      ? quietly(async () => {
+          const { data, error } = await db.from("staff_todos").select("id, title, created_at").eq("audience", "managers").is("done_at", null).order("created_at");
+          if (error) throw error;
+          return data.map((t) => ({ id: t.id as string, title: t.title as string, createdAt: t.created_at as string }));
+        })
+      : null,
+    manager ? quietly(() => getOftenOut()) : null,
   ]);
 
   const mine = sheet?.find((p) => p.employeeId === staff.employeeId);
@@ -256,5 +273,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     onShift: onShift?.map(({ name, since }) => ({ name, since })) ?? null,
     hours,
     trainingOverdue: training ? training.modules.flatMap((m) => m.people.filter((p) => p.assigned && p.overdue)).length : null,
+    managerTodos,
+    oftenOut,
   };
 }

@@ -676,7 +676,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   // Paged, and read in one go through the order (a list of thousands of
   // order ids used to be pasted into a second request, after the first had
   // already stopped at 1,000 orders).
-  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem] = await Promise.all([
+  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }] = await Promise.all([
     supabase.from("ingredients").select("id, name, unit, unit_cost").eq("active", true).order("category").order("name"),
     fetchAll<{ menu_item_id: string | null; quantity: number }>((from, to) =>
       supabase
@@ -692,12 +692,24 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
       supabase.from("inventory_counts").select("ingredient_id, quantity_on_hand, counted_at").order("counted_at").order("id").range(from, to),
     ),
     getRecipesByItem(),
+    supabase.from("menu_items").select("id").eq("is_alcohol", true),
   ]);
   if (ingErr) throw ingErr;
+  if (drinkErr) throw drinkErr;
+
+  // The bar only. Food has recipes too (a hot dog's bun, popcorn kernels),
+  // so "Ran out" knows which buttons to stop; those amounts are placeholders
+  // and those ingredients stay off this report.
+  const drinkIds = new Set((drinks ?? []).map((d) => d.id as string));
+  const barIngredients = new Set<string>();
+  const foodIngredients = new Set<string>();
+  for (const [itemId, recipe] of Object.entries(recipesByItem)) {
+    for (const ri of recipe.ingredients) (drinkIds.has(itemId) ? barIngredients : foodIngredients).add(ri.ingredient_id);
+  }
 
   const theoreticalByIngredient = new Map<string, number>();
   for (const oi of orderItems) {
-    const recipe = oi.menu_item_id ? recipesByItem[oi.menu_item_id] : undefined;
+    const recipe = oi.menu_item_id && drinkIds.has(oi.menu_item_id) ? recipesByItem[oi.menu_item_id] : undefined;
     if (!recipe) continue;
     for (const ri of recipe.ingredients) {
       theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * oi.quantity);
@@ -719,7 +731,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     return best;
   }
 
-  const rows: AlcoholUsageRow[] = (ingredients ?? []).map((ing) => {
+  const rows: AlcoholUsageRow[] = (ingredients ?? []).filter((ing) => barIngredients.has(ing.id) || !foodIngredients.has(ing.id)).map((ing) => {
     const list = countsByIngredient.get(ing.id) ?? [];
     const startCount = latestAtOrBefore(list, since);
     const endCount = latestAtOrBefore(list, now);

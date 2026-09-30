@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import InfoTip from "@/components/help/InfoTip";
 import type { Ingredient, MenuItem, ParItemRef, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { removeRecipeIngredient, updateRecipeIngredientQuantity, updateRecipeMeta } from "./actions";
@@ -113,7 +114,10 @@ function RecipeEditor({ item, recipe, ingredients, parItems }: { item: MenuItem;
         />
       </div>
 
-      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">Ingredients</div>
+      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+        Ingredients
+        <InfoTip topic="recipes-par-link" />
+      </div>
       {(recipe?.ingredients ?? []).length === 0 ? (
         <div className="mb-2 text-sm text-[var(--muted)]">No ingredients yet.</div>
       ) : (

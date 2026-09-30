@@ -59,6 +59,18 @@ export interface ShiftTodo {
   assigneeName: string | null;
   dueDate: string | null;
   fromName: string | null;
+  // For every manager, admin and owner, not one person: the register shows
+  // it only while one of them is using it.
+  forManagers: boolean;
+  // A restock to-do made by "Ran out": Done means it was bought, which
+  // closes that report and puts what it stopped back on sale.
+  outageId: string | null;
+}
+
+// Managers and up (the same roles as hasManagerAccess in src/lib/auth.ts,
+// which is server-only).
+export function isManagerRole(role: string | null | undefined): boolean {
+  return role === "manager" || role === "admin" || role === "owner";
 }
 
 // A booth held for today or tomorrow (confirmed bookings only), for the
@@ -130,6 +142,67 @@ export interface RanOutOptions {
   recipeUses: Record<string, string[]>;
   // Par line id → its open report.
   open: Record<string, { at: string; byName: string | null }>;
+}
+
+// A par line that keeps running out: the managers are asked whether its par
+// should go up. Nothing changes the par by itself.
+export interface OftenOut {
+  parItemId: string;
+  name: string;
+  area: string;
+  times: number; // reports in the window, false alarms left out
+  days: number; // the window: 30
+  lastAt: string;
+  parQty: number | null;
+  unit: string | null;
+  unitSize: string | null;
+}
+
+export const OFTEN_OUT_DAYS = 30;
+export const OFTEN_OUT_TIMES = 2;
+
+// "Ran out 3 times in 30 days. Raise par? It's 2 sleeves now."
+export function raiseParText(o: Pick<OftenOut, "name" | "times" | "days" | "parQty" | "unit" | "unitSize">): string {
+  const par = o.parQty === null ? "It has no par yet." : `It's ${qtyUnit(o.parQty, o.unit)}${o.unitSize ? ` (${o.unitSize})` : ""} now.`;
+  return `${o.name} ran out ${o.times} times in ${o.days} days. Raise par? ${par}`;
+}
+
+// 1st, 2nd, 3rd, 4th … 11th, 12th, 13th, 21st.
+export function ordinal(n: number): string {
+  const tens = n % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : n % 10 === 1 ? "st" : n % 10 === 2 ? "nd" : n % 10 === 3 ? "rd" : "th";
+  return `${n}${suffix}`;
+}
+
+// The managers' restock to-do for a "Ran out" report:
+//   Buy Hot dog buns at Walmart
+//   Ran out 7:45 PM Tue Sep 29, reported by Caleb. Par is 2 sleeves. This
+//   is the 3rd time in 30 days: consider raising the par.
+// A store that's a person ("Andrew" brings the popcorn) reads "Get … from".
+export function restockTaskText(o: {
+  what: string;
+  onSheet: boolean;
+  source: string | null;
+  sourceIsPerson: boolean;
+  reportedAt: string;
+  byName: string | null;
+  parQty: number | null;
+  unit: string | null;
+  unitSize: string | null;
+  times: number; // this report included, false alarms left out
+}): { title: string; details: string } {
+  const source = o.source?.trim() || null;
+  const title = source ? (o.sourceIsPerson ? `Get ${o.what} from ${source}` : `Buy ${o.what} at ${source}`) : `Buy ${o.what}`;
+  const at = new Date(o.reportedAt);
+  const tz = { timeZone: "America/Chicago" } as const;
+  const time = at.toLocaleTimeString("en-US", { ...tz, hour: "numeric", minute: "2-digit" });
+  const day = `${at.toLocaleDateString("en-US", { ...tz, weekday: "short" })} ${at.toLocaleDateString("en-US", { ...tz, month: "short", day: "numeric" })}`;
+  const parts = [`Ran out ${time} ${day}${o.byName ? `, reported by ${o.byName}` : ""}.`];
+  if (o.onSheet) parts.push(o.parQty === null ? "No par set yet." : `Par is ${qtyUnit(o.parQty, o.unit)}${o.unitSize ? ` (${o.unitSize})` : ""}.`);
+  if (o.times >= 2) {
+    parts.push(`This is the ${ordinal(o.times)} time in ${OFTEN_OUT_DAYS} days: ${o.onSheet ? "consider raising the par" : "consider adding it to the par sheet"}.`);
+  }
+  return { title: title.slice(0, 200), details: parts.join(" ") };
 }
 
 export const OUT_LABEL_MAX = 80;

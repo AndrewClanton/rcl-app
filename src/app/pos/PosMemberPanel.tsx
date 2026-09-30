@@ -197,10 +197,12 @@ export default function PosMemberPanel({
         </div>
       ) : (
         <>
-          <div className="mb-2">
-            <button type="button" className="btn-secondary w-full !py-2 text-sm" onClick={() => setFinderOpen(true)}>
+          <div className="mb-2 flex items-center">
+            <button type="button" className="btn-secondary min-w-0 flex-1 !py-2 text-sm" onClick={() => setFinderOpen(true)}>
               Find by photo
             </button>
+            {/* Scanning a member card or online ticket works anywhere on the register. */}
+            <InfoTip topic="door-scanner" />
           </div>
           <input
             className="input"
