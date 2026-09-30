@@ -72,6 +72,7 @@ export default async function AdminMembersPage({
         staffInfo={staffInfo}
         query={params.q ?? ""}
         compedOnly={params.comped === "1"}
+        canManage={!!session && hasManagerAccess(session.role)}
       />
     </div>
   );

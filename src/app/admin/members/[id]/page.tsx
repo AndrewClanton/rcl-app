@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getStaffSession, hasAdminAccess } from "@/lib/auth";
+import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getGiftsForMember } from "@/lib/gift-membership";
@@ -34,6 +34,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       communityPrograms={communityPrograms}
       staffInfo={staffInfo[member.id]}
       viewerIsAdmin={!!session && hasAdminAccess(session.role)}
+      canManage={!!session && hasManagerAccess(session.role)}
       canEditContact={fullContact}
       eraseLog={eraseLog}
     />

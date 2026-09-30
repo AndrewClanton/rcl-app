@@ -3,7 +3,7 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff, assertStaff, assertAdmin } from "@/lib/auth";
+import { requireStaff, assertStaff, assertAdmin, hasManagerAccess } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
@@ -14,26 +14,53 @@ import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 import { seesFullContact } from "@/lib/contact-mask";
 import { birthdayFromInput } from "@/lib/visits";
+import { deleteStoredPhoto } from "@/lib/member-photo";
+import { centralToIso } from "@/lib/ops/time";
 
 function revalidate() {
   revalidatePath("/admin/members");
   revalidatePath("/admin/reports");
 }
 
-export async function addMember(fields: { name: string; email?: string; phone?: string; tier: MemberTier }) {
-  await assertStaff();
-  const name = fields.name.trim();
-  if (!name) return;
-  const supabase = createAdminClient();
-  await supabase.from("members").insert({
-    name,
-    email: fields.email?.trim() || null,
-    phone: fields.phone?.trim() || null,
-    tier: fields.tier,
-  });
-  revalidate();
+// What the back office's member actions return. A failure carries a
+// message for the screen (useRefreshingAction shows it).
+export type MemberActionResult = { ok: true } | { ok: false; error: string };
+
+const DUPLICATE_EMAIL = "A member already has that email.";
+const TIERS: MemberTier[] = ["Insiders", "Insiders+"];
+
+// Managers and up: points, rates, free memberships and the community
+// programs (Andrew, 9/25). A cashier gets null, so the action can say why
+// instead of failing blind.
+async function managerOrNull() {
+  const staff = await assertStaff();
+  return hasManagerAccess(staff.role) ? staff : null;
 }
 
+export async function addMember(fields: { name: string; email?: string; phone?: string; tier: MemberTier }): Promise<MemberActionResult> {
+  await assertStaff();
+  const name = String(fields?.name ?? "").trim();
+  if (!name) return { ok: false, error: "Enter the member's name." };
+  if (!TIERS.includes(fields.tier)) return { ok: false, error: "Pick Insiders or Insiders+." };
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("members").insert({
+    name,
+    email: typeof fields.email === "string" ? fields.email.trim() || null : null,
+    phone: typeof fields.phone === "string" ? fields.phone.trim() || null : null,
+    tier: fields.tier,
+  });
+  if (error?.code === "23505") return { ok: false, error: DUPLICATE_EMAIL };
+  if (error) return { ok: false, error: "Couldn't add the member. Try again." };
+  revalidate();
+  return { ok: true };
+}
+
+// The quick edits on a member's page (tier, monthly member). Only these
+// fields are ever written, whatever else a call sends: the login, points,
+// Stripe ids and the removal stamp are changed by their own actions.
+// Email and phone are managers-and-up (see saveMemberDetails); a cashier's
+// email or phone change is dropped rather than applied. A photo can only
+// be taken off here (removeMemberPhoto, which deletes the file too).
 export async function updateMember(
   id: string,
   fields: Partial<{
@@ -44,19 +71,61 @@ export async function updateMember(
     monthly_member: boolean;
     avatar_url: string | null;
   }>
-) {
+): Promise<MemberActionResult> {
   const staff = await assertStaff();
-  // Contact details are managers-and-up (see saveMemberDetails); a
-  // cashier's email or phone change is dropped rather than applied.
-  const allowed = { ...fields };
-  if (!seesFullContact(staff.role)) {
-    delete allowed.email;
-    delete allowed.phone;
+  const input: Record<string, unknown> = fields && typeof fields === "object" ? fields : {};
+  const allowed: { name?: string; email?: string | null; phone?: string | null; tier?: MemberTier; monthly_member?: boolean } = {};
+  if ("name" in input) {
+    const name = typeof input.name === "string" ? input.name.trim() : "";
+    if (!name) return { ok: false, error: "Name can't be blank." };
+    allowed.name = name;
   }
-  if (Object.keys(allowed).length === 0) return;
-  const supabase = createAdminClient();
-  await supabase.from("members").update(allowed).eq("id", id).is("erased_at", null);
+  if ("tier" in input) {
+    if (!TIERS.includes(input.tier as MemberTier)) return { ok: false, error: "Pick Insiders or Insiders+." };
+    allowed.tier = input.tier as MemberTier;
+  }
+  if ("monthly_member" in input) allowed.monthly_member = input.monthly_member === true;
+  if (seesFullContact(staff.role)) {
+    for (const key of ["email", "phone"] as const) {
+      if (key in input) allowed[key] = typeof input[key] === "string" ? (input[key] as string).trim() || null : null;
+    }
+  }
+  const removePhoto = "avatar_url" in input && input.avatar_url === null;
+
+  if (Object.keys(allowed).length) {
+    const { error } = await createAdminClient().from("members").update(allowed).eq("id", id).is("erased_at", null);
+    if (error?.code === "23505") return { ok: false, error: DUPLICATE_EMAIL };
+    if (error) return { ok: false, error: "Couldn't save. Try again." };
+  }
+  if (removePhoto) return takeOffPhoto(id);
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
+}
+
+// "Remove photo" on a member's page: takes it off their account (and the
+// check-in kiosk) and deletes the stored file, so it isn't still public at
+// its old address.
+export async function removeMemberPhoto(memberId: string): Promise<MemberActionResult> {
+  await assertStaff();
+  return takeOffPhoto(memberId);
+}
+
+async function takeOffPhoto(memberId: string): Promise<MemberActionResult> {
+  const supabase = createAdminClient();
+  const { data: member, error: readErr } = await supabase.from("members").select("avatar_url").eq("id", memberId).is("erased_at", null).maybeSingle();
+  if (readErr) return { ok: false, error: "Couldn't remove the photo. Try again." };
+  if (!member) return { ok: false, error: "Member not found." };
+  if (member.avatar_url) {
+    const { error } = await supabase.from("members").update({ avatar_url: null }).eq("id", memberId);
+    if (error) return { ok: false, error: "Couldn't remove the photo. Try again." };
+  }
+  revalidate();
+  revalidatePath(`/admin/members/${memberId}`);
+  if (!(await deleteStoredPhoto(member.avatar_url, memberId))) {
+    return { ok: false, error: "The photo is off their account, but its file couldn't be deleted from storage. Ask Claude to clean it up." };
+  }
+  return { ok: true };
 }
 
 export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
@@ -66,31 +135,34 @@ export type SaveDetailsResult = { ok: true; message: string } | { ok: false; err
 // customer too, since that's where Stripe sends receipts and renewal
 // notices.
 //
-// Email and phone are managers-and-up: a cashier only ever sees them
-// shortened (lib/contact-mask.ts), so their page leaves them out, and
-// they're refused here too. Left out means "unchanged". The birthday is a
-// month and day ("12-30", "" for none; see BirthdayPicker).
+// Email, phone and points are managers-and-up: a cashier only ever sees
+// the contact details shortened (lib/contact-mask.ts), so their page
+// leaves them out, and they're refused here too, as is a points change.
+// Left out means "unchanged". The birthday is a month and day ("12-30",
+// "" for none; see BirthdayPicker).
 export async function saveMemberDetails(
   id: string,
-  fields: { name: string; email?: string; phone?: string; points: string; birthday?: string },
+  fields: { name: string; email?: string; phone?: string; points?: string; birthday?: string },
 ): Promise<SaveDetailsResult> {
   const staff = await assertStaff();
   if ((fields.email !== undefined || fields.phone !== undefined) && !seesFullContact(staff.role)) {
     return { ok: false, error: "Only a manager can change a member's email or phone." };
   }
-  const name = fields.name.trim();
+  const name = String(fields.name ?? "").trim();
   const email = fields.email?.trim();
   const phone = fields.phone?.trim();
-  const points = Number(fields.points);
+  const points = fields.points === undefined ? undefined : Number(fields.points);
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
   if (!name) return { ok: false, error: "Name can't be blank." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
-  if (fields.points.trim() === "" || !Number.isFinite(points)) return { ok: false, error: "Points has to be a number." };
+  if (points !== undefined && (String(fields.points).trim() === "" || !Number.isFinite(points))) return { ok: false, error: "Points has to be a number." };
   if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of their birthday (or neither)." };
 
   const supabase = createAdminClient();
   const { data: before } = await supabase.from("members").select("name, email, phone, points, birthday, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
   if (!before) return { ok: false, error: "Member not found." };
+  const pointsChange = points !== undefined && points !== Number(before.points);
+  if (pointsChange && !hasManagerAccess(staff.role)) return { ok: false, error: "Only a manager can change a member's points." };
 
   const changes: { name?: string; email?: string | null; phone?: string | null; birthday?: string | null } = {};
   if (name !== before.name) changes.name = name;
@@ -102,7 +174,10 @@ export async function saveMemberDetails(
     if (error?.code === "23505") return { ok: false, error: "Another member already has that email. Search for them in Members." };
     if (error) return { ok: false, error: "Couldn't save. Try again." };
   }
-  if (points !== Number(before.points)) await adjustMemberPoints(id, points);
+  if (pointsChange && !(await setPointsBalance(id, points, staff.employeeId))) {
+    revalidatePath(`/admin/members/${id}`);
+    return { ok: false, error: Object.keys(changes).length ? "Saved the other changes, but the points didn't change. Try again." : "Couldn't change the points. Try again." };
+  }
 
   let message = "Saved ✓";
   // Keep Stripe's copy in step (receipts and renewal notices go there).
@@ -124,9 +199,10 @@ export async function saveMemberDetails(
 
 // Senior/student rates are set only after checking an ID in person. For a
 // paying Insiders+ member this also changes their Stripe price from their
-// next bill (see applyMemberRate).
+// next bill (see applyMemberRate). Managers and up.
 export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<RateChangeResult> {
-  const staff = await assertStaff();
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can change a member's rate." };
   const result = await applyMemberRate(id, tier, staff.employeeId);
   revalidate();
   revalidatePath(`/admin/members/${id}`);
@@ -135,14 +211,27 @@ export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<
 
 // Sets a member's balance by hand. Recorded in their points history as an
 // adjustment by this staff member, so the member can see what changed.
-export async function adjustMemberPoints(id: string, newBalance: number, note?: string) {
-  const staff = await assertStaff();
+// Managers and up.
+export async function adjustMemberPoints(id: string, newBalance: number, note?: string): Promise<MemberActionResult> {
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can change a member's points." };
+  if (typeof newBalance !== "number" || !Number.isFinite(newBalance)) return { ok: false, error: "Points has to be a number." };
+  if (!(await setPointsBalance(id, newBalance, staff.employeeId, note))) return { ok: false, error: "Couldn't change the points. Try again." };
+  return { ok: true };
+}
+
+// The shared step behind the two above; the caller has checked the role.
+async function setPointsBalance(id: string, newBalance: number, by: string, note?: string): Promise<boolean> {
   const { data: member } = await createAdminClient().from("members").select("points").eq("id", id).is("erased_at", null).maybeSingle();
-  if (!member) return;
+  if (!member) return false;
   const delta = Math.round((newBalance - Number(member.points)) * 100) / 100;
-  if (delta) await applyPoints({ memberId: id, delta, reason: "adjustment", note: note?.trim() || "Adjusted by staff", by: staff.employeeId });
+  if (delta) {
+    const r = await applyPoints({ memberId: id, delta, reason: "adjustment", note: (typeof note === "string" && note.trim()) || "Adjusted by staff", by });
+    if (!r.ok) return false;
+  }
   revalidate();
   revalidatePath(`/admin/members/${id}`);
+  return true;
 }
 
 // Removes a member's personal info on request (see /data-deletion): cancels
@@ -167,36 +256,46 @@ export async function eraseMemberPersonalInfo(id: string, requestedOn: string): 
 // Insiders+ (the tier with free-entry benefits) at no charge, and tags who
 // approved it and which program it's attributed to so nonprofit grant
 // reporting can tally participation by program (see /admin/reports).
-export async function grantFreeMembership(id: string, fields: { communityProgramId: string | null; notes: string }) {
-  const staff = await requireStaff();
+// Managers and up.
+export async function grantFreeMembership(id: string, fields: { communityProgramId: string | null; notes: string }): Promise<MemberActionResult> {
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can grant a free membership." };
   const supabase = createAdminClient();
-  await supabase
+  const { data, error } = await supabase
     .from("members")
     .update({
       tier: "Insiders+",
       comped: true,
-      community_program_id: fields.communityProgramId,
-      comp_notes: fields.notes.trim() || null,
+      community_program_id: typeof fields.communityProgramId === "string" && fields.communityProgramId ? fields.communityProgramId : null,
+      comp_notes: String(fields.notes ?? "").trim() || null,
       comped_by: staff.employeeId,
       comped_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .is("erased_at", null);
+    .is("erased_at", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't grant the free membership. Try again." };
+  if (!data?.length) return { ok: false, error: "Member not found." };
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
 }
 
 // Only reverts tier to plain Insiders if there's no real paid subscription
 // behind it -- a comped member who separately started paying via Stripe
 // should keep Insiders+ from their subscription, not lose it here.
-export async function revokeFreeMembership(id: string) {
-  await requireStaff();
+// Managers and up.
+export async function revokeFreeMembership(id: string): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can revoke a free membership." };
   const supabase = createAdminClient();
-  const { data: member } = await supabase.from("members").select("stripe_subscription_id, plus_gift_until").eq("id", id).maybeSingle();
-  await supabase
+  const { data: member, error: readErr } = await supabase.from("members").select("stripe_subscription_id, plus_gift_until").eq("id", id).is("erased_at", null).maybeSingle();
+  if (readErr) return { ok: false, error: "Couldn't revoke the free membership. Try again." };
+  if (!member) return { ok: false, error: "Member not found." };
+  const { error } = await supabase
     .from("members")
     .update({
       // A gifted year still running keeps it on too.
-      tier: member?.stripe_subscription_id || (member && giftActive(member)) ? "Insiders+" : "Insiders",
+      tier: member.stripe_subscription_id || giftActive(member) ? "Insiders+" : "Insiders",
       comped: false,
       community_program_id: null,
       comp_notes: null,
@@ -204,23 +303,32 @@ export async function revokeFreeMembership(id: string) {
       comped_at: null,
     })
     .eq("id", id);
+  if (error) return { ok: false, error: "Couldn't revoke the free membership. Try again." };
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
 }
 
-export async function addCommunityProgram(fields: { name: string; description?: string }) {
-  const name = fields.name.trim();
-  if (!name) return;
-  await requireStaff();
-  const supabase = createAdminClient();
-  await supabase.from("community_programs").insert({ name, description: fields.description?.trim() || null });
+// Managers and up, like granting one.
+export async function addCommunityProgram(fields: { name: string; description?: string }): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can add a community program." };
+  const name = String(fields?.name ?? "").trim();
+  if (!name) return { ok: false, error: "Enter the program's name." };
+  const description = typeof fields.description === "string" ? fields.description.trim() || null : null;
+  const { error } = await createAdminClient().from("community_programs").insert({ name, description });
+  if (error?.code === "23505") return { ok: false, error: "There's already a program with that name." };
+  if (error) return { ok: false, error: "Couldn't add the program. Try again." };
   revalidate();
+  return { ok: true };
 }
 
-export async function setCommunityProgramActive(id: string, active: boolean) {
-  await requireStaff();
-  const supabase = createAdminClient();
-  await supabase.from("community_programs").update({ active }).eq("id", id);
+export async function setCommunityProgramActive(id: string, active: boolean): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can change a community program." };
+  const { data, error } = await createAdminClient().from("community_programs").update({ active: active === true }).eq("id", id).select("id");
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  if (!data?.length) return { ok: false, error: "That program wasn't found. Refresh the page." };
   revalidate();
+  return { ok: true };
 }
 
 // Opens Stripe's own hosted billing portal for this member's Stripe
@@ -250,8 +358,8 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
 
   let firstChargeAt: Date | null = giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null;
   if (firstChargeDate) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate)) return { ok: false, error: "Pick a valid first-charge date." };
-    firstChargeAt = new Date(`${firstChargeDate}T12:00:00-05:00`); // noon Central
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate) || Number.isNaN(Date.parse(`${firstChargeDate}T12:00:00Z`))) return { ok: false, error: "Pick a valid first-charge date." };
+    firstChargeAt = new Date(centralToIso(firstChargeDate, "12:00")); // noon Central, CDT or CST
     // Stripe won't hold a first charge for less than 48 hours.
     if (firstChargeAt.getTime() < Date.now() + 49 * 3_600_000) return { ok: false, error: "The first charge has to be at least 2 days out. Leave the date blank to charge today." };
   }
