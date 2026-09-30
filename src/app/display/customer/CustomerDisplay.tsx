@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
-import { LADDER, REWARD_LABEL } from "@/lib/visits";
+import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
 import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
@@ -29,7 +29,8 @@ function showtime(iso: string) {
 //   checks in when they come through the door;
 // - right: the live order as the bartender rings it up (PosApp.tsx
 //   broadcasts cart snapshots; nothing is saved until the sale), or,
-//   between orders, a Royale welcome: tonight's movies and the points path.
+//   between orders, a Royale welcome: tonight's movies and what checking in
+//   earns (points and badges, lib/visits.ts).
 // The register's ✨ Celebrate throws streamers across the whole screen.
 // previewCart / previewStep / previewTickets are for previews only.
 export default function CustomerDisplay({
@@ -123,18 +124,40 @@ function Welcome({ movies }: { movies: PromoMovie[] }) {
           </div>
         </section>
       )}
-      <section className={k.pitch}>
-        <div className={k.pitchTitle}>Check in every visit. Your streak pays.</div>
-        <div className={k.ladder}>
-          {LADDER.map((s) => (
-            <div key={s.day} className={k.rung}>
-              <div className={k.rungDay}>Day {s.day}</div>
-              <div className={k.rungWhat}>{s.reward ? `${s.reward === "popcorn" ? "🍿" : "🍕"} ${REWARD_LABEL[s.reward]}` : `${s.points} pts`}</div>
-            </div>
-          ))}
-        </div>
-      </section>
+      <BadgePitch />
     </>
+  );
+}
+
+// The badges on the welcome pitch, in this order (there are a few more).
+const PITCH: BadgeKey[] = ["welcome", "weeks_4", "weeks_13", "weeks_26", "weeks_52", "early_riser", "night_owl", "visits_10"];
+
+// Why checking in pays: points every time, and badges for coming back.
+function BadgePitch() {
+  const badges = PITCH.flatMap((key) => BADGES.filter((b) => b.key === key));
+  return (
+    <section className={k.pitch}>
+      <div className={k.pitchTitle}>
+        {VISIT_POINTS} points every check-in.
+        <span className={k.pitchMore}>Come every week for bonuses.</span>
+      </div>
+      <ul className={k.badgeRow}>
+        {badges.map((b) => (
+          <li key={b.key} className={k.badgeChip}>
+            <span className={k.chipEmoji} aria-hidden="true">
+              {b.emoji}
+            </span>
+            <span className={k.chipLabel}>{b.label}</span>
+            <span className={k.chipWhat}>{b.reward ? `+ free ${b.reward}` : `+${b.points}`}</span>
+          </li>
+        ))}
+        {BADGES.length > badges.length && (
+          <li className={k.chipMore} aria-label="and more">
+            …
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }
 

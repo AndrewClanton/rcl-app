@@ -45,7 +45,7 @@ export default function PosMemberPanel({
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
   employeeId: string;
-  // Puts a redeemed streak reward on the order as a $0 line.
+  // Puts a redeemed badge reward on the order as a $0 line.
   onRewardLine: (label: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -274,9 +274,10 @@ export default function PosMemberPanel({
   );
 }
 
-// Streak rewards this member has earned and not used yet (free popcorn at a
-// 7-visit streak, free pizza at 30; see lib/visits.ts). Redeem marks it used
-// and puts it on the order at $0; Undo gives it back if it was a mis-tap.
+// Badge rewards this member has earned and not used yet (a free popcorn
+// with 13 weeks in a row, a free pizza with 26; see lib/visits.ts). Redeem
+// marks it used and puts it on the order at $0; Undo gives it back if it
+// was a mis-tap.
 function MemberRewards({ memberId, onRewardLine }: { memberId: string; onRewardLine: (label: string) => void }) {
   const [rewards, setRewards] = useState<OpenReward[]>([]);
   const [used, setUsed] = useState<OpenReward[]>([]);
@@ -306,7 +307,7 @@ function MemberRewards({ memberId, onRewardLine }: { memberId: string; onRewardL
     setRewards((rs) => rs.filter((x) => x.id !== r.id));
     if (!ok) return setError("That reward was already used (maybe on the other register).");
     setUsed((u) => [...u, r]);
-    onRewardLine(`${r.label} (streak reward)`);
+    onRewardLine(`${r.label} (badge reward)`);
   }
 
   async function undo(r: OpenReward) {

@@ -13,6 +13,7 @@ import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 import { seesFullContact } from "@/lib/contact-mask";
+import { birthdayFromInput } from "@/lib/visits";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -60,14 +61,19 @@ export async function updateMember(
 
 export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
 
-// The Save button on a member's page: name, email, phone and points
-// together. A changed email or name is copied to their Stripe customer too,
-// since that's where Stripe sends receipts and renewal notices.
+// The Save button on a member's page: name, email, phone, points and
+// birthday together. A changed email or name is copied to their Stripe
+// customer too, since that's where Stripe sends receipts and renewal
+// notices.
 //
 // Email and phone are managers-and-up: a cashier only ever sees them
 // shortened (lib/contact-mask.ts), so their page leaves them out, and
-// they're refused here too. Left out means "unchanged".
-export async function saveMemberDetails(id: string, fields: { name: string; email?: string; phone?: string; points: string }): Promise<SaveDetailsResult> {
+// they're refused here too. Left out means "unchanged". The birthday is a
+// month and day ("12-30", "" for none; see BirthdayPicker).
+export async function saveMemberDetails(
+  id: string,
+  fields: { name: string; email?: string; phone?: string; points: string; birthday?: string },
+): Promise<SaveDetailsResult> {
   const staff = await assertStaff();
   if ((fields.email !== undefined || fields.phone !== undefined) && !seesFullContact(staff.role)) {
     return { ok: false, error: "Only a manager can change a member's email or phone." };
@@ -76,18 +82,21 @@ export async function saveMemberDetails(id: string, fields: { name: string; emai
   const email = fields.email?.trim();
   const phone = fields.phone?.trim();
   const points = Number(fields.points);
+  const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
   if (!name) return { ok: false, error: "Name can't be blank." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
   if (fields.points.trim() === "" || !Number.isFinite(points)) return { ok: false, error: "Points has to be a number." };
+  if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of their birthday (or neither)." };
 
   const supabase = createAdminClient();
-  const { data: before } = await supabase.from("members").select("name, email, phone, points, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
+  const { data: before } = await supabase.from("members").select("name, email, phone, points, birthday, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
   if (!before) return { ok: false, error: "Member not found." };
 
-  const changes: { name?: string; email?: string | null; phone?: string | null } = {};
+  const changes: { name?: string; email?: string | null; phone?: string | null; birthday?: string | null } = {};
   if (name !== before.name) changes.name = name;
   if (email !== undefined && email !== (before.email ?? "")) changes.email = email || null;
   if (phone !== undefined && phone !== (before.phone ?? "")) changes.phone = phone || null;
+  if (birthday !== undefined && birthday !== (before.birthday ?? null)) changes.birthday = birthday;
   if (Object.keys(changes).length) {
     const { error } = await supabase.from("members").update(changes).eq("id", id).is("erased_at", null);
     if (error?.code === "23505") return { ok: false, error: "Another member already has that email. Search for them in Members." };

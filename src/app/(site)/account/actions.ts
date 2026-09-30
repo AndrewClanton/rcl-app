@@ -10,6 +10,7 @@ import { getStripe } from "@/lib/stripe";
 import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
+import { birthdayFromInput } from "@/lib/visits";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -95,10 +96,11 @@ export async function startBillingPortal(): Promise<BillingPortalResult> {
 
 export type ProfileResult = { ok: true } | { ok: false; error: string };
 
-// Members can fix their own name and phone, and write a short line about
-// themselves (staff see it when they check in). Email is how they sign in,
-// so it isn't editable here.
-export async function updateMyProfile(fields: { name: string; phone: string; tagline?: string }): Promise<ProfileResult> {
+// Members can fix their own name and phone, write a short line about
+// themselves (staff see it when they check in), and give their birthday
+// (month and day, "12-30", for the Birthday Visit badge; "" removes it).
+// Email is how they sign in, so it isn't editable here.
+export async function updateMyProfile(fields: { name: string; phone: string; tagline?: string; birthday?: string }): Promise<ProfileResult> {
   const member = await requireMember();
   const name = fields.name.trim();
   if (!name) return { ok: false, error: "Enter your name." };
@@ -107,9 +109,16 @@ export async function updateMyProfile(fields: { name: string; phone: string; tag
   if (phone && phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
   const tagline = (fields.tagline ?? "").replace(/\s+/g, " ").trim();
   if (tagline.length > 120) return { ok: false, error: "Keep your line to 120 characters." };
+  const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
+  if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of your birthday (or neither)." };
   const { error } = await createAdminClient()
     .from("members")
-    .update({ name, phone: phone || null, ...(fields.tagline !== undefined ? { tagline: tagline || null } : {}) })
+    .update({
+      name,
+      phone: phone || null,
+      ...(fields.tagline !== undefined ? { tagline: tagline || null } : {}),
+      ...(birthday !== undefined ? { birthday } : {}),
+    })
     .eq("id", member.id);
   if (error) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");

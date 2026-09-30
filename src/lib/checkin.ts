@@ -21,7 +21,7 @@
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
-import type { RewardKind } from "@/lib/visits";
+import type { EarnedBadge } from "@/lib/visits";
 
 export type CheckinKind = "known" | "new";
 
@@ -36,9 +36,10 @@ export interface CheckinConfirmed {
   firstName: string;
   points: number; // balance, after any visit points
   isNew: boolean;
-  // Today's visit (lib/visits.ts): its points, streak, and any reward.
-  // Missing if the visit couldn't be saved.
-  visit?: { earned: number; streak: number; alreadyToday: boolean; reward: RewardKind | null };
+  // Today's visit (lib/visits.ts): the check-in's points, their week
+  // streak, and any new badges (each with its points and reward). earned is
+  // everything it paid. Missing if the visit couldn't be saved.
+  visit?: { earned: number; visitPoints: number; weekStreak: number; alreadyToday: boolean; badges: EarnedBadge[] };
   // "Scan to see your points online": a member with no login yet, confirmed
   // by staff (pos/checkin-actions.ts confirmVisit). The screen only shows it
   // if it passes isClaimUrl.

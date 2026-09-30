@@ -3,25 +3,40 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import BirthdayPicker from "@/components/BirthdayPicker";
+import { badgeFor, birthdayFromInput } from "@/lib/visits";
 import { setEmailOptIn, updateMyProfile } from "../../actions";
 
-export function ProfileDetailsForm({ name: initialName, phone: initialPhone, tagline: initialTagline }: { name: string; phone: string; tagline: string }) {
+// birthday is "12-30" or "" (see BirthdayPicker).
+export function ProfileDetailsForm({
+  name: initialName,
+  phone: initialPhone,
+  tagline: initialTagline,
+  birthday: initialBirthday,
+}: {
+  name: string;
+  phone: string;
+  tagline: string;
+  birthday: string;
+}) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [phone, setPhone] = useState(initialPhone);
   const [tagline, setTagline] = useState(initialTagline);
+  const [birthday, setBirthday] = useState(initialBirthday);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const dirty = name !== initialName || phone !== initialPhone || tagline !== initialTagline;
+  const dirty = name !== initialName || phone !== initialPhone || tagline !== initialTagline || birthday !== initialBirthday;
 
   return (
     <form
       className="grid gap-3 sm:grid-cols-2"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (birthdayFromInput(birthday) === undefined) return setMsg({ ok: false, text: "Pick both the month and the day of your birthday (or neither)." });
         setBusy(true);
         setMsg(null);
-        const r = await updateMyProfile({ name, phone, tagline }).catch(() => ({ ok: false as const, error: "Something went wrong." }));
+        const r = await updateMyProfile({ name, phone, tagline, birthday }).catch(() => ({ ok: false as const, error: "Something went wrong." }));
         setBusy(false);
         setMsg(r.ok ? { ok: true, text: "Saved." } : { ok: false, text: r.error });
         if (r.ok) router.refresh();
@@ -35,6 +50,17 @@ export function ProfileDetailsForm({ name: initialName, phone: initialPhone, tag
         <div className="label-xs">Phone</div>
         <input id="profile-phone" className="input" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" inputMode="tel" placeholder="(417) 555-0123" />
       </label>
+      <div className="block sm:col-span-2">
+        <label className="label-xs" htmlFor="profile-birthday">
+          Birthday (optional)
+        </label>
+        <div className="sm:max-w-sm">
+          <BirthdayPicker id="profile-birthday" className="input" value={birthday} onChange={setBirthday} />
+        </div>
+        <div className="mt-1 text-xs text-[var(--muted)]">
+          Check in during your birthday week for {badgeFor("birthday")?.points} bonus points. Just the month and day; no year.
+        </div>
+      </div>
       <label className="block sm:col-span-2">
         <div className="label-xs">Your line (optional)</div>
         <input

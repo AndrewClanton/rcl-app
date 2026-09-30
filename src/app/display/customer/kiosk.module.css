@@ -360,6 +360,43 @@
   border: 3px solid var(--ink);
   border-radius: 10px;
 }
+/* a new badge: ink with a gold edge, its emoji big on a gold coin */
+.toastBadge {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px 10px 12px;
+  background: var(--ink);
+  color: var(--cream);
+  border-color: var(--gold);
+  animation: badgeIn 480ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.toastBadge .toastTitle {
+  color: var(--gold);
+}
+.toastBadge .toastDetail {
+  font-weight: 700;
+}
+.badgeEmoji {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow:
+    0 0 0 3px var(--ink),
+    0 0 0 5px var(--gold);
+  font-size: 30px;
+  line-height: 1;
+}
+@keyframes badgeIn {
+  from {
+    transform: translateY(-10px) scale(0.92);
+    opacity: 0;
+  }
+}
 .toastScan {
   margin-top: 6px;
   font-family: var(--mono);
@@ -462,30 +499,48 @@
   font-size: clamp(22px, 3.2vh, 32px);
   line-height: 1.05;
 }
-.ladder {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-  margin-top: 12px;
+.pitchMore {
+  display: block;
+  font-size: 0.6em;
+  margin-top: 4px;
 }
-.rung {
+/* the badges, as a wrapping row of small printed pills */
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.badgeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 2px solid var(--ink);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  padding: 3px 10px 3px 6px;
+  background: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
 }
-.rungDay {
+.chipEmoji {
+  font-size: 18px;
+  line-height: 1;
+}
+.chipLabel {
+  font-family: var(--display);
+  font-size: 14px;
+  line-height: 1.1;
+}
+.chipWhat {
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
-.rungWhat {
+.chipMore {
+  align-self: center;
   font-family: var(--display);
-  font-size: 18px;
-  line-height: 1.1;
-  margin-top: 2px;
+  font-size: 16px;
 }
 
 /* the order, on a cream receipt */
@@ -599,6 +654,7 @@
 @media (prefers-reduced-motion: reduce) {
   .check,
   .toast,
+  .toastBadge,
   .ticketsCard {
     animation: none;
   }

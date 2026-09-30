@@ -16,6 +16,8 @@ import { approvalText } from "@/lib/pin-rules";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { giftEndsWithoutRenewal, plusNeedsCard, plusPaidFor } from "@/lib/plus-status";
+import { birthdayToInput } from "@/lib/visits";
+import BirthdayPicker from "@/components/BirthdayPicker";
 import { createMemberBillingPortalLink, createMemberCardLink, eraseMemberPersonalInfo, grantFreeMembership, revokeFreeMembership, saveMemberDetails, setMemberRate, updateMember } from "../actions";
 
 function money(n: number) {
@@ -105,11 +107,16 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
   const [email, setEmail] = useState(member.email ?? "");
   const [phone, setPhone] = useState(member.phone ?? "");
   const [points, setPoints] = useState(String(member.points));
+  const [birthday, setBirthday] = useState(birthdayToInput(member.birthday));
   const router = useRouter();
   const [saving, startSave] = useTransition();
   const [saved, setSaved] = useState<{ ok: boolean; text: string } | null>(null);
   const dirty =
-    name !== member.name || email !== (member.email ?? "") || phone !== (member.phone ?? "") || (points.trim() !== "" && Number(points) !== Number(member.points));
+    name !== member.name ||
+    email !== (member.email ?? "") ||
+    phone !== (member.phone ?? "") ||
+    (points.trim() !== "" && Number(points) !== Number(member.points)) ||
+    birthday !== birthdayToInput(member.birthday);
 
   function save(e: React.FormEvent) {
     e.preventDefault();
@@ -118,7 +125,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     startSave(async () => {
       // A cashier's copy of the email and phone is shortened, so it's never
       // sent back: saving would overwrite the real ones with the dots.
-      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, points } : { name, points }).catch(() => null);
+      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, points, birthday } : { name, points, birthday }).catch(() => null);
       if (!r) return setSaved({ ok: false, text: "Couldn't save. Try again." });
       setSaved(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
       if (r.ok) router.refresh();
@@ -130,6 +137,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     setEmail(member.email ?? "");
     setPhone(member.phone ?? "");
     setPoints(String(member.points));
+    setBirthday(birthdayToInput(member.birthday));
     setSaved(null);
   }
 
@@ -219,6 +227,9 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
               value={points}
               onChange={(e) => setPoints(e.target.value)}
             />
+          </Field>
+          <Field label="Birthday" hint="Month and day only. Checking in during their birthday week earns the Birthday Visit badge.">
+            <BirthdayPicker value={birthday} onChange={setBirthday} className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " />
           </Field>
           <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
             <button type="submit" className="rounded bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" disabled={!dirty || saving}>

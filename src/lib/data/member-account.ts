@@ -439,6 +439,9 @@ export interface YearStatement {
   points: { earned: number; redeemed: number; other: number; endBalance: number | null };
 }
 
+// Points history reasons that count as earned on a statement.
+const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge"];
+
 export async function getYearStatement(memberId: string, year: number): Promise<YearStatement> {
   const [purchases, ledger] = await Promise.all([getPurchases(memberId), getPointsLedger(memberId, 5000)]);
   const inYear = purchases.filter((p) => yearOf(p.date) === year);
@@ -451,9 +454,9 @@ export async function getYearStatement(memberId: string, year: number): Promise<
     refunded: sum(inYear.filter((p) => p.status === "refunded").map((p) => p.amount)),
     tax: sum(inYear.filter((p) => p.status === "completed").map((p) => p.tax)),
     points: {
-      earned: sum(yearLedger.filter((l) => l.reason === "purchase" || l.reason === "welcome_bonus" || l.reason === "visit").map((l) => l.delta)),
+      earned: sum(yearLedger.filter((l) => EARNED_REASONS.includes(l.reason)).map((l) => l.delta)),
       redeemed: -sum(yearLedger.filter((l) => l.reason === "redeem").map((l) => l.delta)),
-      other: sum(yearLedger.filter((l) => !["purchase", "welcome_bonus", "visit", "redeem"].includes(l.reason)).map((l) => l.delta)),
+      other: sum(yearLedger.filter((l) => !EARNED_REASONS.includes(l.reason) && l.reason !== "redeem").map((l) => l.delta)),
       endBalance: yearLedger[0]?.balanceAfter ?? null,
     },
   };
