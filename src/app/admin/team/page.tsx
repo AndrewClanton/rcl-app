@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requireManager } from "@/lib/auth";
-import { shiftDate } from "@/lib/ops/time";
+import { businessDay, shiftDate } from "@/lib/ops/time";
 import { getForgottenClockOuts, getSchedule, getTeam, getTimesheet, getTodos, payPeriodStart, thisWeek, weekStartOf } from "@/lib/data/team";
 import PageHeader from "@/components/admin/PageHeader";
 import ScheduleWeek from "./ScheduleWeek";
@@ -106,7 +106,7 @@ async function ScheduleView({ week }: { week: string }) {
       week={week}
       days={Array.from({ length: 7 }, (_, i) => ({ date: shiftDate(week, i), label: dayLabel(shiftDate(week, i)) }))}
       team={team}
-      shifts={shifts.map((s) => ({ ...s, time: `${clock(s.startsAt)}–${clock(s.endsAt)}`, date: new Date(new Date(s.startsAt).getTime() - 4 * 3_600_000).toLocaleDateString("en-CA", { timeZone: TZ }) }))}
+      shifts={shifts.map((s) => ({ ...s, time: `${clock(s.startsAt)}–${clock(s.endsAt)}`, date: businessDay(new Date(s.startsAt)).date }))}
     />
   );
 }

@@ -9,9 +9,14 @@ import { searchMovies, getMovieDetails } from "@/lib/omdb";
 import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
+<<<<<<< HEAD
 import { centralToIso } from "@/lib/ops/time";
 import { SHOWING_VISIBILITIES, isOutdoorRoom, type ShowingVisibility } from "@/lib/showing-visibility";
 import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
+=======
+import { centralToIso, shiftDate } from "@/lib/ops/time";
+import { getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
+>>>>>>> 916eb74 (Lobby TV, schedule and late end times use the 4 AM business day on DST nights)
 
 function revalidate() {
   // The rows behind Home, Showtimes and the sitemap (cached for a minute):
@@ -53,8 +58,9 @@ export async function addHouseEvent(input: { title: string; note: string; date: 
   if (input.end) {
     if (!/^\d{1,2}:\d{2}$/.test(input.end)) return { ok: false, error: "That end time doesn't look right." };
     endsAt = centralToIso(input.date, input.end);
-    // Ends after midnight (a late comedy show): the next day.
-    if (endsAt <= startsAt) endsAt = new Date(new Date(endsAt).getTime() + 86_400_000).toISOString();
+    // Ends after midnight (a late comedy show): that time on the next date,
+    // not 24 hours on, which is an hour off the night the clocks change.
+    if (endsAt <= startsAt) endsAt = centralToIso(shiftDate(input.date, 1), input.end);
   }
   const { error } = await createAdminClient().from("house_events").insert({ title, note: input.note.trim() || null, starts_at: startsAt, ends_at: endsAt });
   if (error) return { ok: false, error: "Couldn't save that event. Try again." };

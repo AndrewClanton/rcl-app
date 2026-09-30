@@ -12,22 +12,26 @@
 //  5. Every 15 minutes of 2026 (every minute of the two change nights): the
 //     business day's window holds the moment, starts at 4:00 on the wall
 //     clock, and ends where the next day's starts.
+//  6. The lobby TV's day labels (src/app/display/box-office/board.ts):
+//     Tonight / Today / Tomorrow by business date, change nights included.
 //
 // Usage: node scripts/check-business-day.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
 
-// "server-only" (which throws outside Next's server build) is a no-op here.
+// board.ts imports "@/lib/ops/time" (the app's path alias): point it at src/.
 register(
   "data:text/javascript," +
     encodeURIComponent(
-      `export async function resolve(s, c, next) {
-        if (s === "server-only") return { url: "data:text/javascript,", shortCircuit: true };
+      `const src = ${JSON.stringify(new URL("../src/", import.meta.url).href)};
+      export async function resolve(s, c, next) {
+        if (s.startsWith("@/")) return next(src + s.slice(2) + ".ts", c);
         return next(s, c);
       }`,
     ),
 );
 
 const { businessDay, businessDayWindow, centralToIso, recentBusinessDays, shiftDate } = await import("../src/lib/ops/time.ts");
+const { dayLabel } = await import("../src/app/display/box-office/board.ts");
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -128,6 +132,12 @@ eq("fall: 12:30 AM (CDT)", centralToIso("2026-11-01", "00:30"), "2026-11-01T05:3
 eq("fall: 1:30 AM (twice) is the first, CDT", centralToIso("2026-11-01", "01:30"), "2026-11-01T06:30:00.000Z");
 eq("fall: 2:30 AM CST", centralToIso("2026-11-01", "02:30"), "2026-11-01T08:30:00.000Z");
 eq("Dec 31, 11 PM CST", centralToIso("2026-12-31", "23:00"), "2027-01-01T05:00:00.000Z");
+// A closing shift or late event that ends after midnight ends at that time on
+// the next date (admin/team and admin/screenings actions), not 24 hours on.
+eq("fall: Sat 5 PM-2 AM shift ends 2 AM CST", centralToIso(shiftDate("2026-10-31", 1), "02:00"), "2026-11-01T08:00:00.000Z");
+eq("  (24 hours on would say 1 AM CST)", new Date(Date.parse(centralToIso("2026-10-31", "02:00")) + 86_400_000).toISOString(), "2026-11-01T07:00:00.000Z");
+eq("spring: Sat 5 PM-1 AM shift ends 1 AM CST", centralToIso(shiftDate("2026-03-07", 1), "01:00"), "2026-03-08T07:00:00.000Z");
+eq("a normal night's 12:30 AM end", centralToIso(shiftDate("2026-10-02", 1), "00:30"), "2026-10-03T05:30:00.000Z");
 
 // ---------- 5. every moment of 2026 ----------
 {
@@ -159,6 +169,28 @@ eq("Dec 31, 11 PM CST", centralToIso("2026-12-31", "23:00"), "2027-01-01T05:00:0
   check("every 2026 window starts at 4:00 AM on the wall clock", !bad.start.length, bad.start.slice(0, 3).join(", "));
   check("  and ends where the next day's starts", !bad.seam.length, bad.seam.slice(0, 3).join(", "));
   check("  and is 24 hours, but for Mar 7 (23) and Oct 31 (25)", !bad.length.length, bad.length.slice(0, 3).join(", "));
+}
+
+// ---------- 6. the lobby TV's day labels ----------
+{
+  const label = (show, now, long) => dayLabel(show.getTime(), now.getTime(), long);
+  const friEvening = cdt("2026-10-02", "19:00");
+  eq("TV: 2 PM show, same day", label(cdt("2026-10-02", "14:00"), cdt("2026-10-02", "12:00")), "Today");
+  eq("TV: 9 PM show is Tonight", label(cdt("2026-10-02", "21:00"), friEvening), "Tonight");
+  eq("TV: 12:30 AM show is still Tonight", label(cdt("2026-10-03", "00:30"), friEvening), "Tonight");
+  eq("TV: Saturday 7 PM is Tomorrow", label(cdt("2026-10-03", "19:00"), friEvening), "Tomorrow");
+  eq("TV: 12:30 AM Sunday (Saturday night) is Tomorrow", label(cdt("2026-10-04", "00:30"), friEvening), "Tomorrow");
+  eq("TV: Sunday 7 PM is the day", label(cdt("2026-10-04", "19:00"), friEvening), "Sun 10/4");
+  eq("  long", label(cdt("2026-10-04", "19:00"), friEvening, true), "Sunday, Oct 4");
+  eq("TV: at 1 AM, a 7 PM show that evening is Tomorrow", label(cdt("2026-10-03", "19:00"), cdt("2026-10-03", "01:00")), "Tomorrow");
+  // Spring forward: at 4:30 AM CDT Sunday it's Sunday (minus-four-hours said Saturday).
+  eq("TV spring: at 4:30 AM Sunday, Sunday 7 PM is Tonight", label(cdt("2026-03-08", "19:00"), cdt("2026-03-08", "04:30")), "Tonight");
+  eq("TV spring: and Monday 7 PM is Tomorrow", label(cdt("2026-03-09", "19:00"), cdt("2026-03-08", "04:30")), "Tomorrow");
+  // Fall back: at 3:30 AM CST Sunday it's still Saturday (minus-four-hours said Sunday).
+  eq("TV fall: at 3:30 AM Sunday, Sunday 7 PM is Tomorrow", label(cst("2026-11-01", "19:00"), cst("2026-11-01", "03:30")), "Tomorrow");
+  eq("TV fall: at 4:30 AM Saturday, Sunday 7 PM is Tomorrow", label(cst("2026-11-01", "19:00"), cdt("2026-10-31", "04:30")), "Tomorrow");
+  eq("TV fall: and Monday 7 PM is the day", label(cst("2026-11-02", "19:00"), cdt("2026-10-31", "04:30")), "Mon 11/2");
+  eq("TV: New Year's Eve, a 7 PM Jan 1 show is Tomorrow", label(cst("2027-01-01", "19:00"), cst("2026-12-31", "20:00")), "Tomorrow");
 }
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll business-day checks passed.");

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { businessDay, centralToIso } from "@/lib/ops/time";
+import { businessDay, centralToIso, shiftDate } from "@/lib/ops/time";
 import { finishTodo, removeTodo, reopenTodo } from "@/lib/ops/outages";
 import { centralLocal } from "@/lib/hours";
 
@@ -157,8 +157,9 @@ export async function addScheduledShift(input: { employeeId: string; date: strin
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{1,2}:\d{2}$/.test(input.start) || !/^\d{1,2}:\d{2}$/.test(input.end)) return { ok: false, error: "Pick a day, a start and an end time." };
   const startsAt = centralToIso(input.date, input.start);
   let endsAt = centralToIso(input.date, input.end);
-  // Ends after midnight (a closing shift): the next day.
-  if (endsAt <= startsAt) endsAt = new Date(new Date(endsAt).getTime() + 86_400_000).toISOString();
+  // Ends after midnight (a closing shift): that time on the next date, not 24
+  // hours on, which is an hour off the night the clocks change.
+  if (endsAt <= startsAt) endsAt = centralToIso(shiftDate(input.date, 1), input.end);
   const { error } = await createAdminClient()
     .from("staff_schedule")
     .insert({ employee_id: input.employeeId, starts_at: startsAt, ends_at: endsAt, note: input.note.trim() || null, created_by: staff.employeeId });
