@@ -321,8 +321,9 @@ export async function unlimitedPhoneLink(
   if (how === "tablet") return { ok: true, url, firstName: name, message: "The QR code is on the customer screen." };
 
   if (!(await allowAttempt(`unlimited-email:${m.id}`, 3, 3600))) return { ok: false, error: "Already emailed a few times this hour. Show the QR code instead." };
-  const email = { name: m.name, plan: planPrice(plan.tier, plan.interval), url };
-  const sent = await sendEmail(m.email, unlimitedFinishSubject(), unlimitedFinishHtml(email), {
+  const legacy = !!(m as { legacy_plus?: boolean | null }).legacy_plus;
+  const email = { name: m.name, plan: planPrice(plan.tier, plan.interval), url, legacy };
+  const sent = await sendEmail(m.email, unlimitedFinishSubject(legacy), unlimitedFinishHtml(email), {
     text: unlimitedFinishText(email),
     tags: [{ name: "type", value: "unlimited_finish" }],
     idempotencyKey: `unlimited-finish:${m.id}:${Math.floor(Date.now() / 60_000)}`,

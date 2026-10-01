@@ -162,9 +162,10 @@ export default function PosMemberPanel({
             </div>
           </div>
 
-          {member.legacyUnlimited && (
+          {(member.legacyUnlimited || (!member.subscribed && !member.comped)) && (
             <LegacyPlusCard
               key={`unlimited-${member.id}`}
+              kind={member.legacyUnlimited ? "legacy" : member.tier === "Insiders+" ? "nocard" : "upgrade"}
               member={member}
               readerId={readerId}
               employeeId={employeeId}

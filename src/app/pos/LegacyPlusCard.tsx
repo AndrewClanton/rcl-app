@@ -26,6 +26,7 @@ export default function LegacyPlusCard({
   employeeId,
   onDone,
   toTablet,
+  kind = "legacy",
 }: {
   member: PosMember;
   readerId: string | null;
@@ -33,13 +34,32 @@ export default function LegacyPlusCard({
   // Their Insiders+ is set up: the member as they are now.
   onDone: (m: PosMember) => void;
   toTablet: TabletSend;
+  // legacy: a former unlimited member (the gold flag). nocard: Insiders+ by
+  // hand with nothing billing them. upgrade: any other member, folded
+  // away behind one button until staff need it.
+  kind?: "legacy" | "nocard" | "upgrade";
 }) {
   const [open, setOpen] = useState<"reader" | "phone" | null>(null);
+  const [shown, setShown] = useState(kind !== "upgrade");
+  if (!shown) {
+    return (
+      <button className="btn-secondary mt-2 min-h-11 w-full !py-2 text-sm" onClick={() => setShown(true)}>
+        Upgrade to Insiders+ · $15/mo
+      </button>
+    );
+  }
+  const headline =
+    kind === "legacy" ? "No payment on file for unlimited membership" : kind === "nocard" ? "Insiders+ with no card on file" : "Upgrade to Insiders+";
   return (
     <div className="mt-2 overflow-hidden rounded-lg border-2 text-sm" style={{ borderColor: "var(--foreground)" }} role="status">
       <div className="flex items-center gap-1 px-2.5 py-1.5 font-bold leading-tight" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
-        <span className="min-w-0 flex-1">No payment on file for unlimited membership</span>
-        <InfoTip topic="unlimited-no-payment" className="!mx-0" />
+        <span className="min-w-0 flex-1">{headline}</span>
+        {kind === "legacy" && <InfoTip topic="unlimited-no-payment" className="!mx-0" />}
+        {kind === "upgrade" && (
+          <button className="!mx-0 px-1 text-xs underline" onClick={() => setShown(false)}>
+            Hide
+          </button>
+        )}
       </div>
       <div className="space-y-2 p-2.5" style={{ background: "var(--surface)" }}>
         <div className="grid grid-cols-2 gap-2">
@@ -51,7 +71,7 @@ export default function LegacyPlusCard({
           </button>
         </div>
         <p className="text-xs" style={{ color: "var(--muted)" }}>
-          Not paying today? Ring them up like any guest.
+          {kind === "upgrade" ? "Charged today, then every month. Free movies and 10% off start right away." : "Not paying today? Ring them up like any guest."}
         </p>
       </div>
       {open && (
