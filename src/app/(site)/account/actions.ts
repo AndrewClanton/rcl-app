@@ -30,9 +30,11 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   return { ok: false, error: result.error };
 }
 
+// This device only (see app/login/actions.ts): a member signing out on a
+// friend's laptop shouldn't end their session on their own phone.
 export async function signOut(): Promise<void> {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
   redirect("/");
 }
 

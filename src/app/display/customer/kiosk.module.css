@@ -443,6 +443,7 @@
   height: auto;
 }
 .sprockets {
+  flex: none;
   height: 16px;
   background: repeating-linear-gradient(90deg, transparent 0 10px, rgba(243, 236, 217, 0.14) 10px 26px, transparent 26px 36px);
   border-top: 2px solid rgba(243, 236, 217, 0.12);
@@ -501,6 +502,7 @@
   color: var(--ink);
 }
 .pitch {
+  flex: none;
   margin-top: auto;
   border: 3px solid var(--gold);
   border-radius: 16px;
@@ -509,6 +511,16 @@
     radial-gradient(circle at 1px 1px, rgba(20, 17, 12, 0.18) 1px, transparent 1.6px) 0 0 / 9px 9px,
     var(--gold);
   color: var(--ink);
+}
+/* a short landscape screen (the 8.7" tablet is about 1005 x 600): a smaller
+   logo and posters, so the points box below has room to breathe */
+@media (min-aspect-ratio: 1/1) and (max-height: 720px) {
+  .logo {
+    width: min(300px, 50%);
+  }
+  .posterImg {
+    max-height: 29vh;
+  }
 }
 .pitchTitle {
   font-family: var(--display);
@@ -520,16 +532,22 @@
   font-size: 0.6em;
   margin-top: 4px;
 }
-/* the badges, as a wrapping row of small printed pills */
+/* the badges, as one line of small printed pills that fades out at the
+   edge: as many as fit, never a second row (on the 8.7" tablet a third row
+   was cut off at the bottom of the screen) */
 .badgeRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
 }
 .badgeChip {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;

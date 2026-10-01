@@ -1,6 +1,13 @@
 import type { MetadataRoute } from "next";
+import { unstable_rethrow } from "next/navigation";
 import { SITE_URL } from "@/lib/site";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
+
+// Built per request, like /showtimes: a copy made at deploy time kept listing
+// showtimes long after they'd started (those links are 404s now) and never
+// listed new ones. The screening rows themselves are cached (see
+// getPubliclyVisibleScreenings), so a crawler's visit costs no more than that.
+export const dynamic = "force-dynamic";
 
 const STATIC_ROUTES: MetadataRoute.Sitemap = [
   { url: `${SITE_URL}/`, changeFrequency: "daily", priority: 1 },
@@ -21,7 +28,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.8,
     }));
     return [...STATIC_ROUTES, ...screeningRoutes];
-  } catch {
+  } catch (e) {
+    // Next's own signals (rendering per request) pass through.
+    unstable_rethrow(e);
     // Don't let a DB hiccup take the whole sitemap down -- static routes still matter.
     return STATIC_ROUTES;
   }

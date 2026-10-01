@@ -346,6 +346,13 @@ export const HELP_TOPICS = {
   },
 
   // ---------- reports and money ----------
+  "membership-payments": {
+    title: "Memberships in Reports",
+    area: "Reports and money",
+    body:
+      "Insiders+ is charged by Stripe on its own (a new member's first charge, each monthly or yearly renewal, a switch to yearly), and gift memberships are paid on Stripe's page, so none of it goes through the register. Reports read those charges from Stripe every 10 minutes while they're open and each morning before the daily email, and count each one once, on the business day it was charged. They're in Collected and net sales as their own line, with their tax on the Sales tax tab. A refund comes off the day of the charge, like a register refund. Insiders+ paid in cash or set by hand isn't here: Stripe never sees it.",
+    links: [{ label: "Reports → Members", href: "/admin/reports/members" }],
+  },
   "box-office-csv": {
     title: "The box office report for distributors",
     area: "Reports and money",
