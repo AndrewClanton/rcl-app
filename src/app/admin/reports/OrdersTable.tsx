@@ -98,7 +98,7 @@ export default function OrdersTable({ orders, emptyText = "No orders this day." 
                   <td className="py-1.5 pr-2">{o.orderNumber}</td>
                   <td className="whitespace-nowrap py-1.5 pr-2">{time(o.at)}</td>
                   <td className="py-1.5 pr-2">{o.cashier ?? "—"}</td>
-                  <td className="max-w-[18rem] truncate py-1.5 pr-2" title={o.items}>
+                  <td className="max-w-[18rem] truncate py-1.5 pr-2 xl:max-w-[32rem] 2xl:max-w-[44rem]" title={o.items}>
                     {o.name && <span className="font-medium">{o.name}: </span>}
                     {o.items}
                   </td>

@@ -46,7 +46,7 @@ export interface BackOfficeNav {
   find: FindEntry[];
 }
 
-const HOME: NavLink = { href: "/admin", label: "Today", about: "Tonight at a glance, and anything that needs a look.", keywords: "dashboard home overview" };
+const HOME: NavLink = { href: "/admin", label: "Today", about: "Your shortcuts, tonight at a glance, and anything that needs a look.", keywords: "dashboard home overview shortcuts" };
 
 const REGISTER: NavLink = {
   href: "/pos",
@@ -81,6 +81,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       keywords: "insiders plus loyalty points customers guests add a member community programs free comped gift billing",
     },
     { href: "/admin/members/regulars", label: "Top regulars", about: "Who came in most and spent most this month, for prizes.", keywords: "prizes visits spend leaderboard", min: "manager" },
+    {
+      href: "/admin/email",
+      label: "Email",
+      about: "Member emails: the weekly lineup, campaigns, automations and results.",
+      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders",
+      min: "manager",
+    },
     {
       href: "/admin/members/old-site",
       label: "Old site members",
@@ -143,6 +150,12 @@ const PAGES: Record<AreaKey, MapLink[]> = {
 };
 
 const YOU: MapLink[] = [
+  {
+    href: "/admin/me",
+    label: "My account",
+    about: "Your shifts, hours this pay period, tasks done, what's coming up, and what you rang.",
+    keywords: "me profile employee account analytics clock in clock out tasks calendar sales tips rang schedule",
+  },
   { href: "/admin/my-hours", label: "My hours", about: "Your hours this week and in past weeks.", keywords: "hours worked clock in timesheet paycheck" },
   { href: "/admin/my-pin", label: "My PIN", about: "Change the PIN you type on the register.", keywords: "pin password code approve refunds", badge: "pin" },
   { href: "/training", label: "My training", about: "The trainings assigned to you.", keywords: "training courses sign off" },

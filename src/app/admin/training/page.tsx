@@ -53,16 +53,19 @@ export default async function AdminTrainingPage() {
         </span>
       </div>
 
-      {modules.map((m) => (
-        <TrainingModuleCard
-          key={m.slug}
-          module={{ slug: m.slug, title: m.title, summary: m.summary, category: m.category, minutes: m.minutes, version: m.version, hasQuiz: !!m.quiz }}
-          people={m.people}
-          staff={staff}
-        />
-      ))}
+      {/* Two to a row on a computer. */}
+      <div className="space-y-6 xl:grid xl:grid-cols-2 xl:items-start xl:gap-6 xl:space-y-0">
+        {modules.map((m) => (
+          <TrainingModuleCard
+            key={m.slug}
+            module={{ slug: m.slug, title: m.title, summary: m.summary, category: m.category, minutes: m.minutes, version: m.version, hasQuiz: !!m.quiz }}
+            people={m.people}
+            staff={staff}
+          />
+        ))}
+      </div>
 
-      <p className="text-xs text-[var(--muted)]">
+      <p className="max-w-3xl text-xs text-[var(--muted)]">
         Need a new training? Tell Claude what it should cover. They&apos;re built picture by picture, like the membership how-to. When a training changes, everyone who
         signed the old version is asked to sign again.
       </p>

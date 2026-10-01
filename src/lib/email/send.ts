@@ -6,10 +6,9 @@ import { hashEmail } from "./hash";
 // everyday "transactional" mail (receipts, tickets, the daily report, booth
 // and gift emails, tests). List email goes through campaign-send.ts instead.
 //
-// RESEND_API_KEY is set in Vercel. EMAIL_FROM is the sender, e.g.
-// "Royale Cinema Lounge <hello@royalecinemajoplin.com>" once the domain is
-// verified in Resend; until then Resend's own address works, but only for
-// sending to the email the Resend account was made with.
+// RESEND_API_KEY is set in Vercel. EMAIL_FROM can override the sender;
+// otherwise mail comes from hello@ our own domain, verified in Resend 10/1
+// (DKIM and SPF records in Cloudflare).
 //
 // Transactional mail never checks email preferences or caps (a receipt is
 // owed either way), but it does skip an address that hard-bounced: mailing
@@ -50,7 +49,7 @@ export async function sendEmail(to: string, subject: string, html: string, opts:
       ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey.slice(0, 256) } : {}),
     },
     body: JSON.stringify({
-      from: process.env.EMAIL_FROM || "Royale Cinema Lounge <onboarding@resend.dev>",
+      from: process.env.EMAIL_FROM || "Royale Cinema Lounge <hello@royalecinemajoplin.com>",
       to: [to],
       subject,
       html,

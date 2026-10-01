@@ -4,7 +4,9 @@ import InfoTip from "@/components/help/InfoTip";
 import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
-import { BOOTHS_LABEL, FOOD_AND_DRINK, TICKETS_LABEL } from "@/lib/report-categories";
+import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import MembershipsCard from "./MembershipsCard";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
 import OrderSearch from "./OrderSearch";
@@ -41,6 +43,7 @@ export default function DayScreen({
   found,
   drill,
   canRecord,
+  sync,
 }: {
   r: DayReport;
   before: DayReport; // the same weekday a week earlier
@@ -52,16 +55,25 @@ export default function DayScreen({
   found: DayOrder | null;
   drill: DayDrillData;
   canRecord: boolean; // managers and up record tip payouts
+  sync: PaymentSyncStatus; // when member payments were last read from Stripe
 }) {
   const keep: Keep = { date: date === today ? undefined : date, days: days === 30 ? undefined : String(days) };
-  const vs = `vs ${money(before.collected)} last ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}`;
+  const lastWeekday = `last ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}`;
+  const vs = `vs ${money(before.collected)} ${lastWeekday}`;
   // This day with a drill-down open (and an order search kept, if any).
   // Just the query: it opens over this page, wherever it is.
   const to = (d: Drill) => {
     const q = new URLSearchParams(Object.entries({ ...keep, order: orderNumber ? String(orderNumber) : undefined, ...d }).filter(([, v]) => v) as [string, string][]);
     return `?${q.toString()}`;
   };
-  const soldHref = (label: string) => (label === TICKETS_LABEL ? to({ show: "tickets" }) : label === BOOTHS_LABEL ? to({ show: "orders", pay: "online" }) : to({ show: "orders", cat: label }));
+  const soldHref = (label: string) =>
+    label === TICKETS_LABEL
+      ? to({ show: "tickets" })
+      : label === BOOTHS_LABEL
+        ? to({ show: "orders", pay: "online" })
+        : label === MEMBERSHIPS_LABEL
+          ? to({ show: "memberships" })
+          : to({ show: "orders", cat: label });
   const fullRefunds = r.orders.filter((o) => o.status === "refunded");
 
   return (
@@ -103,11 +115,10 @@ export default function DayScreen({
         </Card>
       )}
 
-      <DayFigures r={r} before={before} vs={vs} to={to} paidOut={drill.payout !== null} />
+      <DayFigures r={r} before={before} vs={vs} to={to} paidOut={drill.payout !== null} trend={<TrendCard trend={trend} date={date} days={days} keep={keep} />} />
 
-      <TrendCard trend={trend} date={date} days={days} keep={keep} />
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {/* A computer: what sold, top items and where the money goes side by side. */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 xl:grid-cols-3">
         <Card title="What sold" subtitle="Before tax and tips. Tap a line for the orders behind it.">
           {r.sold.length === 0 ? (
             <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p>
@@ -133,27 +144,29 @@ export default function DayScreen({
         <Card title="Top items">
           {r.topItems.length === 0 ? <p className="text-sm text-[var(--muted)]">Nothing sold this day.</p> : <TopItems items={r.topItems.map((it) => ({ ...it, href: to({ show: "orders", item: it.name }) }))} />}
         </Card>
+
+        <Card title="Where the money goes" subtitle="Nathan's split. Each is its own rule, so they don't add up to sales." className="lg:col-span-2 xl:col-span-1">
+          <Rows
+            rows={r.accounts.map((a) => ({
+              key: a.label,
+              label: (
+                <>
+                  {a.label}
+                  <div className="text-xs text-[var(--muted)]">{a.rule}</div>
+                </>
+              ),
+              value: <span className="text-base font-semibold">{money(a.amount)}</span>,
+              // The sales each rule is worked from.
+              href: a.label === "Box office" ? to({ show: "tickets" }) : a.label === "Tax account" ? to({ show: "net" }) : to({ show: "orders", cat: FOOD_AND_DRINK }),
+            }))}
+          />
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy, memberships). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
+          </p>
+        </Card>
       </div>
 
-      <Card title="Where the money goes" subtitle="Nathan's split. Each is its own rule, so they don't add up to sales.">
-        <Rows
-          rows={r.accounts.map((a) => ({
-            key: a.label,
-            label: (
-              <>
-                {a.label}
-                <div className="text-xs text-[var(--muted)]">{a.rule}</div>
-              </>
-            ),
-            value: <span className="text-base font-semibold">{money(a.amount)}</span>,
-            // The sales each rule is worked from.
-            href: a.label === "Box office" ? to({ show: "tickets" }) : a.label === "Tax account" ? to({ show: "net" }) : to({ show: "orders", cat: FOOD_AND_DRINK }),
-          }))}
-        />
-        <p className="mt-2 text-xs text-[var(--muted)]">
-          Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
-        </p>
-      </Card>
+      <MembershipsCard m={r.memberships} before={before.memberships} prevName={lastWeekday} sync={sync} href={() => to({ show: "memberships" })} />
 
       <Card title={`Orders · ${r.orders.length}`}>
         <OrdersTable orders={r.orders} />
@@ -166,13 +179,25 @@ export default function DayScreen({
   );
 }
 
-function DayFigures({ r, before, vs, to, paidOut }: { r: DayReport; before: DayReport; vs: string; to: (d: Drill) => string; paidOut: boolean }) {
+// The day's numbers, how it was paid, and (`trend`) the days around it. A
+// computer puts How it was paid and the trend side by side.
+function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; before: DayReport; vs: string; to: (d: Drill) => string; paidOut: boolean; trend: React.ReactNode }) {
   const avg = r.orderCount ? r.orderSales / r.orderCount : 0;
   const avgBefore = before.orderCount ? before.orderSales / before.orderCount : null;
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat hero className="col-span-2" label="Collected" value={money(r.collected)} now={r.collected} before={before.collected} beforeText={vs} sub="cash, card and online, with tax and tips" href={to({ show: "collected" })} />
+        <Stat
+          hero
+          className="col-span-2"
+          label="Collected"
+          value={money(r.collected)}
+          now={r.collected}
+          before={before.collected}
+          beforeText={vs}
+          sub={r.memberships.collected !== 0 ? `cash, card, online and ${money(r.memberships.collected)} in memberships, with tax and tips` : "cash, card, online and memberships, with tax and tips"}
+          href={to({ show: "collected" })}
+        />
         <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} href={to({ show: "net" })} />
         <Stat label="Orders" value={num(r.orderCount)} now={r.orderCount} before={before.orderCount} href={to({ show: "orders" })} />
         <Stat label="Tips" value={money(r.tips)} now={r.tips} before={before.tips} sub={r.tips > 0 ? (paidOut ? "paid out" : "not paid out yet") : undefined} href={to({ show: "tips" })} />
@@ -180,16 +205,20 @@ function DayFigures({ r, before, vs, to, paidOut }: { r: DayReport; before: DayR
         <Stat label="Tickets" value={num(r.ticketsSold)} now={r.ticketsSold} before={before.ticketsSold} sub={r.tickets.free ? `${r.tickets.free} free` : undefined} href={to({ show: "tickets" })} />
         <Stat label="Average order" value={r.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} sub="before tax and tip" href={to({ show: "orders" })} />
       </div>
-      <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
-        <SplitBar
-          parts={[
-            { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
-            { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
-            { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
-            { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
-          ]}
-        />
-      </Card>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+        <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
+          <SplitBar
+            parts={[
+              { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
+              { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
+              { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
+              { label: "Memberships", value: r.memberships.collected, href: to({ show: "memberships" }) },
+              { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
+            ]}
+          />
+        </Card>
+        {trend}
+      </div>
     </div>
   );
 }
@@ -225,7 +254,7 @@ function TrendCard({ trend, date, days, keep }: { trend: RevenueDay[]; date: str
           label: new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-US", days <= 7 ? { weekday: "short", timeZone: "UTC" } : { month: "short", day: "numeric", timeZone: "UTC" }),
           value: d.total,
           strong: d.date === date,
-          title: `${longDate(d.date)}: ${money(d.total)}${d.online ? ` (${money(d.online)} online)` : ""}`,
+          title: `${longDate(d.date)}: ${money(d.total)}${d.online || d.memberships ? ` (${[d.online ? `${money(d.online)} online` : "", d.memberships ? `${money(d.memberships)} memberships` : ""].filter(Boolean).join(", ")})` : ""}`,
           href: href({ ...keep, date: d.date === last ? undefined : d.date }),
         }))}
         emptyText="Nothing collected in these days."

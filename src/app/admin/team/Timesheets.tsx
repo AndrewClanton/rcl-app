@@ -95,7 +95,11 @@ export function Totals({ people, weeks }: { people: TimesheetPerson[][]; weeks: 
           <tbody>
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-[var(--border)]">
-                <td className="py-1">{r.name}</td>
+                <td className="py-1">
+                  <Link href={`/admin/team/${r.id}`} className="underline-offset-2 hover:underline">
+                    {r.name}
+                  </Link>
+                </td>
                 {multi &&
                   r.hours.map((h, i) => (
                     <td key={i} className="py-1 pl-3 text-right">
@@ -147,80 +151,96 @@ function ShiftFlags({ s }: { s: TimesheetShift }) {
 
 export function WeekTimesheet({ people }: { people: TimesheetPerson[] }) {
   if (!people.length) return <p className="text-sm text-[var(--muted)]">Nobody clocked in or was scheduled this week.</p>;
+  // Totals only draws when someone has hours (it's empty otherwise), so
+  // only then does it get its column.
+  const totals = people.length > 1 && people.some((p) => p.hours > 0);
   return (
-    <div className="space-y-4">
-      {people.length > 1 && <Totals people={[people]} weeks={[{ label: "This week" }]} />}
-      {people.map((p) => (
-        <section key={p.employeeId} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-          <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <h2 className="text-base font-semibold">{p.name}</h2>
-            <span className="text-sm tabular-nums">
-              <strong>{p.hours.toFixed(2)} h</strong> worked
-              {p.scheduledHours > 0 && <span className="text-[var(--muted)]"> of {p.scheduledHours.toFixed(1)} scheduled</span>}
-            </span>
-            {p.lateCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.lateCount} late</span>}
-            {p.missedCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.missedCount} missed</span>}
-            {p.forgottenCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.forgottenCount} never clocked out</span>}
-            {p.runningHours > 0 && <span className="text-sm text-[var(--muted)]">+ {formatHours(p.runningHours)} on now</span>}
-            {p.overtime && <span className="rounded bg-[var(--gold)] px-1.5 text-sm font-bold text-[var(--gold-foreground)]">Over 40 h: overtime</span>}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm tabular-nums">
-              <thead>
-                <tr className="text-left text-xs text-[var(--muted)]">
-                  <th className="pb-1 font-medium">Day</th>
-                  <th className="pb-1 font-medium">Scheduled</th>
-                  <th className="pb-1 font-medium">In</th>
-                  <th className="pb-1 font-medium">Out</th>
-                  <th className="pb-1 text-right font-medium">Hours</th>
-                  <th className="pb-1 font-medium">&nbsp;</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.shifts.map((s, i) => (
-                  <tr key={s.shiftId ?? `s${i}`} className="border-t border-[var(--border)] align-top">
-                    {/* The fix-it control sits under the day, so a phone doesn't have to scroll the table for it. */}
-                    <td className="py-1">
-                      <div className="whitespace-nowrap">{dayLabel(s.date)}</div>
-                      {s.shiftId && s.clockedIn && (
-                        <div className="mb-1 mt-0.5">
-                          <ShiftTimesEditor
-                            shiftId={s.shiftId}
-                            name={p.name}
-                            day={dayLabel(s.date)}
-                            clockedIn={s.clockedIn}
-                            clockedOut={s.clockedOut}
-                            forgotten={s.forgotten}
-                            stillOn={s.runningHours !== null}
-                            suggestedOut={s.suggestedOut}
-                            suggestedFrom={s.suggestedFrom}
-                          />
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-1 text-[var(--muted)]">{s.scheduled ?? "—"}</td>
-                    <td className="py-1">{s.clockedIn ? clock(s.clockedIn) : "—"}</td>
-                    <td className="py-1">
-                      {s.clockedOut ? clock(s.clockedOut) : s.forgotten ? <span className="font-bold text-[var(--danger-text)]">never</span> : s.clockedIn ? <span className="text-[var(--muted)]">still on</span> : "—"}
-                    </td>
-                    <td className="py-1 text-right">{s.hours !== null ? s.hours.toFixed(2) : s.runningHours !== null ? <span className="text-[var(--muted)]">{s.runningHours.toFixed(2)} so far</span> : ""}</td>
-                    <td className="py-1 pl-3 text-xs">
-                      <div className="flex flex-wrap gap-x-2 gap-y-0.5">
-                        <ShiftFlags s={s} />
-                      </div>
-                    </td>
+    // On a computer the totals stay in view on the left while each
+    // person's week scrolls by on the right. A long staff list scrolls
+    // inside the totals rather than running off the screen.
+    <div className={`space-y-4 ${totals ? "xl:grid xl:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] xl:items-start xl:gap-5 xl:space-y-0" : ""}`}>
+      {totals && (
+        <div className="xl:sticky xl:top-4 xl:max-h-[calc(100dvh-2rem)] xl:overflow-y-auto">
+          <Totals people={[people]} weeks={[{ label: "This week" }]} />
+        </div>
+      )}
+      <div className="space-y-4">
+        {people.map((p) => (
+          <section key={p.employeeId} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="mb-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+              <h2 className="text-base font-semibold">
+                <Link href={`/admin/team/${p.employeeId}`} className="underline-offset-2 hover:underline">
+                  {p.name}
+                </Link>
+              </h2>
+              <span className="text-sm tabular-nums">
+                <strong>{p.hours.toFixed(2)} h</strong> worked
+                {p.scheduledHours > 0 && <span className="text-[var(--muted)]"> of {p.scheduledHours.toFixed(1)} scheduled</span>}
+              </span>
+              {p.lateCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.lateCount} late</span>}
+              {p.missedCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.missedCount} missed</span>}
+              {p.forgottenCount > 0 && <span className="text-sm font-medium text-[var(--danger-text)]">{p.forgottenCount} never clocked out</span>}
+              {p.runningHours > 0 && <span className="text-sm text-[var(--muted)]">+ {formatHours(p.runningHours)} on now</span>}
+              {p.overtime && <span className="rounded bg-[var(--gold)] px-1.5 text-sm font-bold text-[var(--gold-foreground)]">Over 40 h: overtime</span>}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px] text-sm tabular-nums">
+                <thead>
+                  <tr className="text-left text-xs text-[var(--muted)]">
+                    <th className="pb-1 font-medium">Day</th>
+                    <th className="pb-1 font-medium">Scheduled</th>
+                    <th className="pb-1 font-medium">In</th>
+                    <th className="pb-1 font-medium">Out</th>
+                    <th className="pb-1 text-right font-medium">Hours</th>
+                    <th className="pb-1 font-medium">&nbsp;</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ))}
-      <p className="text-xs text-[var(--muted)]">
-        Hours come from Start shift and End shift on the register. A clock-in within 4 hours of a scheduled start counts as that shift; 5 or more minutes after the
-        start is marked late. A shift that was never clocked out counts as 0 hours until its clock-out is set. Every change to a clock-in or clock-out needs a reason
-        and is kept with the shift.
-      </p>
+                </thead>
+                <tbody>
+                  {p.shifts.map((s, i) => (
+                    <tr key={s.shiftId ?? `s${i}`} className="border-t border-[var(--border)] align-top">
+                      {/* The fix-it control sits under the day, so a phone doesn't have to scroll the table for it. */}
+                      <td className="py-1">
+                        <div className="whitespace-nowrap">{dayLabel(s.date)}</div>
+                        {s.shiftId && s.clockedIn && (
+                          <div className="mb-1 mt-0.5">
+                            <ShiftTimesEditor
+                              shiftId={s.shiftId}
+                              name={p.name}
+                              day={dayLabel(s.date)}
+                              clockedIn={s.clockedIn}
+                              clockedOut={s.clockedOut}
+                              forgotten={s.forgotten}
+                              stillOn={s.runningHours !== null}
+                              suggestedOut={s.suggestedOut}
+                              suggestedFrom={s.suggestedFrom}
+                            />
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-1 text-[var(--muted)]">{s.scheduled ?? "—"}</td>
+                      <td className="py-1">{s.clockedIn ? clock(s.clockedIn) : "—"}</td>
+                      <td className="py-1">
+                        {s.clockedOut ? clock(s.clockedOut) : s.forgotten ? <span className="font-bold text-[var(--danger-text)]">never</span> : s.clockedIn ? <span className="text-[var(--muted)]">still on</span> : "—"}
+                      </td>
+                      <td className="py-1 text-right">{s.hours !== null ? s.hours.toFixed(2) : s.runningHours !== null ? <span className="text-[var(--muted)]">{s.runningHours.toFixed(2)} so far</span> : ""}</td>
+                      <td className="py-1 pl-3 text-xs">
+                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          <ShiftFlags s={s} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
+        <p className="text-xs text-[var(--muted)]">
+          Hours come from Start shift and End shift on the register. A clock-in within 4 hours of a scheduled start counts as that shift; 5 or more minutes after the
+          start is marked late. A shift that was never clocked out counts as 0 hours until its clock-out is set. Every change to a clock-in or clock-out needs a reason
+          and is kept with the shift. Tap a name for that person&apos;s page: their calendar, tasks and sales.
+        </p>
+      </div>
     </div>
   );
 }

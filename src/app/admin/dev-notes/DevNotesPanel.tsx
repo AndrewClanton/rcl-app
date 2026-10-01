@@ -40,7 +40,8 @@ function Section({ title, hint, notes, empty, muted }: { title: string; hint: st
       {notes.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">{empty}</p>
       ) : (
-        <div className="space-y-2">
+        // Two to a row on a computer.
+        <div className="space-y-2 xl:grid xl:grid-cols-2 xl:items-start xl:gap-2 xl:space-y-0">
           {notes.map((note) => (
             <NoteCard key={note.id} note={note} muted={muted} />
           ))}

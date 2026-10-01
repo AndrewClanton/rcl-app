@@ -34,3 +34,35 @@ export function ChevronIcon({ open }: { open: boolean }) {
     </svg>
   );
 }
+
+// Today, in the slim menu.
+export function HomeIcon() {
+  return (
+    <svg {...base}>
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9v11h5v-6h4v6h5V9" />
+    </svg>
+  );
+}
+
+// The register: a receipt.
+export function RegisterIcon() {
+  return (
+    <svg {...base}>
+      <path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" />
+      <path d="M9 8h6M9 12h6M9 16h3" />
+    </svg>
+  );
+}
+
+// The menu down the side, with an arrow: `hide` points in (fold it away),
+// otherwise out (keep it open).
+export function SidebarIcon({ hide }: { hide: boolean }) {
+  return (
+    <svg {...base}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+      <path d={hide ? "m16 10-2 2 2 2" : "m14 10 2 2-2 2"} />
+    </svg>
+  );
+}

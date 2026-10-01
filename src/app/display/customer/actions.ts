@@ -1,6 +1,6 @@
 "use server";
 
-import { assertStaff } from "@/lib/auth";
+import { assertDisplayScreen } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cleanEmail, cleanFirstName, formatPhone, isFullPhone, phoneDigits, type CheckinRequest } from "@/lib/checkin";
 import { memberIdsWithPhone, sealCheckin } from "@/lib/checkin-server";
@@ -8,8 +8,9 @@ import { allowAttempt, TOO_MANY_TRIES } from "@/lib/rate-limit";
 import { issueClaimLink } from "@/lib/member-claim";
 
 // Check-in for points, from the customer screen. The screen page is gated by
-// requireStaff() (a physical, staff-set-up device), and assertStaff()
-// re-checks here so these can't be called directly. Neither ever returns a
+// requireDisplayScreen() (a physical device, signed in with its display-only
+// login or a staff one), and assertDisplayScreen() re-checks here so these
+// can't be called by anyone else. Neither ever returns a
 // member's details: a known number gets back a sealed request for the
 // register, where staff see who it is and confirm; an unknown one just
 // hears "new", so the screen can ask for a first name.
@@ -20,13 +21,13 @@ const NOT_A_NUMBER = "That doesn't look like a full phone number. Try again?";
 const LOOKUP_FAILED = "We couldn't look that up just now. Ask a staff member for help.";
 
 export async function startCheckin(phone: string): Promise<CheckinStart> {
-  const staff = await assertStaff();
+  const screen = await assertDisplayScreen();
   const digits = phoneDigits(phone);
   if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
   // Anyone at the tablet can type numbers, so the lookup is capped per
   // signed-in screen, on top of the screen's own lockout.
   // Roomy enough for a group checking in one after another at the door.
-  if (!(await allowAttempt(`checkin-lookup:${staff.employeeId}`, 30, 60))) return { ok: false, error: TOO_MANY_TRIES };
+  if (!(await allowAttempt(`checkin-lookup:${screen.employeeId}`, 30, 60))) return { ok: false, error: TOO_MANY_TRIES };
 
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
@@ -43,14 +44,14 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
 // email). Nothing is saved yet -- the register's "Create & attach" does that
 // once staff have seen them. Email opt-in stays off unless they ticked it.
 export async function startNewCheckin(fields: { phone: string; firstName: string; email: string; emailOptIn: boolean }): Promise<{ ok: true; request: CheckinRequest } | { ok: false; error: string }> {
-  const staff = await assertStaff();
+  const screen = await assertDisplayScreen();
   const digits = phoneDigits(fields.phone);
   if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
   const firstName = cleanFirstName(fields.firstName);
   if (!firstName) return { ok: false, error: "Type your first name (letters only)." };
   const email = fields.email.trim() ? cleanEmail(fields.email) : null;
   if (fields.email.trim() && !email) return { ok: false, error: "That email doesn't look right. Fix it, or leave it blank." };
-  if (!(await allowAttempt(`checkin-new:${staff.employeeId}`, 5, 60))) return { ok: false, error: TOO_MANY_TRIES };
+  if (!(await allowAttempt(`checkin-new:${screen.employeeId}`, 5, 60))) return { ok: false, error: TOO_MANY_TRIES };
 
   // Someone may have signed up with this number since the lookup: then it's
   // an ordinary check-in, confirmed by photo at the register.
@@ -76,14 +77,14 @@ export type KioskCreate =
 // (email, password, photo) on their own phone from the QR code, when a
 // claim link is available. Email marketing stays off.
 export async function createKioskMember(fields: { phone: string; firstName: string; lastName: string }): Promise<KioskCreate> {
-  const staff = await assertStaff();
+  const screen = await assertDisplayScreen();
   const digits = phoneDigits(fields.phone);
   if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
   const firstName = cleanFirstName(fields.firstName);
   if (!firstName) return { ok: false, error: "Type your first name (letters only)." };
   const lastName = cleanFirstName(fields.lastName);
   if (!lastName) return { ok: false, error: "Type your last name (letters only)." };
-  if (!(await allowAttempt(`checkin-create:${staff.employeeId}`, 8, 60))) return { ok: false, error: TOO_MANY_TRIES };
+  if (!(await allowAttempt(`checkin-create:${screen.employeeId}`, 8, 60))) return { ok: false, error: TOO_MANY_TRIES };
 
   // Signed up (here or on the other screen) since the lookup: an ordinary
   // check-in instead of a second account.

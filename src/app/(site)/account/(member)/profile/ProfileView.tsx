@@ -6,6 +6,7 @@ import { GooglePhotoButton, PhotoUploadButton, RemovePhotoButton } from "../../P
 import { EmailPreference, PasswordForm, ProfileDetailsForm } from "./ProfileForms";
 import { Panel } from "../ui";
 import { birthdayToInput } from "@/lib/visits";
+import ProfilePanels from "./ProfilePanels";
 
 export default function ProfileView({
   member,
@@ -26,7 +27,7 @@ export default function ProfileView({
           <MemberAvatar name={member.name} url={member.avatar_url} size={104} plus={member.tier === "Insiders+"} />
           <div className="min-w-0 flex-1 space-y-3">
             <p className="max-w-lg text-[15px] text-[var(--muted)]">
-              Staff use your photo to find your account at the register, and it shows on the screen facing you when you check out. Only staff and you see it.
+              Staff use your photo to find your account at the register. If you share your profile page, it shows there too.
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <PhotoUploadButton label={member.avatar_url ? "Change photo" : "Upload a photo"} className={`${member.avatar_url ? "btn-secondary" : "btn-primary"} px-4 py-2.5`} />
@@ -39,7 +40,7 @@ export default function ProfileView({
 
       <Panel title="Your details">
         <div className="p-5">
-          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} tagline={member.tagline ?? ""} birthday={birthdayToInput(member.birthday)} />
+          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} tagline={member.tagline ?? ""} birthday={birthdayToInput(member.birthday)} lineHidden={!!member.tagline_hidden_at} />
           <div className="mt-5 border-t-2 border-dashed border-[var(--border)] pt-4">
             <div className="label-xs">Email</div>
             <div className="font-bold">{member.email}</div>
@@ -75,6 +76,8 @@ export default function ProfileView({
           <PasswordForm hasPassword={has.has("email")} />
         </div>
       </Panel>
+
+      <ProfilePanels member={member} />
 
       <Panel title="Emails">
         <div className="p-5">

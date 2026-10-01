@@ -49,8 +49,10 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
   }
 
   return (
-    <div className="space-y-5">
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+    // On a computer the form sits on the left and stays put; the lists
+    // take the rest of the width.
+    <div className="space-y-5 xl:grid xl:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] xl:items-start xl:gap-6 xl:space-y-0">
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 xl:sticky xl:top-4">
         <h2 className="mb-1 text-sm font-semibold">Give someone a to-do</h2>
         <p className="mb-3 text-xs text-[var(--muted)]">It pops up on the register for them when they&apos;re on shift, until they tap Done.</p>
         <div className="mb-3">
@@ -86,84 +88,86 @@ export default function TodoManager({ team, todos }: { team: TeamMember[]; todos
         {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
       </section>
 
-      <section>
-        <h2 className="mb-2 text-sm font-semibold">
-          Open <span className="font-normal text-[var(--muted)]">· {open.length}</span>
-        </h2>
-        {open.length === 0 ? (
-          <p className="text-sm text-[var(--muted)]">Nothing waiting.</p>
-        ) : (
-          <div className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)] bg-[var(--surface)]">
-            {open.map((t) => (
-              <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">
-                    {t.outageId && <span className="bo-badge bo-badge-warn mr-1.5 align-middle">Ran out</span>}
-                    {t.title}
-                  </div>
-                  <div className="text-xs text-[var(--muted)]">
-                    {t.forManagers ? "For the managers" : `For ${t.assigneeName ?? "whoever's on shift"}`}
-                    {t.dueDate && ` · due ${due(t.dueDate)}`}
-                    {t.createdByName && !t.outageId && ` · from ${t.createdByName}`}
-                    {t.details && ` · ${t.details}`}
-                  </div>
-                </div>
-                <button
-                  className={t.outageId ? "btn-primary min-h-11 !px-3 !py-1 text-xs" : "rounded border border-[var(--border)] px-2 py-1 text-xs"}
-                  title={t.outageId ? "Closes the Ran out report and puts what it stopped back on sale" : undefined}
-                  onClick={async () => {
-                    await saved(setTodoDoneFromOffice(t.id, true));
-                    router.refresh();
-                  }}
-                >
-                  {t.outageId ? "Bought it" : "Mark done"}
-                </button>
-                {!t.outageId && (
-                  <button
-                    className="text-xs text-[var(--danger-text)] hover:underline"
-                    onClick={async () => {
-                      await saved(deleteTodo(t.id));
-                      router.refresh();
-                    }}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {done.length > 0 && (
+      <div className="space-y-5">
         <section>
           <h2 className="mb-2 text-sm font-semibold">
-            Done lately <span className="font-normal text-[var(--muted)]">· last two weeks</span>
+            Open <span className="font-normal text-[var(--muted)]">· {open.length}</span>
           </h2>
-          <div className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm">
-            {done.map((t) => (
-              <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-[var(--muted)]">
-                <span className="min-w-0 flex-1">
-                  <span className="line-through">{t.title}</span>
-                  {t.closedAs && ` (${CLOSED_AS[t.closedAs]})`} · {t.doneByName ?? "someone"}, {t.doneAt ? stamp(t.doneAt) : ""}
-                </span>
-                {/* A restock to-do closed with its report; if it's out again, it gets reported again. */}
-                {!t.outageId && (
+          {open.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">Nothing waiting.</p>
+          ) : (
+            <div className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)] bg-[var(--surface)]">
+              {open.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">
+                      {t.outageId && <span className="bo-badge bo-badge-warn mr-1.5 align-middle">Ran out</span>}
+                      {t.title}
+                    </div>
+                    <div className="text-xs text-[var(--muted)]">
+                      {t.forManagers ? "For the managers" : `For ${t.assigneeName ?? "whoever's on shift"}`}
+                      {t.dueDate && ` · due ${due(t.dueDate)}`}
+                      {t.createdByName && !t.outageId && ` · from ${t.createdByName}`}
+                      {t.details && ` · ${t.details}`}
+                    </div>
+                  </div>
                   <button
-                    className="text-xs hover:underline"
+                    className={t.outageId ? "btn-primary min-h-11 !px-3 !py-1 text-xs" : "rounded border border-[var(--border)] px-2 py-1 text-xs"}
+                    title={t.outageId ? "Closes the Ran out report and puts what it stopped back on sale" : undefined}
                     onClick={async () => {
-                      await saved(setTodoDoneFromOffice(t.id, false));
+                      await saved(setTodoDoneFromOffice(t.id, true));
                       router.refresh();
                     }}
                   >
-                    Reopen
+                    {t.outageId ? "Bought it" : "Mark done"}
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
+                  {!t.outageId && (
+                    <button
+                      className="text-xs text-[var(--danger-text)] hover:underline"
+                      onClick={async () => {
+                        await saved(deleteTodo(t.id));
+                        router.refresh();
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
-      )}
+
+        {done.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-sm font-semibold">
+              Done lately <span className="font-normal text-[var(--muted)]">· last two weeks</span>
+            </h2>
+            <div className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm">
+              {done.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-[var(--muted)]">
+                  <span className="min-w-0 flex-1">
+                    <span className="line-through">{t.title}</span>
+                    {t.closedAs && ` (${CLOSED_AS[t.closedAs]})`} · {t.doneByName ?? "someone"}, {t.doneAt ? stamp(t.doneAt) : ""}
+                  </span>
+                  {/* A restock to-do closed with its report; if it's out again, it gets reported again. */}
+                  {!t.outageId && (
+                    <button
+                      className="text-xs hover:underline"
+                      onClick={async () => {
+                        await saved(setTodoDoneFromOffice(t.id, false));
+                        router.refresh();
+                      }}
+                    >
+                      Reopen
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </div>
   );
 }

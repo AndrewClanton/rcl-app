@@ -12,9 +12,9 @@ export default function MembershipForAFriend() {
 
       <Step n={1} title="Open the back office and tap Members">
         <p>
-          Go to <b>rcl-app.vercel.app/admin</b> and sign in. The menu is the row of words under the title. On a phone it wraps onto a few lines.
+          Go to <b>www.royalecinemajoplin.com/admin</b> and sign in. The menu is the row of words under the title. On a phone it wraps onto a few lines.
         </p>
-        <Screen url="rcl-app.vercel.app/admin" caption="Back office · top of every page" label="Back office with the Members link highlighted in the menu">
+        <Screen url="www.royalecinemajoplin.com/admin" caption="Back office · top of every page" label="Back office with the Members link highlighted in the menu">
           <BackOfficeNav ring="Members" n={1} />
         </Screen>
       </Step>
@@ -23,7 +23,7 @@ export default function MembershipForAFriend() {
         <p>
           This is the one that&apos;s easy to miss. The button sits <b>under the whole member list</b>, below the page numbers.
         </p>
-        <Screen url="rcl-app.vercel.app/admin/members" caption="Members page · bottom" label="Members page: search, member list, page numbers, then the Add member button">
+        <Screen url="www.royalecinemajoplin.com/admin/members" caption="Members page · bottom" label="Members page: search, member list, page numbers, then the Add member button">
           <div className={s.card}>
             <div className={s.row}>
               <span className={`${s.input} ${s.grow}`}>Search members by name or email...</span>
@@ -62,7 +62,7 @@ export default function MembershipForAFriend() {
         <p>
           Leave the level on <b>Insiders</b>. It switches to Insiders+ by itself once the buyer pays.
         </p>
-        <Screen url="rcl-app.vercel.app/admin/members" caption={'"Email (optional)" isn\'t optional for this one'} label="Add member form filled in, with the Add member button highlighted">
+        <Screen url="www.royalecinemajoplin.com/admin/members" caption={'"Email (optional)" isn\'t optional for this one'} label="Add member form filled in, with the Add member button highlighted">
           <div className={s.card}>
             <h4 className={s.cardTitle}>Add member</h4>
             <div className={s.row}>
@@ -80,7 +80,7 @@ export default function MembershipForAFriend() {
 
       <Step n={4} title="Search their name and tap them">
         <p>The form closes after you add them. Scroll back up to the search box, type the friend&apos;s name, and tap their row.</p>
-        <Screen url="rcl-app.vercel.app/admin/members?q=jamie" caption="Members page · top" label="Members search with the new member's row highlighted">
+        <Screen url="www.royalecinemajoplin.com/admin/members?q=jamie" caption="Members page · top" label="Members search with the new member's row highlighted">
           <div className={s.card}>
             <div className={s.row}>
               <span className={`${s.input} ${s.filled} ${s.grow}`}>jamie</span>
@@ -103,7 +103,7 @@ export default function MembershipForAFriend() {
           On their page, scroll past their details and the <b>Free / community membership</b> box. The <b>Billing</b> box is next. Leave &quot;First charge&quot;
           blank so it charges today.
         </p>
-        <Screen url="rcl-app.vercel.app/admin/members/…" caption="Member page · third box down" label="Billing box with Yearly selected and Open card page highlighted">
+        <Screen url="www.royalecinemajoplin.com/admin/members/…" caption="Member page · third box down" label="Billing box with Yearly selected and Open card page highlighted">
           <div className={`${s.card} ${s.faded}`}>
             <div className={s.row}>
               <b style={{ fontSize: 15 }}>Jamie Friend</b>
@@ -186,7 +186,7 @@ export default function MembershipForAFriend() {
           Switch back to the back office tab and refresh. The badge should say <b>Insiders+</b> and Billing should say <b>Subscription: active</b>. If it
           doesn&apos;t after a minute, tell a manager.
         </p>
-        <Screen url="rcl-app.vercel.app/admin/members/…" caption="Member page · done" label="Member page after paying: Insiders+ badge and Subscription active">
+        <Screen url="www.royalecinemajoplin.com/admin/members/…" caption="Member page · done" label="Member page after paying: Insiders+ badge and Subscription active">
           <div className={s.card}>
             <div className={s.row}>
               <b style={{ fontSize: 15 }}>Jamie Friend</b>
