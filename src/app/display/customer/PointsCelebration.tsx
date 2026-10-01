@@ -6,6 +6,9 @@ import styles from "./checkin.module.css";
 
 // How long the burst stays up (the CSS fades it out just before this).
 const SHOW_MS = 6600;
+// Rewind's moment (Back office found their visits from before the new
+// system) is a bigger deal: it stays up longer (.overlayLong).
+const LONG_MS = 10600;
 
 const RED = "#ed1c24";
 const INK = "#14110c";
@@ -42,24 +45,32 @@ function pts(n: number) {
 // Plays on the customer screen when a sale with a member on it completes
 // (the register broadcasts "points-earned"), then gets out of the way.
 // accent: their favorite color (lib/flair.ts), for the confetti's red.
+// headline / detail / long: Rewind's "Welcome back" (lib/checkin.ts
+// RewindFound), instead of "Nice one".
 export default function PointsCelebration({
   firstName,
   earned,
   balance,
   accent = null,
+  headline,
+  detail,
+  long = false,
   onDone,
 }: {
   firstName: string;
   earned: number;
   balance: number;
   accent?: string | null;
+  headline?: string;
+  detail?: string;
+  long?: boolean;
   onDone: () => void;
 }) {
   const done = useEffectEvent(onDone);
   useEffect(() => {
-    const timer = setTimeout(() => done(), SHOW_MS);
+    const timer = setTimeout(() => done(), long ? LONG_MS : SHOW_MS);
     return () => clearTimeout(timer);
-  }, []);
+  }, [long]);
 
   // Progress toward their first (or next) reward.
   const toPct = Math.min(100, (balance / POINTS_PER_REWARD) * 100);
@@ -67,7 +78,7 @@ export default function PointsCelebration({
   const needed = Math.max(0, POINTS_PER_REWARD - balance);
 
   return (
-    <div className={styles.overlay} role="status" aria-live="polite">
+    <div className={`${styles.overlay} ${long ? styles.overlayLong : ""}`} role="status" aria-live="polite">
       <div className={styles.confetti} aria-hidden="true">
         {CONFETTI.map(([x, d, s, r, c], i) => (
           <i key={i} style={{ "--x": `${x}%`, "--d": `${d}s`, "--s": `${s}s`, "--r": `${r}deg`, "--c": accent && c === RED ? accent : c } as CSSProperties} />
@@ -84,7 +95,8 @@ export default function PointsCelebration({
         <div className={styles.unit}>{earned === 1 ? "point" : "points"}</div>
       </div>
 
-      <div className={styles.headline}>Nice one, {firstName}!</div>
+      <div className={styles.headline}>{headline ?? `Nice one, ${firstName}!`}</div>
+      {detail && <div className={styles.detail}>{detail}</div>}
 
       <div className={styles.balance}>
         <div className={styles.balanceLabel}>Your balance</div>

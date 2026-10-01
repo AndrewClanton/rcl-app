@@ -91,9 +91,9 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     {
       href: "/admin/members/past-purchases",
       label: "Points from past card purchases",
-      about: "Match card purchases from before the new system to members, then grant their points.",
-      keywords: "fortis backfill old card machine history points grant regulars past visits",
-      min: "admin",
+      about: "Rewind: find a regular's visits from before the new system and give them the points. Owners and admins also review every match and grant.",
+      keywords: "rewind fortis backfill old card machine history points grant regulars past visits last 4 bank app tap",
+      min: "manager",
     },
     {
       href: "/admin/email",

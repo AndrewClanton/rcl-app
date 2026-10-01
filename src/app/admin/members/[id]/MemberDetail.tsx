@@ -11,6 +11,7 @@ import type { GiftMembership } from "@/lib/gift-membership";
 import type { PointsHistoryRow } from "@/lib/data/points-history";
 import GiftCard from "./GiftCard";
 import { PointsBalance, PointsHistoryCard } from "./PointsCard";
+import type { PastVisits } from "@/lib/data/fortis-lookup";
 import ProfileModeration from "./ProfileModeration";
 import InfoTip from "@/components/help/InfoTip";
 import type { HelpTopicKey } from "@/lib/help/topics";
@@ -39,6 +40,7 @@ export default function MemberDetail({
   canEditContact,
   eraseLog,
   pointsHistory,
+  pastVisits = null,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -51,6 +53,8 @@ export default function MemberDetail({
   canEditContact: boolean;
   eraseLog: EraseLogEntry | null;
   pointsHistory: { rows: PointsHistoryRow[]; total: number };
+  // Visits on the old card machine (lib/data/fortis-lookup.ts getPastVisits).
+  pastVisits?: PastVisits | null;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -106,6 +110,25 @@ export default function MemberDetail({
         <BillingCard member={member} />
         <GiftCard member={member} gifts={gifts} />
       </div>
+      {pastVisits && (pastVisits.days > 0 || pastVisits.waiting > 0) && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm xl:col-span-2">
+          <span className="font-semibold">Visits before our new system:</span>{" "}
+          {pastVisits.days > 0 ? (
+            <>
+              {pastVisits.days.toLocaleString("en-US")}
+              {pastVisits.since ? `, starting ${pastVisits.since}` : ""}
+            </>
+          ) : (
+            "none confirmed yet"
+          )}
+          {pastVisits.waiting > 0 && (
+            <span className="text-[var(--muted)]">
+              {" "}
+              · {pastVisits.waiting.toLocaleString("en-US")} more day{pastVisits.waiting === 1 ? "" : "s"} on a card matched automatically, waiting for review
+            </span>
+          )}
+        </div>
+      )}
       <div className="xl:col-span-2">
         <PointsHistoryCard memberId={member.id} initial={pointsHistory} />
       </div>
