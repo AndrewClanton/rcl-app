@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { requireStaff, hasManagerAccess } from "@/lib/auth";
+import { requireStaff, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getPinStatus } from "@/lib/data/employees";
 import { getSignals, navBadges } from "@/lib/data/backoffice";
 import AdminErrorBar from "./AdminErrorBar";
@@ -24,6 +24,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       nav={nav}
       badges={navBadges(signals, pinStatus)}
       me={{ id: staff.employeeId, name: staff.name, role: staff.role }}
+      canNote={hasAdminAccess(staff.role)}
       initialRail={jar.get(RAIL_COOKIE)?.value === "rail"}
       // Which build this is: for the owners only.
       version={staff.role === "owner" ? appVersion().line : null}

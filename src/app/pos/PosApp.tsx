@@ -23,8 +23,10 @@ import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
-import RegisterCheckins from "./RegisterCheckins";
+import { useRegisterCheckins } from "./RegisterCheckins";
+import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
+import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
@@ -74,8 +76,28 @@ interface CartLine {
   isAlcohol: boolean;
 }
 
-// The Movies tab sits alongside the menu categories.
+// The Movies tab sits alongside the menu categories, and so does Customers
+// (check-ins waiting to confirm, who's checked in today, find by face).
 const MOVIES_TAB = "__movies";
+const CUSTOMERS_TAB = "__customers";
+
+// A person, drawn like the category icons (CategoryIcon).
+function CustomersIcon() {
+  return (
+    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
+    </svg>
+  );
+}
+
+// A dev note from the register is about the register, or about the
+// customer screen beside it (which has no button of its own: it faces the
+// customer).
+const NOTE_ABOUT: NoteAbout[] = [
+  { label: "This register", path: "/pos", title: "Register" },
+  { label: "Customer screen", path: "/display/customer", title: "Customer screen" },
+];
 
 type TotalsMember = { tier: MemberTier; points: number } | null;
 
@@ -123,6 +145,7 @@ export default function PosApp({
   defaultReaderId,
   initialScreenings,
   registerTopic,
+  canNote,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -132,6 +155,7 @@ export default function PosApp({
   defaultReaderId: string | null;
   initialScreenings: RegisterScreening[];
   registerTopic: string;
+  canNote: boolean; // an admin is signed in: Dev note
 }) {
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
@@ -237,6 +261,28 @@ export default function PosApp({
   // The last sale's movie tickets, kept for "Reprint last tickets".
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Check-ins from the customer screen. Always listening, whatever's on
+  // screen; staff answer them on the Customers tab, whose count shows how
+  // many are waiting.
+  const checkins = useRegisterCheckins({ registerTopic, member, onAttach: setMember, hasOrder: cart.length > 0 || !!activeTabId, lastSale: lastReceipt });
+  const waiting = checkins.pending.length;
+  // Something on the Customers tab still to act on that isn't a check-in:
+  // tickets to print, or a possible duplicate account.
+  const customersNote = !!checkins.dupHint || !!checkins.tonight?.tickets.some((t) => t.printable);
+  // Set when "Find by photo" opens the Customers tab, so it scrolls to the faces.
+  const [findAt, setFindAt] = useState(0);
+  const menuScrollRef = useRef<HTMLDivElement>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+
+  // What's beside the order: a menu category, Movies or Customers. Each
+  // opens at its top.
+  function pickTab(id: string) {
+    setCategoryId(id);
+    setBuilderItemId(null);
+    setFindAt(0);
+    menuScrollRef.current?.scrollTo({ top: 0 });
+  }
 
   const category = useMemo(() => categories.find((c) => c.id === categoryId) ?? null, [categories, categoryId]);
   const ticketsInCart = useMemo(() => {
@@ -1027,8 +1073,12 @@ export default function PosApp({
             onChange={setMember}
             employeeId={employeeId}
             onRewardLine={(label) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }])}
+            onFind={() => {
+              pickTab(CUSTOMERS_TAB);
+              setFindAt(Date.now());
+            }}
+            waiting={waiting}
           />
-          <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
 
           <div className="space-y-1 pt-1">
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
@@ -1116,6 +1166,19 @@ export default function PosApp({
               canPrint={!!printTarget && devices.autoPrint}
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
             />
+            {/* Admins only. Docked here, in the row's spare cells, rather than
+                floating over the menu buttons the way it used to. */}
+            {canNote && (
+              <button
+                className="btn-secondary col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap !px-2 py-2 text-sm"
+                style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+                onClick={() => setNoteOpen(true)}
+                title="Leave a dev note about the register or the customer screen"
+              >
+                <NoteIcon size={16} />
+                Dev note
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1126,10 +1189,7 @@ export default function PosApp({
         <div className="mb-3 flex shrink-0 flex-wrap gap-2">
           <button
             className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${categoryId === MOVIES_TAB ? "chip-selected" : ""}`}
-            onClick={() => {
-              setCategoryId(MOVIES_TAB);
-              setBuilderItemId(null);
-            }}
+            onClick={() => pickTab(MOVIES_TAB)}
           >
             <CategoryIcon category="movies" />
             Movies
@@ -1138,16 +1198,36 @@ export default function PosApp({
             <button
               key={c.id}
               className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base ${categoryId === c.id ? "chip-selected" : ""}`}
-              onClick={() => {
-                setCategoryId(c.id);
-                setBuilderItemId(null);
-              }}
+              onClick={() => pickTab(c.id)}
             >
               {/* An icon reads at this size where a tiny photo doesn't. */}
               <CategoryIcon category={c.key} label={c.label} />
               {c.label}
             </button>
           ))}
+          {/* Last, so the menu tabs keep their places. Its count is the
+              check-ins waiting to confirm, and it pulses gently until
+              they're answered: nothing pops up over the menu buttons. Never
+              narrower than its name and count (an upright iPad gives it a
+              row of its own). */}
+          <button
+            className={`chip relative flex min-w-fit flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${
+              categoryId === CUSTOMERS_TAB ? "chip-selected" : waiting > 0 ? "!border-[var(--accent)] motion-safe:animate-checkin-pulse" : ""
+            }`}
+            onClick={() => pickTab(CUSTOMERS_TAB)}
+            aria-label={`Customers${waiting > 0 ? `: ${waiting} check-in${waiting === 1 ? "" : "s"} waiting to confirm` : customersNote ? ": something to look at" : ""}`}
+          >
+            <CustomersIcon />
+            Customers
+            {waiting > 0 ? (
+              <span className="min-w-6 rounded-full px-1.5 text-sm leading-6 text-white tabular-nums" style={{ background: "var(--accent)" }} aria-hidden>
+                {waiting}
+              </span>
+            ) : (
+              customersNote &&
+              categoryId !== CUSTOMERS_TAB && <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--foreground)" }} aria-hidden />
+            )}
+          </button>
         </div>
         {customOpen && (
           <CustomItemModal
@@ -1159,8 +1239,10 @@ export default function PosApp({
           />
         )}
 
-        <div className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
-        {categoryId === MOVIES_TAB ? (
+        <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
+        {categoryId === CUSTOMERS_TAB ? (
+          <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={setMember} findAt={findAt} />
+        ) : categoryId === MOVIES_TAB ? (
           <MovieTickets
             initial={initialScreenings}
             inCart={ticketsInCart}
@@ -1302,6 +1384,8 @@ export default function PosApp({
           onSubmit={handleOpenTab}
         />
       )}
+
+      {noteOpen && <DevNoteDialog about={NOTE_ABOUT} onClose={() => setNoteOpen(false)} />}
 
       {confirmState && (
         <ConfirmModal
