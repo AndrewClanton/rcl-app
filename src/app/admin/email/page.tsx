@@ -108,7 +108,8 @@ export default async function EmailPage() {
             Not sending to lists yet: {o.gate.reason}
             {o.waitingAtResend > 0 && !o.paused_by_guardrail
               ? ` ${o.waitingAtResend.toLocaleString()} handed to Resend earlier ${o.waitingAtResend === 1 ? "is" : "are"} still waiting to go out${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : "; they're called back on the next morning run, or now with the button below"}.`
-              : ""}
+              : ""}{" "}
+            Test copies still go to your own inbox.
           </p>
           {admin && o.waitingAtResend > 0 && !o.paused_by_guardrail && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
         </div>

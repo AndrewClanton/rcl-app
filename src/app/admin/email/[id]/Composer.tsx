@@ -742,6 +742,7 @@ export default function Composer({
             >
               Send a test to me
             </button>
+            {!gate.ok && <span className="text-xs text-[var(--muted)]">Test copies still go to your own inbox, even with sending off.</span>}
             {seedCount > 0 && (
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={seeds} onChange={(e) => setSeeds(e.target.checked)} /> and the {seedCount} seed inboxes
