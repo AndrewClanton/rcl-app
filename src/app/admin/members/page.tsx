@@ -63,8 +63,8 @@ export default async function AdminMembersPage({
           className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
         >
           <span>
-            <span className="font-semibold">Indy import</span> · {indy.imported.toLocaleString()} imported · {indy.toImport.toLocaleString()} approved,
-            waiting
+            <span className="font-semibold">Indy import</span> · {indy.imported.toLocaleString()} imported · {indy.toImport.toLocaleString()} ready to
+            import
             {indy.needsChoice > 0 && <> · <span className="text-[var(--accent)]">{indy.needsChoice} need a pick</span></>}
           </span>
           <span className="text-[var(--muted)]">Review →</span>

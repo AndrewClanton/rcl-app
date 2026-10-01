@@ -1,16 +1,20 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { assertAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { consentTablesExist, READY_FILTER } from "@/lib/data/indy";
+import { consentTablesExist, neverMailListExists } from "@/lib/data/indy";
 import {
   fillPlan,
   indyConsentSource,
+  NEVER_MAIL_REASON,
   newMemberRow,
   plannedFills,
+  READY_FILTER,
   readyToImport,
+  SAME_EMAIL_REASON,
   saidNoReview,
   takesIndyConsent,
   type IndyImportRow,
@@ -38,12 +42,14 @@ export async function setIndyChoice(indyUserId: string, choice: IndyChoice): Pro
   const supabase = createAdminClient();
   const { data: row, error: readErr } = await supabase
     .from("indy_accounts")
-    .select("indy_user_id, email, first_name, last_name, phone, birthday, said_yes, classification, email_member_id, phone_member_id, import_as, said_no_review, said_no_decision, imported_member_id, erased_at")
+    .select(
+      "indy_user_id, email, first_name, last_name, phone, birthday, said_yes, classification, reasons, email_member_id, phone_member_id, import_as, said_no_review, said_no_decision, imported_member_id, imported_at, erased_at"
+    )
     .eq("indy_user_id", indyUserId)
     .maybeSingle();
   if (readErr) return { ok: false, error: "Couldn't read that account. Try again." };
   if (!row) return { ok: false, error: "Couldn't find that account." };
-  if (row.imported_member_id) return { ok: false, error: "Already imported. Change the member on the Members page instead." };
+  if (row.imported_member_id || row.imported_at) return { ok: false, error: "Already imported. Change the member on the Members page instead." };
   if (row.erased_at) return { ok: false, error: "This person asked to be removed, so they can't be imported." };
   if (row.classification === "skip" && choice !== "skip") return { ok: false, error: "Skipped accounts can't be imported from here." };
 
@@ -55,6 +61,7 @@ export async function setIndyChoice(indyUserId: string, choice: IndyChoice): Pro
   } else if (choice === "new") {
     if (!row.email) return { ok: false, error: "This account has no email, so it can't be a new member." };
     if (row.email_member_id) return { ok: false, error: "That email already belongs to a member. Fill the email match instead." };
+    if ((row.reasons ?? []).includes(NEVER_MAIL_REASON)) return { ok: false, error: "That address is on the never-mail list, so it can't be added as a new member." };
     patch = { decision: "import", import_as: "new", target_member_id: null, planned_fills: [], said_no_review: false, said_no_decision: null };
   } else {
     const targetId = choice === "fill_email" ? row.email_member_id : row.phone_member_id;
@@ -81,7 +88,8 @@ export async function setIndyChoice(indyUserId: string, choice: IndyChoice): Pro
     .from("indy_accounts")
     .update({ ...patch, decided_by: staff.employeeId, decided_at: new Date().toISOString() })
     .eq("indy_user_id", indyUserId)
-    .is("imported_member_id", null);
+    .is("imported_member_id", null)
+    .is("imported_at", null);
   if (error) return { ok: false, error: "Couldn't save that. Try again." };
   revalidate();
   return { ok: true };
@@ -98,6 +106,7 @@ export async function setIndySaidNo(indyUserId: string, decision: "honor" | "lea
     .eq("indy_user_id", indyUserId)
     .eq("said_no_review", true)
     .is("imported_member_id", null)
+    .is("imported_at", null)
     .is("erased_at", null)
     .select("indy_user_id");
   if (error) return { ok: false, error: "Couldn't save that. Try again." };
@@ -107,7 +116,7 @@ export async function setIndySaidNo(indyUserId: string, decision: "honor" | "lea
 }
 
 // Every new account still on the automatic default, approved by this
-// person. Ones skipped by hand stay skipped.
+// person: the next Import adds them. Ones skipped by hand stay skipped.
 export async function approveAllNewIndy(): Promise<Result<{ count: number }>> {
   const staff = await assertAdmin();
   const supabase = createAdminClient();
@@ -116,8 +125,10 @@ export async function approveAllNewIndy(): Promise<Result<{ count: number }>> {
     .update({ decision: "import", decided_by: staff.employeeId, decided_at: new Date().toISOString() })
     .eq("classification", "new")
     .eq("import_as", "new")
+    .eq("decision", "import")
     .is("decided_by", null)
     .is("imported_member_id", null)
+    .is("imported_at", null)
     .is("erased_at", null)
     .select("indy_user_id");
   if (error) return { ok: false, error: "Couldn't approve them. Try again." };
@@ -126,7 +137,7 @@ export async function approveAllNewIndy(): Promise<Result<{ count: number }>> {
 }
 
 // Honor or leave every "said no" that's still waiting. Ones already set one
-// by one keep that choice.
+// by one keep that choice, and skipped ones stay skipped.
 export async function setAllIndySaidNo(decision: "honor" | "leave"): Promise<Result<{ count: number }>> {
   const staff = await assertAdmin();
   const supabase = createAdminClient();
@@ -135,7 +146,9 @@ export async function setAllIndySaidNo(decision: "honor" | "leave"): Promise<Res
     .update({ said_no_decision: decision, decided_by: staff.employeeId, decided_at: new Date().toISOString() })
     .eq("said_no_review", true)
     .eq("said_no_decision", "pending")
+    .neq("decision", "skip")
     .is("imported_member_id", null)
+    .is("imported_at", null)
     .is("erased_at", null)
     .select("indy_user_id");
   if (error) return { ok: false, error: "Couldn't save that. Try again." };
@@ -151,15 +164,20 @@ const BATCH = 500;
 const TIME_BUDGET_MS = 75_000;
 const IN_CHUNK = 100; // ids per .in() filter, to keep URLs short
 
+const HASH_CHUNK = 50; // never-mail hashes per .in() filter (64 characters each)
+
 type ImportRow = IndyImportRow & { reasons: string[]; email_member_id: string | null };
 const IMPORT_COLUMNS =
-  "indy_user_id, email, first_name, last_name, phone, birthday, indy_created_at, said_yes, said_no_review, said_no_decision, decision, import_as, target_member_id, imported_member_id, erased_at, reasons, email_member_id";
+  "indy_user_id, email, first_name, last_name, phone, birthday, indy_created_at, said_yes, said_no_review, said_no_decision, decision, import_as, target_member_id, classification, decided_by, imported_member_id, imported_at, erased_at, reasons, email_member_id";
 
 interface Mark {
   indy_user_id: string;
   member_id: string | null;
   honored?: boolean;
   consent?: boolean;
+  // The fields this press wrote on a member who was already here, kept so
+  // a wrong fill can be undone exactly.
+  filled?: string[];
 }
 interface SendBack {
   row: ImportRow;
@@ -227,7 +245,49 @@ async function sendBack(supabase: SupabaseClient, b: SendBack): Promise<boolean>
   return !error;
 }
 
-async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: Map<string, string>, now: string, tally: Tally): Promise<string | null> {
+// The never-mail list keys an address as sha256(lower(trim(email))) in hex,
+// the same as the email-marketing migration works it out in SQL.
+const emailHash = (email: string) => createHash("sha256").update(email.trim().toLowerCase(), "utf8").digest("hex");
+
+// Which of these addresses are on the never-mail list. Null if it couldn't
+// be read.
+async function onNeverMailList(supabase: SupabaseClient, emails: string[]): Promise<Set<string> | null> {
+  const byHash = new Map(emails.map((e) => [emailHash(e), e]));
+  const found = new Set<string>();
+  for (const part of chunks([...byHash.keys()], HASH_CHUNK)) {
+    const { data, error } = await supabase.from("email_suppressions").select("email_hash").in("email_hash", part);
+    if (error) return null;
+    for (const s of data as { email_hash: string }[]) {
+      const email = byHash.get(s.email_hash);
+      if (email) found.add(email);
+    }
+  }
+  return found;
+}
+
+// The live member who has this email, if any (for a row sent back because
+// someone with its email joined), so the conflict offers "Fill email match".
+async function memberWithEmail(supabase: SupabaseClient, email: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("members")
+    .select("id, email")
+    .ilike("email", email.replace(/[%_\\]/g, (c) => `\\${c}`))
+    .is("erased_at", null)
+    .limit(5);
+  if (error) return null;
+  return (data as { id: string; email: string | null }[]).find((m) => (m.email ?? "").trim().toLowerCase() === email)?.id ?? null;
+}
+
+interface ImportContext {
+  now: string;
+  taken: Map<string, string>; // email -> member id, for every live member with an email
+  indyEmails: Map<string, Set<string>>; // email -> the Indy accounts with it (not skipped, not removed)
+  neverMailList: boolean; // email_suppressions is there to check
+  tally: Tally;
+}
+
+async function importBatch(supabase: SupabaseClient, rows: ImportRow[], ctx: ImportContext): Promise<string | null> {
+  const { now, taken, indyEmails, tally } = ctx;
   // A member already carrying one of these Indy ids is a batch that went in
   // but wasn't marked (a timeout, say): mark it now instead of adding twice.
   const already = await membersWhere(supabase, "indy_user_id", rows.map((r) => r.indy_user_id));
@@ -236,10 +296,15 @@ async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: M
   if (!already || !targetList) return "Couldn't read the members to fill.";
   const linkedTo = new Map(already.filter((m) => !m.erased_at).map((m) => [m.indy_user_id as string, m]));
   const targets = new Map(targetList.map((m) => [m.id, m]));
+  // Nobody on the never-mail list (they asked us to stop, or were removed
+  // after unsubscribing) comes back as a new member.
+  const newEmails = rows.filter((r) => r.import_as === "new" && r.email).map((r) => r.email as string);
+  const suppressed = ctx.neverMailList && newEmails.length ? await onNeverMailList(supabase, newEmails) : new Set<string>();
+  if (!suppressed) return "Couldn't check the never-mail list.";
 
   const marks: Mark[] = [];
   const backs: SendBack[] = [];
-  const fills: { row: ImportRow; memberId: string; plan: ReturnType<typeof fillPlan> }[] = [];
+  const fills: { row: ImportRow; member: IndyMember; plan: ReturnType<typeof fillPlan> }[] = [];
   const inserts: ImportRow[] = [];
 
   const adding = new Set<string>(); // emails being added in this batch
@@ -247,9 +312,16 @@ async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: M
   for (const row of rows) {
     const linked = linkedTo.get(row.indy_user_id);
     if (row.import_as === "new") {
+      const sharedWith = [...(indyEmails.get(row.email ?? "") ?? [])].filter((id) => id !== row.indy_user_id);
       if (linked) marks.push({ indy_user_id: row.indy_user_id, member_id: linked.id });
       else if (!row.email) backs.push({ row, reason: "no email to add them with" });
+      else if (suppressed.has(row.email)) backs.push({ row, reason: NEVER_MAIL_REASON });
       else if (taken.has(row.email)) backs.push({ row, reason: "someone with this email joined since the load", emailMemberId: taken.get(row.email) });
+      // Another Indy account with this email is in Members or on its way
+      // (filling a member with no email, say): adding this one could give one
+      // person two members. Someone who picked "Add as new" on the conflict
+      // has seen that, so only the automatic sort is held back.
+      else if (row.classification === "new" && sharedWith.length) backs.push({ row, reason: SAME_EMAIL_REASON });
       else if (adding.has(row.email)) backs.push({ row, reason: "another Indy account with this email is being added" });
       else {
         adding.add(row.email);
@@ -269,22 +341,30 @@ async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: M
       backs.push({ row, reason: "another Indy account is filling the same member" });
       continue;
     }
-    const plan = fillPlan(row, targets.get(row.target_member_id), now);
-    if (plan.problem) backs.push({ row, reason: plan.problem });
+    const member = targets.get(row.target_member_id);
+    const plan = fillPlan(row, member, now);
+    if (plan.problem || !member) backs.push({ row, reason: plan.problem ?? "the matched member is gone" });
     else {
       filling.add(row.target_member_id);
-      fills.push({ row, memberId: row.target_member_id, plan });
+      fills.push({ row, member, plan });
     }
   }
 
-  // Fill in what's still empty on members who are already here. The link
-  // only goes on a member with none, so one can never be overwritten.
+  // Fill in what's still empty on members who are already here. Each field
+  // is written only if it's still what was read a moment ago, so a phone,
+  // birthday or name the member (or staff) put in since is never
+  // overwritten, and an honored "no" never overrides a choice they just
+  // made. The link only goes on a member with none.
   let failed = false;
-  await eachLimit(fills, 8, async ({ row, memberId, plan }) => {
+  await eachLimit(fills, 8, async ({ row, member, plan }) => {
     if (failed) return;
     if (Object.keys(plan.patch).length) {
-      let update = supabase.from("members").update(plan.patch).eq("id", memberId).is("erased_at", null);
-      if (plan.patch.indy_user_id) update = update.is("indy_user_id", null);
+      let update = supabase.from("members").update(plan.patch).eq("id", member.id).is("erased_at", null);
+      if ("indy_user_id" in plan.patch) update = update.is("indy_user_id", null);
+      if ("phone" in plan.patch) update = member.phone === null ? update.is("phone", null) : update.eq("phone", member.phone);
+      if ("birthday" in plan.patch) update = update.is("birthday", null);
+      if ("name" in plan.patch) update = member.name === null ? update.is("name", null) : update.eq("name", member.name);
+      if ("email_opt_in" in plan.patch) update = update.is("email_opt_in_changed_at", null);
       const { data, error } = await update.select("id");
       if (error?.code === "23505") {
         backs.push({ row, reason: "this Indy account is already linked to a different member" });
@@ -295,11 +375,11 @@ async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: M
         return;
       }
       if (!data.length) {
-        backs.push({ row, reason: "that member changed while importing (linked elsewhere or removed)" });
+        backs.push({ row, reason: "that member changed while importing; pick again" });
         return;
       }
     }
-    marks.push({ indy_user_id: row.indy_user_id, member_id: memberId, honored: plan.honored });
+    marks.push({ indy_user_id: row.indy_user_id, member_id: member.id, honored: plan.honored, filled: plan.filled });
     if (plan.filled.length) tally.filled++;
     else tally.linked++;
     if (plan.honored) tally.honored++;
@@ -324,8 +404,8 @@ async function importBatch(supabase: SupabaseClient, rows: ImportRow[], taken: M
           taken.set(row.email as string, one.id);
           tally.added++;
         } else if (oneErr.code === "23505") {
-          const byIndy = /indy_user_id/.test(oneErr.message ?? "");
-          backs.push({ row, reason: byIndy ? "this Indy account is already linked to a member" : "someone with this email joined since the load" });
+          if (/indy_user_id/.test(oneErr.message ?? "")) backs.push({ row, reason: "this Indy account is already linked to a member" });
+          else backs.push({ row, reason: "someone with this email joined since the load", emailMemberId: await memberWithEmail(supabase, row.email as string) });
         } else {
           failed = true;
           break;
@@ -392,11 +472,13 @@ async function recordConsent(supabase: SupabaseClient, employeeId: string, deadl
   return null;
 }
 
-// Copies every approved, not-yet-imported Indy account into members:
+// Copies every ready, not-yet-imported Indy account into members:
 // - a fill fills only what's still empty on that member (phone, birthday, a
 //   placeholder name), never the email, and links the Indy account;
-// - a new account becomes a free Insider, with email on or off as they
-//   answered on Indy (a recorded choice, dated when they gave it);
+// - a new account a person approved becomes a free Insider, with email on
+//   or off as they answered on Indy (a recorded choice, dated when they gave
+//   it), unless its address is on the never-mail list or another Indy
+//   account shares it (those go back to Conflict);
 // - an existing member's email setting changes only for a "no" marked
 //   Honor, and only if they're still opted in by the old default.
 // Points, visits, photos, addresses and paid plans are not imported. No
@@ -417,6 +499,27 @@ export async function importApprovedIndyAccounts(): Promise<Result<Tally & { rem
     for (const m of data) taken.set(m.email.trim().toLowerCase(), m.id);
     if (data.length < 1000) break;
   }
+  // Which Indy accounts share an email (skipped and removed ones aside).
+  const indyEmails = new Map<string, Set<string>>();
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("indy_accounts")
+      .select("indy_user_id, email")
+      .not("email", "is", null)
+      .neq("decision", "skip")
+      .is("erased_at", null)
+      .order("indy_user_id")
+      .range(from, from + 999);
+    if (error) return { ok: false, error: "Couldn't read the Indy accounts. Nothing was changed." };
+    for (const r of data as { indy_user_id: string; email: string }[]) {
+      const email = r.email.trim().toLowerCase();
+      indyEmails.set(email, (indyEmails.get(email) ?? new Set<string>()).add(r.indy_user_id));
+    }
+    if (data.length < 1000) break;
+  }
+  const neverMailList = await neverMailListExists(supabase);
+  if (neverMailList === null) return { ok: false, error: "Couldn't check the never-mail list. Nothing was changed." };
+  const ctx: ImportContext = { now, taken, indyEmails, neverMailList, tally };
 
   let stopped: string | null = null;
   while (!stopped && Date.now() < deadline) {
@@ -426,17 +529,18 @@ export async function importApprovedIndyAccounts(): Promise<Result<Tally & { rem
       .eq("decision", "import")
       .not("import_as", "is", null)
       .is("imported_member_id", null)
+      .is("imported_at", null)
       .is("erased_at", null)
       .or(READY_FILTER)
       .order("indy_user_id")
       .limit(BATCH);
     if (error) {
-      stopped = "Couldn't read the approved accounts.";
+      stopped = "Couldn't read the accounts ready to import.";
       break;
     }
-    const rows = (data as ImportRow[]).filter(readyToImport);
+    const rows = (data as unknown as ImportRow[]).filter(readyToImport);
     if (!rows.length) break;
-    stopped = await importBatch(supabase, rows, taken, now, tally);
+    stopped = await importBatch(supabase, rows, ctx);
   }
 
   const tables = await consentTablesExist(supabase);
@@ -448,6 +552,7 @@ export async function importApprovedIndyAccounts(): Promise<Result<Tally & { rem
     .eq("decision", "import")
     .not("import_as", "is", null)
     .is("imported_member_id", null)
+    .is("imported_at", null)
     .is("erased_at", null)
     .or(READY_FILTER);
   const unrecorded =

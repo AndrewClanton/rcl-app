@@ -2,7 +2,7 @@
 // each field, sorting each person into fill / new / conflict / skip, and
 // what an import may change on a member who's already here. Indy was the
 // ticketing system before this app; its customer export is loaded into
-// indy_accounts (supabase/migrations/20261001120000_indy_accounts.sql) by
+// indy_accounts (supabase/migrations/20261001140000_indy_accounts.sql) by
 // scripts/load-indy-accounts.mjs, reviewed at /admin/members/indy, and only
 // copied into members when an admin presses Import there.
 //
@@ -121,8 +121,14 @@ export interface IndyExisting {
   said_no_decision: IndySaidNo | null;
   decided_by: string | null;
   imported_member_id: string | null;
+  imported_at?: string | null;
   erased_at: string | null;
 }
+
+// Reasons the sort and the import give that other code looks for.
+export const SAME_EMAIL_REASON = "another Indy account has the same email";
+export const IMPORTED_EMAIL_REASON = "an Indy account with the same email is already in Members";
+export const NEVER_MAIL_REASON = "address is on the never-mail list";
 
 // ---------- the CSV ----------
 // Quoted fields can hold commas, quotes ("") and line breaks (Indy's
@@ -160,13 +166,29 @@ export function parseCsv(text: string): string[][] {
   return rows.filter((r) => r.some((c) => c.trim() !== ""));
 }
 
-// The export as one object per person, keyed by column name.
-export function readIndyCsv(text: string): { columns: string[]; records: Record<string, string>[]; missing: string[] } {
+// The export as one object per person, keyed by column name. ragged counts
+// rows with more or fewer fields than the header (a stray quote shifts every
+// column after it), so the loader can stop instead of reading the wrong ones.
+export function readIndyCsv(text: string): { columns: string[]; records: Record<string, string>[]; missing: string[]; ragged: number } {
   const [head = [], ...body] = parseCsv(text);
   const columns = head.map((h) => h.trim());
   const records = body.map((r) => Object.fromEntries(columns.map((c, i) => [c, (r[i] ?? "").trim()])));
   const missing = INDY_COLUMNS.filter((c) => !columns.includes(c));
-  return { columns, records, missing };
+  const ragged = body.filter((r) => r.length !== columns.length).length;
+  return { columns, records, missing, ragged };
+}
+
+// The yes/no columns are read as the literal "true" (any case); anything
+// else counts as no. Counts, per column, the values that are neither true,
+// false nor blank (1/0, yes/no...), which would silently turn every answer
+// into a no and stop staff accounts being skipped.
+export function oddIndyValues(records: Record<string, string>[]): Record<string, number> {
+  const odd: Record<string, number> = {};
+  for (const col of ["employee", ...INDY_EMAIL_SWITCHES]) {
+    const n = records.filter((r) => !["true", "false", ""].includes(lc(r[col]))).length;
+    if (n) odd[col] = n;
+  }
+  return odd;
 }
 
 // ---------- cleaning up one field ----------
@@ -378,7 +400,11 @@ const MATCH_REASONS = new Set(["matched by email", "matched by phone (member has
 // conflict: the matches disagree or can't be trusted. A person decides.
 // skip: staff, test accounts, no way to reach them, and anyone removed at
 //   their request.
-export function classifyIndy(people: IndyPerson[], members: IndyMember[]): IndyStagingRow[] {
+// importedEmails: on a re-load, the emails of Indy accounts already
+// imported (email -> that account's Indy id). One imported by phone into a
+// member with no email leaves its email on no member, so another account
+// with that email would otherwise look new.
+export function classifyIndy(people: IndyPerson[], members: IndyMember[], importedEmails: Map<string, string> = new Map()): IndyStagingRow[] {
   const live = members.filter((m) => !m.erased_at);
   const byEmail = new Map<string, IndyMember>();
   const byPhone = new Map<string, IndyMember[]>();
@@ -429,7 +455,11 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[]): IndyS
       import_as: classification === "fill" ? "fill" : classification === "new" ? "new" : null,
     });
 
-    if (erasedIndy.has(p.indy_user_id)) return sorted("skip", ["removed at their request"]);
+    if (erasedIndy.has(p.indy_user_id)) {
+      // Kept only as a skipped, blanked row, like the erase trigger leaves one.
+      const blank = { email: null, first_name: null, last_name: null, phone: null, phone_digits: null, birthday: null, indy_last_visit: null, indy_points: null };
+      return { ...sorted("skip", ["removed at their request"]), ...blank, reasons: ["removed at their request"], email_member_id: null, phone_member_id: null };
+    }
     if (p.skip.length) return sorted("skip", p.skip);
     const linked = byIndy.get(p.indy_user_id);
     if (linked) return sorted("fill", ["already linked to this Indy account"], linked);
@@ -450,16 +480,21 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[]): IndyS
     return sorted("skip", ["no email, and no member has that phone"]);
   });
 
-  // Two Indy accounts landing on the same member, or two new ones with the
-  // same email: nobody can tell which is right without looking.
+  // Two Indy accounts landing on the same member, or two with the same
+  // email that no member has: nobody can tell which is right without
+  // looking. The email case spans fill, new and conflict: one account filling
+  // a kiosk-made member (no email) by phone while another with the same email
+  // is added as new would give one person two members, and the email's
+  // unique index can't catch it because the kiosk member has no email. (An
+  // email a member already has is safe: every account with it matches that
+  // member, so two fills of it are the same-member case, and it can't be
+  // added as new.)
   const byTarget = new Map<string, IndyStagingRow[]>();
-  const byNewEmail = new Map<string, IndyStagingRow[]>();
   for (const r of rows) {
     if (r.classification === "fill" && r.target_member_id) byTarget.set(r.target_member_id, [...(byTarget.get(r.target_member_id) ?? []), r]);
-    if (r.classification === "new" && r.email) byNewEmail.set(r.email, [...(byNewEmail.get(r.email) ?? []), r]);
   }
-  const toConflict = (group: IndyStagingRow[], reason: string) => {
-    if (group.length < 2) return;
+  const toConflict = (group: IndyStagingRow[], reason: string, min = 2) => {
+    if (group.length < min) return;
     for (const r of group) {
       r.classification = "conflict";
       r.reasons = [reason, ...r.reasons.filter((x) => !MATCH_REASONS.has(x))];
@@ -473,7 +508,15 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[]): IndyS
   // (A member already linked to one Indy account can't be a second one's
   // fill: that's a conflict above, so these groups never include it.)
   for (const group of byTarget.values()) toConflict(group, "another Indy account matches the same member");
-  for (const group of byNewEmail.values()) toConflict(group, "another Indy account has the same email");
+  const byFreeEmail = new Map<string, IndyStagingRow[]>();
+  for (const r of rows) {
+    if (r.classification !== "skip" && r.email && !r.email_member_id) byFreeEmail.set(r.email, [...(byFreeEmail.get(r.email) ?? []), r]);
+  }
+  for (const group of byFreeEmail.values()) toConflict(group, SAME_EMAIL_REASON);
+  for (const [email, group] of byFreeEmail) {
+    const importedAs = importedEmails.get(email);
+    if (importedAs) toConflict(group.filter((r) => r.indy_user_id !== importedAs), IMPORTED_EMAIL_REASON, 1);
+  }
   for (const r of rows) if (r.said_no_review) r.said_no_decision = "pending";
   return rows;
 }
@@ -485,7 +528,7 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[]): IndyS
 // imported, or erased, is left alone: null means "don't write it".
 export function mergeIndyRow(fresh: IndyStagingRow, existing: IndyExisting | undefined, membersById: Map<string, IndyMember>): IndyStagingRow | null {
   if (!existing) return fresh;
-  if (existing.erased_at || existing.imported_member_id) return null;
+  if (existing.erased_at || existing.imported_member_id || existing.imported_at) return null;
   if (!existing.decided_by) return fresh;
   const target = existing.target_member_id ? membersById.get(existing.target_member_id) : undefined;
   const liveTarget = target && !target.erased_at ? target : null;
@@ -539,13 +582,68 @@ export type IndyImportRow = Pick<
   | "decision"
   | "import_as"
   | "target_member_id"
-> & { imported_member_id: string | null; erased_at: string | null };
+  | "classification"
+> & { decided_by: string | null; imported_member_id: string | null; imported_at: string | null; erased_at: string | null };
 
-// Ready for the Import button: approved, not in yet, and not a "said no on
-// Indy" that's still waiting for Honor or Leave.
-export function readyToImport(r: Pick<IndyImportRow, "decision" | "import_as" | "said_no_review" | "said_no_decision" | "imported_member_id" | "erased_at">): boolean {
-  if (r.decision !== "import" || !r.import_as || r.imported_member_id || r.erased_at) return false;
+type ReadyFields = Pick<IndyImportRow, "decision" | "import_as" | "said_no_review" | "said_no_decision" | "imported_member_id" | "erased_at"> & {
+  decided_by?: string | null;
+  imported_at?: string | null;
+};
+
+// Ready for the Import button: set to import, not in yet, not a "said no
+// on Indy" still waiting for Honor or Leave, and, for a new member, approved
+// by a person (Approve, Approve all new, or Add as new on a conflict). The
+// loader's automatic default never adds anyone by itself. A fill is ready on
+// the default: it only fills a matched member's empty details.
+// (imported_at as well as imported_member_id: the member link is cleared if
+// that member is ever deleted, and the row must not go in twice.)
+export function readyToImport(r: ReadyFields): boolean {
+  if (r.decision !== "import" || !r.import_as || r.imported_member_id || r.imported_at || r.erased_at) return false;
+  if (r.import_as === "new" && !r.decided_by) return false;
   return !r.said_no_review || r.said_no_decision === "honor" || r.said_no_decision === "leave";
+}
+
+// The same as a PostgREST filter, for .or(): the database narrows to these
+// rows, then readyToImport checks each one. Used with decision = 'import',
+// import_as not null, imported_member_id null, imported_at null and
+// erased_at null (scripts/check-indy-import.mjs checks they agree).
+export const READY_FILTER = "and(or(said_no_review.eq.false,said_no_decision.in.(honor,leave)),or(import_as.eq.fill,decided_by.not.is.null))";
+
+// What pressing Import would do right now, from the rows not in yet: the
+// review screen's dry run. Fills and links are as of the last load or pick
+// (the import works them out again and never overwrites), and an honored
+// "no" is skipped for a member who has set their email themselves by then.
+export interface IndyImportPreview {
+  ready: number;
+  newMembers: number;
+  newEmailOn: number;
+  newEmailOff: number;
+  fills: number; // members who get a detail filled in
+  links: number; // members only linked, nothing to fill
+  honor: number; // "no"s to honor (email off at import)
+  newWaiting: number; // new, still waiting for a person to approve
+}
+export type IndyPreviewRow = ReadyFields & Pick<IndyStagingRow, "said_yes" | "planned_fills">;
+
+export function importPreview(rows: IndyPreviewRow[]): IndyImportPreview {
+  const p: IndyImportPreview = { ready: 0, newMembers: 0, newEmailOn: 0, newEmailOff: 0, fills: 0, links: 0, honor: 0, newWaiting: 0 };
+  for (const r of rows) {
+    if (!readyToImport(r)) {
+      if (r.import_as === "new" && !r.decided_by && readyToImport({ ...r, decided_by: "anyone" })) p.newWaiting++;
+      continue;
+    }
+    p.ready++;
+    if (r.import_as === "new") {
+      p.newMembers++;
+      if (r.said_yes) p.newEmailOn++;
+      else p.newEmailOff++;
+    } else {
+      if ((r.planned_fills ?? []).length) p.fills++;
+      else p.links++;
+      if (r.said_no_review && r.said_no_decision === "honor") p.honor++;
+    }
+  }
+  return p;
 }
 
 export interface IndyFillPlan {
@@ -581,6 +679,10 @@ export function fillPlan(row: IndyImportRow, member: IndyMember | null | undefin
     if (saidNoReview(row, member)) {
       patch.email_opt_in = false;
       patch.email_opt_in_changed_at = now;
+      honored = true;
+    } else if (member.indy_user_id === row.indy_user_id && member.email_opt_in === false) {
+      // An earlier press already linked them and turned email off, then
+      // stopped before marking the row: that "no" was honored.
       honored = true;
     } else keptTheirChoice = true;
   }

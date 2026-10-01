@@ -9,7 +9,12 @@
 -- Indy password or payment details. RLS is on with no policies: service
 -- role only.
 --
--- Additive and safe to run more than once.
+-- Additive and safe to run more than once. It adds a column, an index and
+-- a trigger to members, so apply it outside service hours: if something
+-- holds members open, this gives up after 5 seconds instead of queueing the
+-- register behind it (run it again).
+set local lock_timeout = '5s';
+
 create table if not exists indy_accounts (
   -- Indy's own user id ('id' in the export).
   indy_user_id text primary key,
@@ -47,7 +52,9 @@ create table if not exists indy_accounts (
   --              import_as 'new' and clears it.
   -- Starts from the classification (fill and new: import; conflict: review;
   -- skip: skip). decided_by is null for that automatic default; a loader
-  -- re-run re-sorts only rows nobody has decided.
+  -- re-run re-sorts only rows nobody has decided. A 'new' row goes in only
+  -- once a person has approved it (decided_by set): the automatic default
+  -- alone never adds anyone.
   decision text not null check (decision in ('import', 'skip', 'review')),
   import_as text check (import_as in ('fill', 'new')),
   target_member_id uuid references members(id) on delete set null,
@@ -68,6 +75,10 @@ create table if not exists indy_accounts (
   imported_member_id uuid references members(id) on delete set null,
   imported_at timestamptz,
   said_no_honored_at timestamptz,   -- the import turned their email off
+  -- The fields the import actually wrote on a member who was already here
+  -- (["phone", "birthday", "name"]), so a wrong fill can be undone exactly
+  -- later. Null for a new member, and before the import.
+  filled_fields jsonb,
   -- Their Indy answer was written to the email-marketing tables
   -- (member_email_prefs, email_consent_log). Null while those tables don't
   -- exist yet, so a later Import run fills it in.
@@ -80,6 +91,9 @@ create table if not exists indy_accounts (
   shuffle text generated always as (md5(indy_user_id)) stored,
   loaded_at timestamptz not null default now()
 );
+
+-- (For a database that ran an earlier copy of this file.)
+alter table indy_accounts add column if not exists filled_fields jsonb;
 
 create index if not exists indy_accounts_group_idx on indy_accounts (classification, shuffle);
 create index if not exists indy_accounts_decision_idx on indy_accounts (decision);
@@ -94,8 +108,9 @@ alter table indy_accounts enable row level security;
 alter table members add column if not exists indy_user_id text unique;
 
 -- After an import batch: mark each row with its member, whether its "no"
--- was honored, and whether its answer reached the email-marketing tables,
--- in one statement. p_rows: [{indy_user_id, member_id, honored, consent}].
+-- was honored, which fields it filled, and whether its answer reached the
+-- email-marketing tables, in one statement.
+-- p_rows: [{indy_user_id, member_id, honored, consent, filled}].
 -- Only fills in what's still empty, so a retried batch changes nothing.
 -- Service role only.
 create or replace function public.mark_indy_accounts(p_rows jsonb)
@@ -109,8 +124,9 @@ as $$
     set imported_member_id = coalesce(ia.imported_member_id, r.member_id),
         imported_at = coalesce(ia.imported_at, case when r.member_id is not null then now() end),
         said_no_honored_at = coalesce(ia.said_no_honored_at, case when r.honored then now() end),
+        filled_fields = coalesce(ia.filled_fields, r.filled),
         consent_recorded_at = coalesce(ia.consent_recorded_at, case when r.consent then now() end)
-    from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r(indy_user_id text, member_id uuid, honored boolean, consent boolean)
+    from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r(indy_user_id text, member_id uuid, honored boolean, consent boolean, filled jsonb)
     where ia.indy_user_id = r.indy_user_id
     returning 1
   )
@@ -121,13 +137,17 @@ grant execute on function public.mark_indy_accounts(jsonb) to service_role;
 
 -- Removing a member's personal info (erase_member_personal_info) also
 -- blanks their Indy copy and marks it skipped and erased, so a later load
--- can't bring it back. Matched by the Indy link, the rows pointing at them,
--- and the email they had.
+-- can't bring it back. Matched by the Indy link, the rows pointing at them
+-- (imported, filling, or matched by email or by phone), and the email they
+-- had.
 --
 -- member_erasures can't help recognise someone removed BEFORE this table
 -- existed: it records only the member id, dates and counts, never the
 -- email, and the erase blanks the member's email. Those people are caught
--- only if their member row carried an indy_user_id.
+-- only if their member row carried an indy_user_id. The review screen
+-- counts the rest (removed before the last load, never linked to Indy) so
+-- New can be checked by hand, and the import checks the never-mail list
+-- (email_suppressions) before adding anyone, once that table exists.
 create or replace function public.forget_erased_indy_accounts()
 returns trigger
 language plpgsql
@@ -147,6 +167,7 @@ begin
       or imported_member_id = new.id
       or target_member_id = new.id
       or email_member_id = new.id
+      or phone_member_id = new.id
       or (old.email is not null and lower(email) = lower(old.email)));
   return new;
 end;

@@ -2,10 +2,15 @@
 // (scripts/load-indy-accounts.mjs) without touching the database, using
 // made-up people only: the CSV reader with quotes, commas and line breaks
 // inside fields; cleaning up names, emails, phones and birthdays; each sort
-// (fill / new / conflict / skip); that a fill never overwrites anything or
-// sets an email; the "said no on Indy" rule; and that a re-run keeps
-// decisions and leaves imported rows alone. Also runs the loader offline
-// and checks it prints counts, never a person.
+// (fill / new / conflict / skip), including two Indy accounts with one
+// email; that a fill never overwrites anything or sets an email; the "said
+// no on Indy" rule; that new people wait for a person's approval; that
+// READY_FILTER (the database side) picks exactly what readyToImport does;
+// the review screen's dry-run counts; and that a re-run keeps decisions and
+// leaves imported rows alone. Also runs the loader offline and checks it
+// prints counts, never a person, and stops on an export it can't read
+// safely. (What writes to the database, the import action and the erase
+// trigger, isn't run here.)
 //
 // Usage: node scripts/check-indy-import.mjs   (Node 23.6+ runs the .ts directly)
 import { execFileSync } from "node:child_process";
@@ -40,6 +45,13 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const { records, missing } = rules.readIndyCsv(text);
   check("CSV: records are keyed by column", records[0].address === "12 Elm St, Apt 4" && records[2].email === "sage@quillmail.net");
   check("CSV: missing columns are reported", missing.includes("date_of_birth") && missing.includes("employee"));
+  check("CSV: rows match the header", rules.readIndyCsv(text).ragged === 0);
+  // A stray quote swallows the rest of its line (and the next), so fields
+  // shift: counted, so the loader can stop.
+  check("CSV: a row with a field too many or too few is counted", rules.readIndyCsv("a,b,c\n1,2,3\n4,5\n6,7,8,9\n").ragged === 2);
+  const yn = (v) => ({ employee: v, email_showtimes: "true", email_last_chance: "false", email_promotions: "", email_newsletter: "TRUE" });
+  check("CSV: true, false and blank are the only yes/no values", same(rules.oddIndyValues([yn("false"), yn("true"), yn("")]), {}));
+  check("CSV: 1/0 or yes/no in a yes/no column is counted per column", same(rules.oddIndyValues([yn("1"), yn("yes"), yn("false"), { ...yn("0"), email_newsletter: "Y" }]), { employee: 3, email_newsletter: 1 }));
 }
 
 // ---------- cleaning up ----------
@@ -175,12 +187,55 @@ check("conflict: phone matches more than one member", cls("7") === "conflict");
 check("conflict: the member is linked to a different Indy account", cls("8") === "conflict");
 check("fill: the member already linked to this Indy account", cls("9001") === "fill" && by.get("9001").target_member_id === "m-linked");
 check("skip: a member removed at their request (by Indy link)", cls("9002") === "skip" && by.get("9002").reasons.includes("removed at their request"));
+check(
+  "skip: a removed person's row keeps none of their details",
+  ["email", "first_name", "last_name", "phone", "phone_digits", "birthday", "indy_last_visit", "indy_points"].every((k) => by.get("9002")[k] === null) &&
+    same(by.get("9002").reasons, ["removed at their request"])
+);
 check("erased members are never matched", cls("10") === "new" && !by.get("10").email_member_id);
-check("new: no match and an email; approved by default", cls("11") === "new" && by.get("11").decision === "import" && by.get("11").import_as === "new");
+check(
+  "new: no match and an email; set to import, but waits for a person to approve",
+  cls("11") === "new" &&
+    by.get("11").decision === "import" &&
+    by.get("11").import_as === "new" &&
+    !rules.readyToImport({ ...by.get("11"), decided_by: null, imported_member_id: null, erased_at: null }) &&
+    rules.readyToImport({ ...by.get("11"), decided_by: "emp-1", imported_member_id: null, erased_at: null })
+);
 check("skip: staff", cls("12") === "skip" && by.get("12").decision === "skip");
 check("skip: phone only and no member has it", cls("13") === "skip");
 check("conflict rows start as review, skips as skip", sortedRows.every((r) => (r.classification === "conflict" ? r.decision === "review" : r.classification === "skip" ? r.decision === "skip" : r.decision === "import")));
 check("no row ever plans to fill an email", sortedRows.every((r) => !r.planned_fills.includes("email")));
+
+// ---------- two Indy accounts, one email ----------
+{
+  // A matches a kiosk-made member (no email) by phone; B has the same email
+  // and no phone. Filling the member from A and adding B as new would give
+  // one person two members, and the email's unique index can't catch it.
+  const kiosk = [M("m-kiosk", { name: "Lane Ash", phone: "(417) 555-0130" })];
+  const a = rules.cleanIndyRecord(indyRow({ id: "A1", email: "lane@quillmail.net", phone: "417-555-0130" }), TODAY);
+  const b = rules.cleanIndyRecord(indyRow({ id: "B1", email: "lane@quillmail.net" }), TODAY);
+  const alone = rules.classifyIndy([a], kiosk)[0];
+  check("same email: on its own, A fills the kiosk member by phone", alone.classification === "fill" && alone.target_member_id === "m-kiosk");
+  const [ra, rb] = rules.classifyIndy([a, b], kiosk);
+  check(
+    "same email: a fill and a new with one email both become conflicts",
+    [ra, rb].every((r) => r.classification === "conflict" && r.decision === "review" && !r.import_as && r.reasons[0] === rules.SAME_EMAIL_REASON),
+    `${ra.classification}/${rb.classification}`
+  );
+  check("same email: the conflict still offers the phone match", ra.phone_member_id === "m-kiosk" && !ra.target_member_id);
+  // A later export brings B after A went in by phone (A not in the file).
+  const later = rules.classifyIndy([b], kiosk, new Map([["lane@quillmail.net", "A1"]]))[0];
+  check("same email: an account whose email an imported one already has is a conflict, not new", later.classification === "conflict" && later.reasons[0] === rules.IMPORTED_EMAIL_REASON);
+  const self = rules.classifyIndy([a], kiosk, new Map([["lane@quillmail.net", "A1"]]))[0];
+  check("same email: the imported account itself isn't held back by its own email", self.classification === "fill");
+  // Two new ones with one email (a guest checkout, say).
+  const n1 = rules.cleanIndyRecord(indyRow({ id: "N1", email: "rory@quillmail.net" }), TODAY);
+  const n2 = rules.cleanIndyRecord(indyRow({ id: "N2", email: "rory@quillmail.net", phone: "417-555-0131" }), TODAY);
+  check("same email: two new accounts with one email are conflicts", rules.classifyIndy([n1, n2], kiosk).every((r) => r.classification === "conflict"));
+  // A skipped account never holds anyone back.
+  const s1 = rules.cleanIndyRecord(indyRow({ id: "S1", email: "rory@quillmail.net", employee: "true" }), TODAY);
+  check("same email: a skipped account doesn't make a conflict", rules.classifyIndy([n1, s1], kiosk)[0].classification === "new");
+}
 
 // ---------- fills never overwrite ----------
 check("fill plan: an old-site placeholder name and empty birthday get filled; the phone they have stays", same(by.get("1").planned_fills, ["birthday", "name"]));
@@ -207,6 +262,14 @@ check("fill plan: a real name is never replaced", !rules.plannedFills(people[1],
   const yesRow = { ...by.get("9001"), imported_member_id: null, erased_at: null };
   const yesPlan = rules.fillPlan(yesRow, members.find((m) => m.id === "m-linked"), now);
   check("import: a yes never changes an existing member's email setting", !("email_opt_in" in yesPlan.patch) && !("indy_user_id" in yesPlan.patch));
+  // An earlier press linked the member and turned email off, then stopped
+  // before marking the row: the retry still counts the "no" as honored.
+  const retried = rules.fillPlan(
+    { ...row, said_no_decision: "honor" },
+    { ...since, name: "Blake Fenn", birthday: "2000-10-10", indy_user_id: "1", email_opt_in: false, email_opt_in_changed_at: "2026-10-01T14:59:00.000Z" },
+    now
+  );
+  check("import: a retry after an honored 'no' went in still counts it honored", retried.honored && !retried.keptTheirChoice && Object.keys(retried.patch).length === 0);
 }
 
 // ---------- said no on Indy ----------
@@ -220,6 +283,113 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
   check("ready: a said-no waiting for Honor or Leave is held back", !rules.readyToImport({ ...base, said_no_decision: "pending" }));
   check("ready: once picked it goes", rules.readyToImport({ ...base, said_no_decision: "honor" }) && rules.readyToImport({ ...base, said_no_decision: "leave" }));
   check("ready: review, skip and imported rows never go", !rules.readyToImport({ ...base, said_no_review: false, decision: "review" }) && !rules.readyToImport({ ...base, said_no_review: false, decision: "skip" }) && !rules.readyToImport({ ...base, said_no_review: false, imported_member_id: "x" }));
+  check("ready: a row marked imported never goes again, even if its member link was cleared", !rules.readyToImport({ ...base, said_no_review: false, imported_at: "2026-10-01T15:00:00Z" }));
+  const fresh = { decision: "import", import_as: "new", said_no_review: false, said_no_decision: null, imported_member_id: null, erased_at: null };
+  check("ready: a new row on the loader's default waits; once a person approves it goes", !rules.readyToImport({ ...fresh, decided_by: null }) && rules.readyToImport({ ...fresh, decided_by: "emp-1" }));
+  check("ready: a fill goes on the default (it only fills empty details)", rules.readyToImport({ ...base, said_no_review: false, said_no_decision: null, decided_by: null }));
+}
+
+// ---------- READY_FILTER says what readyToImport says ----------
+// The import and the counts narrow rows in the database with READY_FILTER
+// (inside .or(), next to decision = import, import_as not null and the
+// not-imported, not-removed filters), so it must pick exactly the rows
+// readyToImport does. A small reader for the PostgREST logic tree it's
+// written in (and/or, eq, in, is null, not.), with SQL's three-valued logic.
+{
+  function parseFilter(s) {
+    let i = 0;
+    const node = () => {
+      const group = /^(and|or)\(/.exec(s.slice(i));
+      if (group) {
+        i += group[0].length;
+        const kids = [node()];
+        while (s[i] === ",") {
+          i++;
+          kids.push(node());
+        }
+        if (s[i++] !== ")") throw new Error(`expected ) at ${i - 1}`);
+        return { op: group[1], kids };
+      }
+      const c = /^([a-z_]+)\.(not\.)?(eq|is|in)\./.exec(s.slice(i));
+      if (!c) throw new Error(`can't read the filter at ${i}`);
+      i += c[0].length;
+      let value;
+      if (c[3] === "in") {
+        if (s[i++] !== "(") throw new Error(`expected ( at ${i - 1}`);
+        const end = s.indexOf(")", i);
+        value = s.slice(i, end).split(",");
+        i = end + 1;
+      } else {
+        value = /^[^,()]*/.exec(s.slice(i))[0];
+        i += value.length;
+      }
+      return { field: c[1], not: !!c[2], cmp: c[3], value };
+    };
+    const tree = node();
+    if (i !== s.length) throw new Error(`unread text at ${i}`);
+    return tree;
+  }
+  // true, false, or null for SQL's unknown.
+  function truth(n, row) {
+    if (n.op) {
+      const v = n.kids.map((k) => truth(k, row));
+      if (n.op === "and") return v.includes(false) ? false : v.includes(null) ? null : true;
+      return v.includes(true) ? true : v.includes(null) ? null : false;
+    }
+    const v = row[n.field] ?? null;
+    let t;
+    if (n.cmp === "is") {
+      if (n.value !== "null") throw new Error(`is.${n.value} isn't read here`);
+      t = v === null;
+    } else if (v === null) t = null;
+    else if (n.cmp === "eq") t = String(v) === n.value;
+    else t = n.value.includes(String(v));
+    return n.not && t !== null ? !t : t;
+  }
+  let tree = null;
+  try {
+    tree = parseFilter(`or(${rules.READY_FILTER})`);
+  } catch (e) {
+    check("READY_FILTER: reads as a PostgREST filter", false, e.message);
+  }
+  if (tree) {
+    let rowsTried = 0;
+    const mismatches = [];
+    for (const decision of ["import", "skip", "review"])
+      for (const import_as of [null, "fill", "new"])
+        for (const said_no_review of [false, true])
+          for (const said_no_decision of [null, "pending", "honor", "leave"])
+            for (const decided_by of [null, "emp-1"])
+              for (const imported_member_id of [null, "m-1"])
+                for (const imported_at of [null, "2026-10-01T15:00:00Z"])
+                  for (const erased_at of [null, "2026-10-01T15:00:00Z"]) {
+                    const r = { decision, import_as, said_no_review, said_no_decision, decided_by, imported_member_id, imported_at, erased_at };
+                    const inDb = decision === "import" && import_as !== null && !imported_member_id && !imported_at && !erased_at && truth(tree, r) === true;
+                    rowsTried++;
+                    if (inDb !== rules.readyToImport(r)) mismatches.push(JSON.stringify(r));
+                  }
+    check(`READY_FILTER: picks exactly the rows readyToImport does (${rowsTried} combinations)`, mismatches.length === 0, mismatches.slice(0, 2).join(" "));
+  }
+}
+
+// ---------- the dry run on the review screen ----------
+{
+  const row = (over) => ({ decision: "import", import_as: "fill", said_yes: true, said_no_review: false, said_no_decision: null, planned_fills: [], decided_by: null, imported_member_id: null, imported_at: null, erased_at: null, ...over });
+  const p = rules.importPreview([
+    row({ import_as: "new", decided_by: "emp-1" }),
+    row({ import_as: "new", decided_by: "emp-1", said_yes: false }),
+    row({ import_as: "new" }), // waits for approval
+    row({ planned_fills: ["phone"] }),
+    row({ planned_fills: [] }),
+    row({ said_yes: false, said_no_review: true, said_no_decision: "honor", planned_fills: ["birthday"] }),
+    row({ said_yes: false, said_no_review: true, said_no_decision: "pending" }), // held back
+    row({ decision: "skip" }),
+  ]);
+  check(
+    "preview: counts what Import would do",
+    same(p, { ready: 5, newMembers: 2, newEmailOn: 1, newEmailOff: 1, fills: 2, links: 1, honor: 1, newWaiting: 1 }),
+    JSON.stringify(p)
+  );
 }
 
 // ---------- a new member ----------
@@ -246,6 +416,7 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
   check("re-run: a decided row keeps its decision and pick", kept.decision === "import" && kept.import_as === "fill" && kept.target_member_id === "m-a" && kept.classification === "conflict");
   check("re-run: a decided row's fills are worked out against the member now", same(kept.planned_fills, rules.plannedFills(fresh3, membersById.get("m-a"))));
   check("re-run: an imported row is left alone", rules.mergeIndyRow(fresh3, { ...decided, imported_member_id: "m-a" }, membersById) === null);
+  check("re-run: a row marked imported is left alone, even with its member link cleared", rules.mergeIndyRow(fresh3, { ...decided, imported_at: "2026-10-01T15:00:00Z" }, membersById) === null);
   check("re-run: a removed row is left alone", rules.mergeIndyRow(fresh3, { ...untouched, erased_at: "2026-09-30T00:00:00Z" }, membersById) === null);
   const saidNoKept = rules.mergeIndyRow(by.get("1"), { ...by.get("1"), decided_by: "emp-1", said_no_decision: "honor", imported_member_id: null, erased_at: null }, membersById);
   check("re-run: an Honor pick survives", saidNoKept.said_no_decision === "honor" && saidNoKept.said_no_review);
@@ -289,6 +460,24 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
       refused = e.status === 1;
     }
     check("loader: --members-file without --dry is refused", refused);
+
+    // An export it can't read safely stops, with counts only.
+    const runOn = (file) => {
+      try {
+        execFileSync(process.execPath, [loader, file, "--dry", "--members-file", join(dir, "members.json")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        return { status: 0, text: "" };
+      } catch (e) {
+        return { status: e.status, text: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+      }
+    };
+    const oneOff = [cols.join(","), ...csvRows.map((r, i) => cols.map((c) => quote(c === "employee" && i === 1 ? "1" : (r[c] ?? ""))).join(","))].join("\n");
+    writeFileSync(join(dir, "odd.csv"), oneOff);
+    const odd = runOn(join(dir, "odd.csv"));
+    check("loader: a 1/0 in a yes/no column stops it, with counts only", odd.status === 1 && /employee: 1/.test(odd.text) && !/quillmail|Kai|Lark/.test(odd.text), odd.text.match(/Stopped.*/)?.[0]);
+    const short = [cols.join(","), ...csvRows.map((r, i) => cols.map((c) => quote(r[c] ?? "")).slice(0, i === 2 ? -1 : undefined).join(","))].join("\n");
+    writeFileSync(join(dir, "short.csv"), short);
+    const ragged = runOn(join(dir, "short.csv"));
+    check("loader: a row with a field missing stops it, with counts only", ragged.status === 1 && /1 row\(s\)/.test(ragged.text) && !/quillmail|Kai|Lark/.test(ragged.text), ragged.text.match(/Stopped.*/)?.[0]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

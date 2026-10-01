@@ -5,10 +5,14 @@
 // The export is kept outside the repo (it holds ~1,500 people's personal
 // info), and this prints counts only: never a name, email or phone.
 //
-// Safe to re-run (a fresher export, say): rows are upserted by Indy id in
-// batches of 500. Rows nobody has touched are sorted afresh; a row someone
-// decided at /admin/members/indy keeps its decision and link; a row already
-// imported, or removed at the person's request, is left alone.
+// Safe to re-run (a fresher export, say): rows are written by Indy id. Rows
+// nobody has touched are sorted afresh; a row someone decided at
+// /admin/members/indy keeps its decision and link; a row already imported,
+// or removed at the person's request, is left alone (also if that happens
+// while this runs: each row is written only if it's still as it was read).
+//
+// Stops, printing counts only, if a row has more or fewer fields than the
+// header, or a yes/no column holds anything but true, false or blank.
 //
 // Usage (from the repo root, with .env.local):
 //   node scripts/load-indy-accounts.mjs <indy-users.csv> [--dry]
@@ -16,7 +20,7 @@
 //   node scripts/load-indy-accounts.mjs <csv> --dry --members-file <members.json> [--staging-file <rows.json>]
 // (Node 23.6+ runs the .ts rules directly.)
 import { readFileSync } from "node:fs";
-import { centralToday, classifyIndy, cleanIndyRecord, mergeIndyRow, readIndyCsv, summarizeIndy } from "../src/lib/indy-rules.ts";
+import { centralToday, classifyIndy, cleanIndyRecord, mergeIndyRow, oddIndyValues, readIndyCsv, summarizeIndy } from "../src/lib/indy-rules.ts";
 
 const args = process.argv.slice(2);
 const flagValue = (name) => {
@@ -41,9 +45,25 @@ if (STAGING_FILE && !MEMBERS_FILE) {
 }
 
 // ---- The export ------------------------------------------------------------
-const { columns, records, missing } = readIndyCsv(readFileSync(csvPath, "utf8"));
+const { columns, records, missing, ragged } = readIndyCsv(readFileSync(csvPath, "utf8"));
 if (missing.length) {
   console.error(`Stopped: the export is missing these columns: ${missing.join(", ")}. Nothing was written.`);
+  process.exit(1);
+}
+// A stray quote shifts every column after it, so the rest would be read from
+// the wrong columns.
+if (ragged) {
+  console.error(`Stopped: ${ragged} row(s) have more or fewer fields than the header (a stray quote?). Nothing was written.`);
+  process.exit(1);
+}
+// Only "true" reads as yes: 1/0 or yes/no would turn every answer into a no
+// and stop staff accounts being skipped.
+const odd = oddIndyValues(records);
+if (Object.keys(odd).length) {
+  const list = Object.entries(odd)
+    .map(([col, n]) => `${col}: ${n}`)
+    .join(", ");
+  console.error(`Stopped: yes/no columns with values other than true, false or blank (rows per column): ${list}. Nothing was written.`);
   process.exit(1);
 }
 const today = centralToday();
@@ -68,7 +88,7 @@ for (const r of records) {
 // ---- Members and what's already staged (read only) --------------------------
 const MEMBER_COLUMNS = ["id", "name", "email", "phone", "birthday", "email_opt_in", "email_opt_in_changed_at", "indy_user_id", "erased_at"];
 const STAGING_COLUMNS =
-  "indy_user_id, classification, reasons, email_member_id, phone_member_id, target_member_id, import_as, decision, said_no_decision, decided_by, imported_member_id, erased_at";
+  "indy_user_id, email, classification, reasons, email_member_id, phone_member_id, target_member_id, import_as, decision, said_no_decision, decided_by, decided_at, imported_member_id, imported_at, erased_at";
 const asMember = (m) => Object.fromEntries(MEMBER_COLUMNS.map((c) => [c, m[c] ?? null]));
 const isMissingTable = (e) => e?.code === "PGRST205" || e?.code === "42P01";
 
@@ -115,7 +135,7 @@ if (MEMBERS_FILE) {
   const staged = await readAll("indy_accounts", STAGING_COLUMNS, "indy_user_id");
   if (staged.error && isMissingTable(staged.error)) {
     if (!DRY) {
-      console.error("indy_accounts isn't there: apply supabase/migrations/20261001120000_indy_accounts.sql first. Nothing was written.");
+      console.error("indy_accounts isn't there: apply supabase/migrations/20261001140000_indy_accounts.sql first. Nothing was written.");
       process.exit(1);
     }
     stagingMissing = true;
@@ -129,7 +149,13 @@ if (MEMBERS_FILE) {
 // ---- Sort -------------------------------------------------------------------
 const existing = new Map(existingRows.map((r) => [r.indy_user_id, r]));
 const membersById = new Map(members.map((m) => [m.id, m]));
-const fresh = classifyIndy(people, members);
+// Emails of Indy accounts already imported: one imported by phone into a
+// member with no email leaves its email on no member, so another account
+// with that email mustn't look new.
+const importedEmails = new Map(
+  existingRows.filter((r) => (r.imported_member_id || r.imported_at) && !r.erased_at && r.email).map((r) => [r.email.trim().toLowerCase(), r.indy_user_id])
+);
+const fresh = classifyIndy(people, members, importedEmails);
 const rows = [];
 let keptDecision = 0;
 let leftAlone = 0;
@@ -162,15 +188,51 @@ if (DRY) {
 }
 
 // ---- Write indy_accounts only -----------------------------------------------
+// A row that's new to the table is inserted (unless one appeared meanwhile).
+// A row already there is updated only if it's still as it was read above:
+// not removed at the person's request (the erase trigger blanks it), not
+// imported, and not decided again. So nobody's details come back, and no
+// pick is written over, because of something that happened while this ran.
 const loadedAt = new Date().toISOString();
+const inserts = rows.filter((r) => !existing.has(r.indy_user_id)).map((r) => ({ ...r, loaded_at: loadedAt }));
+const updates = rows.filter((r) => existing.has(r.indy_user_id));
 let written = 0;
-for (let i = 0; i < rows.length; i += 500) {
-  const batch = rows.slice(i, i + 500).map((r) => ({ ...r, loaded_at: loadedAt }));
-  const { error } = await supabase.from("indy_accounts").upsert(batch, { onConflict: "indy_user_id" });
-  if (error) {
-    console.error(`Stopped after ${written} rows (${error.message}). Run it again to finish; it's safe to repeat.`);
-    process.exit(1);
-  }
-  written += batch.length;
+let changedMeanwhile = 0;
+const stop = (message) => {
+  console.error(`Stopped after ${written} rows (${message}). Run it again to finish; it's safe to repeat.`);
+  process.exit(1);
+};
+for (let i = 0; i < inserts.length; i += 500) {
+  const batch = inserts.slice(i, i + 500);
+  const { data, error } = await supabase.from("indy_accounts").upsert(batch, { onConflict: "indy_user_id", ignoreDuplicates: true }).select("indy_user_id");
+  if (error) stop(error.message);
+  written += data.length;
+  changedMeanwhile += batch.length - data.length;
 }
-console.log(`loaded ${written} into indy_accounts. Review and import at /admin/members/indy.`);
+let failed = null;
+let next = 0;
+await Promise.all(
+  Array.from({ length: Math.min(8, updates.length) }, async () => {
+    while (!failed && next < updates.length) {
+      const { indy_user_id, ...patch } = updates[next++];
+      const before = existing.get(indy_user_id);
+      let q = supabase
+        .from("indy_accounts")
+        .update({ ...patch, loaded_at: loadedAt })
+        .eq("indy_user_id", indy_user_id)
+        .is("erased_at", null)
+        .is("imported_member_id", null)
+        .is("imported_at", null);
+      q = before.decided_at ? q.eq("decided_at", before.decided_at) : q.is("decided_at", null);
+      q = before.decided_by ? q.eq("decided_by", before.decided_by) : q.is("decided_by", null);
+      const { data, error } = await q.select("indy_user_id");
+      if (error) failed = error.message;
+      else if (data.length) written++;
+      else changedMeanwhile++;
+    }
+  })
+);
+if (failed) stop(failed);
+console.log(
+  `loaded ${written} into indy_accounts${changedMeanwhile ? ` (${changedMeanwhile} changed while this ran and were left as they are)` : ""}. Review and import at /admin/members/indy.`
+);
