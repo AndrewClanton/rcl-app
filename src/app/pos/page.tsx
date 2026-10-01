@@ -31,7 +31,8 @@ export const viewport: Viewport = {
 };
 
 export default async function PosPage() {
-  const session = await requireStaff();
+  // Signing in again comes back here, not to the back office.
+  const session = await requireStaff("/pos");
 
   const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
@@ -42,8 +43,8 @@ export default async function PosPage() {
     getRegisterScreenings(),
   ]);
 
-  // Tickets/events aren't ready for POS ordering yet (event booking flow,
-  // per-showtime ticket linkage) -- hide that category here for now.
+  // Tickets are sold from the Movies tab (per showing, with seats counted),
+  // so the menu's tickets category stays off the register's item buttons.
   // Items a manager hid ("Hide from register" on the Menu page) stay off.
   const orderableCategories = withoutHiddenItems(categories).filter((c) => c.key !== "tickets");
 

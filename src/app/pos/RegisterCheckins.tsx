@@ -6,6 +6,7 @@ import MemberAvatar from "@/components/MemberAvatar";
 import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
+import { POINTS_PER_REWARD } from "@/lib/loyalty";
 import { REWARD_LABEL, badgeList } from "@/lib/visits";
 import { entranceFor, flairColor, parseFlair } from "@/lib/flair";
 import { confirmVisit, createCheckinMember, getDuplicateHint, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
@@ -323,8 +324,9 @@ export function useRegisterCheckins({
   // Points on the customer screen. PosApp clears the member in the same
   // update that records the sale, so remember who was on the order; the
   // receipt names them if they were still on it when it was paid. Points are
-  // 1 per $1 of the subtotal (completeOrder), and the balance is read back
-  // fresh so any reward used on the order is counted.
+  // what completeOrder credits: 1 per $1 after the member, monthly and
+  // reward discounts (pointsEarned). The balance is read back fresh, so the
+  // 100 a reward takes is counted; if that read fails, it's worked out here.
   const lastMember = useRef<PosMember | null>(null);
   const announced = useRef<number | null>(null);
   useEffect(() => {
@@ -333,14 +335,17 @@ export function useRegisterCheckins({
 
   const announce = useEffectEvent(async (sale: ReceiptData) => {
     const m = lastMember.current;
-    const earned = Math.round(sale.subtotal);
+    // A receipt from the register carries the figure; otherwise its
+    // discounts are the member, monthly and reward ones.
+    const exact = sale.points?.earned ?? Math.max(0, sale.subtotal - sale.discounts.reduce((s, d) => s + d.amount, 0));
+    const earned = Math.round(exact);
     if (!m || sale.member !== m.name || earned < 1) return;
     const fresh = await getPosMember(m.id).catch(() => null);
     const payload: PointsEarned = {
       orderNumber: sale.orderNumber,
       firstName: firstNameOf(m.name),
       earned,
-      balance: Math.round(fresh ? fresh.points : m.points + sale.subtotal),
+      balance: Math.round(fresh ? fresh.points : m.points + exact - (sale.points?.rewardUsed ? POINTS_PER_REWARD : 0)),
       color: m.flair?.color ?? null,
     };
     send("points-earned", payload);
