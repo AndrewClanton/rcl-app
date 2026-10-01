@@ -109,8 +109,13 @@ export function creditLine(source: PictureSource | null | undefined, credit: Pic
 }
 
 // Where a candidate's preview comes from: our own server, never the source.
-export function previewUrl(query: string, index: number): string {
-  return `/api/menu-pictures/preview?q=${encodeURIComponent(query)}&i=${index}`;
+// `page` (the picture's source page, as the screen shows its credit) makes
+// sure the preview is that picture even if the server's list has shifted
+// since (a library left out or back): it's only compared, never loaded.
+export const PREVIEW_PAGE_MAX = 500;
+export function previewUrl(query: string, index: number, page?: string | null): string {
+  const p = page && page.length <= PREVIEW_PAGE_MAX ? `&p=${encodeURIComponent(page)}` : "";
+  return `/api/menu-pictures/preview?q=${encodeURIComponent(query)}&i=${index}${p}`;
 }
 
 // ---------- label tiles ----------

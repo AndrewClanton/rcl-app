@@ -128,7 +128,8 @@ async function firstThatWorks(target: PhotoTarget, id: string, query: string, ta
     }
     const r = await storePhoto(target, id, jpeg, { source: c.source, credit: c.credit, query, index: i, approved: false });
     if (!r.ok && r.needsMigration) {
-      refused.add(c.source);
+      // The same update lets in both, so neither is tried again here.
+      refused.add("pixabay").add("pexels");
       tries--;
       continue;
     }

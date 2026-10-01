@@ -121,7 +121,7 @@ export default function TextIconDesigner({
           // next); "Use this icon" is the one way to save.
           enterKeyHint="done"
           onKeyDown={(e) => {
-            if (e.key !== "Enter") return;
+            if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
             e.preventDefault();
             e.currentTarget.blur();
           }}

@@ -113,7 +113,8 @@ export default function PicturePicker({
   useEffect(() => {
     if (!found || n < 2) return;
     const img = new window.Image();
-    img.src = previewUrl(found.query, (at + 1) % n);
+    const next = (at + 1) % n;
+    img.src = previewUrl(found.query, next, found.candidates[next].credit.page);
   }, [found, at, n]);
 
   function step(d: number) {
@@ -153,7 +154,7 @@ export default function PicturePicker({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={`${found.query}#${at}`}
-              src={previewUrl(found.query, at)}
+              src={previewUrl(found.query, at, shown.credit.page)}
               alt={shown.credit.title ?? "Picture"}
               className="absolute inset-0 h-full w-full object-cover"
               onError={() => setBroken((b) => new Set(b).add(at))}
