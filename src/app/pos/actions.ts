@@ -13,8 +13,10 @@ import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
 import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
-import { checkSaleTotals, flagSale, verifyCardPayment, type TotalsCheck } from "@/lib/register-sale-checks";
+import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type CoffeeCheck, type TotalsCheck } from "@/lib/register-sale-checks";
 import { currentMemberId } from "@/lib/member-forward";
+import { coffeeDay } from "@/lib/daily-perk-server";
+import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -28,6 +30,9 @@ export interface CheckoutLine {
 
 export interface CheckoutTotals {
   subtotal: number;
+  // The Insiders+ daily coffee (lib/daily-perk.ts). Optional: a sale kept
+  // in a register's browser from before it existed has none.
+  daily_perk_discount?: number;
   tier_discount: number;
   monthly_discount: number;
   redemption_discount: number;
@@ -203,15 +208,34 @@ async function memberPoints(supabase: ReturnType<typeof createAdminClient>, memb
 // Checked right before the payment screen opens, so a problem is caught
 // before anyone pays instead of after. A check that can't run lets the sale
 // through (completeOrder looks again).
-export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number };
+// dropDailyCoffee: the Insiders+ daily coffee has to come off the order,
+// with the member's coffee today when that's why (already used: the
+// register shows when).
+export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null };
 
 export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals): Promise<PaymentCheck> {
   await assertStaff();
   const supabase = createAdminClient();
+  const coffeeOn = Number(totals.daily_perk_discount ?? 0) > 0;
   // The account a merged-away member became (lib/member-forward.ts), so the
   // points and the totals check read the account completeOrder will pay.
-  const needsMember = !!fields.memberId && ((fields.pointsRedeemed && totals.redemption_discount > 0) || ENFORCE_REGISTER_TOTALS);
+  const needsMember = !!fields.memberId && ((fields.pointsRedeemed && totals.redemption_discount > 0) || coffeeOn || ENFORCE_REGISTER_TOTALS);
   const memberId = needsMember ? await currentMemberId(fields.memberId) : fields.memberId;
+  // A daily coffee the member has already had today (on the other
+  // register, say), or can't have, comes off before anyone pays. Checked
+  // whether or not totals are enforced. If the check can't run, the sale
+  // goes ahead (completeOrder looks again).
+  let dailyCoffee: CoffeeCheck | undefined;
+  if (coffeeOn) {
+    dailyCoffee = await checkDailyCoffee({ memberId, lines: fields.lines });
+    if (!dailyCoffee.ok) {
+      return {
+        ok: false,
+        error: `${dailyCoffee.reason} The free coffee has been taken off the order. Check the new total, then take payment.`,
+        dropDailyCoffee: dailyCoffee.used ? { usedAt: dailyCoffee.used.usedAt, orderNumber: dailyCoffee.used.orderNumber } : null,
+      };
+    }
+  }
   if (fields.pointsRedeemed && totals.redemption_discount > 0) {
     if (!memberId) return { ok: false, error: "A points reward needs a member on the order. Attach the member, or uncheck the reward." };
     const points = await memberPoints(supabase, memberId);
@@ -224,7 +248,7 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
     }
   }
   if (ENFORCE_REGISTER_TOTALS) {
-    const check = await checkSaleTotals({ ...fields, memberId, totals });
+    const check = await checkSaleTotals({ ...fields, memberId, totals, dailyCoffee });
     if (check.problems.length) return { ok: false, error: `This order doesn't add up, so it can't be paid yet: ${check.problems[0]} Clear it and ring it up again, or get a manager.` };
   }
   return { ok: true };
@@ -293,14 +317,38 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     return { ok: false, error: card.error, cardCharged: card.charged };
   }
 
+  const saleForCheck = { ...params, memberId, tip };
+  let totalsCheck: TotalsCheck | null = null;
+
+  // The Insiders+ daily coffee (lib/daily-perk.ts): checked again here
+  // (Insiders+, a daily coffee item on the order, not had today), then
+  // recorded as today's on the order. The register checked before payment;
+  // one that gets through anyway is still saved (the customer has paid by
+  // now) but doesn't count as today's, and the totals check flags it for a
+  // manager with the reason.
+  const coffeeAmount = cents(Number(params.totals.daily_perk_discount ?? 0));
+  const coffeeDate = coffeeDay();
+  let dailyCoffee: CoffeeCheck | undefined = coffeeAmount > 0 ? await checkDailyCoffee({ memberId, lines: params.lines }, coffeeDate) : undefined;
+  // The coffee's columns go on a sale only when it has one, so the register
+  // keeps saving every other sale before migration
+  // 20261001220000_plus_daily_coffee.sql adds them.
+  let saleFields: typeof orderFields & { daily_perk_discount?: number; daily_perk_date?: string | null } =
+    coffeeAmount > 0 ? { ...orderFields, daily_perk_discount: coffeeAmount, daily_perk_date: dailyCoffee?.ok ? coffeeDate : null } : orderFields;
+  // The database keeps one coffee per member and day: two registers using it
+  // at the same moment get here. The later sale is saved without it counting.
+  const coffeeTaken = (e: { code?: string; message?: string } | null) => !!e && e.code === "23505" && (e.message ?? "").includes("orders_daily_perk_once");
+  const coffeeRace = () => {
+    saleFields = { ...saleFields, daily_perk_date: null };
+    dailyCoffee = { ok: false, reason: "This member's free coffee for today went on another order at the same moment." };
+    totalsCheck = null; // figured with the coffee allowed: look again
+  };
+
   // The order's math, redone from the menu. Log-only unless enforcing; when
   // enforcing, a sale whose card is already charged is still saved (and
   // flagged): the register checked before payment, and losing the record
   // of a charged card is worse.
-  const saleForCheck = { ...params, memberId, tip };
-  let totalsCheck: TotalsCheck | null = null;
   if (ENFORCE_REGISTER_TOTALS) {
-    totalsCheck = await checkSaleTotals(saleForCheck);
+    totalsCheck = await checkSaleTotals({ ...saleForCheck, dailyCoffee });
     if (totalsCheck.problems.length && !paymentIntentId) {
       const refused = totalsCheck;
       after(() => flagSale("totals_refused", { ...flagBase, details: { problems: refused.problems, sent: params.totals, server: refused.server, lines: refused.lines, member: refused.member, payment: params.payment, tip } }));
@@ -324,7 +372,13 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     if (existing) {
       // Only an open tab or held order can be closed, so two closes racing
       // can't both award points and write items.
-      const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", params.draftOrderId).in("status", ["draft", "held", "tab"]).select("id");
+      const draftId = params.draftOrderId;
+      const close = () => supabase.from("orders").update(saleFields).eq("id", draftId).in("status", ["draft", "held", "tab"]).select("id");
+      let { data: closed, error: updateErr } = await close();
+      if (coffeeTaken(updateErr)) {
+        coffeeRace();
+        ({ data: closed, error: updateErr } = await close());
+      }
       if (updateErr) throw updateErr;
       closedNow = !!closed?.length;
     }
@@ -348,12 +402,19 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
     if (numberErr) throw numberErr;
     orderNumber = Number(newNumber);
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .insert({ order_number: orderNumber, ...orderFields })
-      .select("id")
-      .single();
-    if (orderErr) {
+    const insert = () =>
+      supabase
+        .from("orders")
+        .insert({ order_number: orderNumber, ...saleFields })
+        .select("id")
+        .single();
+    let { data: order, error: orderErr } = await insert();
+    if (coffeeTaken(orderErr)) {
+      coffeeRace();
+      ({ data: order, error: orderErr } = await insert());
+    }
+    if (orderErr || !order) {
+      if (!orderErr) throw new Error("The order didn't save.");
       // Lost a race with a repeat of this same card payment (the database
       // allows one order per payment): the other call saved it.
       const saved = orderErr.code === "23505" ? await orderForPayment() : null;
@@ -389,7 +450,9 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       });
     }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
-    const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, memberPointsBefore: balanceBefore }));
+    // The coffee as judged before this sale saved (once saved, its own
+    // coffee would look like today's already used).
+    const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore }));
     if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
     if (check.problems.length) {
       await flagSale("totals_mismatch", { ...saved, details: { problems: check.problems, sent: params.totals, server: check.server, lines: check.lines, member: check.member, payment: params.payment, tip, draft: !!params.draftOrderId } });
@@ -451,14 +514,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   }
 
   revalidate();
+  const warnings: string[] = [];
   if (closedElsewhere) {
-    return {
-      ok: true,
-      orderNumber,
-      warning: `That tab was already closed on another register, so this card payment was saved as new order #${orderNumber}. The customer may have paid twice: get a manager to check Recent orders and refund one.`,
-    };
+    warnings.push(`That tab was already closed on another register, so this card payment was saved as new order #${orderNumber}. The customer may have paid twice: get a manager to check Recent orders and refund one.`);
   }
-  return { ok: true, orderNumber };
+  // Saved with the free coffee, but it didn't count as today's.
+  const coffee = dailyCoffee as CoffeeCheck | undefined;
+  if (coffee && !coffee.ok) warnings.push(`${coffee.reason} The sale was saved with the free coffee anyway, and a manager will see it in Register checks.`);
+  return warnings.length ? { ok: true, orderNumber, warning: warnings.join(" ") } : { ok: true, orderNumber };
 }
 
 // The order a card payment already saved as, if any: a reader payment found
@@ -502,7 +565,11 @@ export async function logAbandonedSale(order: CompleteOrderInput, tries: number)
 // getDraftOrders reads it straight from the row rather than recomputing a
 // bare item subtotal, so the held/tabs lists always show the same
 // tax-and-discount-inclusive number the cashier sees in the cart. Callers
-// pass the totals they already computed for the on-screen cart.
+// pass the totals they already computed for the on-screen cart. An
+// Insiders+ daily coffee is in that total but isn't stored on a draft: the
+// register works it out again when the order is opened, and completeOrder
+// records it when it's paid (so a held order or open tab never uses up the
+// day's coffee).
 
 const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, tax: 0, total: 0 };
 
@@ -725,9 +792,9 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
   await assertStaff();
   const { data, error } = await createAdminClient()
     .from("orders")
-    .select(
-      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
-    )
+    // "*" for the order itself, so Recent orders keeps working before the
+    // daily coffee's migration adds daily_perk_discount.
+    .select("*, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)")
     .in("status", ["completed", "refunded", "voided"])
     .not("completed_at", "is", null)
     .order("completed_at", { ascending: false })
@@ -745,6 +812,7 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     payment_card_amount: number | null;
     payment_voucher_amount: number | null;
     subtotal: number;
+    daily_perk_discount?: number | null;
     tier_discount: number;
     monthly_discount: number;
     redemption_discount: number;
@@ -769,6 +837,7 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     voucher: Number(o.payment_voucher_amount ?? 0),
     subtotal: Number(o.subtotal),
     discounts: [
+      { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
       { label: "Member discount", amount: Number(o.tier_discount) },
       { label: "Monthly member discount", amount: Number(o.monthly_discount) },
       { label: "Points reward", amount: Number(o.redemption_discount) },

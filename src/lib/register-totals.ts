@@ -12,6 +12,12 @@ import type { MemberTier } from "@/lib/types";
 //   option included; a movie ticket's price, $0 for a free Insiders+
 //   entry; a custom item's typed price) and how many. A badge reward
 //   (PosMemberPanel) is a $0 line with no menu item.
+// - the Insiders+ daily coffee (lib/daily-perk.ts): the one line whose item
+//   is ticked as a daily coffee (perkBase: its menu price; null for
+//   anything else) that it takes the most off comes off at that price,
+//   add-ons not included, when dailyPerk is on and the member is
+//   Insiders+. It comes off first, so the percentage discounts are figured
+//   on what's left (10% off a free coffee is nothing).
 // - member discount (5%, 10% for Insiders+), the monthly member 10%, and a
 //   points reward, capped at what's left after the other two.
 // Not in here: the tip and vouchers. A tip goes on top of the total (asked
@@ -37,26 +43,64 @@ export function memberDiscountRate(member: TotalsMember) {
   return member.tier === "Insiders+" ? 0.1 : 0.05;
 }
 
-export function registerTotals(lines: { unit: number; qty: number }[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
+export type TotalsLine = { unit: number; qty: number; perkBase?: number | null };
+
+// The line the daily coffee goes on, and how much comes off: the eligible
+// line it takes the most off (the first, on a tie). Never more than the
+// line's own price each, so an option that lowers the price can't push it
+// below nothing.
+export function dailyPerkPick(lines: TotalsLine[]): { index: number; amount: number } | null {
+  let best: { index: number; amount: number } | null = null;
+  for (let index = 0; index < lines.length; index++) {
+    const l = lines[index];
+    const base = Number(l.perkBase);
+    if (!(base > 0) || !(l.qty >= 1)) continue;
+    const amount = cents(Math.min(base, Math.max(0, Number(l.unit))));
+    if (amount > 0 && (!best || amount > best.amount)) best = { index, amount };
+  }
+  return best;
+}
+
+export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean, dailyPerk = false) {
   const subtotal = cents(lines.reduce((s, l) => s + l.unit * l.qty, 0));
-  const tierDiscount = cents(subtotal * memberDiscountRate(member));
-  const monthlyDiscount = monthlyMember ? cents(subtotal * 0.1) : 0;
+  const perk = dailyPerk && member?.tier === "Insiders+" ? dailyPerkPick(lines) : null;
+  const dailyPerkDiscount = perk ? Math.min(perk.amount, subtotal) : 0;
+  // What the percentage discounts and a reward are figured on. Without a
+  // daily coffee this is the subtotal, so every other order adds up exactly
+  // as it always has.
+  const rest = cents(subtotal - dailyPerkDiscount);
+  const tierDiscount = cents(rest * memberDiscountRate(member));
+  const monthlyDiscount = monthlyMember ? cents(rest * 0.1) : 0;
   const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
   // A $5 reward on a $3 order takes $3 off, never more than what's left.
-  const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, subtotal - tierDiscount - monthlyDiscount))) : 0;
-  const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
+  const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, rest - tierDiscount - monthlyDiscount))) : 0;
+  const discount = dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
   const tax = taxFree ? 0 : cents(Math.max(0, taxable) * SALES_TAX_RATE);
   const total = cents(Math.max(0, taxable) + tax);
-  return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
+  return {
+    subtotal,
+    dailyPerkDiscount,
+    // Which of `lines` the daily coffee is on (null: none).
+    dailyPerkLine: perk && dailyPerkDiscount > 0 ? perk.index : null,
+    tierDiscount,
+    monthlyDiscount,
+    redemptionDiscount,
+    discount,
+    tax,
+    total,
+    canRedeem,
+  };
 }
 
-// Points a sale earns: 1 per $1 of what was bought after discounts (member,
-// monthly and reward), before tax and tip. Never negative. completeOrder
-// pays this, and the customer screen shows it.
-export function pointsEarned(t: { subtotal: number; tier_discount: number; monthly_discount: number; redemption_discount: number }) {
-  return Math.max(0, cents(t.subtotal - t.tier_discount - t.monthly_discount - t.redemption_discount));
+// Points a sale earns: 1 per $1 of what was bought after discounts (the
+// daily coffee, member, monthly and reward), before tax and tip, so a free
+// coffee earns nothing. Never negative. completeOrder pays this, and the
+// customer screen shows it. (A sale rung before the daily coffee existed
+// has no daily_perk_discount.)
+export function pointsEarned(t: { subtotal: number; tier_discount: number; monthly_discount: number; redemption_discount: number; daily_perk_discount?: number }) {
+  return Math.max(0, cents(t.subtotal - (Number(t.daily_perk_discount) || 0) - t.tier_discount - t.monthly_discount - t.redemption_discount));
 }
 
 // A badge reward the member cashed in on the register: a $0 line with no

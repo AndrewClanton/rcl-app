@@ -8,6 +8,9 @@ import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { flairKeys, parseFlair, type FlairKeys } from "@/lib/flair";
 import { visibleLine } from "@/lib/member-profile";
 import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
+import { dailyCoffeeToday } from "@/lib/daily-perk-server";
+import { currentMemberId } from "@/lib/member-forward";
+import type { DailyCoffeeState } from "@/lib/daily-perk";
 
 // What the register needs to know about an attached member -- looked up on
 // demand instead of shipping every member's contact details to the register
@@ -99,6 +102,19 @@ export async function getPosMember(id: string): Promise<PosMember | null> {
   await assertStaff();
   const { data } = await createAdminClient().from("members").select(POS_MEMBER_SELECT).eq("id", id).is("erased_at", null).maybeSingle();
   return data ? toPosMember(data as unknown as Row) : null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// An Insiders+ member's free daily coffee today (lib/daily-perk.ts): still
+// ready, or when it went. Looked up when they're put on an order. Null when
+// it couldn't be read; the register then doesn't offer it.
+export async function getDailyCoffee(memberId: string): Promise<DailyCoffeeState | null> {
+  await assertStaff();
+  if (typeof memberId !== "string" || !UUID.test(memberId)) return null;
+  // The account a merged-away member became, as the sale will be saved.
+  const id = await currentMemberId(memberId);
+  return id ? dailyCoffeeToday(id) : null;
 }
 
 // Several members at once (the register's "here today" list), in the order asked.

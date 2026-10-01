@@ -205,6 +205,13 @@ export const HELP_TOPICS = {
     body:
       "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a confirmed check-in, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
   },
+  "daily-coffee": {
+    title: "Insiders+ free daily coffee",
+    area: "Register: members and the door",
+    body:
+      "Insiders+ members get one free black coffee or hot tea each business day (4 AM to 4 AM). With the member on the order, the register takes a daily coffee item's menu price off by itself; add-ons are still charged, and Remove takes it off if they'd rather save it. It's checked again before they pay, so a second one the same day shows when they had the first, and refunding that order gives the day's coffee back. Which items count is ticked on the Menu page.",
+    links: [{ label: "Menu", href: "/admin/menu" }],
+  },
   "door-scanner": {
     title: "Scanning tickets and member cards",
     area: "Register: members and the door",
@@ -271,7 +278,7 @@ export const HELP_TOPICS = {
     title: "Insiders vs Insiders+",
     area: "Members and memberships",
     body:
-      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
+      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, a free black coffee or hot tea every day, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "points-history": {

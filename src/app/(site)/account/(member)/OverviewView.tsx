@@ -10,6 +10,7 @@ import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
+import type { DailyCoffeeState } from "@/lib/daily-perk";
 import { BoothStub, Empty, Panel, PurchaseRows, SectionHead, STACK, TAP, TicketStub } from "./ui";
 
 export default function OverviewView({
@@ -17,6 +18,7 @@ export default function OverviewView({
   purchases,
   screenings,
   booths = [],
+  coffee = null,
   googlePhoto,
   welcome,
 }: {
@@ -24,6 +26,8 @@ export default function OverviewView({
   purchases: PurchaseRow[];
   screenings: { upcoming: MemberScreening[]; past: MemberScreening[]; tonight?: MemberScreening[] };
   booths?: MemberBooth[];
+  // Insiders+: today's free coffee (null: not Insiders+, or it couldn't be read).
+  coffee?: DailyCoffeeState | null;
   googlePhoto: string | null;
   welcome: boolean;
 }) {
@@ -86,6 +90,14 @@ export default function OverviewView({
             <div className="min-w-0">
               <p className="text-[15px]">Show this at the door or the register and we&apos;ll pull up your account.</p>
               {rate !== "adult" && <p className="spec-code mt-2">{RATE_LABEL[rate]} rate</p>}
+              {coffee && (
+                <p className="mt-3 text-[15px]">
+                  Your free coffee today: <strong className={coffee.usedAt ? "" : "text-[var(--accent)]"}>{coffee.usedAt ? "used" : "ready"}</strong>
+                  <span className="mt-0.5 block text-sm text-[var(--muted)]">
+                    {coffee.usedAt ? "There's another one tomorrow." : "A black coffee or hot tea, on us. Show this card when you order."}
+                  </span>
+                </p>
+              )}
             </div>
           </div>
         </Panel>
@@ -206,7 +218,8 @@ export default function OverviewView({
             <span className="ctag ctag-yellow">Insiders+</span>
             <p className="font-display mt-3 text-2xl text-[var(--gold)]">Walk in free, every time.</p>
             <p className="mt-1 max-w-[56ch] text-[15px] opacity-85">
-              Unlimited screenings, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
+              Unlimited screenings, a free black coffee or hot tea every day, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or{" "}
+              {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
             </p>
           </div>
           <PlusLink next="/account" className={`btn-primary ${TAP} w-full px-5 py-3 sm:w-auto`}>
