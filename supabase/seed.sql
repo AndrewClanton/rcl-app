@@ -182,3 +182,11 @@ insert into members (name, tier, points) values
   ('Morgan Blake', 'Insiders+', 210),
   ('Priya Nair', 'Insiders', 60),
   ('Sam Douglas', 'Insiders+', 95);
+
+-- Their points history starts from those balances (a balance always equals
+-- the sum of its history: scripts/check-points-ledger.mjs).
+insert into points_ledger (member_id, delta, balance_after, reason, note)
+select id, points, points, 'opening_balance', 'Balance before the points history began'
+from members
+where points <> 0
+  and not exists (select 1 from points_ledger l where l.member_id = members.id);

@@ -7,13 +7,15 @@ import { requireStaff, assertStaff, assertAdmin } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
-import { applyPoints } from "@/lib/points";
+import { adjustPoints } from "@/lib/points";
+import { getPointsHistory, type PointsHistoryRow } from "@/lib/data/points-history";
 import { eraseMember, type EraseResult } from "@/lib/member-erase";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
 import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 import { seesFullContact } from "@/lib/contact-mask";
 import { birthdayFromInput } from "@/lib/visits";
+import { MAX_POINTS_CHANGE, formatPoints, pointsReasonProblem } from "@/lib/points-history";
 
 function revalidate() {
   revalidatePath("/admin/members");
@@ -46,9 +48,13 @@ export async function updateMember(
   }>
 ) {
   const staff = await assertStaff();
+  // Only these fields, whatever else the request carries: points, say,
+  // change only through the points history (changeMemberPoints).
+  const keys = ["name", "email", "phone", "tier", "monthly_member", "avatar_url"] as const;
+  const allowed: Record<string, unknown> = {};
+  for (const k of keys) if (fields && typeof fields === "object" && k in fields) allowed[k] = fields[k];
   // Contact details are managers-and-up (see saveMemberDetails); a
   // cashier's email or phone change is dropped rather than applied.
-  const allowed = { ...fields };
   if (!seesFullContact(staff.role)) {
     delete allowed.email;
     delete allowed.phone;
@@ -61,10 +67,10 @@ export async function updateMember(
 
 export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
 
-// The Save button on a member's page: name, email, phone, points and
-// birthday together. A changed email or name is copied to their Stripe
-// customer too, since that's where Stripe sends receipts and renewal
-// notices.
+// The Save button on a member's page: name, email, phone and birthday
+// together. (Points aren't typed over here: see changeMemberPoints.) A
+// changed email or name is copied to their Stripe customer too, since
+// that's where Stripe sends receipts and renewal notices.
 //
 // Email and phone are managers-and-up: a cashier only ever sees them
 // shortened (lib/contact-mask.ts), so their page leaves them out, and
@@ -72,7 +78,7 @@ export type SaveDetailsResult = { ok: true; message: string } | { ok: false; err
 // month and day ("12-30", "" for none; see BirthdayPicker).
 export async function saveMemberDetails(
   id: string,
-  fields: { name: string; email?: string; phone?: string; points: string; birthday?: string },
+  fields: { name: string; email?: string; phone?: string; birthday?: string },
 ): Promise<SaveDetailsResult> {
   const staff = await assertStaff();
   if ((fields.email !== undefined || fields.phone !== undefined) && !seesFullContact(staff.role)) {
@@ -81,15 +87,13 @@ export async function saveMemberDetails(
   const name = fields.name.trim();
   const email = fields.email?.trim();
   const phone = fields.phone?.trim();
-  const points = Number(fields.points);
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
   if (!name) return { ok: false, error: "Name can't be blank." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
-  if (fields.points.trim() === "" || !Number.isFinite(points)) return { ok: false, error: "Points has to be a number." };
   if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of their birthday (or neither)." };
 
   const supabase = createAdminClient();
-  const { data: before } = await supabase.from("members").select("name, email, phone, points, birthday, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
+  const { data: before } = await supabase.from("members").select("name, email, phone, birthday, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
   if (!before) return { ok: false, error: "Member not found." };
 
   const changes: { name?: string; email?: string | null; phone?: string | null; birthday?: string | null } = {};
@@ -102,7 +106,6 @@ export async function saveMemberDetails(
     if (error?.code === "23505") return { ok: false, error: "Another member already has that email. Search for them in Members." };
     if (error) return { ok: false, error: "Couldn't save. Try again." };
   }
-  if (points !== Number(before.points)) await adjustMemberPoints(id, points);
 
   let message = "Saved ✓";
   // Keep Stripe's copy in step (receipts and renewal notices go there).
@@ -133,16 +136,52 @@ export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<
   return result;
 }
 
-// Sets a member's balance by hand. Recorded in their points history as an
-// adjustment by this staff member, so the member can see what changed.
-export async function adjustMemberPoints(id: string, newBalance: number, note?: string) {
+// ---------- points: a bank account, not a number to type over ----------
+
+export type PointsChangeResult = { ok: true; balance: number; message: string } | { ok: false; error: string; balance?: number };
+
+// "Add or take away points" on a member's page: any staff member, as
+// typing a new balance was before. Writes one 'adjustment' row in their
+// points history with the reason (the member sees it) and who did it (they
+// don't), and only if the balance is still the one the person confirmed
+// ("Balance goes from X to Y"). Never takes a balance below zero.
+export async function changeMemberPoints(
+  id: string,
+  change: { amount: number; reason: string; expectedBalance: number },
+): Promise<PointsChangeResult> {
   const staff = await assertStaff();
-  const { data: member } = await createAdminClient().from("members").select("points").eq("id", id).is("erased_at", null).maybeSingle();
-  if (!member) return;
-  const delta = Math.round((newBalance - Number(member.points)) * 100) / 100;
-  if (delta) await applyPoints({ memberId: id, delta, reason: "adjustment", note: note?.trim() || "Adjusted by staff", by: staff.employeeId });
-  revalidate();
-  revalidatePath(`/admin/members/${id}`);
+  const amount = Number(change?.amount);
+  const reason = typeof change?.reason === "string" ? change.reason.trim().replace(/\s+/g, " ") : "";
+  const expected = Number(change?.expectedBalance);
+  if (!Number.isInteger(amount) || amount === 0) return { ok: false, error: "Enter a whole number of points (not zero)." };
+  if (Math.abs(amount) > MAX_POINTS_CHANGE) return { ok: false, error: `One change can move at most ${MAX_POINTS_CHANGE.toLocaleString()} points.` };
+  const problem = pointsReasonProblem(reason);
+  if (problem) return { ok: false, error: problem };
+  if (!Number.isFinite(expected)) return { ok: false, error: "Reload the page and try again." };
+
+  const r = await adjustPoints({ memberId: id, delta: amount, note: reason, by: staff.employeeId, expected });
+  const balance = r.balance ?? undefined;
+  if (r.status === "ok" || r.status === "duplicate") {
+    revalidate();
+    revalidatePath(`/admin/members/${id}`);
+    const now = r.balance ?? expected + amount;
+    const n = Math.abs(amount);
+    return { ok: true, balance: now, message: `${amount > 0 ? "Added" : "Took away"} ${formatPoints(n)} point${n === 1 ? "" : "s"}. Balance is now ${formatPoints(now)}.` };
+  }
+  if (r.status === "stale") {
+    revalidatePath(`/admin/members/${id}`);
+    return { ok: false, balance, error: `Their balance is now ${formatPoints(r.balance ?? 0)}: something changed it since you opened this (a sale or check-in, say), so this wasn't saved. Check the history below, then confirm the new numbers if your change isn't there.` };
+  }
+  if (r.status === "negative") return { ok: false, balance, error: `They have ${formatPoints(r.balance ?? 0)} points, so that would put them below zero. Nothing was saved.` };
+  if (r.status === "not_found") return { ok: false, error: "Member not found." };
+  return { ok: false, error: "Couldn't save. Nothing changed. Try again." };
+}
+
+// "Show more" on a member's points history.
+export async function loadPointsHistory(id: string, offset: number): Promise<{ rows: PointsHistoryRow[]; total: number }> {
+  await assertStaff();
+  const from = Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  return getPointsHistory(id, from, 50);
 }
 
 // Removes a member's personal info on request (see /data-deletion): cancels
