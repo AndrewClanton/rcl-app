@@ -55,7 +55,9 @@ import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import CardNoticeBanner from "./CardNotice";
 import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
-import { cents, ENFORCE_REGISTER_TOTALS, pointsEarned, registerTotals } from "@/lib/register-totals";
+import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, pointsEarned, registerTotals } from "@/lib/register-totals";
+import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
+import { getDailyCoffee } from "./member-actions";
 import {
   checkBeforePayment,
   completeOrder,
@@ -119,6 +121,7 @@ const NOTE_ABOUT: NoteAbout[] = [
 function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
   return {
     subtotal: t.subtotal,
+    daily_perk_discount: t.dailyPerkDiscount,
     tier_discount: t.tierDiscount,
     monthly_discount: t.monthlyDiscount,
     redemption_discount: t.redemptionDiscount,
@@ -198,6 +201,34 @@ export default function PosApp({
   const [outPromptId, setOutPromptId] = useState<string | null>(null);
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
+  // The Insiders+ daily coffee (lib/daily-perk.ts). The attached member's
+  // coffee today is looked up when they're put on the order, however they
+  // got there (a check-in, a search, a scan, a tab): undefined while it's
+  // looked up, null if it couldn't be (then it isn't offered).
+  const isPlus = member?.tier === "Insiders+";
+  const [coffee, setCoffee] = useState<{ memberId: string; state: DailyCoffeeState | null } | null>(null);
+  const [coffeeTry, setCoffeeTry] = useState(0);
+  // The member whose free coffee staff took off this order.
+  const [coffeeOffFor, setCoffeeOffFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!memberId || !isPlus) return;
+    let live = true;
+    getDailyCoffee(memberId).then(
+      (state) => {
+        if (live) setCoffee({ memberId, state });
+      },
+      () => {
+        if (live) setCoffee({ memberId, state: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId, isPlus, coffeeTry]);
+  const coffeeToday = isPlus && memberId && coffee?.memberId === memberId ? coffee.state : undefined;
+  // On this order unless it's used, unknown, or staff took it off. Only one
+  // member is on an order, so only their coffee can be.
+  const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
@@ -314,7 +345,15 @@ export default function PosApp({
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
-  const totals = registerTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
+  // A line can be the free coffee if its item is ticked as a daily coffee
+  // (Back office -> Menu): its menu price comes off, its add-ons don't.
+  const totalsLines = cart.map((l) => {
+    const item = findItem(l.menuItemId);
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
+  });
+  const totals = registerTotals(totalsLines, member, monthlyMember, taxFree, pointsRedeemed, coffeeOn);
+  // The line it would go on, whether or not it's on: "Use it" puts it back.
+  const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
   const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
 
@@ -357,6 +396,7 @@ export default function PosApp({
     setTaxFree(f.tax_free);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
+    setCoffeeOffFor(null);
   }
 
   function addLine(line: BuiltLine) {
@@ -388,7 +428,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId, coffeeOn]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -463,6 +503,7 @@ export default function PosApp({
     // The customer screen's live tally: savings, whose order it is, and the
     // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
+      { label: DAILY_COFFEE_LINE, amount: totals.dailyPerkDiscount },
       { label: "Member discount", amount: totals.tierDiscount },
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
       { label: "Points reward", amount: totals.redemptionDiscount },
@@ -502,6 +543,9 @@ export default function PosApp({
     setMonthlyMember(false);
     setPointsRedeemed(false);
     setActiveTabId(null);
+    // Looked up again for the next order: a coffee just used shows as used.
+    setCoffee(null);
+    setCoffeeOffFor(null);
   }
 
   // False (with nothing moved) if what's on screen couldn't be saved.
@@ -685,9 +729,10 @@ export default function PosApp({
         return;
       }
     }
-    // A points reward the member no longer has the points for comes off
-    // before anyone pays. If the check can't run, the sale goes ahead.
-    if ((pointsRedeemed && totals.redemptionDiscount > 0) || ENFORCE_REGISTER_TOTALS) {
+    // A points reward the member no longer has the points for, or a daily
+    // coffee they've already had today (on the other register, say), comes
+    // off before anyone pays. If the check can't run, the sale goes ahead.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
       setBusy(true);
       const r = await checkBeforePayment(currentFields(), totalsPayload(totals)).catch(() => null);
       setBusy(false);
@@ -695,6 +740,11 @@ export default function PosApp({
         if (r.points !== undefined) {
           setPointsRedeemed(false);
           if (member) setMember({ ...member, points: r.points });
+        }
+        if (r.dropDailyCoffee !== undefined && memberId) {
+          // Already used: the member panel shows when. Otherwise it's just off.
+          if (r.dropDailyCoffee?.usedAt) setCoffee({ memberId, state: r.dropDailyCoffee });
+          else setCoffeeOffFor(memberId);
         }
         return setToast(r.error);
       }
@@ -866,6 +916,7 @@ export default function PosApp({
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
       subtotal: order.totals.subtotal,
       discounts: [
+        { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
         { label: "Monthly member discount", amount: order.totals.monthly_discount },
         { label: "Points reward", amount: order.totals.redemption_discount },
@@ -1182,7 +1233,7 @@ export default function PosApp({
               No items yet
             </div>
           ) : (
-            cart.map((line) => (
+            cart.map((line, i) => (
               // One compact row per line (quantity, name, price, remove) so a
               // longer order still fits the iPad without scrolling much.
               <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
@@ -1214,6 +1265,11 @@ export default function PosApp({
                       {line.mods.join(", ")}
                     </div>
                   )}
+                  {i === totals.dailyPerkLine && (
+                    <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
+                      ☕ {line.qty > 1 ? "One free today" : "Free today"}
+                    </div>
+                  )}
                 </div>
                 <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
                   {money(line.unit * line.qty)}
@@ -1230,9 +1286,50 @@ export default function PosApp({
             ))
           )}
 
+          {/* The Insiders+ daily coffee: on the order with a way to take it
+              off, or off with a way to put it back. */}
+          {memberId && coffeePick && totals.dailyPerkLine !== null ? (
+            <div
+              className="flex items-center gap-2 rounded-md border-2 px-2 py-1.5 text-xs"
+              style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }}
+            >
+              <span className="min-w-0 flex-1">
+                ☕ <strong>{DAILY_COFFEE_TITLE}</strong>
+                {/* Wraps on an upright iPad rather than cutting off. */}
+                <span className="block">{cart[totals.dailyPerkLine]?.name} free, add-ons still charged</span>
+              </span>
+              <span className="shrink-0 font-bold tabular-nums">−{money(totals.dailyPerkDiscount)}</span>
+              <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setCoffeeOffFor(memberId)}>
+                Remove
+              </button>
+            </div>
+          ) : (
+            memberId &&
+            coffeePick && (
+              <div className="flex items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+                <span className="min-w-0 flex-1">☕ {DAILY_COFFEE_TITLE}: not on this order.</span>
+                <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setCoffeeOffFor(null)}>
+                  Use it
+                </button>
+              </div>
+            )
+          )}
+
           <PosMemberPanel
             member={member}
             onChange={setMember}
+            coffee={
+              isPlus
+                ? {
+                    today: coffeeToday,
+                    onOrder: totals.dailyPerkDiscount > 0,
+                    retry: () => {
+                      setCoffee(null);
+                      setCoffeeTry((n) => n + 1);
+                    },
+                  }
+                : null
+            }
             employeeId={employeeId}
             onRewardLine={(label) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }])}
             onFind={() => {

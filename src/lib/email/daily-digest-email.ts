@@ -1,4 +1,5 @@
 import type { DailyDigest } from "@/lib/data/daily-digest";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import type { MembershipLineKey, MembershipTotals } from "@/lib/membership-payments/rows";
 
 // The end-of-day report as an email: plain tables and inline styles, which
@@ -85,6 +86,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
 
   const sold: [string, string, boolean?][] = r.sold.map((s) => [`${esc(s.label)}${s.detail ? ` <span style="color:${MUTED}">· ${esc(s.detail)}</span>` : ""}`, money(s.amount)]);
   if (r.discounts > 0) sold.push(["Member discounts", `−${money(r.discounts)}`]);
+  if (r.dailyCoffee > 0) sold.push([`${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, `−${money(r.dailyCoffee)}`]);
   sold.push(["Net sales", money(r.netSales), true]);
   sold.push([`<span style="color:${MUTED}">Tips · sales tax</span>`, `<span style="color:${MUTED}">${money(r.tips)} · ${money(r.tax)}</span>`]);
 

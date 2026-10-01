@@ -4,6 +4,9 @@ import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cents, registerTotals, type TotalsMember } from "@/lib/register-totals";
 import type { MemberTier } from "@/lib/types";
+import { hasPlusPerks } from "@/lib/plus-status";
+import { coffeeTime } from "@/lib/daily-perk";
+import { coffeeDay, dailyCoffeeUse, type DailyCoffeeUse } from "@/lib/daily-perk-server";
 
 // The server's own look at a register sale before it's saved, instead of
 // taking the register's word for it:
@@ -19,6 +22,12 @@ import type { MemberTier } from "@/lib/types";
 //   anything more than a cent off, a "pick one" question left unanswered,
 //   and payments that don't add up to the total plus tip. Log-only unless
 //   ENFORCE_REGISTER_TOTALS is on.
+// - checkDailyCoffee: an Insiders+ daily coffee on the order is allowed:
+//   the member has Insiders+ perks, an item on the order is ticked as a
+//   daily coffee, and they haven't had today's. The register is stopped
+//   before payment when it isn't (whether or not totals are enforced); a
+//   sale that gets through anyway is saved without counting as today's
+//   coffee, and its totals check says why.
 //
 // Anything worth a look lands in register_sale_flags (and the server log,
 // prefixed "[register-check]").
@@ -29,7 +38,8 @@ import type { MemberTier } from "@/lib/types";
 // sat on an open tab (the tab keeps the old price), a modifier renamed or
 // removed since it was rung, or a member's points or tier changing between
 // attaching them and paying, or a "pick one" question added to an item
-// after it was rung. With enforce on, the register checks before
+// after it was rung, or an item's daily coffee tick changed while it sat on
+// an open tab. With enforce on, the register checks before
 // the payment screen, so those show a message and nothing is charged; a
 // sale whose card was already charged is still saved (and flagged), never
 // refused.
@@ -107,7 +117,9 @@ export interface SaleForCheck {
   taxFree: boolean;
   pointsRedeemed: boolean;
   lines: { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id?: string | null }[];
-  totals: { subtotal: number; tier_discount: number; monthly_discount: number; redemption_discount: number; tax: number; total: number };
+  // daily_perk_discount: the Insiders+ daily coffee (missing from a sale
+  // rung before it existed, which is the same as none).
+  totals: { subtotal: number; daily_perk_discount?: number; tier_discount: number; monthly_discount: number; redemption_discount: number; tax: number; total: number };
   payment?: { cash: number; card: number; voucher?: number };
   tip?: number;
   // The member's points before this sale moved them, for a check that runs
@@ -115,6 +127,10 @@ export interface SaleForCheck {
   // a reward is judged on the balance it was taken from. Left out (or not a
   // number), the member's balance now is used.
   memberPointsBefore?: number | null;
+  // The daily coffee's own check (checkDailyCoffee), when it already ran
+  // before the sale was saved: once saved, the sale's own coffee would
+  // count as "already had today's". Left out, it's checked here.
+  dailyCoffee?: CoffeeCheck;
 }
 
 type ServerTotals = SaleForCheck["totals"];
@@ -129,12 +145,47 @@ export interface TotalsCheck {
 
 const TOTAL_LABELS: [keyof ServerTotals, string][] = [
   ["subtotal", "Subtotal"],
+  ["daily_perk_discount", "Insiders+ daily coffee"],
   ["tier_discount", "Member discount"],
   ["monthly_discount", "Monthly member discount"],
   ["redemption_discount", "Points reward"],
   ["tax", "Tax"],
   ["total", "Total"],
 ];
+
+// ---------- the Insiders+ daily coffee ----------
+
+// reason: one plain sentence for staff (and the flag), with no customer
+// details. unchecked: it couldn't be looked up, so it's allowed (the
+// database still allows only one a day).
+export type CoffeeCheck = { ok: true; unchecked?: string } | { ok: false; reason: string; used?: DailyCoffeeUse };
+
+// Whether the member on a sale can have a free daily coffee on it now.
+// Never throws.
+export async function checkDailyCoffee(sale: { memberId: string | null; lines: { menu_item_id: string | null; screening_id?: string | null }[] }, date = coffeeDay()): Promise<CoffeeCheck> {
+  if (!sale.memberId) return { ok: false, reason: "There's no member on the order." };
+  try {
+    const supabase = createAdminClient();
+    const itemIds = [...new Set(sale.lines.filter((l) => l.menu_item_id && !l.screening_id).map((l) => l.menu_item_id as string))];
+    const [memberRow, items, used] = await Promise.all([
+      supabase.from("members").select("tier").eq("id", sale.memberId).maybeSingle(),
+      // "*": daily_perk is there once its migration is applied.
+      itemIds.length ? supabase.from("menu_items").select("*").in("id", itemIds) : Promise.resolve({ data: [] as never[], error: null }),
+      dailyCoffeeUse(sale.memberId, date),
+    ]);
+    const error = memberRow.error ?? items.error;
+    if (error) return { ok: true, unchecked: error.message };
+    if (!memberRow.data) return { ok: false, reason: "The member on the order wasn't found." };
+    if (!hasPlusPerks(memberRow.data as { tier: MemberTier })) return { ok: false, reason: "The member on the order isn't Insiders+." };
+    if (!((items.data ?? []) as { daily_perk?: boolean }[]).some((i) => i.daily_perk)) {
+      return { ok: false, reason: "Nothing on the order is a daily coffee item (Back office, Menu)." };
+    }
+    if (used) return { ok: false, reason: `This member already had today's free coffee (order #${used.orderNumber} at ${coffeeTime(used.usedAt)}).`, used };
+    return used === undefined ? { ok: true, unchecked: "today's coffee couldn't be looked up" } : { ok: true };
+  } catch (e) {
+    return { ok: true, unchecked: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 // Never throws: a hiccup here must not stop a sale.
 export async function checkSaleTotals(sale: SaleForCheck): Promise<TotalsCheck> {
@@ -169,14 +220,15 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   const none = Promise.resolve({ data: [] as never[], error: null });
 
   const [items, groups, screenings, memberRow] = await Promise.all([
-    itemIds.length ? supabase.from("menu_items").select("id, price, is_alcohol").in("id", itemIds) : none,
+    // "*" so the check still runs before the daily coffee's migration adds daily_perk.
+    itemIds.length ? supabase.from("menu_items").select("*").in("id", itemIds) : none,
     itemIds.length ? supabase.from("menu_modifier_groups").select("*, options:menu_modifier_options(name, price_delta)").in("item_id", itemIds) : none,
     screeningIds.length ? supabase.from("screenings").select("id, ticket_price").in("id", screeningIds) : none,
     sale.memberId ? supabase.from("members").select("tier, points").eq("id", sale.memberId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   for (const r of [items, groups, screenings, memberRow]) if (r.error) throw new Error(r.error.message);
 
-  const itemById = new Map(((items.data ?? []) as { id: string; price: number; is_alcohol: boolean }[]).map((i) => [i.id, i]));
+  const itemById = new Map(((items.data ?? []) as { id: string; price: number; is_alcohol: boolean; daily_perk?: boolean }[]).map((i) => [i.id, i]));
   const groupsByItem = new Map<string, Group[]>();
   for (const g of (groups.data ?? []) as unknown as Group[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
   const ticketPrice = new Map(((screenings.data ?? []) as { id: string; ticket_price: number }[]).map((s) => [s.id, Number(s.ticket_price)]));
@@ -190,6 +242,9 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     const sent = Number(l.unit_price);
     let expected = sent;
     let note: string | undefined;
+    // What a daily coffee takes off this line: its item's menu price, if
+    // the item is ticked as a daily coffee.
+    let perkBase: number | null = null;
     if (!Number.isInteger(l.quantity) || l.quantity < 1) problems.push(`"${l.name}" has a quantity of ${l.quantity}.`);
     if (l.screening_id) {
       const price = ticketPrice.get(l.screening_id);
@@ -201,6 +256,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
       if (!item) {
         problems.push(`"${l.name}" isn't on the menu anymore, so its price couldn't be checked.`);
       } else {
+        if (item.daily_perk) perkBase = Number(item.price);
         const itemGroups = groupsByItem.get(item.id) ?? [];
         const mods = modifierPrice(itemGroups, l.modifiers ?? []);
         if ("extra" in mods) expected = Number(item.price) + mods.extra;
@@ -221,14 +277,32 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     // A badge reward ($0, no menu item) and a custom item are taken at the
     // price rung: there's nothing on the menu to check them against.
     if (differs(sent, expected)) problems.push(`"${l.name}" was rung at ${money(sent)} each; the menu says ${money(expected)}.`);
-    return { name: l.name, sent, expected, qty: l.quantity, note };
+    return { name: l.name, sent, expected, qty: l.quantity, note, perkBase };
   });
 
-  const t = registerTotals(lines.map((l) => ({ unit: l.expected, qty: l.qty })), member, sale.monthlyMember, sale.taxFree, sale.pointsRedeemed);
-  const server: ServerTotals = { subtotal: t.subtotal, tier_discount: t.tierDiscount, monthly_discount: t.monthlyDiscount, redemption_discount: t.redemptionDiscount, tax: t.tax, total: t.total };
+  // The daily coffee counts only if it was on the order (staff can take it
+  // off) and it's allowed; one that isn't comes to $0 here.
+  let dailyPerk = false;
+  if (Number(sale.totals.daily_perk_discount ?? 0) > 0) {
+    const coffee = sale.dailyCoffee ?? (await checkDailyCoffee(sale));
+    dailyPerk = coffee.ok;
+    if (!coffee.ok) problems.push(`Insiders+ daily coffee: ${coffee.reason} It came off the order anyway.`);
+  }
+
+  const t = registerTotals(lines.map((l) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase })), member, sale.monthlyMember, sale.taxFree, sale.pointsRedeemed, dailyPerk);
+  const server: ServerTotals = {
+    subtotal: t.subtotal,
+    daily_perk_discount: t.dailyPerkDiscount,
+    tier_discount: t.tierDiscount,
+    monthly_discount: t.monthlyDiscount,
+    redemption_discount: t.redemptionDiscount,
+    tax: t.tax,
+    total: t.total,
+  };
   for (const [key, label] of TOTAL_LABELS) {
-    const sent = Number(sale.totals[key]);
-    if (differs(sent, server[key])) problems.push(`${label}: the register sent ${money(sent)}, the server figures ${money(server[key])}.`);
+    const sent = Number(sale.totals[key] ?? 0);
+    const figured = Number(server[key] ?? 0);
+    if (differs(sent, figured)) problems.push(`${label}: the register sent ${money(sent)}, the server figures ${money(figured)}.`);
   }
 
   // The payment: cash, card (a tip picked on the reader is inside it) and

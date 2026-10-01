@@ -189,7 +189,12 @@ export interface SalesSummary {
   memberships: MembershipTotals;
   // What was sold, before tax and tips.
   sold: { label: string; amount: number; detail?: string }[];
-  discounts: number;
+  discounts: number; // member, monthly member and points-reward discounts
+  // Insiders+ free daily coffees given away (lib/daily-perk.ts): their menu
+  // price, on completed orders, and how many. Their own line, so the cost
+  // of the perk shows instead of hiding in the discounts.
+  dailyCoffee: number;
+  dailyCoffeeCount: number;
   partialRefunds: number; // goods given back on part-refunded orders, before tax
   netSales: number;
   ticketsSold: number;
@@ -254,6 +259,9 @@ type DayOrderRow = {
   tier_discount: number;
   monthly_discount: number;
   redemption_discount: number;
+  // The Insiders+ daily coffee given away (lib/daily-perk.ts). Missing
+  // until its migration (20261001230000_plus_daily_coffee.sql) is applied.
+  daily_perk_discount?: number | null;
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
@@ -263,8 +271,10 @@ type DayOrderRow = {
 // The cashier join names its foreign key: since the manager-PIN migration,
 // orders has two links to employees (who rang it up, and refund_approved_by),
 // and a bare employees(name) fails with "more than one relationship".
+// The order's own columns are "*", so the reports keep working before the
+// daily coffee's migration adds daily_perk_discount.
 const DAY_ORDER_COLUMNS =
-  "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tax_free, tip, total, tier_discount, monthly_discount, redemption_discount, stripe_payment_intent_id, employee_id, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
+  "*, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
 
 type RefundedParts = { amount: number; tax: number; card: number; cash: number };
 const NOTHING_REFUNDED: RefundedParts = { amount: 0, tax: 0, card: 0, cash: 0 };
@@ -435,7 +445,9 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     online = 0,
     tips = 0,
     tax = 0,
-    discounts = 0;
+    discounts = 0,
+    dailyCoffee = 0,
+    dailyCoffeeCount = 0;
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
   for (const o of completed) {
@@ -447,6 +459,11 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     tips += Number(o.tip);
     tax += Number(o.tax);
     discounts += Number(o.tier_discount) + Number(o.monthly_discount) + Number(o.redemption_discount);
+    const coffee = Number(o.daily_perk_discount ?? 0);
+    if (coffee > 0) {
+      dailyCoffee += coffee;
+      dailyCoffeeCount++;
+    }
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
       // Tickets are counted from their bookings below, not as bar sales.
@@ -522,8 +539,10 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     memberships,
     sold,
     discounts,
+    dailyCoffee,
+    dailyCoffeeCount,
     partialRefunds,
-    netSales: grossSales - discounts - partialRefunds,
+    netSales: grossSales - discounts - dailyCoffee - partialRefunds,
     ticketsSold,
     tickets,
     orderCount: completed.length,

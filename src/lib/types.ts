@@ -62,6 +62,9 @@ export interface MenuItem {
   event_price_mode: EventPriceMode | null;
   sort_order: number;
   active: boolean;
+  // An Insiders+ member's free daily coffee can be this item (lib/daily-perk.ts).
+  // Missing until migration 20261001230000_plus_daily_coffee.sql is applied.
+  daily_perk?: boolean;
   // 86'd ("Ran out" on the register): set while it shouldn't be sold, with
   // the reason shown on its button ("Out of hot dog buns").
   out_since?: string | null;

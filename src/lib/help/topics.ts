@@ -211,6 +211,13 @@ export const HELP_TOPICS = {
     body:
       "Once a card has paid for a member's sales with their account on the order on 2 different days (or they paid with it online, signed in), it's linked to them, so a later card sale with nobody attached still earns them the points. They see only the points, not what was bought, and tickets on that sale stay off their account. The register says so right after the sale (\"23 points to Sarah · Visa •••• 4242\"), with an Undo that asks which it was: someone else paid with Sarah's card (the card stays hers), or it isn't her card at all (it's unlinked). Then you can give the points to whoever paid. Undo works for 2 minutes on that register; after that a manager undoes it on the member's page. A card linked to two accounts (a family card) never picks on its own; the register asks who's paying. A staff member's own card, or a card already on someone else's account, is linked only by a manager, from a sale on the member's page. We keep the card type, its last four digits and Stripe's code for the card, never the number, and members can remove a card on their account.",
   },
+  "daily-coffee": {
+    title: "Insiders+ free daily coffee",
+    area: "Register: members and the door",
+    body:
+      "Insiders+ members get one free black coffee or hot tea each business day (4 AM to 4 AM). With the member on the order, the register takes a daily coffee item's menu price off by itself; add-ons are still charged, and Remove takes it off if they'd rather save it. It's checked again before they pay, so a second one the same day shows when they had the first, and refunding that order gives the day's coffee back. Which items count is ticked on the Menu page.",
+    links: [{ label: "Menu", href: "/admin/menu" }],
+  },
   "door-scanner": {
     title: "Scanning tickets and member cards",
     area: "Register: members and the door",
@@ -277,7 +284,7 @@ export const HELP_TOPICS = {
     title: "Insiders vs Insiders+",
     area: "Members and memberships",
     body:
-      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
+      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, a free black coffee or hot tea every day, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "points-history": {

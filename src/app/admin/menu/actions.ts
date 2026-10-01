@@ -187,13 +187,19 @@ export async function addItem(categoryId: string, name: string, price: number, i
 
 export async function updateItem(
   id: string,
-  fields: Partial<{ name: string; price: number; is_alcohol: boolean; is_event_item: boolean; event_price_mode: EventPriceMode | null; active: boolean }>,
+  // daily_perk: can be an Insiders+ member's free daily coffee (lib/daily-perk.ts).
+  fields: Partial<{ name: string; price: number; is_alcohol: boolean; is_event_item: boolean; event_price_mode: EventPriceMode | null; active: boolean; daily_perk: boolean }>,
 ): Promise<Result> {
   const no = await denied();
   if (no) return no;
   if (fields.name !== undefined && !fields.name.trim()) return { ok: false, error: "An item needs a name." };
   if (fields.price !== undefined && !(fields.price >= 0)) return { ok: false, error: "Enter a price of $0.00 or more." };
+  if (fields.daily_perk !== undefined && typeof fields.daily_perk !== "boolean") return { ok: false, error: "Couldn't save that change. Try again." };
   const { error } = await createAdminClient().from("menu_items").update(fields).eq("id", id);
+  // No daily_perk column yet (PGRST204, 42703): its migration isn't applied.
+  if (error && fields.daily_perk !== undefined && (error.code === "PGRST204" || error.code === "42703")) {
+    return { ok: false, error: "The Insiders+ daily coffee needs a database update first (migration 20261001230000_plus_daily_coffee.sql). Nothing was changed." };
+  }
   const f = failed(error, "save that change");
   if (f) return f;
   revalidate();
