@@ -63,7 +63,7 @@ export default async function RegisterChecksPage({ searchParams }: { searchParam
       <Card title="Flagged sales" subtitle="What the server wanted a person to look at, newest first: totals that didn't add up, card payments it refused, tabs paid twice, sales staff stopped trying to save. The last 100.">
         {!flags.ok ? (
           <p className="text-sm text-[var(--muted)]">
-            {flags.missing ? "Flags need a database update first (migration 20261001100000_register_sale_flags.sql). Until then they're only in the server log." : `Couldn't load the flags: ${flags.error}`}
+            {flags.missing ? "Flags need a database update first (migration 20261001200000_register_sale_flags.sql). Until then they're only in the server log." : `Couldn't load the flags: ${flags.error}`}
           </p>
         ) : flags.flags.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">Nothing flagged.</p>

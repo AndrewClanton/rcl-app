@@ -244,7 +244,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
 // ---------- flags ----------
 
 // What each kind means is in the table's migration
-// (20261001100000_register_sale_flags.sql). kind is free text there, so a
+// (20261001200000_register_sale_flags.sql). kind is free text there, so a
 // new one needs no migration: add it here and to that list.
 export type SaleFlagKind =
   | "card_refused"
@@ -259,7 +259,7 @@ export type SaleFlagKind =
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Best effort, never throws. The server log always gets it; the table does
-// once its migration (20261001100000_register_sale_flags) is applied.
+// once its migration (20261001200000_register_sale_flags) is applied.
 export async function flagSale(
   kind: SaleFlagKind,
   f: { orderId?: string | null; orderNumber?: number | null; employeeId?: string | null; paymentIntentId?: string | null; details: Record<string, unknown> },

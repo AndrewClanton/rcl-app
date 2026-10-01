@@ -29,11 +29,11 @@
 -- SaleFlagKind). `details` holds what the register sent and what the server
 -- figured.
 --
--- Named 20261001100000 (not the 20260929210000 it was written as) because
--- that prefix is taken by another migration. The app tolerates this table
--- being missing (it still writes the server log, and the report says the
--- table isn't there), so it can be applied any time. Safe to run more than
--- once.
+-- Named 20261001200000 (it was written as 20260929210000, then
+-- 20261001100000; both prefixes are taken by other migrations). The app
+-- tolerates this table being missing (it still writes the server log, and
+-- the report says the table isn't there), so it can be applied any time.
+-- Safe to run more than once.
 
 create table if not exists register_sale_flags (
   id uuid primary key default gen_random_uuid(),
