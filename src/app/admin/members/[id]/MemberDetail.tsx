@@ -135,6 +135,11 @@ export default function MemberDetail({
       <div className="xl:col-span-2">
         <PurchaseHistoryCard purchases={purchases} />
       </div>
+      {viewerIsAdmin && (
+        <div className="xl:col-span-2">
+          <MergeDuplicateCard member={member} />
+        </div>
+      )}
       <div className="xl:col-span-2">
         <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
       </div>
@@ -639,6 +644,24 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Two accounts for one person (often an old-site account plus one the door
+// tablet made): fold the other into this one. The merge page shows both
+// side by side and exactly what happens before anything changes. Owner and
+// admin only.
+function MergeDuplicateCard({ member }: { member: Member }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="text-lg font-semibold">Merge a duplicate into this account</h2>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        If {member.name} has a second account, its visits, points, orders and tickets can come over to this one, and the other account is deleted.
+      </p>
+      <Link href={`/admin/members/${member.id}/merge`} className="mt-3 inline-block rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
+        Find the duplicate…
+      </Link>
     </div>
   );
 }

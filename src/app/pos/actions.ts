@@ -11,6 +11,7 @@ import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
+import { currentMemberId } from "@/lib/member-forward";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -185,12 +186,16 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 
   const supabase = createAdminClient();
   const tip = params.tip ?? 0;
+  // The member on the sale, or the account they were merged into while the
+  // sale was open (lib/member-forward.ts): the old id would fail after
+  // they've paid.
+  const memberId = await currentMemberId(params.memberId);
 
   const orderFields = {
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
-    member_id: params.memberId,
+    member_id: memberId,
     order_name: params.orderName || null,
     subtotal: params.totals.subtotal,
     tier_discount: params.totals.tier_discount,
@@ -263,14 +268,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 
   // 1 point per $1 of the order, and 100 back out when a reward was used.
   // Each change lands in the member's points history, tied to this order.
-  if (params.memberId) {
+  if (memberId) {
     if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
-      await applyPoints({ memberId: params.memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+      await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
     }
-    await applyPoints({ memberId: params.memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
+    await applyPoints({ memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
-  await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
+  await syncTicketBookings(supabase, { id: orderId, memberId, name: params.orderName || null }, params.lines);
 
   // A closed tab's card on file comes off file, however the tab was paid.
   if (params.draftOrderId) await releaseTabCard(orderId);
@@ -316,6 +321,7 @@ const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_dis
 export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields, totals: CheckoutTotals = ZERO_TOTALS): Promise<string> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
   if (numberErr) throw numberErr;
 
@@ -326,7 +332,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       source: "pos",
       status,
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: status === "tab" ? fields.orderName || null : null,
       tax_free: fields.taxFree,
@@ -373,11 +379,12 @@ export type DraftSaveResult = { ok: true } | { ok: false; error: string; closed?
 export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals, opts?: { kitchen?: "hold" | "now" }): Promise<DraftSaveResult> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: updated, error } = await supabase
     .from("orders")
     .update({
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: fields.orderName || null,
       tax_free: fields.taxFree,

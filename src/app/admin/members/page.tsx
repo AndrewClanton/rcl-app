@@ -55,6 +55,17 @@ export default async function AdminMembersPage({
           <span className="text-[var(--muted)]">Review →</span>
         </Link>
       )}
+      {session && hasAdminAccess(session.role) && (
+        <Link
+          href="/admin/members/duplicates"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Possible duplicates</span> · two accounts for one person (often one made at the door tablet), to merge
+          </span>
+          <span className="text-[var(--muted)]">Review →</span>
+        </Link>
+      )}
       {session && hasManagerAccess(session.role) && (
         <Link
           href="/admin/members/regulars"

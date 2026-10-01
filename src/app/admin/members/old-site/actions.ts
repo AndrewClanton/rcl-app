@@ -79,6 +79,9 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   // The old site's plan type was the rate ("Senior ($12.00)"). Carried over
   // with no "set by", which staff screens show as "from old site".
   const oldRate = (r: ApprovedRow) => (/^senior/i.test(r.membership_type ?? "") ? "senior" : /^student/i.test(r.membership_type ?? "") ? "student" : null);
+  // The old site's "-" (or any phone with no digits) is no phone at all:
+  // saved as one, the door tablet could never find them by it.
+  const realPhone = (p: string | null) => (p && /\d/.test(p) ? p : null);
   const wasPaying = (r: ApprovedRow) => !!r.subscription_billing_status || r.membership_is_plus || r.membership_duration === "monthly" || r.membership_duration === "annual";
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -104,7 +107,7 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
           legacy_user_id: r.legacy_user_id,
           legacy_plus: wasPaying(r),
           imported_at: now,
-          ...(match.phone ? {} : { phone: r.phone }),
+          ...(match.phone || !realPhone(r.phone) ? {} : { phone: realPhone(r.phone) }),
           ...(match.price_tier || !oldRate(r) ? {} : { price_tier: oldRate(r) }),
         })
         .eq("id", match.id);
@@ -116,7 +119,7 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
     toInsert.push({
       name,
       email: r.email.trim(),
-      phone: r.phone,
+      phone: realPhone(r.phone),
       tier: "Insiders",
       points: 0,
       price_tier: oldRate(r),

@@ -4,6 +4,7 @@ import { SITE_URL } from "@/lib/site";
 import { allowAttempt } from "@/lib/rate-limit";
 import { setMarketingOptIn } from "@/lib/email/consent";
 import { emailTokensReady, openEmailToken, PREFERENCES_PATH } from "@/lib/email/tokens";
+import { currentMemberId } from "@/lib/member-forward";
 
 // One-click unsubscribe (RFC 8058), the address in every marketing email's
 // List-Unsubscribe header: Gmail's and Yahoo's own "Unsubscribe" button
@@ -40,12 +41,15 @@ async function unsubscribe(token: string | null): Promise<boolean> {
     console.warn("unsubscribe: a token that didn't open");
     return false;
   }
-  const r = await setMarketingOptIn(t.memberId, false, "one_click", { sendId: t.sendId });
+  // An email sent before its account was merged into another unsubscribes
+  // the account it became (otherwise it would quietly do nothing).
+  const memberId = (await currentMemberId(t.memberId)) ?? t.memberId;
+  const r = await setMarketingOptIn(memberId, false, "one_click", { sendId: t.sendId });
   if (!r.ok) throw new Error(r.error);
   if (t.sendId) {
     const admin = createAdminClient();
     const at = new Date().toISOString();
-    const { data } = await admin.from("email_sends").update({ unsubscribed_at: at }).eq("id", t.sendId).eq("member_id", t.memberId).is("unsubscribed_at", null).select("id");
+    const { data } = await admin.from("email_sends").update({ unsubscribed_at: at }).eq("id", t.sendId).eq("member_id", memberId).is("unsubscribed_at", null).select("id");
     if (data?.length) await admin.from("email_events").insert({ send_id: t.sendId, type: "unsubscribed", occurred_at: at, detail: {} });
   }
   return true;

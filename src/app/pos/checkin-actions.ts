@@ -1,6 +1,6 @@
 "use server";
 
-import { assertStaff } from "@/lib/auth";
+import { assertStaff, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
 import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
@@ -10,6 +10,9 @@ import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
 import { openRewards, recordVisit, redeemReward, todaysVisitors, unredeemReward, type OpenReward } from "@/lib/visits-server";
 import type { VisitResult } from "@/lib/visits";
 import { issueClaimLink } from "@/lib/member-claim";
+import { tabletDuplicateOf } from "@/lib/data/member-merge";
+import { currentMemberId } from "@/lib/member-forward";
+import { mergeHref } from "@/lib/member-merge";
 import { setMarketingOptIn } from "@/lib/email/consent";
 import { memberJoined } from "@/lib/email/automations";
 
@@ -171,12 +174,27 @@ async function tabletClaimLink(memberId: string): Promise<string | null> {
   return issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS });
 }
 
-export async function confirmVisit(memberId: string): Promise<VisitConfirm> {
+export async function confirmVisit(cardMemberId: string): Promise<VisitConfirm> {
   const staff = await assertStaff();
+  // Merged into another account since the card came up: that one.
+  const memberId = (await currentMemberId(cardMemberId)) ?? cardMemberId;
   const visit = await recordVisit(memberId, staff.employeeId);
   if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
   const [rewards, claimUrl] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId)]);
   return { ok: true, visit, rewards, claimUrl };
+}
+
+// After a check-in: an account the tablet made lately that's probably a
+// second account for an older member with the same name and no usable
+// phone (lib/data/member-merge.ts). The register only shows a line, with a
+// link to review it in Back office for an owner or admin (the merge page
+// is theirs; anyone else gets the line without the link). Nothing is
+// merged from here. Null almost always, and whenever it can't tell.
+export async function getDuplicateHint(memberId: string): Promise<{ href: string | null } | null> {
+  const staff = await assertStaff();
+  const hit = await tabletDuplicateOf(memberId);
+  if (!hit) return null;
+  return { href: hasAdminAccess(staff.role) ? mergeHref(hit.olderId, memberId) : null };
 }
 
 export interface HereToday {

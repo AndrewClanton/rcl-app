@@ -6,6 +6,7 @@ import { maskEmail } from "@/lib/contact-mask";
 import { emailStateFor } from "@/lib/email/consent";
 import { firstNameOf } from "@/lib/email/format";
 import { openEmailToken, UNSUBSCRIBE_PATH } from "@/lib/email/tokens";
+import { currentMemberId } from "@/lib/member-forward";
 import EmailPreferences from "./EmailPreferences";
 
 // "Email from the Royale": where every email's "Email preferences" and
@@ -27,7 +28,8 @@ export default async function EmailPreferencesPage({ searchParams }: { searchPar
   const token = one(p.t);
   const t = openEmailToken(token);
   const member = t
-    ? (await createAdminClient().from("members").select("id, name, email, erased_at").eq("id", t.memberId).maybeSingle()).data
+    ? // A link from before the account was merged into another: the account it became.
+      (await createAdminClient().from("members").select("id, name, email, erased_at").eq("id", (await currentMemberId(t.memberId)) ?? t.memberId).maybeSingle()).data
     : null;
 
   if (!t || !member || member.erased_at) {
