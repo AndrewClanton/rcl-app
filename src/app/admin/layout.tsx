@@ -7,6 +7,7 @@ import AdminErrorBar from "./AdminErrorBar";
 import AdminShell from "./_nav/AdminShell";
 import { navFor } from "./_nav/map";
 import { RAIL_COOKIE } from "./_nav/prefs";
+import { appVersion } from "@/lib/app-version";
 
 // The back office's frame: the menu (a sidebar on an iPad or computer, a
 // drawer on a phone), grouped by the job and cut down to what this
@@ -24,6 +25,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       badges={navBadges(signals, pinStatus)}
       me={{ id: staff.employeeId, name: staff.name, role: staff.role }}
       initialRail={jar.get(RAIL_COOKIE)?.value === "rail"}
+      // Which build this is: for the owners only.
+      version={staff.role === "owner" ? appVersion().line : null}
     >
       {/* Everyone started on 9999, and it keeps working until they pick
           their own -- this nags until they do (src/app/admin/my-pin). */}

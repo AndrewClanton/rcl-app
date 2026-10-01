@@ -90,12 +90,14 @@ export default function AdminShell({
   badges,
   me,
   initialRail = false,
+  version = null,
   children,
 }: {
   nav: BackOfficeNav;
   badges: NavBadges;
   me: { id: string; name: string; role: string };
   initialRail?: boolean;
+  version?: string | null; // owners only: "v1.0 · build 7f3a2c1 · Oct 1, 12:40 PM"
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -158,6 +160,7 @@ export default function AdminShell({
       nav={nav}
       badges={badges}
       me={me}
+      version={version}
       active={active}
       activeArea={hereArea}
       onFind={() => {
@@ -362,6 +365,7 @@ function SideNav({
   nav,
   badges,
   me,
+  version,
   active,
   activeArea,
   onFind,
@@ -372,6 +376,7 @@ function SideNav({
   nav: BackOfficeNav;
   badges: NavBadges;
   me: { name: string; role: string };
+  version: string | null;
   active: string | null;
   activeArea: AreaKey | null;
   onFind: () => void;
@@ -500,6 +505,11 @@ function SideNav({
             <ChevronIcon open={!youOpen} />
           </button>
         </div>
+        {version && (
+          <div className="mt-1 truncate px-2 font-mono text-[10.5px] text-[var(--muted)]" title={`This build: ${version}`}>
+            {version}
+          </div>
+        )}
       </div>
     </div>
   );
