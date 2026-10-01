@@ -33,7 +33,7 @@ export default function TicketsCard({ shown }: { shown: TicketsShown }) {
           </div>
         ))}
       </div>
-      {toPrint && <div className={k.ticketMeta}>Your bartender will print them for you.</div>}
+      {toPrint && <div className={k.ticketMeta}>The box office will print them for you.</div>}
     </div>
   );
 }
