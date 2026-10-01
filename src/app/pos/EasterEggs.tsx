@@ -12,21 +12,30 @@ export default function EasterEggs({
   next,
   onPick,
   onCelebrate,
+  onRickroll,
   canPrint,
 }: {
   next: FlourishKey | null;
   onPick: (key: FlourishKey | null) => void;
   onCelebrate: () => void;
+  onRickroll: () => void;
   canPrint: boolean; // a printer that auto-prints receipts
 }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
+  const [rolled, setRolled] = useState(false);
 
   useEffect(() => {
     if (!sent) return;
     const timer = setTimeout(() => setSent(false), 2500);
     return () => clearTimeout(timer);
   }, [sent]);
+
+  useEffect(() => {
+    if (!rolled) return;
+    const timer = setTimeout(() => setRolled(false), 2500);
+    return () => clearTimeout(timer);
+  }, [rolled]);
 
   const picked = FLOURISHES.find((f) => f.key === next);
 
@@ -60,6 +69,15 @@ export default function EasterEggs({
             }}
           >
             {sent ? "🎉 Sent to the customer screen!" : "🎉 Celebrate on the customer screen"}
+          </button>
+          <button
+            className="btn-secondary w-full !py-2.5"
+            onClick={() => {
+              onRickroll();
+              setRolled(true);
+            }}
+          >
+            {rolled ? "🕺 Never gonna give you up…" : "🕺 Rickroll the customer screen"}
           </button>
           <div>
             <div className="eyebrow mb-1.5">Next receipt surprise</div>
