@@ -82,6 +82,7 @@ function attention(s: Signals, board: TodayBoard): Attention[] {
   if (s.held) out.push({ tone: "info", text: `${plural(s.held, "held order")} parked on the register`, href: "/pos", go: "Register" });
   if (s.devNotes) out.push({ tone: "info", text: `${plural(s.devNotes, "new dev note")} to look over`, href: "/admin/dev-notes", go: "Dev notes" });
   if (s.oldSite) out.push({ tone: "info", text: `${plural(s.oldSite, "old-site account")} waiting for a decision`, href: "/admin/members/old-site", go: "Old site members" });
+  if (s.roadmap) out.push({ tone: "info", text: `${plural(s.roadmap, "new suggestion")} from What's new`, href: "/admin/roadmap", go: "Roadmap" });
   return out;
 }
 
