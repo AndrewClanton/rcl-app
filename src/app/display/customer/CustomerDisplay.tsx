@@ -9,6 +9,7 @@ import TicketsCard, { type TicketsShown } from "./TicketsCard";
 import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
+import AutoUpdate from "../AutoUpdate";
 import k from "./kiosk.module.css";
 
 export interface PromoMovie {
@@ -39,12 +40,14 @@ function showtime(iso: string) {
 export default function CustomerDisplay({
   movies,
   registerTopic,
+  version,
   previewCart,
   previewStep,
   previewTickets,
 }: {
   movies: PromoMovie[];
   registerTopic: string;
+  version?: string; // this deployment, so the screen can update itself
   previewCart?: RegisterCartSnapshot;
   previewStep?: CheckinStep;
   previewTickets?: TicketsShown;
@@ -100,6 +103,7 @@ export default function CustomerDisplay({
       </aside>
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
+      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!burst || !!rickroll} />}
     </div>
   );
 }

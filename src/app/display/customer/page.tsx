@@ -2,6 +2,7 @@ import { requireDisplayScreen } from "@/lib/auth";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import CustomerDisplay from "./CustomerDisplay";
 import { registerTopic } from "@/lib/register-topic";
+import { deploymentId } from "@/lib/deployment";
 
 export const dynamic = "force-dynamic";
 
@@ -21,5 +22,5 @@ export default async function CustomerDisplayPage() {
     if (movies.length >= 8) break;
   }
 
-  return <CustomerDisplay movies={movies} registerTopic={registerTopic()} />;
+  return <CustomerDisplay movies={movies} registerTopic={registerTopic()} version={deploymentId()} />;
 }
