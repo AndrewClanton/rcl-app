@@ -178,7 +178,9 @@ function Stopped({ claim, signedIn }: { claim: Exclude<ClaimState, { state: "rea
           <p className="text-[15px]">
             {claim.kind === "kiosk"
               ? "Codes on the check-in screen are good for 30 minutes. You'll get a fresh one on your next receipt, or ask us at the box office."
-              : "Codes on receipts are good for two weeks. Your next receipt will have a fresh one, or ask us at the box office."}
+              : claim.kind === "email"
+                ? "Links in our emails are good for 30 days. Sign in with this email address instead (it finds your account), or ask us at the box office."
+                : "Codes on receipts are good for two weeks. Your next receipt will have a fresh one, or ask us at the box office."}
           </p>
         </Shell>
       );

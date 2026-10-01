@@ -83,7 +83,9 @@ export default async function PrivacyPage() {
             <strong>Visits:</strong> screenings you have tickets for, and the days you make a purchase with your account attached.
           </li>
           <li>
-            <strong>Email preferences:</strong> whether you want our weekly lineup emails.
+            <strong>Email preferences and history:</strong> whether you get our member emails, which kinds you chose, any pause, and where and when you said
+            yes or no. For each email we send, whether it was delivered, opened, or a link in it was clicked, so we can send less of what isn&apos;t
+            wanted.
           </li>
           <li>
             <strong>Page visits:</strong> which pages of this site are opened and how long they stay on screen, counted anonymously with a random number kept
@@ -129,8 +131,13 @@ export default async function PrivacyPage() {
             for 90 days so no one else can take it over. Our staff can hide a profile line, or turn off a page, if it&apos;s offensive.
           </li>
           <li>
-            To send the emails you ask for (the weekly lineup and member news) and account emails such as receipts, sign-in links and billing
-            notices.
+            To email Insiders the weekly lineup and member news (events, offers, your birthday week), and to send account emails such as receipts,
+            tickets, sign-in links and billing notices. Members, including those whose accounts moved over from our old website, get these unless they
+            turn them off. You choose which kinds you get, or pause them, at{" "}
+            <Link href="/account/email" className="font-bold text-[var(--accent)] hover:underline">
+              your email settings
+            </Link>{" "}
+            or with the link at the bottom of any of our emails.
           </li>
           <li>To keep the website and our records secure, and to meet our tax and legal obligations.</li>
         </ul>
@@ -154,7 +161,8 @@ export default async function PrivacyPage() {
             .
           </li>
           <li>
-            <strong>Our email service provider</strong> sends the emails you&apos;ve signed up for.
+            <strong>Resend</strong>, our email provider, delivers our emails and tells us whether each one was delivered or opened. Links in our emails
+            go through our own website, which is how we see clicks.
           </li>
           <li>
             <strong>Google or Facebook,</strong> only if you choose to sign in with them.
@@ -175,6 +183,12 @@ export default async function PrivacyPage() {
           If you ask us to delete your account, we delete your profile, photo, contact details, points and sign-in connections. We remove your name
           from the purchase records we&apos;re required to keep. See <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">Deleting your data</Link>.
         </p>
+        <p>
+          If an email to you bounces, or you mark one of our emails as spam, we keep a scrambled (hashed) copy of the address on a &ldquo;never
+          email&rdquo; list. If you&apos;ve unsubscribed and then ask us to delete your account, your address goes on that list the same way. It
+          can&apos;t be turned back into your address, and we keep it after your account is deleted, so you&apos;re never sent our member emails again
+          by mistake.
+        </p>
       </section>
 
       <section>
@@ -183,7 +197,13 @@ export default async function PrivacyPage() {
           <li>See and update your details anytime on the Profile tab of your account.</li>
           <li>Add, change or remove your photo anytime.</li>
           <li>Turn your profile page on or off, change its link, and change or clear your profile line and check-in effect, on the Profile tab.</li>
-          <li>Turn off the weekly emails in your account, or with the unsubscribe link in any of those emails.</li>
+          <li>
+            Choose which member emails you get, pause them for 30 days, or unsubscribe from all of them in one tap, from{" "}
+            <Link href="/account/email" className="font-bold text-[var(--accent)] hover:underline">
+              your email settings
+            </Link>{" "}
+            or the link at the bottom of any of our emails. It takes effect right away. Receipts and account emails still come.
+          </li>
           <li>
             Ask for a copy of your information, or to delete your account, by emailing info@royalecinemajoplin.com. See{" "}
             <Link href="/data-deletion" className="font-bold text-[var(--accent)] hover:underline">

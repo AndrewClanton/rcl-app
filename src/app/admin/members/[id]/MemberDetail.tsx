@@ -8,7 +8,9 @@ import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/li
 import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
+import type { PointsHistoryRow } from "@/lib/data/points-history";
 import GiftCard from "./GiftCard";
+import { PointsBalance, PointsHistoryCard } from "./PointsCard";
 import ProfileModeration from "./ProfileModeration";
 import InfoTip from "@/components/help/InfoTip";
 import type { HelpTopicKey } from "@/lib/help/topics";
@@ -36,6 +38,7 @@ export default function MemberDetail({
   gifts,
   canEditContact,
   eraseLog,
+  pointsHistory,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -47,6 +50,7 @@ export default function MemberDetail({
   // and are shown, not edited.
   canEditContact: boolean;
   eraseLog: EraseLogEntry | null;
+  pointsHistory: { rows: PointsHistoryRow[]; total: number };
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -103,6 +107,9 @@ export default function MemberDetail({
         <GiftCard member={member} gifts={gifts} />
       </div>
       <div className="xl:col-span-2">
+        <PointsHistoryCard memberId={member.id} initial={pointsHistory} />
+      </div>
+      <div className="xl:col-span-2">
         <PurchaseHistoryCard purchases={purchases} />
       </div>
       {viewerIsAdmin && (
@@ -122,7 +129,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
   const [name, setName] = useState(member.name);
   const [email, setEmail] = useState(member.email ?? "");
   const [phone, setPhone] = useState(member.phone ?? "");
-  const [points, setPoints] = useState(String(member.points));
   const [birthday, setBirthday] = useState(birthdayToInput(member.birthday));
   const router = useRouter();
   const [saving, startSave] = useTransition();
@@ -131,7 +137,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     name !== member.name ||
     email !== (member.email ?? "") ||
     phone !== (member.phone ?? "") ||
-    (points.trim() !== "" && Number(points) !== Number(member.points)) ||
     birthday !== birthdayToInput(member.birthday);
 
   function save(e: React.FormEvent) {
@@ -141,7 +146,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     startSave(async () => {
       // A cashier's copy of the email and phone is shortened, so it's never
       // sent back: saving would overwrite the real ones with the dots.
-      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, points, birthday } : { name, points, birthday }).catch(() => null);
+      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, birthday } : { name, birthday }).catch(() => null);
       if (!r) return setSaved({ ok: false, text: "Couldn't save. Try again." });
       setSaved(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
       if (r.ok) router.refresh();
@@ -152,7 +157,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     setName(member.name);
     setEmail(member.email ?? "");
     setPhone(member.phone ?? "");
-    setPoints(String(member.points));
     setBirthday(birthdayToInput(member.birthday));
     setSaved(null);
   }
@@ -206,8 +210,10 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {/* Name, email, phone and points save together with the button
-            (or Enter). The ones below save as soon as they're changed. */}
+        {/* Name, email, phone and birthday save together with the button
+            (or Enter). Points move only by adding or taking away, with a
+            reason (below the button); the rest save as soon as they're
+            changed. */}
         <form onSubmit={save} className="contents">
           <Field label="Name">
             <input className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={name} onChange={(e) => setName(e.target.value)} />
@@ -236,14 +242,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
               </Field>
             </>
           )}
-          <Field label="Points">
-            <input
-              type="number"
-              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-              value={points}
-              onChange={(e) => setPoints(e.target.value)}
-            />
-          </Field>
           <Field label="Birthday" hint="Month and day only. Checking in during their birthday week earns the Birthday Visit badge.">
             <BirthdayPicker value={birthday} onChange={setBirthday} className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " />
           </Field>
@@ -266,6 +264,9 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             )}
           </div>
         </form>
+        <div className="sm:col-span-2">
+          <PointsBalance memberId={member.id} balance={Number(member.points)} />
+        </div>
         <Field label="Tier" help="insiders-vs-plus">
           <select
             className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "

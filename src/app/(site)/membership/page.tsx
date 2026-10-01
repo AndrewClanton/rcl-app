@@ -10,6 +10,7 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { safePath } from "@/lib/safe-path";
 import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
+import { issueFormToken } from "@/lib/public-form-guard";
 import { PageMasthead, SpecFoot, Starburst } from "@/components/print";
 
 // Per request: the checkout result and the signed-in member's own plan are
@@ -228,7 +229,7 @@ export default async function MembershipPage({
                 </div>
               </div>
             ) : (
-              <MembershipForm initialPlan={plan === "annual" ? "annual" : plan === "plus" ? "plus" : "free"} returnTo={next} />
+              <MembershipForm initialPlan={plan === "annual" ? "annual" : plan === "plus" ? "plus" : "free"} returnTo={next} formToken={issueFormToken("membership")} />
             )}
           </>
         )}

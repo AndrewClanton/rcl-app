@@ -13,6 +13,8 @@ import { issueClaimLink } from "@/lib/member-claim";
 import { tabletDuplicateOf } from "@/lib/data/member-merge";
 import { currentMemberId } from "@/lib/member-forward";
 import { mergeHref } from "@/lib/member-merge";
+import { setMarketingOptIn } from "@/lib/email/consent";
+import { memberJoined } from "@/lib/email/automations";
 
 // The register's half of check-in for points (the customer screen's half is
 // in display/customer/actions.ts). Staff-only: this is where a sealed
@@ -99,9 +101,7 @@ export async function createCheckinMember(ref: string, existingId: string | null
     }
     // They ticked "email me" just now, so honour it. (Never switches emails
     // off: leaving the box empty isn't a request to unsubscribe.)
-    if (c.emailOptIn) {
-      await supabase.from("members").update({ email_opt_in: true, email_opt_in_changed_at: new Date().toISOString() }).eq("id", m.id).eq("email_opt_in", false);
-    }
+    if (c.emailOptIn) await setMarketingOptIn(m.id, true, "kiosk", { byEmployee: staff.employeeId }).catch(() => null);
     return { ok: true, member: m, isNew: false, note };
   }
 
@@ -137,6 +137,13 @@ export async function createCheckinMember(ref: string, existingId: string | null
     note = EMAIL_TAKEN;
   }
   if (error || !data) return { ok: false, error: "Couldn't create the account. Try again, or add them from Members in the back office." };
+  // Their choice at the screen, with where it came from (lib/email/consent.ts);
+  // a yes also queues the welcome email.
+  const saved = await createAdminClient().from("members").select("email, email_opt_in").eq("id", data.id).maybeSingle();
+  if (saved.data?.email) {
+    await setMarketingOptIn(data.id, saved.data.email_opt_in !== false, "kiosk", { byEmployee: staff.employeeId }).catch(() => null);
+    if (saved.data.email_opt_in !== false) memberJoined(data.id);
+  }
 
   const member = await getPosMember(data.id);
   if (!member) return { ok: false, error: OFFLINE };

@@ -27,6 +27,8 @@ export async function createPlusCheckout(p: {
   returnTo: string | null;
   firstChargeAt?: Date | null;
   interval?: BillingInterval;
+  // They ticked "email me the weekly lineup" on the join form.
+  emailOptIn?: boolean;
 }): Promise<string | null> {
   const interval = p.interval ?? "month";
   const priceId = await insidersPlusPriceIdFor(p.priceTier, interval);
@@ -50,6 +52,9 @@ export async function createPlusCheckout(p: {
       pending_phone: p.phone ?? "",
       price_tier: p.priceTier,
       billing_interval: interval,
+      // "1" or "0" from the join form's box; left out when there was no
+      // box (a signed-in member upgrading), so nothing changes for them.
+      ...(typeof p.emailOptIn === "boolean" ? { email_opt_in: p.emailOptIn ? "1" : "0" } : {}),
     },
   });
   return session.url;
