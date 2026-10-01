@@ -228,6 +228,10 @@ body {
   .rpt-bar-light {
     background: color-mix(in srgb, var(--foreground) 12%, var(--surface));
   }
+  /* A fifth part (card, cash, online, memberships, vouchers): stripes. */
+  .rpt-bar-hatch {
+    background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--foreground) 55%, var(--surface)) 0 2px, var(--surface) 2px 5px);
+  }
 }
 
 /* Printing a report (Reports -> Box office -> Print): black on white, no
