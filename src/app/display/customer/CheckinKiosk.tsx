@@ -2,7 +2,19 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned, type RewindFound } from "@/lib/checkin";
+import {
+  checkinTopic,
+  formatPhone,
+  isFullPhone,
+  type CheckinConfirmed,
+  type CheckinRequest,
+  type PlusFinish,
+  type PlusWelcome,
+  type PointsEarned,
+  type RewindFound,
+} from "@/lib/checkin";
+import { RATE_PRICE } from "@/lib/membership-rates";
+import { finishShown, type FinishShown } from "./FinishCard";
 import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
 import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
@@ -20,7 +32,10 @@ type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 export type CheckinStep =
   | { name: "phone" } // the keypad: always there between check-ins
   | { name: "new" } // a number we don't know: first and last name
-  | { name: "sent" } // a known number, sent to the register; back to the keypad shortly
+  // A known number, sent to the register; back to the keypad shortly.
+  // unlimited: a former unlimited member with no card on file here
+  // (lib/legacy-plus.ts), told their card goes on at the register.
+  | { name: "sent"; unlimited?: boolean }
   | { name: "created"; firstName: string; claimUrl: string | null }; // a new account, made
 
 // Confirmations land as banners across the top of the panel, so they
@@ -63,8 +78,12 @@ const ENTRANCE_STALE_MS = 10_000;
 
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 
-// Half-finished screens clear themselves when someone walks away.
+// Half-finished screens clear themselves when someone walks away. The
+// "no card on file" note for a former unlimited member stays long enough
+// to read.
 const TIMEOUT_MS: Record<CheckinStep["name"], number> = { phone: 0, new: 90_000, sent: 2_800, created: 25_000 };
+const UNLIMITED_NOTE_MS = 12_000;
+const timeoutFor = (step: CheckinStep) => (step.name === "sent" && step.unlimited ? UNLIMITED_NOTE_MS : TIMEOUT_MS[step.name]);
 
 // A request the register hasn't answered is resent until it has, and given
 // up after this long (the sealed reference expires then anyway).
@@ -80,6 +99,10 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 // - An unknown number asks for a first and last name and makes the account
 //   right away (email marketing off), then offers a QR code to finish on
 //   their own phone. Staff still confirm the visit on the register.
+// - A known number that's a former unlimited member's with no card on file
+//   here (lib/legacy-plus.ts) gets "Unlimited membership: no card on file"
+//   and where to tap their card (Andrew, 10/1): no name, nothing more. The
+//   register can then put a QR code up for them to add it on their phone.
 // This screen never shows anyone's details until staff have confirmed:
 // then just a first name and points, their profile line, and their
 // entrance in their color (lib/flair.ts; or a party in their birthday
@@ -91,16 +114,21 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
 // onRewind: Back office's Rewind just gave someone points for their visits
 // before the new system ("Welcome back" plays here; streamers there).
+// onFinish: a former unlimited member's "add your card on your phone" QR
+// code from the register, or null to take it down (they paid, or staff
+// took it down). CustomerDisplay shows it beside the order.
 export default function CheckinKiosk({
   registerTopic,
   initialStep,
   onTickets,
   onRewind,
+  onFinish,
 }: {
   registerTopic: string;
   initialStep?: CheckinStep;
   onTickets?: (shown: TicketsShown) => void;
   onRewind?: () => void;
+  onFinish?: (shown: FinishShown | null) => void;
 }) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   const [digits, setDigits] = useState("");
@@ -171,9 +199,25 @@ export default function CheckinKiosk({
   function toast(t: Omit<Toast, "key">, ms = 8_000) {
     const key = Date.now() + Math.random();
     setToasts((ts) => [...ts.slice(-2), { ...t, key }]);
-    // A QR code stays up long enough to get a phone out.
+    // A QR code stays up long enough to get a phone out (and to add a card).
     setTimeout(() => setToasts((ts) => ts.filter((x) => x.key !== key)), t.claimUrl ? 25_000 : ms);
   }
+
+  // "Add your card on your phone" (a former unlimited member, sent by the
+  // register): beside the order, replacing any earlier one.
+  const onFinishMessage = useEffectEvent((p: Partial<PlusFinish> | null) => {
+    const shown = finishShown(p);
+    if (shown) onFinish?.(shown);
+  });
+
+  const onFinishClose = useEffectEvent(() => onFinish?.(null));
+
+  // Their Insiders+ is set up (on the reader, or on their phone).
+  const onPlusWelcome = useEffectEvent((p: Partial<PlusWelcome> | null) => {
+    if (!p || typeof p.firstName !== "string") return;
+    onFinish?.(null);
+    toast({ title: `🎉 ${p.firstName.slice(0, 40)}, you're Insiders+!`, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
+  });
 
   const onSeen = useEffectEvent((id: unknown) => {
     const item = typeof id === "string" ? outbox.current.get(id) : undefined;
@@ -306,6 +350,9 @@ export default function CheckinKiosk({
         .on("broadcast", { event: "checkin-sync" }, () => resendAll(false))
         .on("broadcast", { event: "points-earned" }, (msg) => onPoints(msg.payload))
         .on("broadcast", { event: "rewind" }, (msg) => onRewindFound(msg.payload))
+        .on("broadcast", { event: "plus-finish" }, (msg) => onFinishMessage(msg.payload))
+        .on("broadcast", { event: "plus-finish-close" }, () => onFinishClose())
+        .on("broadcast", { event: "plus-welcome" }, (msg) => onPlusWelcome(msg.payload))
         .subscribe((status) => {
           if (status === "SUBSCRIBED") resendAll(false);
         });
@@ -326,7 +373,7 @@ export default function CheckinKiosk({
   }, []);
 
   useEffect(() => {
-    const ms = TIMEOUT_MS[step.name];
+    const ms = timeoutFor(step);
     if (!ms) return;
     const timer = setTimeout(() => timeUp(), ms);
     return () => clearTimeout(timer);
@@ -364,7 +411,7 @@ export default function CheckinKiosk({
     if (r.status === "new") return setStep({ name: "new" });
     queue(r.request);
     setDigits("");
-    setStep({ name: "sent" });
+    setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent" });
   }
 
   async function signUp() {
@@ -501,7 +548,20 @@ export default function CheckinKiosk({
         </form>
       )}
 
-      {step.name === "sent" && (
+      {step.name === "sent" && step.unlimited && (
+        <div className={k.done}>
+          <div className={k.eyebrow}>Insiders+</div>
+          <h1 className={k.title}>Unlimited membership: no card on file</h1>
+          <p className={k.sub} style={{ fontSize: 20 }}>
+            Tap your card at the register to keep it going — ${RATE_PRICE.adult} a month.
+          </p>
+          <button className={k.ghost} style={{ alignSelf: "stretch" }} onClick={reset}>
+            OK
+          </button>
+        </div>
+      )}
+
+      {step.name === "sent" && !step.unlimited && (
         <div className={k.done}>
           <div className={k.check} aria-hidden="true">
             ✓

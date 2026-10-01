@@ -242,6 +242,13 @@ export const HELP_TOPICS = {
     body:
       "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them, at the register (Member → Change rate) or on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
   },
+  "unlimited-no-payment": {
+    title: "No payment on file for unlimited membership",
+    area: "Register: members and the door",
+    body:
+      "They paid for unlimited on our old website, but its billing never charged them and no card came over, so nothing is paying for it now. Set it up while they're here: Card on reader (they tap or insert it; $15 a month plus tax, charged today, then monthly), or On their phone (a QR code on the customer screen, or an emailed link). Not paying today? Ring them up like any guest.",
+    links: [{ label: "Former unlimited members", href: "/admin/members/former-unlimited" }],
+  },
 
   // ---------- register: shift tools ----------
   "ran-out": {

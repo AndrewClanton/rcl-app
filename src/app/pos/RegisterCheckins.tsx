@@ -15,6 +15,7 @@ import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
 import { usePrintTarget } from "./printing";
 import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
+import type { TabletSend } from "./LegacyPlusCard";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -29,7 +30,10 @@ export interface Pending {
 }
 
 type Tonight = { member: PosMember; tickets: DoorTicket[] };
-type DupHint = { name: string; href: string | null };
+// olderId/unlimited: the older account paid for unlimited on the old site
+// and has nothing paying here (lib/legacy-plus.ts), so staff can open it to
+// set that up (the tablet couldn't find it: usually no phone on file).
+type DupHint = { name: string; href: string | null; olderId: string | null; unlimited: boolean };
 
 // A request's sealed reference stops working after 15 minutes (see
 // lib/checkin-server.ts), so its card goes then too.
@@ -61,6 +65,9 @@ export interface Checkins {
   notice: string | null;
   tonight: Tonight | null;
   dupHint: DupHint | null;
+  // A former unlimited member just checked in with no payment on file
+  // (lib/legacy-plus.ts): the card to set it up, top of the Customers tab.
+  unlimited: PosMember | null;
   printing: boolean;
   retry: (p: Pending) => void;
   confirm: (p: Pending, m: PosMember, addToOrder: boolean) => void;
@@ -70,6 +77,11 @@ export interface Checkins {
   dismissNotice: () => void;
   dismissTonight: () => void;
   dismissDupHint: () => void;
+  // Opens the older account from the duplicate hint (and puts it on the order).
+  openOlder: () => void;
+  dismissUnlimited: () => void;
+  // To the customer screen, on the check-in channel (LegacyPlusCard).
+  toTablet: TabletSend;
 }
 
 // The register's side of "Check in for points" on the customer screen.
@@ -115,6 +127,7 @@ export function useRegisterCheckins({
   // member it couldn't find by phone: a quiet line with a Back office link.
   // Nothing is merged from the register.
   const [dupHint, setDupHint] = useState<DupHint | null>(null);
+  const [unlimited, setUnlimited] = useState<PosMember | null>(null);
   const [printing, setPrinting] = useState(false);
   const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
@@ -196,9 +209,12 @@ export function useRegisterCheckins({
     setDupHint(null);
     void getDuplicateHint(m.id)
       .then((h) => {
-        if (h) setDupHint({ name: m.name, href: h.href });
+        if (h) setDupHint({ name: m.name, href: h.href, olderId: h.olderId, unlimited: h.unlimited });
       })
       .catch(() => {});
+    // No payment on file for their unlimited membership: the card to set it
+    // up goes to the top of the Customers tab.
+    setUnlimited(m.legacyUnlimited ? m : null);
     const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
     if (visit?.alreadyToday) bits.push("Already checked in today, so no new points.");
     else if (visit) bits.push(`+${visit.visitPoints} pts${visit.weekStreak > 1 ? `, ${visit.weekStreak}-week streak` : ""}.`);
@@ -240,6 +256,16 @@ export function useRegisterCheckins({
 
   function decline(p: Pending) {
     answer(p.id, "checkin-declined", { id: p.id });
+  }
+
+  async function openOlder() {
+    const id = dupHint?.olderId;
+    if (!id) return;
+    const m = await getPosMember(id).catch(() => null);
+    if (!m) return setNotice("Couldn't open that account. Look them up by name instead.");
+    onAttach(m);
+    setDupHint(null);
+    setNotice(`${m.name} (the older account) is on the order.`);
   }
 
   const onRequest = useEffectEvent((raw: Partial<CheckinRequest> | null) => {
@@ -364,6 +390,7 @@ export function useRegisterCheckins({
     notice,
     tonight,
     dupHint,
+    unlimited,
     printing,
     retry: (p) => void load(p.id, p.ref),
     // A "known" card for an account the tablet just made is that person's
@@ -375,6 +402,9 @@ export function useRegisterCheckins({
     dismissNotice: () => setNotice(null),
     dismissTonight: () => setTonight(null),
     dismissDupHint: () => setDupHint(null),
+    openOlder: () => void openOlder(),
+    dismissUnlimited: () => setUnlimited(null),
+    toTablet: (event, payload) => send(event, payload),
   };
 }
 
@@ -415,6 +445,15 @@ export function CheckinResults({ checkins }: { checkins: Checkins }) {
               </>
             ) : (
               "; let an owner or admin know."
+            )}
+            {dupHint.unlimited && dupHint.olderId && (
+              <>
+                {" "}
+                <strong>The older one has no payment on file for unlimited membership.</strong>{" "}
+                <button className="relative font-semibold underline after:absolute after:inset-x-0 after:-inset-y-3.5 after:content-['']" onClick={checkins.openOlder}>
+                  Put the older account on the order
+                </button>
+              </>
             )}
           </span>
           <DismissButton label="Dismiss" onClick={checkins.dismissDupHint} />
@@ -631,6 +670,16 @@ function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
   );
 }
 
+// A former unlimited member (lib/legacy-plus.ts), before staff confirm:
+// once they're checked in, the card to set it up shows above.
+function UnlimitedFlag() {
+  return (
+    <div className="rounded-md border-2 px-2.5 py-1.5 text-sm font-bold" style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--gold-foreground)" }}>
+      No payment on file for unlimited membership
+    </div>
+  );
+}
+
 function OrderNote({ current, target, hasOrder }: { current: PosMember | null; target: PosMember; hasOrder: boolean }) {
   if (current?.id === target.id) return <p className="text-xs" style={{ color: "var(--muted)" }}>Already on this order.</p>;
   if (current)
@@ -686,6 +735,7 @@ function KnownCard({
     return (
       <>
         <Face m={m} phoneLast4={card.phoneLast4} />
+        {m.legacyUnlimited && <UnlimitedFlag />}
         <OrderNote current={current} target={m} hasOrder={hasOrder} />
         <ConfirmButtons working={working} hasOrder={hasOrder} onConfirm={(add) => onConfirm(m, add)} onNo={onDecline} noLabel="Not them" />
       </>
@@ -707,6 +757,11 @@ function KnownCard({
               {m.tier} · {pts(m.points)}
               {current?.id === m.id ? " · on this order" : ""}
             </div>
+            {m.legacyUnlimited && (
+              <div className="text-xs font-bold" style={{ color: "var(--warn-text)" }}>
+                No payment on file for unlimited
+              </div>
+            )}
           </div>
           <button className="btn-primary min-h-11 shrink-0 !px-4 !py-1.5" disabled={working} onClick={() => onConfirm(m, false)}>
             Check in

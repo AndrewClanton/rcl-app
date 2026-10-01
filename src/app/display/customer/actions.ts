@@ -6,6 +6,7 @@ import { cleanEmail, cleanFirstName, formatPhone, isFullPhone, phoneDigits, type
 import { memberIdsWithPhone, sealCheckin } from "@/lib/checkin-server";
 import { allowAttempt, TOO_MANY_TRIES } from "@/lib/rate-limit";
 import { issueClaimLink } from "@/lib/member-claim";
+import { legacyNeedsSetup } from "@/lib/legacy-plus";
 
 // Check-in for points, from the customer screen. The screen page is gated by
 // requireDisplayScreen() (a physical device, signed in with its display-only
@@ -15,7 +16,10 @@ import { issueClaimLink } from "@/lib/member-claim";
 // register, where staff see who it is and confirm; an unknown one just
 // hears "new", so the screen can ask for a first name.
 
-export type CheckinStart = { ok: true; status: "known"; request: CheckinRequest } | { ok: true; status: "new" } | { ok: false; error: string };
+// unlimited: the number is a former unlimited member's with nothing paying
+// for it here (lib/legacy-plus.ts): the screen tells them their card goes
+// on at the register. Nothing else about them comes back.
+export type CheckinStart = { ok: true; status: "known"; request: CheckinRequest; unlimited?: true } | { ok: true; status: "new" } | { ok: false; error: string };
 
 const NOT_A_NUMBER = "That doesn't look like a full phone number. Try again?";
 const LOOKUP_FAILED = "We couldn't look that up just now. Ask a staff member for help.";
@@ -37,7 +41,20 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
   // your phone" check would prove nothing and anyone who knows a regular's
   // number could take their account. Theirs comes after staff confirm it's
   // them (confirmVisit in pos/checkin-actions.ts), or on their receipt.
-  return { ok: true, status: "known", request: sealCheckin({ kind: "known", phone: digits }) };
+  const request = sealCheckin({ kind: "known", phone: digits });
+  return (await unlimitedWithoutCard(found.ids)) ? { ok: true, status: "known", request, unlimited: true } : { ok: true, status: "known", request };
+}
+
+// Every account on this number paid for unlimited on the old site and has
+// nothing paying for it here (usually there's one; a shared family number
+// only counts when it's true of all of them, so nobody is told about
+// someone else's membership). False whenever it can't tell.
+async function unlimitedWithoutCard(ids: string[]): Promise<boolean> {
+  if (!ids.length) return false;
+  // "*": works before and after the onboarding migration adds its column.
+  const { data, error } = await createAdminClient().from("members").select("*").in("id", ids.slice(0, 8));
+  if (error || !data?.length) return false;
+  return data.every((m) => legacyNeedsSetup({ ...m, comped: !!m.comped }));
 }
 
 // A number we don't know: the customer gave a first name (and maybe an

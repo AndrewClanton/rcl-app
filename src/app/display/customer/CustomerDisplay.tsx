@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
+import type { PlusFinish } from "@/lib/checkin";
 import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
 import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
+import FinishCard, { finishShown, type FinishShown } from "./FinishCard";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
 import AutoUpdate from "../AutoUpdate";
@@ -36,7 +38,7 @@ function showtime(iso: string) {
 // The register's ✨ Celebrate throws streamers across the whole screen, and
 // so does Rewind (Back office found a regular's visits from before the new
 // system), under the kiosk's "Welcome back".
-// previewCart / previewStep / previewTickets are for previews only.
+// previewCart / previewStep / previewTickets / previewFinish are for previews only.
 export default function CustomerDisplay({
   movies,
   registerTopic,
@@ -44,6 +46,7 @@ export default function CustomerDisplay({
   previewCart,
   previewStep,
   previewTickets,
+  previewFinish,
 }: {
   movies: PromoMovie[];
   registerTopic: string;
@@ -51,6 +54,7 @@ export default function CustomerDisplay({
   previewCart?: RegisterCartSnapshot;
   previewStep?: CheckinStep;
   previewTickets?: TicketsShown;
+  previewFinish?: PlusFinish;
 }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[]; banner?: string | null } | null>(null);
@@ -62,6 +66,14 @@ export default function CustomerDisplay({
     const timer = setTimeout(() => setTickets(null), 25_000);
     return () => clearTimeout(timer);
   }, [tickets]);
+  // A former unlimited member's "add your card on your phone" QR code, from
+  // the register: up until they've paid, staff take it down, or 2 minutes.
+  const [finish, setFinish] = useState<FinishShown | null>(() => finishShown(previewFinish));
+  useEffect(() => {
+    if (!finish) return;
+    const timer = setTimeout(() => setFinish(null), 120_000);
+    return () => clearTimeout(timer);
+  }, [finish]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -96,14 +108,15 @@ export default function CustomerDisplay({
 
   return (
     <div className={k.screen}>
-      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} onRewind={rewindStreamers} />
+      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} onRewind={rewindStreamers} onFinish={setFinish} />
       <aside className={k.side}>
+        {finish && <FinishCard key={finish.key} shown={finish} />}
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
         {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
       </aside>
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
-      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!burst || !!rickroll} />}
+      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!finish || !!burst || !!rickroll} />}
     </div>
   );
 }

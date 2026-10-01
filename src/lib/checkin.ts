@@ -23,6 +23,11 @@
 //   server -> screen    "rewind"            RewindFound (Back office's Rewind
 //                       gave a member points for their visits before the new
 //                       system; sent by the server, lib/tablet-broadcast.ts)
+//   register -> screen  "plus-finish"       PlusFinish: a QR code for a former
+//                       unlimited member to put their card on Stripe's page
+//                       from their own phone (lib/legacy-plus.ts)
+//   register -> screen  "plus-finish-close" {}  take that QR code down
+//   register -> screen  "plus-welcome"      PlusWelcome: their Insiders+ is set up
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
@@ -81,6 +86,19 @@ export interface RewindFound {
   earned: number;
   balance: number;
   color?: string | null; // their flair color's key, for the confetti
+}
+
+// The screen only shows a url that passes isPlusFinishUrl, and words for
+// the plan from its own price list (never text off the channel).
+export interface PlusFinish {
+  firstName: string;
+  url: string;
+  tier: "adult" | "senior" | "student";
+  interval: "month" | "year";
+}
+
+export interface PlusWelcome {
+  firstName: string;
 }
 
 export function checkinTopic(registerTopic: string): string {

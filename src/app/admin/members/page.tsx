@@ -68,6 +68,17 @@ export default async function AdminMembersPage({
       )}
       {session && hasManagerAccess(session.role) && (
         <Link
+          href="/admin/members/former-unlimited"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Former unlimited members</span> · paid for unlimited on the old website: who&apos;s set up here yet
+          </span>
+          <span className="text-[var(--muted)]">See the list →</span>
+        </Link>
+      )}
+      {session && hasManagerAccess(session.role) && (
+        <Link
           href="/admin/members/regulars"
           className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
         >

@@ -80,6 +80,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       about: "Find, add and edit members, points, Insiders+ and free memberships.",
       keywords: "insiders plus loyalty points customers guests add a member community programs free comped gift billing",
     },
+    {
+      href: "/admin/members/former-unlimited",
+      label: "Former unlimited members",
+      about: "Paid for unlimited on the old website: who's set up on Insiders+ here, who came in without paying, who hasn't been in.",
+      keywords: "legacy old site unlimited monthly members insiders plus no card on file fortis onboarding set up",
+      min: "manager",
+    },
     { href: "/admin/members/regulars", label: "Top regulars", about: "Who came in most and spent most this month, for prizes.", keywords: "prizes visits spend leaderboard", min: "manager" },
     {
       href: "/admin/members/regulars/most-regular",

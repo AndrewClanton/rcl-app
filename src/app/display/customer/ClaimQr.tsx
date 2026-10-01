@@ -3,14 +3,16 @@
 import { useMemo } from "react";
 import QRCode from "qrcode";
 import { isClaimUrl } from "@/lib/claim-link";
+import { isPlusFinishUrl } from "@/lib/plus-finish-link";
 import k from "./kiosk.module.css";
 
-// A "claim your account" link (lib/member-claim.ts) as a QR code, for the
-// customer tablet. Drawn as one SVG path straight from the QR matrix: no
-// canvas, no effect, crisp at any size. Only ever a claim link on this
-// site -- anything else (a stray or tampered broadcast) draws nothing.
+// A "claim your account" link (lib/member-claim.ts), or a "finish your
+// Insiders+ on your phone" link (lib/plus-finish-link.ts), as a QR code, for
+// the customer tablet. Drawn as one SVG path straight from the QR matrix: no
+// canvas, no effect, crisp at any size. Only ever one of those two links on
+// this site -- anything else (a stray or tampered broadcast) draws nothing.
 function qrPath(url: string): { size: number; d: string } | null {
-  if (!isClaimUrl(url)) return null;
+  if (!isClaimUrl(url) && !isPlusFinishUrl(url)) return null;
   try {
     const { size, data } = QRCode.create(url, { errorCorrectionLevel: "M" }).modules;
     let d = "";

@@ -55,7 +55,7 @@ import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import CardNoticeBanner from "./CardNotice";
 import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
-import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, pointsEarned, registerTotals } from "@/lib/register-totals";
+import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, memberDiscountRate, pointsEarned, registerTotals } from "@/lib/register-totals";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee } from "./member-actions";
 import {
@@ -231,6 +231,17 @@ export default function PosApp({
   const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
+  // The manual "Monthly member (10% off)" tick counts only with no member on
+  // the order: a member's own discount (10% for Insiders+) applies by
+  // itself, and the two never stack (Andrew, 10/1). An older tab or held
+  // order saved with both comes back without the extra 10%.
+  const monthlyOn = monthlyMember && !member;
+  // Putting someone on the order takes the manual tick off, so it doesn't
+  // come back if they're taken off again.
+  function attachMember(m: PosMember | null) {
+    setMember(m);
+    if (m) setMonthlyMember(false);
+  }
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   // The tab whose last save failed; its warning shows while it's on screen.
@@ -279,7 +290,7 @@ export default function PosApp({
     (text) => {
       void handleDoorScan(text, printTarget).then(({ scan, message }) => {
         const now = scanStateRef.current;
-        if (scan?.ok && scan.member && !now.member && now.empty) setMember(scan.member);
+        if (scan?.ok && scan.member && !now.member && now.empty) attachMember(scan.member);
         setToast(message);
         setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
       });
@@ -296,11 +307,13 @@ export default function PosApp({
   // Check-ins from the customer screen. Always listening, whatever's on
   // screen; staff answer them on the Customers tab, whose count shows how
   // many are waiting.
-  const checkins = useRegisterCheckins({ registerTopic, member, onAttach: setMember, hasOrder: cart.length > 0 || !!activeTabId, lastSale: lastReceipt });
+  const checkins = useRegisterCheckins({ registerTopic, member, onAttach: attachMember, hasOrder: cart.length > 0 || !!activeTabId, lastSale: lastReceipt });
   const waiting = checkins.pending.length;
   // Something on the Customers tab still to act on that isn't a check-in:
-  // tickets to print, or a possible duplicate account.
-  const customersNote = !!checkins.dupHint || !!checkins.tonight?.tickets.some((t) => t.printable);
+  // tickets to print, a possible duplicate account, or a former unlimited
+  // member with no payment on file who isn't on the order.
+  const customersNote =
+    !!checkins.dupHint || !!checkins.tonight?.tickets.some((t) => t.printable) || (!!checkins.unlimited && checkins.unlimited.id !== member?.id);
   // Set when "Find by photo" opens the Customers tab, so it scrolls to the faces.
   const [findAt, setFindAt] = useState(0);
   const menuScrollRef = useRef<HTMLDivElement>(null);
@@ -351,7 +364,7 @@ export default function PosApp({
     const item = findItem(l.menuItemId);
     return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
   });
-  const totals = registerTotals(totalsLines, member, monthlyMember, taxFree, pointsRedeemed, coffeeOn);
+  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn);
   // The line it would go on, whether or not it's on: "Use it" puts it back.
   const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
@@ -363,7 +376,7 @@ export default function PosApp({
       memberId,
       orderName,
       taxFree,
-      monthlyMember,
+      monthlyMember: monthlyOn,
       pointsRedeemed,
       station: devices.station,
       lines: cart.map((l) => ({
@@ -428,7 +441,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId, coffeeOn]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -1317,7 +1330,7 @@ export default function PosApp({
 
           <PosMemberPanel
             member={member}
-            onChange={setMember}
+            onChange={attachMember}
             coffee={
               isPlus
                 ? {
@@ -1337,13 +1350,27 @@ export default function PosApp({
               setFindAt(Date.now());
             }}
             waiting={waiting}
+            readerId={readerId}
+            toTablet={checkins.toTablet}
           />
 
           <div className="space-y-1 pt-1">
-          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
-            Monthly member (10% off)
-          </label>
+          {/* With a member on the order, their discount is ticked by itself
+              (Insiders+ 10%; plain Insiders earn points instead) and the
+              manual Monthly member tick is hidden, so the two can't stack. */}
+          {member ? (
+            isPlus && (
+              <label className="flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+                <input type="checkbox" checked readOnly disabled aria-readonly />
+                Insiders+ · {Math.round(memberDiscountRate(member) * 100)}% off
+              </label>
+            )
+          ) : (
+            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+              <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
+              Monthly member (10% off)
+            </label>
+          )}
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
             <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
             Tax exempt
@@ -1501,7 +1528,7 @@ export default function PosApp({
 
         <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
         {categoryId === CUSTOMERS_TAB ? (
-          <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={setMember} findAt={findAt} />
+          <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={attachMember} findAt={findAt} readerId={readerId} employeeId={employeeId} />
         ) : categoryId === MOVIES_TAB ? (
           <MovieTickets
             initial={initialScreenings}
