@@ -10,7 +10,8 @@ import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-act
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
 import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
-import LegacyPlusCard, { type TabletSend } from "./LegacyPlusCard";
+import LegacyPlusCard, { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
+import { memberSignal } from "./member-signal";
 
 // An Insiders+ member's free daily coffee today, as the register knows it
 // (PosApp): undefined while it's looked up, null if it couldn't be.
@@ -68,8 +69,8 @@ export default function PosMemberPanel({
   onFind: () => void;
   // Check-ins from the customer screen waiting on the Customers tab.
   waiting: number;
-  // For a former unlimited member with no payment on file (LegacyPlusCard):
-  // this register's card reader, and the customer screen.
+  // For setting up Insiders+ here (LegacyPlusCard: no card on file, or an
+  // upgrade): this register's card reader, and the customer screen.
   readerId: string | null;
   toTablet: TabletSend;
 }) {
@@ -136,6 +137,7 @@ export default function PosMemberPanel({
   }
 
   const rate: MemberPriceTier = member?.price_tier ?? "adult";
+  const signal = memberSignal(member);
   const source = member ? rateSource(member) : null;
   const showNoMatch = query.trim().length >= 2 && !searching && !error && results.length === 0;
 
@@ -144,9 +146,14 @@ export default function PosMemberPanel({
       <div className="eyebrow mb-2">Member</div>
 
       {member ? (
-        <div className="rounded-lg border p-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
+        // Edged in gold for paying Insiders+, red for a former unlimited
+        // member who isn't paying (member-signal.ts), like the order above.
+        <div
+          className={`rounded-lg p-2.5 text-sm ${signal ? "border-2" : "border"}`}
+          style={{ borderColor: signal === "plus" ? "var(--gold)" : signal === "unlimited" ? "var(--accent)" : "var(--border)" }}
+        >
           <div className="flex items-center gap-3">
-            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={member.tier === "Insiders+"} />
+            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={member.tier === "Insiders+" && !member.legacyUnlimited} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-semibold">{member.name}</span>
@@ -162,19 +169,29 @@ export default function PosMemberPanel({
             </div>
           </div>
 
-          {(member.legacyUnlimited || (!member.subscribed && !member.comped)) && (
-            <LegacyPlusCard
-              key={`unlimited-${member.id}`}
-              kind={member.legacyUnlimited ? "legacy" : member.tier === "Insiders+" ? "nocard" : "upgrade"}
-              member={member}
-              readerId={readerId}
-              employeeId={employeeId}
-              toTablet={toTablet}
-              onDone={(m) => {
-                onChange(m);
-                setMessage(`${m.name.split(" ")[0]} is Insiders+ now.`);
-              }}
-            />
+          {/* A former unlimited member who isn't paying: the ways to set it
+              up are on the red banner across the top of the order. */}
+          {member.legacyUnlimited ? (
+            <div className="mt-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-bold leading-snug text-white" style={{ background: NOT_ACTIVE_RED }}>
+              <NotActiveStamp />
+              <span className="min-w-0 flex-1">Unlimited: no payment on file. Set it up at the top of the order.</span>
+            </div>
+          ) : (
+            !member.subscribed &&
+            !member.comped && (
+              <LegacyPlusCard
+                key={`unlimited-${member.id}`}
+                kind={member.tier === "Insiders+" ? "nocard" : "upgrade"}
+                member={member}
+                readerId={readerId}
+                employeeId={employeeId}
+                toTablet={toTablet}
+                onDone={(m) => {
+                  onChange(m);
+                  setMessage(`${m.name.split(" ")[0]} is Insiders+ now.`);
+                }}
+              />
+            )
           )}
           {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
           {coffee && <CoffeeToday coffee={coffee} />}

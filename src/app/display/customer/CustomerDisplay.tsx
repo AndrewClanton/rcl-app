@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
@@ -11,6 +11,7 @@ import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import FinishCard, { finishShown, type FinishShown } from "./FinishCard";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
+import { PlusWelcomeCard, UnlimitedCard } from "./MemberCards";
 import AutoUpdate from "../AutoUpdate";
 import k from "./kiosk.module.css";
 
@@ -34,7 +35,10 @@ function showtime(iso: string) {
 // - right: the live order as the bartender rings it up (PosApp.tsx
 //   broadcasts cart snapshots; nothing is saved until the sale), or,
 //   between orders, a Royale welcome: tonight's movies and what checking in
-//   earns (points and badges, lib/visits.ts).
+//   earns (points and badges, lib/visits.ts). The member on the order adds a
+//   card: a paying Insiders+ member's gold badge on the order, or, for a
+//   former unlimited member with nothing paying for it, "Your unlimited
+//   membership isn't active" until it's set up (MemberCards.tsx).
 // The register's ✨ Celebrate throws streamers across the whole screen, and
 // so does Rewind (Back office found a regular's visits from before the new
 // system), under the kiosk's "Welcome back".
@@ -75,6 +79,57 @@ export default function CustomerDisplay({
     return () => clearTimeout(timer);
   }, [finish]);
 
+  // A former unlimited member with nothing paying for it on the order keeps
+  // "Your unlimited membership isn't active" up beside it (MemberCards.tsx)
+  // until it's set up or they're off the order. Once it's set up, a short
+  // "You're Insiders+!" takes its place: `welcome` while that shows, and
+  // `setUp` (their first name) keeps the red card down until the register
+  // catches up (staff tap Done after the welcome has already played here).
+  const [welcome, setWelcome] = useState<{ key: number; firstName: string } | null>(null);
+  const [setUp, setSetUp] = useState<string | null>(null);
+  useEffect(() => {
+    if (!welcome) return;
+    const timer = setTimeout(() => setWelcome(null), 9_000);
+    return () => clearTimeout(timer);
+  }, [welcome]);
+  const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
+  const celebrated = useRef<string | null>(null);
+  const celebrate = useCallback((firstName: string) => {
+    celebrated.current = firstName;
+    setSetUp(firstName);
+    setWelcome({ key: Date.now(), firstName });
+  }, []);
+
+  // Every cart from the register. Set up on the register while this screen
+  // missed the welcome (it was reloading, say): celebrate now instead.
+  const onCart = useCallback(
+    (next: RegisterCartSnapshot) => {
+      const before = lastMember.current ?? null;
+      const now = next.member ?? null;
+      lastMember.current = now;
+      setCart(next);
+      const justSetUp = !!before?.unlimited && !!now && !now.unlimited && now.plus && now.firstName === before.firstName;
+      if (justSetUp && celebrated.current !== now.firstName) celebrate(now.firstName);
+      if (!now?.unlimited) setSetUp(null);
+      // Celebrated once per member on the order.
+      if (!now || now.firstName !== celebrated.current) celebrated.current = null;
+    },
+    [celebrate],
+  );
+
+  // "You're Insiders+!" from the register (CheckinKiosk hears it). For the
+  // member on this order it plays here, beside the order, instead of as a
+  // banner over the keypad: true when it did (or already has).
+  const onPlusWelcome = useCallback(
+    (firstName: string) => {
+      const who = lastMember.current;
+      if (!who || who.firstName.slice(0, 40) !== firstName) return false;
+      if (celebrated.current !== who.firstName) celebrate(who.firstName);
+      return true;
+    },
+    [celebrate],
+  );
+
   useEffect(() => {
     const supabase = createClient();
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -84,7 +139,7 @@ export default function CustomerDisplay({
       if (cancelled) return;
       channel = supabase
         .channel(registerTopic)
-        .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
+        .on("broadcast", { event: "cart" }, (msg) => onCart(msg.payload as RegisterCartSnapshot))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
         .on("broadcast", { event: "rickroll" }, () => setRickroll((on) => (on ? null : Date.now())))
         .on("broadcast", { event: "rickroll-stop" }, () => setRickroll(null))
@@ -99,24 +154,50 @@ export default function CustomerDisplay({
       cancelled = true;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [registerTopic]);
+  }, [registerTopic, onCart]);
 
   const hasOrder = !!cart && cart.items.length > 0;
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearRickroll = useCallback(() => setRickroll(null), []);
   const rewindStreamers = useCallback(() => setBurst({ id: Date.now(), pieces: makeStreamers(90), banner: null }), []);
 
+  // The red card, by first name: not while their "add your card on your
+  // phone" QR code is up (that card asks the same thing, with the code), or
+  // once it's set up. With nothing rung up yet (and no tickets beside it),
+  // it, or the welcome, fills the panel; otherwise it's a banner over the
+  // order, which keeps its total in view.
+  const who = cart?.member ?? null;
+  const unlimitedFor = who?.unlimited && who.firstName !== setUp && !finish && !welcome ? who.firstName : null;
+  const hero = !hasOrder && !tickets;
+
   return (
     <div className={k.screen}>
-      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} onRewind={rewindStreamers} onFinish={setFinish} />
-      <aside className={k.side}>
+      <CheckinKiosk
+        registerTopic={registerTopic}
+        initialStep={previewStep}
+        onTickets={setTickets}
+        onRewind={rewindStreamers}
+        onFinish={setFinish}
+        onPlusWelcome={onPlusWelcome}
+      />
+      <aside className={`${k.side} ${!hero && (unlimitedFor || welcome) ? k.sideTight : ""}`}>
         {finish && <FinishCard key={finish.key} shown={finish} />}
+        {welcome && !hero && <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} hero={false} />}
+        {unlimitedFor && !hero && <UnlimitedCard firstName={unlimitedFor} hero={false} />}
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
-        {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
+        {hasOrder ? (
+          <OrderReceipt cart={cart} />
+        ) : welcome && hero ? (
+          <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} hero />
+        ) : unlimitedFor && hero ? (
+          <UnlimitedCard firstName={unlimitedFor} hero />
+        ) : (
+          <Welcome movies={movies} />
+        )}
       </aside>
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
-      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!finish || !!burst || !!rickroll} />}
+      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!finish || !!burst || !!rickroll || !!unlimitedFor || !!welcome} />}
     </div>
   );
 }
@@ -194,11 +275,24 @@ export function OrderReceipt({ cart }: { cart: RegisterCartSnapshot }) {
   const who = cart.member;
   const earn = cart.pointsToEarn ?? 0;
   const count = cart.items.reduce((n, i) => n + i.quantity, 0);
+  // A paying Insiders+ member sees their perk at work: the gold badge here,
+  // and "Insiders+ 10% off" among the savings.
+  const plus = !!who?.plus && !who.unlimited;
   return (
     <div className={k.receipt}>
       <div className={k.receiptHead}>
-        <span className={k.receiptName}>{who ? `${who.firstName}'s order` : cart.orderName || "Your order"}</span>
-        <span className={k.eyebrow} style={{ color: "var(--gold)" }}>
+        <span className={k.receiptWho}>
+          <span className={k.receiptName}>{who ? `${who.firstName}'s order` : cart.orderName || "Your order"}</span>
+          {plus && (
+            <span className={k.plusPill}>
+              <span className={k.plusPillSeal} aria-hidden="true">
+                +
+              </span>
+              Insiders+ · 10% off
+            </span>
+          )}
+        </span>
+        <span className={`${k.eyebrow} ${k.receiptCount}`} style={{ color: "var(--gold)" }}>
           {count} item{count === 1 ? "" : "s"}
         </span>
       </div>

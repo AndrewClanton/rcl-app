@@ -22,6 +22,9 @@ import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
+import { UnlimitedBanner } from "./LegacyPlusCard";
+import { PlusRibbon, SignalFrame } from "./MemberSignal";
+import { memberSignal, publishMemberSignal } from "./member-signal";
 import { useRegisterCheckins } from "./RegisterCheckins";
 import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
@@ -206,6 +209,14 @@ export default function PosApp({
   // got there (a check-in, a search, a scan, a tab): undefined while it's
   // looked up, null if it couldn't be (then it isn't offered).
   const isPlus = member?.tier === "Insiders+";
+  // Gold for paying Insiders+, red NOT ACTIVE for a former unlimited member
+  // who isn't paying (member-signal.ts): the frame, the strip over the
+  // order, and the mark beside the title on a phone.
+  const signal = memberSignal(member);
+  useEffect(() => {
+    publishMemberSignal(signal);
+  }, [signal]);
+  useEffect(() => () => publishMemberSignal(null), []);
   const [coffee, setCoffee] = useState<{ memberId: string; state: DailyCoffeeState | null } | null>(null);
   const [coffeeTry, setCoffeeTry] = useState(0);
   // The member whose free coffee staff took off this order.
@@ -517,11 +528,21 @@ export default function PosApp({
     // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
       { label: DAILY_COFFEE_LINE, amount: totals.dailyPerkDiscount },
-      { label: "Member discount", amount: totals.tierDiscount },
+      // Named for the guest: "Insiders+ 10% off" is the perk they see applied.
+      { label: isPlus && !member?.legacyUnlimited ? `Insiders+ ${Math.round(memberDiscountRate(member) * 100)}% off` : "Member discount", amount: totals.tierDiscount },
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
       { label: "Points reward", amount: totals.redemptionDiscount },
     ].filter((d) => d.amount > 0),
-    member: member ? { firstName: member.name.trim().split(/\s+/)[0] || member.name, points: Math.round(member.points), plus: member.tier === "Insiders+" } : null,
+    // Only what the screen shows: a first name, points, and which of the two
+    // membership cards to show (unlimited wins: never "Insiders+" for them).
+    member: member
+      ? {
+          firstName: member.name.trim().split(/\s+/)[0] || member.name,
+          points: Math.round(member.points),
+          plus: member.tier === "Insiders+" && !member.legacyUnlimited,
+          unlimited: member.legacyUnlimited,
+        }
+      : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
@@ -1087,7 +1108,11 @@ export default function PosApp({
       {/* Cart panel. On a tablet the page is locked to the screen: the header
           and the checkout block stay put, and only the middle (the order
           itself) scrolls -- so the header and footer are kept to two rows each. */}
-      <div className="card flex flex-col !p-3 md:min-h-0">
+      <SignalFrame signal={signal} />
+      <div
+        className="card flex flex-col !p-3 md:min-h-0"
+        style={signal ? { boxShadow: `0 0 0 3px ${signal === "plus" ? "var(--gold)" : "var(--accent)"}` } : undefined}
+      >
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
             <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
@@ -1157,6 +1182,26 @@ export default function PosApp({
             <button className="notice notice-warn mb-2 w-full p-2 text-left text-xs font-semibold" onClick={retryTabSave}>
               {tabSaveIssue.stale ? "Tab not saved: the register was just updated. Tap to reload, then check this tab." : "Tab not saved. Tap to retry."}
             </button>
+          )}
+          {/* Across the top of the order, never scrolled away: a former
+              unlimited member who isn't paying (with the two ways to set it
+              up), or a paying Insiders+ member. */}
+          {member && signal === "unlimited" ? (
+            <UnlimitedBanner
+              key={member.id}
+              member={member}
+              readerId={readerId}
+              employeeId={employeeId}
+              toTablet={checkins.toTablet}
+              onDone={(m) => {
+                attachMember(m);
+                const done = `${m.name.trim().split(/\s+/)[0] || m.name} is Insiders+ now.`;
+                setToast(done);
+                setTimeout(() => setToast((t) => (t === done ? null : t)), 8000);
+              }}
+            />
+          ) : (
+            member && signal === "plus" && <PlusRibbon name={member.name} discount={memberDiscountRate(member)} />
           )}
         </div>
 

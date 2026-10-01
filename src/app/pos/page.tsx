@@ -7,6 +7,7 @@ import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
 import PosApp from "./PosApp";
+import { HeaderSignal } from "./MemberSignal";
 import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
@@ -53,11 +54,14 @@ export default async function PosPage() {
     // exactly one screen height and the panels inside scroll on their own.
     <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-3 md:h-dvh md:overflow-hidden md:overscroll-none md:py-2">
       {/* The iPad already shows the date; its height goes to the order instead. */}
-      <div className="mb-2 flex shrink-0 items-baseline justify-between md:hidden">
+      <div className="mb-2 flex shrink-0 items-baseline gap-2 md:hidden">
         <h1 className="font-display text-xl" style={{ color: "var(--foreground)" }}>
           Royale Cinema Lounge <span style={{ color: "var(--accent)" }}>· Point of Sale</span>
         </h1>
-        <span className="eyebrow">
+        {/* Gold "+" for a paying Insiders+ member on the order; NOT ACTIVE
+            for a former unlimited member who isn't paying. */}
+        <HeaderSignal />
+        <span className="eyebrow ml-auto">
           {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
         </span>
       </div>

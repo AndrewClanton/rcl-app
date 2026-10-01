@@ -15,7 +15,11 @@ export interface RegisterCartSnapshot {
   total: number;
   discounts?: { label: string; amount: number }[];
   // Who's checked in on this order: first name only, for the live tally.
-  member?: { firstName: string; points: number; plus: boolean } | null;
+  // plus: they're Insiders+ (the screen shows their badge). unlimited: a
+  // former unlimited member with nothing paying for it (lib/legacy-plus.ts):
+  // the screen keeps "Your unlimited membership isn't active" up beside the
+  // order until it's set up or they're taken off the order.
+  member?: { firstName: string; points: number; plus: boolean; unlimited?: boolean } | null;
   pointsToEarn?: number;
 }
 

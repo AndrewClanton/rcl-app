@@ -714,11 +714,261 @@
   font-size: 26px;
 }
 
+/* ---------- the member on the order (MemberCards.tsx) ---------- */
+/* "Your unlimited membership isn't active": red with a paper edge, never
+   gold (gold means Insiders+). A banner over the order, or the whole panel
+   (.unlimitedHero) while nothing's rung up yet. */
+.unlimited {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 3px solid var(--paper);
+  background: var(--red);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--ink), 0 14px 32px rgba(0, 0, 0, 0.5);
+  animation: slide 260ms ease-out both;
+}
+.unlimitedCopy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.notActive {
+  display: inline-block;
+  transform: rotate(-2deg);
+  padding: 3px 10px;
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.unlimitedTitle {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(22px, 3.2vh, 30px);
+  font-weight: 400;
+  line-height: 1.05;
+}
+.unlimitedWhy {
+  margin: 0;
+  font-size: clamp(17px, 2.3vh, 21px);
+  line-height: 1.3;
+}
+.unlimitedTax {
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+.tapIcon {
+  flex: none;
+  width: clamp(64px, 9vh, 84px);
+  height: auto;
+}
+.tapWaves {
+  animation: tapPulse 1.6s ease-in-out infinite;
+}
+@keyframes tapPulse {
+  50% {
+    opacity: 0.2;
+  }
+}
+.perks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.perks li {
+  border: 2px solid var(--paper);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: rgba(20, 17, 12, 0.22);
+  font-size: clamp(15px, 2vh, 18px);
+  font-weight: 700;
+}
+.unlimitedHero {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column-reverse;
+  justify-content: center;
+  gap: clamp(12px, 2.4vh, 26px);
+  padding: clamp(18px, 4vh, 44px) clamp(18px, 3vw, 40px);
+  text-align: center;
+}
+.unlimitedHero .unlimitedCopy {
+  flex: none;
+  justify-items: center;
+  gap: clamp(8px, 1.4vh, 14px);
+}
+.unlimitedHero .unlimitedTitle {
+  font-size: clamp(30px, 5.2vh, 52px);
+}
+.unlimitedHero .unlimitedWhy {
+  max-width: 30ch;
+  font-size: clamp(19px, 2.8vh, 26px);
+}
+.unlimitedHero .tapIcon {
+  width: clamp(88px, 15vh, 150px);
+}
+/* the moment it's set up: gold, like Insiders+ everywhere */
+.plusWelcome {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 3px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--gold), 0 14px 32px rgba(0, 0, 0, 0.5);
+  animation: badgeIn 480ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.plusWelcome.unlimitedHero {
+  flex: 1;
+  flex-direction: column;
+  gap: clamp(12px, 2.4vh, 26px);
+  padding: clamp(18px, 4vh, 44px) clamp(18px, 3vw, 40px);
+}
+.plusSeal {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 44px;
+  line-height: 1;
+  box-shadow: 0 0 0 3px var(--gold), 0 0 0 6px var(--ink);
+}
+.unlimitedHero .plusSeal {
+  width: clamp(88px, 14vh, 130px);
+  height: clamp(88px, 14vh, 130px);
+  font-size: clamp(64px, 10vh, 96px);
+}
+/* An upright screen gives the order only what the keypad leaves (about 390px
+   on an upright iPad): with a membership card over the order, everything
+   gets tighter and the points strip steps aside, so the total stays in
+   view. */
+@media (max-aspect-ratio: 1/1) {
+  .sideTight {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .sideTight .earn {
+    display: none;
+  }
+  .sideTight .unlimited,
+  .sideTight .plusWelcome {
+    padding: 10px 14px;
+    gap: 12px;
+  }
+  .sideTight .tapIcon {
+    display: none;
+  }
+  .sideTight .unlimitedCopy {
+    gap: 4px;
+  }
+  .sideTight .unlimitedTitle {
+    font-size: 21px;
+  }
+  .sideTight .unlimitedWhy {
+    font-size: 16px;
+  }
+  .sideTight .plusSeal {
+    width: 44px;
+    height: 44px;
+    font-size: 32px;
+  }
+  .unlimitedHero {
+    padding: 14px 18px;
+    gap: 10px;
+  }
+  .unlimitedHero .perks {
+    display: none;
+  }
+  .unlimitedHero .unlimitedTitle {
+    font-size: clamp(26px, 3.4vh, 40px);
+  }
+  .unlimitedHero .unlimitedWhy {
+    font-size: clamp(18px, 2vh, 22px);
+  }
+  .unlimitedHero .tapIcon {
+    width: clamp(72px, 7vh, 96px);
+  }
+  .unlimitedHero .plusSeal {
+    width: 84px;
+    height: 84px;
+    font-size: 60px;
+  }
+}
+
+/* a paying Insiders+ member's badge, in the order's head (under their name
+   when the two don't fit on one line) */
+.receiptCount {
+  flex: none;
+  white-space: nowrap;
+}
+.receiptWho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+.plusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 4px;
+  border-radius: 999px;
+  background: var(--gold);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.plusPillSeal {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .check,
   .toast,
   .toastBadge,
-  .ticketsCard {
+  .ticketsCard,
+  .unlimited,
+  .tapWaves,
+  .plusWelcome {
     animation: none;
   }
   .key,

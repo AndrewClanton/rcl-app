@@ -14,7 +14,9 @@ import { cancelUnlimitedCard, checkUnlimitedCard, startUnlimitedCard, unlimitedD
 // their Insiders+ now, both charged today: their card on the reader, or
 // Stripe's page on their own phone (a QR code on the customer screen, or
 // an emailed link). If they'd rather not, staff just ring them up like any
-// other guest.
+// other guest. On the order it's the red NOT ACTIVE banner across the top
+// (UnlimitedBanner, below); just checked in and not on an order yet, it's
+// this card on the Customers tab.
 
 export type TabletSend = (event: "plus-finish" | "plus-finish-close" | "plus-welcome", payload: PlusFinish | PlusWelcome | Record<string, never>) => void;
 
@@ -50,11 +52,18 @@ export default function LegacyPlusCard({
   }
   const headline =
     kind === "legacy" ? "No payment on file for unlimited membership" : kind === "nocard" ? "Insiders+ with no card on file" : "Upgrade to Insiders+";
+  // Gold is for Insiders+ that's active; a former unlimited member who isn't
+  // paying gets the red NOT ACTIVE look instead (member-signal.ts).
+  const legacy = kind === "legacy";
   return (
     <div className="mt-2 overflow-hidden rounded-lg border-2 text-sm" style={{ borderColor: "var(--foreground)" }} role="status">
-      <div className="flex items-center gap-1 px-2.5 py-1.5 font-bold leading-tight" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
+      <div
+        className="flex items-center gap-1.5 px-2.5 py-1.5 font-bold leading-tight"
+        style={legacy ? { background: NOT_ACTIVE_RED, color: "#fff" } : { background: "var(--gold)", color: "var(--gold-foreground)" }}
+      >
+        {legacy && <NotActiveStamp />}
         <span className="min-w-0 flex-1">{headline}</span>
-        {kind === "legacy" && <InfoTip topic="unlimited-no-payment" className="!mx-0" />}
+        {legacy && <InfoTip topic="unlimited-no-payment" className="!mx-0 !text-white" />}
         {kind === "upgrade" && (
           <button className="!mx-0 px-1 text-xs underline" onClick={() => setShown(false)}>
             Hide
@@ -90,6 +99,92 @@ export default function LegacyPlusCard({
         />
       )}
     </div>
+  );
+}
+
+// The NOT ACTIVE red: a shade darker than the brand red, so white words on
+// it are easy to read.
+export const NOT_ACTIVE_RED = "var(--accent-hover)";
+
+// "NOT ACTIVE", stamped in ink: on the order's banner, the Customers tab and
+// the member box.
+export function NotActiveStamp({ big = false }: { big?: boolean }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 -rotate-2 items-center rounded border-2 font-black uppercase tracking-wide ${big ? "px-2 py-1 text-sm" : "px-1.5 py-0.5 text-[11px]"}`}
+      style={{ background: "var(--foreground)", borderColor: "#fff", color: "#fff" }}
+    >
+      Not active
+    </span>
+  );
+}
+
+// A former unlimited member with nothing paying for it, on the order: a red
+// banner across the top of the order, with the two ways to set it up right
+// there, so nobody can miss it or take them for an active Insiders+ member.
+// It stays until their Insiders+ is set up or they're taken off the order.
+export function UnlimitedBanner({
+  member,
+  readerId,
+  employeeId,
+  toTablet,
+  onDone,
+}: {
+  member: PosMember;
+  readerId: string | null;
+  employeeId: string;
+  toTablet: TabletSend;
+  onDone: (m: PosMember) => void;
+}) {
+  const [open, setOpen] = useState<"reader" | "phone" | null>(null);
+  // The setup window sits beside the banner, not in it, so it doesn't pick
+  // up the banner's white words.
+  return (
+    <>
+      <section
+        className="mb-2 rounded-lg border-2 p-2.5 text-white motion-safe:animate-checkin-pulse"
+        style={{ background: NOT_ACTIVE_RED, borderColor: "var(--foreground)" }}
+        role="status"
+        aria-label={`${member.name}: not active, no payment on file for unlimited membership`}
+      >
+        <div className="flex items-start gap-2">
+          <NotActiveStamp big />
+          <div className="min-w-0 flex-1 leading-tight">
+            <div className="font-bold">No payment on file for unlimited membership</div>
+            <div className="truncate text-xs opacity-90">{member.name}</div>
+          </div>
+          <InfoTip topic="unlimited-no-payment" className="!mx-0 !text-white" />
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            className="min-h-12 rounded-lg border-2 px-2 text-base font-bold"
+            style={{ background: "#fff", borderColor: "var(--foreground)", color: "var(--foreground)" }}
+            onClick={() => setOpen("reader")}
+          >
+            Card on reader
+          </button>
+          <button className="min-h-12 rounded-lg border-2 border-white px-2 text-base font-bold text-white" onClick={() => setOpen("phone")}>
+            On their phone
+          </button>
+        </div>
+        <p className="mt-1.5 text-xs opacity-90">Not paying today? Ring them up like any guest.</p>
+      </section>
+      {open && (
+        <SetupModal
+          member={member}
+          mode={open}
+          readerId={readerId}
+          employeeId={employeeId}
+          toTablet={toTablet}
+          onSwitch={(mode) => setOpen(mode)}
+          onClose={() => setOpen(null)}
+          onDone={(m) => {
+            setOpen(null);
+            onDone(m);
+          }}
+        />
+      )}
+    </>
   );
 }
 

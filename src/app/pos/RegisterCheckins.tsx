@@ -15,7 +15,7 @@ import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
 import { usePrintTarget } from "./printing";
 import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
-import type { TabletSend } from "./LegacyPlusCard";
+import { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -657,7 +657,7 @@ function TonightTickets({ tonight, printing, onPrint, onDismiss }: { tonight: To
 function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
   return (
     <div className="flex items-center gap-3">
-      <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={m.tier === "Insiders+"} />
+      <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={m.tier === "Insiders+" && !m.legacyUnlimited} />
       <div className="min-w-0 flex-1">
         <div className="text-2xl font-black leading-tight">{m.name}</div>
         <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
@@ -672,10 +672,12 @@ function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
 
 // A former unlimited member (lib/legacy-plus.ts), before staff confirm:
 // once they're checked in, the card to set it up shows above.
+// Red NOT ACTIVE, never gold: gold means active Insiders+ (member-signal.ts).
 function UnlimitedFlag() {
   return (
-    <div className="rounded-md border-2 px-2.5 py-1.5 text-sm font-bold" style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--gold-foreground)" }}>
-      No payment on file for unlimited membership
+    <div className="flex items-center gap-2 rounded-md border-2 px-2.5 py-1.5 text-sm font-bold leading-tight text-white" style={{ borderColor: "var(--foreground)", background: NOT_ACTIVE_RED }}>
+      <NotActiveStamp />
+      <span className="min-w-0 flex-1">No payment on file for unlimited membership</span>
     </div>
   );
 }
@@ -750,7 +752,7 @@ function KnownCard({
       </div>
       {card.matches.map((m) => (
         <div key={m.id} className="flex items-center gap-2">
-          <MemberAvatar name={m.name} url={m.avatar_url} size={44} plus={m.tier === "Insiders+"} />
+          <MemberAvatar name={m.name} url={m.avatar_url} size={44} plus={m.tier === "Insiders+" && !m.legacyUnlimited} />
           <div className="min-w-0 flex-1">
             <div className="truncate font-bold">{m.name}</div>
             <div className="text-xs" style={{ color: "var(--muted)" }}>
@@ -758,8 +760,8 @@ function KnownCard({
               {current?.id === m.id ? " · on this order" : ""}
             </div>
             {m.legacyUnlimited && (
-              <div className="text-xs font-bold" style={{ color: "var(--warn-text)" }}>
-                No payment on file for unlimited
+              <div className="text-xs font-bold" style={{ color: "var(--danger-text)" }}>
+                Not active: no payment on file for unlimited
               </div>
             )}
           </div>
