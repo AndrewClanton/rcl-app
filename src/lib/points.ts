@@ -11,7 +11,10 @@ export { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 // in the database (lib/visits-server.ts), not through applyPoints.
 // adjustment: staff adding or taking away points, through adjustPoints.
 // merge: points brought over from a duplicate account.
-export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit" | "badge" | "merge";
+// backfill: card purchases from before the new system, paid once per card by
+// grant_fortis_backfill (Back office > Members > Points from past card
+// purchases), which calls apply_member_points itself.
+export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit" | "badge" | "merge" | "backfill";
 
 export async function applyPoints(args: {
   memberId: string;

@@ -33,6 +33,9 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       return { title: `Badge: ${l.note ?? "earned"}`, href: null };
     case "merge":
       return { title: "Merged in from your other account", href: null };
+    case "backfill":
+      // Card purchases from before the new system.
+      return { title: "Points from your past visits", href: null };
     default: {
       const note = adjustmentNote(l.note);
       return { title: note ? `From the Royale crew: ${note}` : "Adjusted by the Royale crew", href: null };

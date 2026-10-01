@@ -213,7 +213,7 @@ export function PointsBalance({ memberId, balance }: { memberId: string; balance
 const BADGE_EMOJI = new Map(BADGES.map((b) => [b.label, b.emoji]));
 
 // Who made the change: staff for a manual one, the system for the rest.
-const MANUAL = new Set(["adjustment", "merge"]);
+const MANUAL = new Set(["adjustment", "merge", "backfill"]);
 
 function orderLink(r: PointsHistoryRow) {
   return r.orderNumber !== null ? (
@@ -289,6 +289,14 @@ function WhatHappened({ r }: { r: PointsHistoryRow }) {
         <>
           Merged from a duplicate account
           {detail(r.note && r.note !== "Merged from a duplicate account" ? r.note : null)}
+        </>
+      );
+    case "backfill":
+      // Granted from Members > Points from past card purchases.
+      return (
+        <>
+          Past card purchases
+          {detail("From the old card machine, before the new system")}
         </>
       );
     default:
