@@ -21,7 +21,7 @@ import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 // title and description say it plainly.
 export const metadata = pageMeta({
   title: "Movie Showtimes in Joplin, MO",
-  description: "Today's movie showtimes at Royale Cinema Lounge, a dine-in cinema and bar at 715 E Broadway in Joplin, MO. See what's playing and reserve your seat.",
+  description: "Today's movie showtimes at Royale Cinema Lounge, a cinema, bar and members' lounge at 715 E Broadway in Joplin, MO. See what's playing and reserve your seat.",
   path: "/showtimes",
 });
 

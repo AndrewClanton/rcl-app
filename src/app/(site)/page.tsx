@@ -21,7 +21,7 @@ import { pageMeta } from "@/lib/seo/page-meta";
 // classes, see components/site/plus-hint.ts).
 
 export const metadata = pageMeta({
-  title: { absolute: "Royale Cinema Lounge · Dine-in cinema & bar in Joplin, MO" },
+  title: { absolute: "Royale Cinema Lounge · Cinema, bar & lounge in Joplin, MO" },
   description: SITE_DESCRIPTION,
   path: "/",
 });
@@ -127,17 +127,17 @@ export default async function HomePage() {
       {/* Panel Pop: the loud one, with its registration mark at the corner. */}
       <section className="sheet overflow-hidden !border-[3px] !shadow-[7px_7px_0_var(--foreground)]">
         <div className="halftone halftone-hero relative bg-[var(--gold)] px-6 pt-16 pb-14 text-center sm:px-12 sm:pt-20 sm:pb-16">
-          <Starburst className="starburst-red absolute top-5 right-6 hidden sm:block">
+          <Starburst className="starburst-red absolute top-5 right-6 z-[2] hidden sm:block">
             Route
             <br />
             66
           </Starburst>
           <div className="relative z-[1]">
-            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="mx-auto mb-6 h-auto w-40 sm:w-48" style={{ filter: "invert(1) brightness(0.08)" }} />
+            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="mx-auto mb-6 h-auto w-52 sm:w-64" style={{ filter: "invert(1) brightness(0.08)" }} />
             <span className="ctag ctag-red">Joplin, MO</span>
             <h1 className="font-display mx-auto mt-5 max-w-3xl text-4xl leading-[0.98] text-balance sm:text-6xl">micro cinema, third space, film archive</h1>
             <p className="mx-auto mt-5 max-w-xl text-[15px] font-medium sm:text-base">
-              Royale Cinema Lounge is a dine-in cinema and bar. Grab a seat, order off the menu, and catch a show.
+              Royale Cinema Lounge is a cinema, bar and members&apos; lounge. Grab a drink and a bite at the bar, find your seat, and catch a show.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Link href="/showtimes" className="btn-primary -rotate-[1.5deg] px-6 py-3">

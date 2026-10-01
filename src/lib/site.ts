@@ -8,7 +8,7 @@ export const SITE_NAME = "Royale Cinema Lounge";
 // The one-sentence pitch: the home page's description and the fallback for
 // any page that doesn't have its own.
 export const SITE_DESCRIPTION =
-  "A dine-in cinema, bar and members' lounge in a historic 1920 building on Route 66 in Joplin, MO: independent and repertory film, a full food and drink menu, and a VHS video lounge.";
+  "A cinema, bar and members' lounge in a historic 1920 building on Route 66 in Joplin, MO: independent and repertory film, a full bar and coffee bar, and a VHS video lounge.";
 
 // The theater's street address, as schema.org structured data. Shared by the
 // site-wide MovieTheater listing and each showtime's ScreeningEvent, so Google

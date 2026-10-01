@@ -15,7 +15,7 @@ export const DEFAULT_SHARE_IMAGE = {
   url: "/opengraph-image",
   width: 1200,
   height: 630,
-  alt: "Royale Cinema Lounge: a dine-in cinema and bar at 715 E Broadway, Joplin, MO, on Route 66",
+  alt: "Royale Cinema Lounge: a cinema, bar and members' lounge at 715 E Broadway, Joplin, MO, on Route 66",
 };
 
 export function absoluteUrl(path: string): string {

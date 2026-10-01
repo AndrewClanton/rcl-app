@@ -27,7 +27,7 @@ export function theaterJsonLd(): Record<string, unknown> {
     "@type": "MovieTheater",
     "@id": THEATER_ID,
     name: SITE_NAME,
-    description: "A dine-in cinema, bar, and members' lounge showing independent and repertory film in a historic 1920 building on Route 66.",
+    description: "A cinema, bar, and members' lounge showing independent and repertory film in a historic 1920 building on Route 66.",
     url: SITE_URL,
     telephone: THEATER_PHONE,
     email: THEATER_EMAIL,

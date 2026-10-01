@@ -123,7 +123,7 @@ export function BrandCard({ logo, photo }: { logo: string; photo: string | null 
         <img src={logo} width={560} height={197} style={{ width: 560, height: 197 }} alt="" />
         <div style={{ display: "flex", flexDirection: "column" }}>
           <Tag>Joplin, MO · on Route 66</Tag>
-          <div style={{ display: "flex", marginTop: 26, fontFamily: DISPLAY, fontSize: 52, lineHeight: 1.02, color: CREAM }}>Dine-in cinema, bar &amp; members&apos; lounge</div>
+          <div style={{ display: "flex", marginTop: 26, fontFamily: DISPLAY, fontSize: 52, lineHeight: 1.02, color: CREAM }}>Cinema, bar &amp; members&apos; lounge</div>
         </div>
         <div style={{ display: "flex", fontSize: 24, letterSpacing: 2, color: GOLD }}>715 E BROADWAY · JOPLIN, MO 64801</div>
       </div>

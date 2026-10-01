@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { default: SITE_NAME, template: `%s | ${SITE_NAME}` },
   description: SITE_DESCRIPTION,
-  keywords: ["dine-in cinema", "Joplin MO movies", "independent theater", "movie lounge", "Route 66 Joplin", "repertory cinema"],
+  keywords: ["cinema bar", "Joplin MO movies", "independent theater", "movie lounge", "Route 66 Joplin", "repertory cinema"],
   openGraph: {
     title: SITE_NAME,
     description: SITE_DESCRIPTION,
