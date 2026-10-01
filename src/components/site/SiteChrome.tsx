@@ -47,6 +47,11 @@ export default function SiteChrome({ children }: { children: React.ReactNode }) 
             <Link href="/about" className="transition-colors hover:text-[var(--accent)]">
               About
             </Link>
+            {/* The changelog and roadmap; the dot says it's always moving. */}
+            <Link href="/whats-new" className="inline-flex items-center gap-1.5 transition-colors hover:text-[var(--accent)]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
+              What&apos;s new
+            </Link>
             <Link href="/account" className="transition-colors hover:text-[var(--accent)]">
               My Account
             </Link>

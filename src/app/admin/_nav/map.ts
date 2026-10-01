@@ -103,6 +103,14 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       min: "manager",
     },
     {
+      href: "/admin/roadmap",
+      label: "Roadmap & What's new",
+      about: "What's shipped, being built and next in line on the public What's new page, plus the suggestions inbox.",
+      keywords: "roadmap whats new what's new changelog queue ideas suggestions requests votes features shipped release version",
+      min: "manager",
+      badge: "roadmap",
+    },
+    {
       href: "/admin/members/old-site",
       label: "Old site members",
       about: "Check accounts from the old website before they're copied in.",
