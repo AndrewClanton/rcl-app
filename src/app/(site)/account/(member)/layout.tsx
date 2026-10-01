@@ -10,7 +10,7 @@ export default async function AccountLayout({ children }: { children: React.Reac
   const staff = await getStaffSession();
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       <AccountHeader member={member} showBackOffice={!!staff && hasAdminAccess(staff.role)} />
       <AccountNav />
       {children}

@@ -6,7 +6,7 @@ import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { VISIT_POINTS } from "@/lib/visits";
 import { adjustmentNote, rewardOff } from "@/lib/points-history";
 import { dateShort, points } from "../format";
-import { Empty, Panel, SpecPanel } from "../ui";
+import { Empty, Panel, SectionHead, SpecPanel, STACK } from "../ui";
 import { BadgeCabinet, StreakPanel } from "./Badges";
 
 // What each line of their history says. Never a staff member's name: a
@@ -62,7 +62,7 @@ export default function PointsView({
   const used = Math.abs(ledger.filter((l) => l.reason === "redeem").reduce((s, l) => s + l.delta, 0));
 
   return (
-    <div className="space-y-10">
+    <div className={STACK}>
       <SpecPanel
         title="Your points"
         aside={`${POINTS_PER_REWARD} = $${REWARD_VALUE} off`}
@@ -109,18 +109,21 @@ export default function PointsView({
       </Panel>
 
       <section>
-        <h2 className="font-display mb-4 text-2xl">History</h2>
+        <SectionHead title="History" />
         {ledger.length === 0 ? (
           <Empty>No points activity yet.</Empty>
         ) : (
+          // Four columns from a tablet up. On a phone, two: the date goes
+          // under what happened and the balance under the change, so
+          // nothing scrolls sideways.
           <div className="sheet overflow-x-auto">
-            <table className="w-full min-w-[520px] text-[15px]">
+            <table className="w-full text-[15px]">
               <thead>
                 <tr className="border-b-2 border-[var(--foreground)] text-left">
-                  <th className="spec-k px-4 py-3">Date</th>
+                  <th className="spec-k hidden px-4 py-3 sm:table-cell">Date</th>
                   <th className="spec-k px-4 py-3">What happened</th>
                   <th className="spec-k px-4 py-3 text-right">Change</th>
-                  <th className="spec-k px-4 py-3 text-right">Balance</th>
+                  <th className="spec-k hidden px-4 py-3 text-right sm:table-cell">Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -128,7 +131,7 @@ export default function PointsView({
                   const d = describe(l);
                   return (
                     <tr key={l.id} className="border-t border-[var(--border)]">
-                      <td className="spec-code whitespace-nowrap px-4 py-3">{dateShort(l.createdAt)}</td>
+                      <td className="spec-code hidden whitespace-nowrap px-4 py-3 sm:table-cell">{dateShort(l.createdAt)}</td>
                       <td className="px-4 py-3">
                         {d.href ? (
                           <Link href={d.href} className="font-bold hover:underline">
@@ -137,12 +140,14 @@ export default function PointsView({
                         ) : (
                           d.title
                         )}
+                        <div className="spec-code mt-0.5 sm:hidden">{dateShort(l.createdAt)}</div>
                       </td>
-                      <td className={`font-display whitespace-nowrap px-4 py-3 text-right tabular-nums ${l.delta < 0 ? "text-[var(--accent)]" : "text-[var(--success-text)]"}`}>
+                      <td className={`font-display whitespace-nowrap px-4 py-3 text-right align-top tabular-nums sm:align-middle ${l.delta < 0 ? "text-[var(--accent)]" : "text-[var(--success-text)]"}`}>
                         {l.delta > 0 ? "+" : "−"}
                         {points(Math.abs(l.delta))}
+                        <div className="mt-0.5 font-sans text-xs text-[var(--muted)] sm:hidden">Bal. {points(l.balanceAfter)}</div>
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{points(l.balanceAfter)}</td>
+                      <td className="hidden whitespace-nowrap px-4 py-3 text-right tabular-nums sm:table-cell">{points(l.balanceAfter)}</td>
                     </tr>
                   );
                 })}

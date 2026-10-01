@@ -3,6 +3,7 @@ import type { Receipt } from "@/lib/data/member-account";
 import MoviePoster from "@/components/MoviePoster";
 import { money, points, showtime } from "../../../format";
 import { ProofStamp, SpecFoot } from "@/components/print";
+import { TAP } from "../../../ui";
 
 const TZ = "America/Chicago";
 
@@ -16,23 +17,24 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/account/purchases" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--foreground)]">
+        <Link href="/account/purchases" className="-my-3 inline-block py-3 text-sm font-bold text-[var(--muted)] hover:text-[var(--foreground)]">
           ← All purchases
         </Link>
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Full width on a phone, in a row from a tablet up. */}
+        <div className="grid w-full gap-3 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
           {ticketHref && (
-            <Link href={ticketHref} className="btn-secondary px-4 py-2 text-sm">
+            <Link href={ticketHref} className={`btn-secondary ${TAP} px-4 py-2 text-sm`}>
               Show tickets
             </Link>
           )}
-          <a href={`/account/purchases/${kind}/${id}/pdf`} className="btn-primary px-4 py-2 text-sm">
+          <a href={`/account/purchases/${kind}/${id}/pdf`} className={`btn-primary ${TAP} px-4 py-2 text-sm`}>
             Download PDF receipt
           </a>
         </div>
       </div>
 
       <article className="sheet crop mx-auto max-w-xl !bg-white">
-        <header className="flex items-end justify-between gap-4 rounded-t-[4px] bg-[var(--foreground)] px-6 py-5 text-[var(--background)]">
+        <header className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3 rounded-t-[4px] bg-[var(--foreground)] px-4 py-4 text-[var(--background)] sm:px-6 sm:py-5">
           <div>
             <div className="font-display text-lg leading-tight">Royale Cinema Lounge</div>
             <div className="text-xs opacity-70">715 E Broadway, Joplin, MO 64801</div>
@@ -47,13 +49,13 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
         </header>
         <div className="h-1 bg-[var(--accent)]" />
 
-        <div className="space-y-5 p-6">
+        <div className="space-y-5 p-4 sm:p-6">
           <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
             <div>
               <dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">Date</dt>
               <dd>
                 {when.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: TZ })},{" "}
-                {when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ })}
+                <span className="whitespace-nowrap">{when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ })}</span>
               </dd>
             </div>
             <div>
@@ -71,8 +73,8 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
               <div className="w-12 shrink-0">
                 <MoviePoster posterUrl={r.screening.posterUrl} title={r.screening.title} sizes="48px" />
               </div>
-              <div>
-                <div className="font-bold">{r.screening.title}</div>
+              <div className="min-w-0">
+                <div className="font-bold break-words">{r.screening.title}</div>
                 <div className="text-sm text-[var(--muted)]">
                   {showtime(r.screening.startsAt)} · {r.screening.room}
                 </div>
@@ -130,7 +132,7 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
             </div>
           )}
         </div>
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-dashed border-[var(--border)] px-6 py-4 text-xs text-[var(--muted)]">
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-dashed border-[var(--border)] px-4 py-4 text-xs text-[var(--muted)] sm:px-6">
           Questions about this receipt? info@royalecinemajoplin.com · 417-281-4172
         </footer>
         <SpecFoot />

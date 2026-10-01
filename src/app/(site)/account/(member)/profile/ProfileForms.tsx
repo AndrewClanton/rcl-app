@@ -86,7 +86,7 @@ export function ProfileDetailsForm({
         )}
       </label>
       <div className="flex items-center gap-3 sm:col-span-2">
-        <button className="btn-primary !px-5 !py-2 text-sm" disabled={busy || !dirty}>
+        <button className="btn-primary min-h-11 !px-5 !py-2 text-sm" disabled={busy || !dirty}>
           {busy ? "Saving…" : "Save changes"}
         </button>
         {msg && <span className={`text-sm ${msg.ok ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}`}>{msg.text}</span>}
@@ -105,7 +105,7 @@ export function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
   if (!open) {
     return (
       <div className="flex flex-wrap items-center gap-3">
-        <button type="button" className="btn-secondary !px-4 !py-2 text-sm" onClick={() => setOpen(true)}>
+        <button type="button" className="btn-secondary min-h-11 !px-4 !py-2 text-sm" onClick={() => setOpen(true)}>
           {hasPassword ? "Change password" : "Set a password"}
         </button>
         {msg && <span className="text-sm text-[var(--success-text)]">{msg.text}</span>}
@@ -140,10 +140,10 @@ export function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
         <input id="confirm-password" type="password" className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
       </label>
       <div className="flex items-center gap-3">
-        <button className="btn-primary !px-5 !py-2 text-sm" disabled={busy}>
+        <button className="btn-primary min-h-11 !px-5 !py-2 text-sm" disabled={busy}>
           {busy ? "Saving…" : "Save password"}
         </button>
-        <button type="button" className="text-sm text-[var(--muted)] hover:underline" onClick={() => setOpen(false)}>
+        <button type="button" className="min-h-11 px-2 text-sm text-[var(--muted)] hover:underline" onClick={() => setOpen(false)}>
           Cancel
         </button>
         {msg && !msg.ok && <span className="text-sm text-[var(--danger-text)]">{msg.text}</span>}

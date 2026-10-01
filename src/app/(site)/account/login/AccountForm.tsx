@@ -221,7 +221,7 @@ export default function AccountForm({
                 type="button"
                 onClick={() => handleOAuth("google")}
                 disabled={!!oauthBusy}
-                className="flex w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
+                className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
               >
                 <GoogleMark />
                 {oauthBusy === "google" ? "Opening Google…" : "Continue with Google"}
@@ -232,7 +232,7 @@ export default function AccountForm({
                 type="button"
                 onClick={() => handleOAuth("facebook")}
                 disabled={!!oauthBusy}
-                className="flex w-full items-center justify-center gap-3 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#166fe5] disabled:opacity-60"
+                className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#166fe5] disabled:opacity-60"
               >
                 <FacebookMark />
                 {oauthBusy === "facebook" ? "Opening Facebook…" : "Continue with Facebook"}
@@ -249,7 +249,7 @@ export default function AccountForm({
       <div className="mb-4 flex gap-2">
         <button
           type="button"
-          className={`chip ${mode === "signin" ? "chip-selected" : ""}`}
+          className={`chip min-h-11 ${mode === "signin" ? "chip-selected" : ""}`}
           onClick={() => {
             setMode("signin");
             setError(null);
@@ -259,7 +259,7 @@ export default function AccountForm({
         </button>
         <button
           type="button"
-          className={`chip ${mode === "signup" ? "chip-selected" : ""}`}
+          className={`chip min-h-11 ${mode === "signup" ? "chip-selected" : ""}`}
           onClick={() => {
             setMode("signup");
             setError(null);
@@ -299,7 +299,7 @@ export default function AccountForm({
       </button>
 
       {mode === "signin" && (
-        <button type="button" className="mt-3 text-xs text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-60" disabled={submitting} onClick={handleSignInHelp}>
+        <button type="button" className="mt-1 min-h-11 text-xs text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-60" disabled={submitting} onClick={handleSignInHelp}>
           {HELP_LABEL}
         </button>
       )}

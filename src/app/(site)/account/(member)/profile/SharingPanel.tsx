@@ -169,7 +169,7 @@ export default function SharingPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button className="btn-primary !px-5 !py-2 text-sm" disabled={!ready || busy || !dirty}>
+          <button className="btn-primary min-h-11 !px-5 !py-2 text-sm" disabled={!ready || busy || !dirty}>
             {busy ? "Saving…" : "Save"}
           </button>
           {msg && (
@@ -180,15 +180,17 @@ export default function SharingPanel({
         </div>
 
         {live && !dirty && (
+          // On a phone the link gets its own line and the buttons share the
+          // one under it; from a tablet up, all in a row.
           <div className="flex flex-wrap items-center gap-2 rounded-[6px] border-2 border-[var(--foreground)] bg-[var(--gold)] p-3">
-            <span className="min-w-0 flex-1 truncate font-mono text-sm font-bold" title={url}>
+            <span className="min-w-0 basis-full font-mono text-sm font-bold break-all sm:basis-0 sm:flex-1 sm:truncate" title={url}>
               {HOST}
               {profilePath(savedHandle)}
             </span>
-            <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" onClick={() => void shareLink()}>
+            <button type="button" className="btn-secondary min-h-11 flex-1 !px-3 !py-1.5 text-sm sm:flex-none" onClick={() => void shareLink()}>
               {copied ? "Copied!" : "Share link"}
             </button>
-            <a href={profilePath(savedHandle)} target="_blank" rel="noopener" className="btn-secondary !px-3 !py-1.5 text-sm">
+            <a href={profilePath(savedHandle)} target="_blank" rel="noopener" className="btn-secondary inline-flex min-h-11 flex-1 items-center justify-center !px-3 !py-1.5 text-sm sm:flex-none">
               Open ↗
             </a>
           </div>
