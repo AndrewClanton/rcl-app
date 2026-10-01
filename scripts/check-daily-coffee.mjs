@@ -83,7 +83,7 @@ check("not when it's off (used, unknown, or removed)", registerTotals([coffee()]
 // existed (the old formula, copied here).
 function before(lines, member, monthly, taxFree, redeemed) {
   const subtotal = cents(lines.reduce((s, l) => s + l.unit * l.qty, 0));
-  const rate = !member ? 0 : member.tier === "Insiders+" ? 0.1 : 0.05;
+  const rate = !member ? 0 : member.tier === "Insiders+" ? 0.1 : 0;
   const tierDiscount = cents(subtotal * rate);
   const monthlyDiscount = monthly ? cents(subtotal * 0.1) : 0;
   const canRedeem = !!member && member.points >= POINTS_PER_REWARD;

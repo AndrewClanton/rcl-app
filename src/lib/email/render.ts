@@ -234,10 +234,9 @@ function happeningText(h: HappeningData, L: RenderLinks): string {
   return `${dayLabel(h.startsAt)}, ${timeLabel(h.startsAt)}: ${h.title}${h.note ? ` (${h.note})` : ""}\n  Add to my calendar: ${L.href(calendarUrl(h.id), `Calendar: ${h.title}`)}`;
 }
 
-// The money off matches the register (memberDiscountRate in pos/PosApp.tsx):
-// 5% for Insiders, 10% for Insiders+, on the whole order.
+// Plain Insiders get points, not money off; the 10% at the register is an
+// Insiders+ perk (memberDiscountRate in lib/register-totals.ts).
 const INSIDER_PERKS: [string, string][] = [
-  ["5% off everything", "Scan your member card at the register and 5% comes off the whole order: bar, kitchen and box office."],
   ["Points on everything", "1 point for every $1 at the bar, kitchen and box office. 100 points = $5 off."],
   ["Check in, get points", "Scan in at the door: every visit earns 5 points, and badges earn more."],
   ["The weekly lineup", "Every week's films, including the Film Archive classics we only share with members."],

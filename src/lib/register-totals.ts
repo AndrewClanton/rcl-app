@@ -18,7 +18,8 @@ import type { MemberTier } from "@/lib/types";
 //   add-ons not included, when dailyPerk is on and the member is
 //   Insiders+. It comes off first, so the percentage discounts are figured
 //   on what's left (10% off a free coffee is nothing).
-// - member discount (5%, 10% for Insiders+), the monthly member 10%, and a
+// - member discount (10%, Insiders+ only: plain Insiders earn points
+//   instead of a discount), the monthly member 10%, and a
 //   points reward, capped at what's left after the other two.
 // Not in here: the tip and vouchers. A tip goes on top of the total (asked
 // on the register for a tab when there's no reader, or picked on the card
@@ -40,7 +41,7 @@ export type TotalsMember = { tier: MemberTier; points: number } | null;
 
 export function memberDiscountRate(member: TotalsMember) {
   if (!member) return 0;
-  return member.tier === "Insiders+" ? 0.1 : 0.05;
+  return member.tier === "Insiders+" ? 0.1 : 0;
 }
 
 export type TotalsLine = { unit: number; qty: number; perkBase?: number | null };
