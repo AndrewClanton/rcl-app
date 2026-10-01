@@ -25,15 +25,8 @@ export default function SiteChrome({ children }: { children: React.ReactNode }) 
         {/* Tighter on a phone, where the nav wraps to three rows and the
             header stays on screen the whole time. */}
         <div className="mx-auto max-w-5xl px-4 py-3 text-center sm:py-5">
-          {/* The wordmark: ROYALE in red with an ink drop shadow, like a
-              printed marquee, and CINEMA LOUNGE spaced out beside it. */}
-          <Link
-            href="/"
-            aria-label="Royale Cinema Lounge, home"
-            className="font-display inline-flex flex-wrap items-baseline justify-center gap-x-2.5 text-3xl leading-none sm:text-4xl"
-          >
-            <span className="text-[var(--accent)] [text-shadow:2px_2px_0_var(--foreground)] sm:[text-shadow:3px_3px_0_var(--foreground)]">ROYALE</span>
-            <span className="text-[0.6em] tracking-[0.2em]">CINEMA LOUNGE</span>
+          <Link href="/" className="font-display inline-block text-[1.75rem] sm:text-[2.125rem]">
+            ROYALE CINEMA LOUNGE
           </Link>
           <nav className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-sm font-bold text-[var(--muted)] sm:mt-3">
             <Link href="/showtimes" className="transition-colors hover:text-[var(--accent)]">
