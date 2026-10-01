@@ -9,6 +9,7 @@ import { hasPlusPerks } from "@/lib/plus-status";
 import { exactEmail, sameEmail } from "@/lib/email-match";
 import { memberHasBookingFor } from "@/lib/data/screening-detail";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { isWithinPublicWindow } from "@/lib/public-window";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -51,6 +52,14 @@ export async function startCheckout(fields: {
     .eq("id", fields.screeningId)
     .single();
   if (screeningErr || !screening) return { ok: false, error: "Screening not found." };
+  // Sold online only while the showtime is on the public site: once it has
+  // started its page is gone too (a late arrival buys at the box office), and
+  // one further out than the public window isn't on sale yet.
+  if (!isWithinPublicWindow(screening.starts_at)) {
+    return new Date(screening.starts_at).getTime() < Date.now()
+      ? { ok: false, error: "This showing has already started. Tickets are at the box office, subject to availability." }
+      : { ok: false, error: "Screening not found." };
+  }
   const movie = screening.movie as unknown as { title: string };
 
   const { data: existingBookings, error: bookingsErr } = await supabase

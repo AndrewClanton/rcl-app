@@ -422,6 +422,36 @@ body {
   }
 }
 
+/* Insiders+ members see their badge; everyone else sees the pitches. Both
+   are in the page; the browser picks (data-plus on .site, set by
+   components/site/SiteHeaderSync.tsx). Outside any layer so it wins over
+   display utilities like .flex. */
+.site[data-plus] .plus-hide,
+.site:not([data-plus]) .plus-show {
+  display: none !important;
+}
+
+/* The sticky header's height, so an in-page jump (#d-2026-10-02, #insiders,
+   #faq) stops just below it instead of under it. SiteHeaderSync measures
+   the real height; these are the fallbacks until it has (the phone nav
+   wraps to three rows, a tablet's to two, a desktop's to one). */
+.site {
+  --site-header-h: 9rem;
+}
+@media (min-width: 640px) {
+  .site {
+    --site-header-h: 8.75rem;
+  }
+}
+@media (min-width: 1024px) {
+  .site {
+    --site-header-h: 7.25rem;
+  }
+}
+.site-anchor {
+  scroll-margin-top: calc(var(--site-header-h) + 0.75rem);
+}
+
 @layer components {
   /* A showtime you can tap: an ink-ruled ticket stub with a press shadow. */
   .time-chip {
