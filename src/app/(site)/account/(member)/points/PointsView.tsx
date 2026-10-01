@@ -4,15 +4,19 @@ import type { VisitSummary } from "@/lib/visits-server";
 import type { PastVisits } from "@/lib/data/fortis-lookup";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { VISIT_POINTS } from "@/lib/visits";
+import { CARD_UNDO_NOTE } from "@/lib/card-match";
 import { adjustmentNote, rewardOff } from "@/lib/points-history";
 import { dateShort, points } from "../format";
 import { Empty, Panel, SectionHead, SpecPanel, STACK } from "../ui";
 import { BadgeCabinet, StreakPanel } from "./Badges";
 
 // What each line of their history says. Never a staff member's name: a
-// change made by hand shows only the reason it was given.
+// change made by hand shows only the reason it was given. The receipt link
+// is only for a sale or booking whose receipt is on their account (not
+// points a linked card paid them for someone else's purchase,
+// lib/member-cards.ts).
 function describe(l: LedgerEntry): { title: string; href: string | null } {
-  const receipt = l.orderId ? `/account/purchases/order/${l.orderId}` : l.bookingId ? `/account/purchases/ticket/${l.bookingId}` : null;
+  const receipt = !l.receipt ? null : l.orderId ? `/account/purchases/order/${l.orderId}` : l.bookingId ? `/account/purchases/ticket/${l.bookingId}` : null;
   // "Order #1234" -> "order #1234", "2 tickets, bought online" as is.
   const what = l.note ? l.note.replace(/^Order #/, "order #") : null;
   switch (l.reason) {
@@ -23,6 +27,7 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       return { title: `Used for ${rewardOff(l.note, l.delta)}${order ? ` ${order}` : ""}`, href: receipt };
     }
     case "refund":
+      if (l.note === CARD_UNDO_NOTE) return { title: "Taken back: this purchase wasn't yours", href: null };
       return { title: l.note ?? "Purchase refunded", href: receipt };
     case "welcome_bonus":
       return { title: l.note ?? "Welcome bonus", href: null };
@@ -38,6 +43,9 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       // Card purchases from before the new system.
       return { title: "Points from your past visits", href: null };
     default: {
+      // Points given for a sale at the register (after a card mix-up) are
+      // tied to it; other adjustments aren't.
+      if (l.orderId && what) return { title: `Earned on ${what}`, href: receipt };
       const note = adjustmentNote(l.note);
       return { title: note ? `From the Royale crew: ${note}` : "Adjusted by the Royale crew", href: null };
     }

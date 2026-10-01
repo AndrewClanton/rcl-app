@@ -329,7 +329,19 @@ const NOT_SET = {
   phone_digits: "generated from phone",
   erased_at: "the merge refuses an erased account",
   erased_by: "the merge refuses an erased account",
+  // Card linking's on/off switch (20261001220000_member_cards.sql): decided
+  // by that migration's trigger on member_merges, which runs inside the
+  // merge (off on either account stays off), and this update leaves it be.
+  link_cards: "decided by the member_cards_member_merged trigger",
 };
+{
+  const cards = readdirSync(MIGRATIONS).find((f) => f.endsWith("_member_cards.sql"));
+  const text = cards ? readFileSync(join(MIGRATIONS, cards), "utf8") : "";
+  check(
+    "card linking turned off on either account stays off after a merge",
+    /create trigger member_cards_member_merged after insert on member_merges/.test(text) && /update members k set link_cards = false/.test(text),
+  );
+}
 const update = body.slice(body.indexOf("update members set"));
 for (const col of [...memberColumns].sort()) {
   if (col in NOT_SET) continue;
@@ -350,6 +362,7 @@ const PREVIEW_SKIP = {
   legacy_plus: "either account's, like monthly_member",
   tagline_hidden_by: "comes with tagline_hidden_at",
   profile_hidden_by: "comes with profile_hidden_at",
+  link_cards: "a switch the merge decides on its own (off on either stays off); nothing to choose",
 };
 const readCols = MERGE_MEMBER_COLUMNS.split(",").map((c) => c.trim());
 const unread = [...memberColumns].filter((c) => !readCols.includes(c) && !(c in PREVIEW_SKIP));

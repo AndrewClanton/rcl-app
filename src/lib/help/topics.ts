@@ -205,6 +205,12 @@ export const HELP_TOPICS = {
     body:
       "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a confirmed check-in, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
   },
+  "card-linked-points": {
+    title: "Points by card, when nobody's attached",
+    area: "Register: members and the door",
+    body:
+      "Once a card has paid for a member's sales with their account on the order on 2 different days (or they paid with it online, signed in), it's linked to them, so a later card sale with nobody attached still earns them the points. They see only the points, not what was bought, and tickets on that sale stay off their account. The register says so right after the sale (\"23 points to Sarah · Visa •••• 4242\"), with an Undo that asks which it was: someone else paid with Sarah's card (the card stays hers), or it isn't her card at all (it's unlinked). Then you can give the points to whoever paid. Undo works for 2 minutes on that register; after that a manager undoes it on the member's page. A card linked to two accounts (a family card) never picks on its own; the register asks who's paying. A staff member's own card, or a card already on someone else's account, is linked only by a manager, from a sale on the member's page. We keep the card type, its last four digits and Stripe's code for the card, never the number, and members can remove a card on their account.",
+  },
   "door-scanner": {
     title: "Scanning tickets and member cards",
     area: "Register: members and the door",

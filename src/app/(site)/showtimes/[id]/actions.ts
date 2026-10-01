@@ -193,7 +193,10 @@ export async function startCheckout(fields: {
       mode: "payment",
       customer_email: email,
       line_items: lineItems,
-      metadata: { booking_id: booking.id, screening_id: fields.screeningId },
+      // signed_in_member: only a signed-in member's own card is linked to
+      // them afterwards (lib/member-cards.ts), not the card of whoever
+      // typed their email.
+      metadata: { booking_id: booking.id, screening_id: fields.screeningId, ...(signedInSelf ? { signed_in_member: signedInSelf.id } : {}) },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
       success_url: `${origin}/showtimes/${fields.screeningId}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/showtimes/${fields.screeningId}?checkout=cancelled`,

@@ -42,18 +42,25 @@ function money(n: number) {
 // Takes back the points a refunded order earned (and returns any it
 // redeemed). reverse_purchase_points does that in one go, but only once per
 // order: after a partial refund has already taken some back, it would do
-// nothing. So once an order has a partial refund, the rest is worked out
-// here from the order's points history instead.
+// nothing. So once an order has a partial refund (or a card match on it was
+// undone, or its points were given to another member after that: see
+// lib/member-cards.ts), what each member still holds from it is worked out
+// here from the order's points history instead, and taken back.
 async function reverseOrderPoints(orderId: string, by: string) {
   const { data: rows, error } = await createAdminClient().from("points_ledger").select("member_id, delta, reason").eq("order_id", orderId);
-  const earlier = (rows ?? []).filter((r) => r.reason === "refund");
-  if (error || earlier.length === 0) return reversePurchasePoints({ orderId }, by);
-  const own = (rows ?? []).filter((r) => r.reason === "purchase" || r.reason === "redeem");
-  const memberId = own[0]?.member_id as string | undefined;
-  const net = own.reduce((s, r) => s + Number(r.delta), 0);
-  const alreadyBack = earlier.reduce((s, r) => s + Number(r.delta), 0);
-  const rest = round2(-net - alreadyBack);
-  if (memberId && rest !== 0) await applyPoints({ memberId, delta: rest, reason: "refund", orderId, note: "Rest of the purchase refunded", by });
+  if (error || !(rows ?? []).some((r) => r.reason === "refund" || r.reason === "adjustment")) return reversePurchasePoints({ orderId }, by);
+  const held = new Map<string, { net: number; refundedBefore: boolean }>();
+  for (const r of rows ?? []) {
+    if (!["purchase", "redeem", "refund", "adjustment"].includes(r.reason)) continue;
+    const cur = held.get(r.member_id) ?? { net: 0, refundedBefore: false };
+    cur.net += Number(r.delta);
+    if (r.reason === "refund") cur.refundedBefore = true;
+    held.set(r.member_id, cur);
+  }
+  for (const [memberId, h] of held) {
+    const rest = round2(-h.net);
+    if (rest !== 0) await applyPoints({ memberId, delta: rest, reason: "refund", orderId, note: h.refundedBefore ? "Rest of the purchase refunded" : "Purchase refunded", by });
+  }
 }
 
 export async function refundOrder(orderId: string, pin: string): Promise<ApprovalResult> {
@@ -186,10 +193,12 @@ export async function refundOrderPart(orderId: string, amountIn: number, reasonI
     };
   }
 
-  // Points back in proportion to the part refunded (earned on the whole order).
+  // Points back in proportion to the part refunded (earned on the whole
+  // order), from the member on it now. (Points given for the order after a
+  // card match was undone are an adjustment tied to it: lib/member-cards.ts.)
   if (order.member_id && plan.share > 0) {
-    const { data: rows } = await supabase.from("points_ledger").select("delta, reason").eq("order_id", orderId);
-    const earned = (rows ?? []).filter((r) => r.reason === "purchase").reduce((s, r) => s + Number(r.delta), 0);
+    const { data: rows } = await supabase.from("points_ledger").select("delta, reason").eq("order_id", orderId).eq("member_id", order.member_id);
+    const earned = (rows ?? []).filter((r) => r.reason === "purchase" || (r.reason === "adjustment" && Number(r.delta) > 0)).reduce((s, r) => s + Number(r.delta), 0);
     const alreadyBack = (rows ?? []).filter((r) => r.reason === "refund").reduce((s, r) => s + Number(r.delta), 0); // negative
     const takeBack = round2(Math.min(earned * plan.share, earned + alreadyBack));
     if (takeBack > 0) {

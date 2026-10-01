@@ -217,6 +217,9 @@ export interface Member {
   price_tier_set_by: string | null;
   price_tier_set_at: string | null;
   email_opt_in?: boolean;
+  // Their own switch for card-linked points (lib/member-cards.ts). Optional:
+  // not every members query selects it.
+  link_cards?: boolean;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;

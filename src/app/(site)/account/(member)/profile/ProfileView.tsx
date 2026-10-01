@@ -4,6 +4,8 @@ import MemberAvatar from "@/components/MemberAvatar";
 import SignOutButton from "../../SignOutButton";
 import { GooglePhotoButton, PhotoUploadButton, RemovePhotoButton } from "../../PhotoButtons";
 import { EmailPreference, PasswordForm, ProfileDetailsForm } from "./ProfileForms";
+import { LinkedCards } from "./LinkedCards";
+import type { MyLinkedCard } from "@/lib/data/member-account";
 import { Panel, TAP } from "../ui";
 import { birthdayToInput } from "@/lib/visits";
 import ProfilePanels from "./ProfilePanels";
@@ -13,11 +15,13 @@ export default function ProfileView({
   providers,
   googlePhoto,
   enabled,
+  cards,
 }: {
   member: Member;
   providers: string[];
   googlePhoto: string | null;
   enabled: { google: boolean; facebook: boolean };
+  cards: MyLinkedCard[];
 }) {
   const has = new Set(providers);
   return (
@@ -85,6 +89,12 @@ export default function ProfileView({
       <Panel title="Emails">
         <div className="p-5">
           <EmailPreference optIn={member.email_opt_in !== false} />
+        </div>
+      </Panel>
+
+      <Panel title="Cards linked to your account">
+        <div className="p-5">
+          <LinkedCards cards={cards} linkCards={member.link_cards !== false} />
         </div>
       </Panel>
 

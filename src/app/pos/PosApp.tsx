@@ -52,6 +52,8 @@ import UnsavedSaleBanner, {
 } from "./UnsavedSaleBanner";
 import { pickCashier, useCashierPick } from "./cashier-pick";
 import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
+import CardNoticeBanner from "./CardNotice";
+import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
 import { cents, ENFORCE_REGISTER_TOTALS, pointsEarned, registerTotals } from "@/lib/register-totals";
 import {
@@ -224,6 +226,11 @@ export default function PosApp({
     null
   );
   const [toast, setToast] = useState<string | null>(null);
+  // What the last card sale's card did: points found by the card, a card
+  // newly linked, and so on (CardNotice.tsx), newest first. A few are kept,
+  // so the next sale's notice doesn't take away the last one's Undo while
+  // its 2 minutes are still running. `key` starts each one fresh.
+  const [cardNotices, setCardNotices] = useState<{ key: number; notice: CardNotice }[]>([]);
   const devices = useDeviceSettings();
   // Where this register prints: its station's printer through the website,
   // or straight to a printer IP (Devices).
@@ -806,6 +813,7 @@ export default function PosApp({
     };
     let orderNumber: number;
     let warning: string | undefined;
+    let card: CardNotice | null;
     try {
       const r = await completeOrder(order);
       if (!r.ok) {
@@ -819,6 +827,7 @@ export default function PosApp({
       }
       orderNumber = r.orderNumber;
       warning = r.warning;
+      card = r.card;
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
@@ -840,10 +849,18 @@ export default function PosApp({
       if (payment.stripePaymentIntentId && !queued) clearPendingReaderSale(payment.stripePaymentIntentId);
     }
     clearHeld();
+    // Each notice names its order and goes when its 2 minutes are up, so a
+    // quick sale next doesn't take away the last card sale's Undo.
+    if (card) {
+      const next = { key: Date.now(), notice: card };
+      setCardNotices((list) => [next, ...list.filter((n) => n.notice.orderId !== next.notice.orderId)].slice(0, 3));
+    }
     const receipt: ReceiptData = {
       orderNumber,
       at: new Date().toISOString(),
       cashier: employees.find((e) => e.id === order.employeeId)?.name ?? null,
+      // Only a member staff attached. One found by the card isn't printed:
+      // whoever paid takes the receipt, and it may not be their card.
       member: sale.memberName,
       orderName: order.orderName.trim() || null,
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
@@ -1142,6 +1159,9 @@ export default function PosApp({
               {toast}
             </div>
           )}
+          {cardNotices.map((n) => (
+            <CardNoticeBanner key={n.key} notice={n.notice} onClose={() => setCardNotices((list) => list.filter((x) => x.key !== n.key))} />
+          ))}
           {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
             <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
               <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>

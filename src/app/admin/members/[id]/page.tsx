@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import { getStaffSession, hasAdminAccess } from "@/lib/auth";
-import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberPurchaseHistory } from "@/lib/data/members";
+import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
+import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberCards, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getGiftsForMember } from "@/lib/gift-membership";
 import { getPointsHistory } from "@/lib/data/points-history";
@@ -23,7 +23,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(id, role);
   if (!member) notFound();
 
-  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp] = await Promise.all([
+  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp, cards] = await Promise.all([
     getMemberPurchaseHistory(id),
     getCommunityPrograms(),
     getGiftsForMember(id),
@@ -35,6 +35,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     // login): managers and up (lib/sign-in-help.ts). A cashier's page
     // never looks up the login.
     member.erased_at ? Promise.resolve(null) : signInHelpCard(member, session?.role ?? null),
+    member.erased_at ? Promise.resolve([]) : getMemberCards(id),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
   // Cashiers get the on/off switch only; the email history, engagement and
@@ -55,6 +56,8 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       pointsHistory={pointsHistory}
       pastVisits={pastVisits}
       signInHelp={signInHelp}
+      cards={cards}
+      canUndoCardMatch={!!session && hasManagerAccess(session.role)}
     />
     {emailPanel && (
       <div className="mt-6">
