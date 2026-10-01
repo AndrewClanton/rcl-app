@@ -268,6 +268,7 @@ export function salePoints(o: Pick<SaleOrder, "subtotal" | "tier_discount" | "mo
     redemption_discount: Number(o.redemption_discount ?? 0),
   });
 }
+
 const SALE_PAYMENT = "id, fingerprint, livemode, brand, last4, wallet, credited_member_id, credited_how, undone_at";
 
 // A register sale and the card that paid it (null until it's been read).
