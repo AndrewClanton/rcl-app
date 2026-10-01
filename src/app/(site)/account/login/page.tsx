@@ -7,6 +7,14 @@ import { pendingClaimFor } from "@/lib/member-claim-token";
 import { isClaimPath } from "@/lib/claim-link";
 import { PageMasthead } from "@/components/print";
 import AccountForm from "./AccountForm";
+import { pageMeta } from "@/lib/seo/page-meta";
+
+export const metadata = pageMeta({
+  title: "Sign in",
+  description: "Sign in to your Royale Cinema Lounge Insiders account: your tickets, points and membership.",
+  path: "/account/login",
+  noindex: true,
+});
 
 const ERRORS: Record<string, string> = {
   oauth_cancelled: "Sign-in was cancelled. Try again, or use your email.",

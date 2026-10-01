@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo/page-meta";
 import Link from "next/link";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -6,7 +6,8 @@ import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { PageMasthead, SpecFoot } from "@/components/print";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Gift membership", robots: { index: false, follow: false } };
+// A buyer's own receipt page: kept out of search results.
+export const metadata = pageMeta({ title: "Gift membership", description: "An Insiders+ gift membership from Royale Cinema Lounge.", path: "/membership/gift", noindex: true });
 
 // Where Stripe sends the buyer after paying for a gift at the box office
 // (on the staff device, or their own phone from a texted link). The

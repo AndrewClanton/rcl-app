@@ -1,14 +1,17 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { canViewLegalPages, LEGAL_EFFECTIVE_DATE, LEGAL_PAGES_PUBLISHED } from "@/lib/legal";
 import LegalPage from "@/components/LegalPage";
+import { pageMeta } from "@/lib/seo/page-meta";
 
-export const metadata: Metadata = {
+// Static: built once. (While LEGAL_PAGES_PUBLISHED is on, nothing here reads
+// the visitor; switched off, only an admin can open it, per request.)
+export const metadata = pageMeta({
   title: "Deleting your data",
   description: "How to ask Royale Cinema Lounge to delete your account and the information attached to it.",
-  robots: LEGAL_PAGES_PUBLISHED ? undefined : { index: false, follow: false },
-};
+  path: "/data-deletion",
+  noindex: !LEGAL_PAGES_PUBLISHED,
+});
 
 // Meta requires a public "user data deletion instructions" page for any app
 // that offers Facebook sign-in; this is it.
