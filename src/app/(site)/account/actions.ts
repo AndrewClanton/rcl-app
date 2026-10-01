@@ -26,9 +26,27 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   if (!user) return { ok: false, error: "Not signed in." };
   const result = await linkMemberForUser(user, name);
   if (result.ok) return { ok: true };
-  // Don't leave them half signed in to a login that owns nothing.
-  if (result.reason === "unproven") await supabase.auth.signOut();
+  // Don't leave them half signed in to a login that owns nothing (this
+  // device only).
+  if (result.reason === "unproven") await supabase.auth.signOut({ scope: "local" });
   return { ok: false, error: result.error };
+}
+
+// Where the Reset password page sends someone once their new password is
+// saved. A staff login goes to the back office and is never linked to a
+// member account: linking one whose email also has a member row used to
+// sign them out right after the password saved, so the page showed
+// "Auth session missing!" on a second press (Caleb, 10/1).
+export async function afterPasswordReset(): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Your password is saved, but this page lost its sign-in. Sign in with your new password." };
+  const { data: staff } = await createAdminClient().from("employees").select("id").eq("auth_user_id", user.id).maybeSingle();
+  if (staff) return { ok: true, to: "/admin" };
+  const linked = await linkMemberAccount();
+  return linked.ok ? { ok: true, to: "/account" } : linked;
 }
 
 // This device only (see app/login/actions.ts): a member signing out on a
