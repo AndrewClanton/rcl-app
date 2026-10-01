@@ -6,6 +6,7 @@ import { businessDay } from "@/lib/ops/time";
 import { cardLabel } from "@/lib/card-match";
 import { stripeKeyMode } from "@/lib/stripe";
 import { schemaMissing } from "@/lib/schema-missing";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -173,7 +174,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
       let q = supabase
         .from("orders")
         .select(
-          "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, items:order_items(name, quantity, unit_price, modifiers)"
+          "id, order_number, status, completed_at, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tax_free, tip, total, payment_method, payment_cash_amount, payment_card_amount, daily_perk_discount, items:order_items(name, quantity, unit_price, modifiers)"
         )
         .eq("id", id)
         .eq("member_id", member.id)
@@ -186,6 +187,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     if (!o || !o.completed_at) return null;
     const pts = await ledgerFor({ orderId: o.id });
     const discounts = [
+      { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
       { label: "Member discount", amount: Number(o.tier_discount) },
       { label: "Monthly member discount", amount: Number(o.monthly_discount) },
       { label: "Points reward", amount: Number(o.redemption_discount) },

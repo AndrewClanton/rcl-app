@@ -4,6 +4,7 @@ import type { TipWeek } from "@/lib/data/day-drill";
 import { datesIn, rangeLabel, shortDate, weekday } from "@/lib/report-periods";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
 import MembershipsCard from "./MembershipsCard";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import { BarList, Card, Columns, Delta, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
 // Reports -> Week and Month: the same screen for either. Every figure has
@@ -106,6 +107,7 @@ export default function PeriodView({
                 <Rows
                   rows={[
                     ...(s.discounts > 0 ? [{ label: "Member discounts", value: `−${money(s.discounts)}`, muted: true }] : []),
+                    ...(s.dailyCoffee > 0 ? [{ label: `${DAILY_COFFEE_LINE} · ${s.dailyCoffeeCount}`, value: `−${money(s.dailyCoffee)}`, muted: true }] : []),
                     ...(s.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(s.partialRefunds)}`, muted: true }] : []),
                     { label: "Net sales", value: money(s.netSales), strong: true },
                   ]}

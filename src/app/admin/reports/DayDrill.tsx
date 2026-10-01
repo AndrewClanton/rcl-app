@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 import type { DayOrder, DayReport } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
 import { BOOTHS_LABEL, FOOD_AND_DRINK, FOOD_AND_DRINK_CATEGORIES, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import { DRILL_PARAMS, closeDrill, forgetPush, setDrillParams, type DrillParam } from "./drill-nav";
 import DrillLink from "./DrillLink";
 import TipsDrill from "./TipsDrill";
@@ -238,7 +239,7 @@ function OrdersView({
   return (
     <>
       {view === "net" && (
-        <Section title={money(r.netSales)} subtitle="Net sales: what sold, before tax and tips, after member discounts and partial refunds.">
+        <Section title={money(r.netSales)} subtitle="Net sales: what sold, before tax and tips, after member discounts, Insiders+ daily coffees and partial refunds.">
           <Lines
             rows={[
               ...r.sold.map((s) => ({
@@ -260,6 +261,7 @@ function OrdersView({
                         : hrefFor({ show: "orders", cat: s.label }),
               })),
               ...(r.discounts > 0 ? [{ key: "disc", label: "Member discounts", value: `−${money(r.discounts)}`, muted: true }] : []),
+              ...(r.dailyCoffee > 0 ? [{ key: "coffee", label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true }] : []),
               ...(r.partialRefunds > 0 ? [{ key: "part", label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
               { key: "net", label: "Net sales", value: money(r.netSales), strong: true },
             ]}

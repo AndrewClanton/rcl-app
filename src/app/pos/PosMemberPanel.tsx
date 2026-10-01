@@ -9,6 +9,15 @@ import type { MemberPriceTier } from "@/lib/types";
 import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
+import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
+
+// An Insiders+ member's free daily coffee today, as the register knows it
+// (PosApp): undefined while it's looked up, null if it couldn't be.
+export interface PanelCoffee {
+  today: DailyCoffeeState | null | undefined;
+  onOrder: boolean;
+  retry: () => void;
+}
 
 const SIGNED_OUT = "The register couldn't reach the server. Check the connection, or sign in again if it has been a while.";
 
@@ -39,6 +48,7 @@ function confirmCopy(m: PosMember, tier: MemberPriceTier) {
 export default function PosMemberPanel({
   member,
   onChange,
+  coffee,
   employeeId,
   onRewardLine,
   onFind,
@@ -46,6 +56,8 @@ export default function PosMemberPanel({
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
+  // Set for an Insiders+ member: their free daily coffee today.
+  coffee: PanelCoffee | null;
   employeeId: string;
   // Puts a redeemed badge reward on the order as a $0 line.
   onRewardLine: (label: string) => void;
@@ -144,6 +156,7 @@ export default function PosMemberPanel({
           </div>
 
           {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
+          {coffee && <CoffeeToday coffee={coffee} />}
           <MemberRewards key={member.id} memberId={member.id} onRewardLine={onRewardLine} />
 
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
@@ -278,6 +291,40 @@ export default function PosMemberPanel({
           onCancel={() => setConfirmTier(null)}
         />
       )}
+    </div>
+  );
+}
+
+// "Free coffee today: ready / used at 9:14 AM". It goes on the order by
+// itself when a daily coffee item is rung (PosApp).
+function CoffeeToday({ coffee }: { coffee: PanelCoffee }) {
+  const { today, onOrder, retry } = coffee;
+  return (
+    <div className="mt-2 flex items-center gap-1 text-xs">
+      <span className="min-w-0 flex-1">
+        ☕ Free coffee today:{" "}
+        {today === undefined ? (
+          <span style={{ color: "var(--muted)" }}>checking…</span>
+        ) : today === null ? (
+          <>
+            <span style={{ color: "var(--muted)" }}>couldn&apos;t check</span>{" "}
+            <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={retry}>
+              Try again
+            </button>
+          </>
+        ) : today.usedAt ? (
+          <>
+            <strong>used at {coffeeTime(today.usedAt)}</strong>
+            {today.orderNumber !== null && <span style={{ color: "var(--muted)" }}> (#{today.orderNumber})</span>}
+          </>
+        ) : (
+          <>
+            <strong style={{ color: "var(--accent)" }}>ready</strong>
+            {onOrder && <span style={{ color: "var(--muted)" }}> · on this order</span>}
+          </>
+        )}
+      </span>
+      <InfoTip topic="daily-coffee" className="!mx-0" />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { LOYALTY_SUMMARY } from "@/lib/loyalty";
+import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
 import Image from "next/image";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
@@ -249,6 +250,7 @@ export default async function HomePage() {
               <Perk>
                 <strong>Free entry to every screening</strong>, unlimited
               </Perk>
+              <Perk>{DAILY_COFFEE_PERK}</Perk>
               <Perk>2 free booth reservations every month</Perk>
               <Perk>Concession and merch discounts</Perk>
               <Perk>First access to weekly titles and member events</Perk>

@@ -6,6 +6,7 @@ import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
 import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import MembershipsCard from "./MembershipsCard";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
@@ -129,6 +130,7 @@ export default function DayScreen({
                 <Rows
                   rows={[
                     ...(r.discounts > 0 ? [{ label: "Member discounts", value: `−${money(r.discounts)}`, muted: true, href: to({ show: "net" }) }] : []),
+                    ...(r.dailyCoffee > 0 ? [{ label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true, href: to({ show: "net" }) }] : []),
                     ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
                     { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
                     ...(fullRefunds.length > 0

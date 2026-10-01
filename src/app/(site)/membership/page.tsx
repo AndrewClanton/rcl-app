@@ -3,6 +3,7 @@ import { getStripe } from "@/lib/stripe";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
 import Link from "next/link";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks, plusNeedsCard } from "@/lib/plus-checkout";
@@ -147,6 +148,7 @@ export default async function MembershipPage({
             <Perk>
               <strong>Free entry to every screening</strong>, unlimited
             </Perk>
+            <Perk>{DAILY_COFFEE_PERK}</Perk>
             <Perk>
               <Link href="/booths" className="underline decoration-2 underline-offset-2">
                 2 free booth reservations
