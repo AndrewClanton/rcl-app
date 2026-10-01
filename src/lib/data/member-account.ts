@@ -440,7 +440,7 @@ export interface YearStatement {
 }
 
 // Points history reasons that count as earned on a statement.
-const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge"];
+const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge", "backfill"];
 
 export async function getYearStatement(memberId: string, year: number): Promise<YearStatement> {
   const [purchases, ledger] = await Promise.all([getPurchases(memberId), getPointsLedger(memberId, 5000)]);

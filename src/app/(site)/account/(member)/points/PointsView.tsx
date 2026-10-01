@@ -24,6 +24,9 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       return { title: "Check-in", href: null };
     case "badge":
       return { title: `Badge: ${l.note ?? "earned"}`, href: null };
+    case "backfill":
+      // Card purchases from before the new system.
+      return { title: "Points from your past visits", href: null };
     default:
       return { title: l.note && l.note !== "Adjusted by staff" ? `Adjusted by staff: ${l.note}` : "Adjusted by staff", href: null };
   }

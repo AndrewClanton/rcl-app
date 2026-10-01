@@ -9,7 +9,10 @@ export { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 
 // visit and badge: check-ins and their badges, paid by award_member_visit
 // in the database (lib/visits-server.ts), not through applyPoints.
-export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit" | "badge";
+// backfill: card purchases from before the new system, paid once per card by
+// grant_fortis_backfill (Back office > Members > Points from past card
+// purchases), which calls apply_member_points itself.
+export type PointsReason = "purchase" | "redeem" | "refund" | "welcome_bonus" | "adjustment" | "opening_balance" | "visit" | "badge" | "backfill";
 
 export async function applyPoints(args: {
   memberId: string;

@@ -82,6 +82,20 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     },
     { href: "/admin/members/regulars", label: "Top regulars", about: "Who came in most and spent most this month, for prizes.", keywords: "prizes visits spend leaderboard", min: "manager" },
     {
+      href: "/admin/members/regulars/most-regular",
+      label: "Most regular regulars",
+      about: "All time: who comes in on the most days, and the most weeks in a row.",
+      keywords: "streak weeks in a row loyal all time debate leaderboard regular",
+      min: "manager",
+    },
+    {
+      href: "/admin/members/past-purchases",
+      label: "Points from past card purchases",
+      about: "Match card purchases from before the new system to members, then grant their points.",
+      keywords: "fortis backfill old card machine history points grant regulars past visits",
+      min: "admin",
+    },
+    {
       href: "/admin/members/old-site",
       label: "Old site members",
       about: "Check accounts from the old website before they're copied in.",
