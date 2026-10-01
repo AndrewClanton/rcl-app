@@ -17,17 +17,22 @@ export interface UnlimitedFinishEmail {
   name: string;
   plan: string; // "$15/month"
   url: string;
+  // A former unlimited member (members.legacy_plus) keeping it going, or
+  // anyone else joining Insiders+ from the register.
+  legacy?: boolean;
 }
 
-export function unlimitedFinishSubject() {
-  return "Keep your unlimited membership going";
+export function unlimitedFinishSubject(legacy = true) {
+  return legacy ? "Keep your unlimited membership going" : "Finish joining Insiders+";
 }
 
 export function unlimitedFinishText(e: UnlimitedFinishEmail) {
   return [
     `Hi ${first(e.name)},`,
     "",
-    `Our new system doesn't have a card on file for your unlimited membership yet. Add yours here to keep it going (${e.plan} plus tax, charged today and then automatically):`,
+    e.legacy === false
+      ? `Here's your link to start Insiders+: unlimited movies, 10% off at the register and a free coffee or tea every day (${e.plan} plus tax, charged today and then automatically):`
+      : `Our new system doesn't have a card on file for your unlimited membership yet. Add yours here to keep it going (${e.plan} plus tax, charged today and then automatically):`,
     e.url,
     "",
     "The link works for 7 days. Rather do it in person? Tap your card at the register next time you're in.",
@@ -42,7 +47,7 @@ export function unlimitedFinishHtml(e: UnlimitedFinishEmail) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:3px solid ${INK};border-collapse:separate">
       <tr><td style="background:${INK};padding:14px 22px;font:900 13px/1 Arial,Helvetica,sans-serif;letter-spacing:3px;text-transform:uppercase;color:${GOLD}">Insiders+ · unlimited movies</td></tr>
       <tr><td style="padding:22px 22px 6px">
-        <p style="margin:0 0 14px;font:16px/1.5 Arial,Helvetica,sans-serif;color:${INK}">Hi ${esc(first(e.name))}, our new system doesn't have a card on file for your unlimited membership yet. Add yours to keep it going: <strong>${esc(e.plan)}</strong> plus tax, charged today and then automatically.</p>
+        <p style="margin:0 0 14px;font:16px/1.5 Arial,Helvetica,sans-serif;color:${INK}">Hi ${esc(first(e.name))}, ${e.legacy === false ? "here's your link to start Insiders+: unlimited movies, 10% off at the register and a free coffee or tea every day." : "our new system doesn't have a card on file for your unlimited membership yet. Add yours to keep it going."} <strong>${esc(e.plan)}</strong> plus tax, charged today and then automatically.</p>
       </td></tr>
       <tr><td style="padding:8px 22px 6px">
         <a href="${esc(e.url)}" style="display:inline-block;background:${INK};color:${GOLD};font:900 13px/1 Arial,Helvetica,sans-serif;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:12px 18px">Add my card</a>
