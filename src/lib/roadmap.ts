@@ -134,6 +134,33 @@ export function centralDay(iso: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 }
 
+// "Just shipped", a day at a time: items already newest first, grouped by
+// the day they shipped in Joplin, with the releases each day's changes went
+// out in. What's new and Back office both group with this.
+export interface ShippedDayGroup<T> {
+  day: string;
+  date: string;
+  releases: string[];
+  items: T[];
+}
+
+export function shippedByDay<T>(items: T[], at: (item: T) => string, release: (item: T) => string | null): ShippedDayGroup<T>[] {
+  const days: ShippedDayGroup<T>[] = [];
+  for (const item of items) {
+    const when = at(item);
+    const day = centralDay(when);
+    let group = days[days.length - 1];
+    if (!group || group.day !== day) {
+      group = { day, date: when, releases: [], items: [] };
+      days.push(group);
+    }
+    group.items.push(item);
+    const r = release(item);
+    if (r && !group.releases.includes(r)) group.releases.push(r);
+  }
+  return days;
+}
+
 export const SUGGESTION_MAX = 1000;
 export const NOTE_MAX = 1000;
 export const TITLE_MAX = 120;

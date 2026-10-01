@@ -3,8 +3,9 @@ import { PageMasthead, SpecFoot, Sprockets, Starburst } from "@/components/print
 import { pageMeta } from "@/lib/seo/page-meta";
 import { getSignedInMember } from "@/lib/member-auth";
 import { getMemberRoadmapState, getPublicRoadmap, type MemberRoadmapState, type PublicRoadmapItem } from "@/lib/data/roadmap";
-import { centralDay, longDate, timeAgo } from "@/lib/roadmap";
-import { BuildingCard, IdeaCard, LivePulse, QueueRow, SectionHead, ShippedRow, type Viewer } from "./parts";
+import { shippedByDay, timeAgo } from "@/lib/roadmap";
+import { BoardStat, LiveBoard, ShippedDay } from "@/components/roadmap/board";
+import { BuildingCard, IdeaCard, QueueRow, SectionHead, ShippedRow, type Viewer } from "./parts";
 import SuggestBox from "./SuggestBox";
 import LiveRefresh from "./LiveRefresh";
 
@@ -31,48 +32,21 @@ function renderTime() {
 
 // "Just shipped", a day at a time, newest first. The releases those
 // changes went out in sit quietly beside the date.
-function shippedByDay(items: PublicRoadmapItem[]) {
-  const days: { day: string; date: string; releases: string[]; items: PublicRoadmapItem[] }[] = [];
-  for (const item of items) {
-    const at = item.shippedAt ?? item.statusSince;
-    const day = centralDay(at);
-    let group = days[days.length - 1];
-    if (!group || group.day !== day) {
-      group = { day, date: at, releases: [], items: [] };
-      days.push(group);
-    }
-    group.items.push(item);
-    if (item.release && !group.releases.includes(item.release)) group.releases.push(item.release);
-  }
-  return days;
-}
-
 function ShippedDays({ items }: { items: PublicRoadmapItem[] }) {
   return (
     <div className="space-y-6">
-      {shippedByDay(items).map((d) => (
-        <section key={d.day} className="sheet crop" aria-label={longDate(d.date)}>
-          <h3 className="spec-head rounded-t-[4px]">
-            <span>{longDate(d.date)}</span>
-            {d.releases.length > 0 && <span className="font-mono text-[10.5px] font-normal tracking-[0.08em] opacity-70">Release {d.releases.join(", ")}</span>}
-          </h3>
-          <ul className="divide-y divide-[var(--border)]">
-            {d.items.map((item) => (
-              <ShippedRow key={item.id} item={item} />
-            ))}
-          </ul>
-        </section>
+      {shippedByDay(
+        items,
+        (item) => item.shippedAt ?? item.statusSince,
+        (item) => item.release,
+      ).map((d) => (
+        <ShippedDay key={d.day} date={d.date} releases={d.releases} crop>
+          {d.items.map((item) => (
+            <ShippedRow key={item.id} item={item} />
+          ))}
+        </ShippedDay>
       ))}
     </div>
-  );
-}
-
-function Stat({ k, v, href }: { k: string; v: number; href: string }) {
-  return (
-    <a href={href} className="spec-cell block transition-colors hover:bg-[var(--surface-hover)]">
-      <div className="spec-k">{k}</div>
-      <div className="font-display text-3xl leading-none tabular-nums sm:text-4xl">{v}</div>
-    </a>
   );
 }
 
@@ -150,21 +124,12 @@ export default async function WhatsNewPage() {
       </div>
 
       {/* The board at a glance. */}
-      <div className="sheet crop">
-        <div className="spec-head rounded-t-[4px]">
-          <span className="inline-flex items-center gap-2">
-            <LivePulse small />
-            Live board
-          </span>
-          {roadmap.lastUpdate && <span className="font-mono text-[10.5px] font-normal tracking-[0.06em] normal-case opacity-80">Last change {timeAgo(roadmap.lastUpdate, now)}</span>}
-        </div>
-        <div className="spec-grid !grid-cols-2 sm:!grid-cols-4">
-          <Stat k="Shipped this week" v={shippedThisWeek} href="#shipped" />
-          <Stat k="Building now" v={building.length} href="#building" />
-          <Stat k="In line" v={queued.length} href="#up-next" />
-          <Stat k="Ideas" v={ideas.length} href="#ideas" />
-        </div>
-      </div>
+      <LiveBoard lastUpdate={roadmap.lastUpdate} now={now} crop>
+        <BoardStat k="Shipped this week" v={shippedThisWeek} href="#shipped" />
+        <BoardStat k="Building now" v={building.length} href="#building" />
+        <BoardStat k="In line" v={queued.length} href="#up-next" />
+        <BoardStat k="Ideas" v={ideas.length} href="#ideas" />
+      </LiveBoard>
 
       <section aria-labelledby="building-h" className="site-anchor" id="building">
         <SectionHead id="building-h" kicker="On the workbench" title="Building now" count={building.length} live={building.length > 0} />
