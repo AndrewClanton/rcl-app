@@ -376,6 +376,35 @@
   border: 3px solid var(--ink);
   border-radius: 10px;
 }
+/* "add your card on your phone" (FinishCard.tsx): the QR code beside the
+   order, never over the keypad */
+.finishCard {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.finishCard .qr {
+  padding: 6px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.finishCopy {
+  min-width: 0;
+}
+.finishScan {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+@media (max-width: 520px) {
+  .finishCard {
+    flex-direction: column;
+    text-align: center;
+  }
+}
 /* a new badge: ink with a gold edge, its emoji big on a gold coin */
 .toastBadge {
   display: flex;

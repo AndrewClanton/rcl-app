@@ -34,6 +34,9 @@ export async function createPlusCheckout(p: {
   linkCard?: boolean;
   // They ticked "email me the weekly lineup" on the join form.
   emailOptIn?: boolean;
+  // A former unlimited member finishing from the link staff gave them
+  // (lib/legacy-plus.ts): recorded as set up "on their phone".
+  legacyFinish?: boolean;
 }): Promise<string | null> {
   const interval = p.interval ?? "month";
   const priceId = await insidersPlusPriceIdFor(p.priceTier, interval);
@@ -61,6 +64,7 @@ export async function createPlusCheckout(p: {
       // "1" or "0" from the join form's box; left out when there was no
       // box (a signed-in member upgrading), so nothing changes for them.
       ...(typeof p.emailOptIn === "boolean" ? { email_opt_in: p.emailOptIn ? "1" : "0" } : {}),
+      ...(p.legacyFinish ? { legacy_finish: "1" } : {}),
     },
   });
   return session.url;

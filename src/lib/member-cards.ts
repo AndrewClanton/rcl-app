@@ -467,14 +467,32 @@ export async function linkPlusCard(memberId: string | null, session: Stripe.Chec
       const saved = await stripe.customers.listPaymentMethods(customerId, { type: "card", limit: 2 });
       pm = saved.data.length === 1 ? saved.data[0] : null;
     }
-    const card = cardFromPaymentMethod(pm);
-    if (!card) return;
-    const db = createAdminClient();
-    const [links, attached] = await Promise.all([loadCardLinks(db, card.fingerprint), attachedMember(db, memberId, card, true)]);
-    const d = decideCardOutcome({ orderId: "", status: "completed", memberId, memberSource: null, undone: false }, card, links, attached);
-    if (d.kind === "link") await linkCard(db, { memberId, card, source: "plus" });
-    else if (d.kind === "used") await markUsed(db, memberId, card);
+    await linkCardToPlusMember(memberId, pm);
   } catch (e) {
     console.error("Insiders+ card link failed", session.id, e);
+  }
+}
+
+// The card paying for a member's Insiders+, linked to them (the rules in
+// lib/card-match.ts decide). Also the register's "take their card on the
+// reader" for a former unlimited member (pos/legacy-plus-actions.ts): the
+// member is standing there and staff know who they are.
+async function linkCardToPlusMember(memberId: string, pm: Stripe.PaymentMethod | null): Promise<void> {
+  const card = cardFromPaymentMethod(pm);
+  if (!card) return;
+  const db = createAdminClient();
+  const [links, attached] = await Promise.all([loadCardLinks(db, card.fingerprint), attachedMember(db, memberId, card, true)]);
+  const d = decideCardOutcome({ orderId: "", status: "completed", memberId, memberSource: null, undone: false }, card, links, attached);
+  if (d.kind === "link") await linkCard(db, { memberId, card, source: "plus" });
+  else if (d.kind === "used") await markUsed(db, memberId, card);
+}
+
+// The same, from the saved card's id. Never throws.
+export async function linkPlusCardById(memberId: string, paymentMethodId: string): Promise<void> {
+  try {
+    const pm = await getStripe().paymentMethods.retrieve(paymentMethodId);
+    await linkCardToPlusMember(memberId, pm);
+  } catch (e) {
+    console.error("Insiders+ card link failed", paymentMethodId, e);
   }
 }

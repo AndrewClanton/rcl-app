@@ -10,6 +10,7 @@ import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-act
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
 import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
+import LegacyPlusCard, { type TabletSend } from "./LegacyPlusCard";
 
 // An Insiders+ member's free daily coffee today, as the register knows it
 // (PosApp): undefined while it's looked up, null if it couldn't be.
@@ -53,6 +54,8 @@ export default function PosMemberPanel({
   onRewardLine,
   onFind,
   waiting,
+  readerId,
+  toTablet,
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
@@ -65,6 +68,10 @@ export default function PosMemberPanel({
   onFind: () => void;
   // Check-ins from the customer screen waiting on the Customers tab.
   waiting: number;
+  // For a former unlimited member with no payment on file (LegacyPlusCard):
+  // this register's card reader, and the customer screen.
+  readerId: string | null;
+  toTablet: TabletSend;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosMember[]>([]);
@@ -155,6 +162,19 @@ export default function PosMemberPanel({
             </div>
           </div>
 
+          {member.legacyUnlimited && (
+            <LegacyPlusCard
+              key={`unlimited-${member.id}`}
+              member={member}
+              readerId={readerId}
+              employeeId={employeeId}
+              toTablet={toTablet}
+              onDone={(m) => {
+                onChange(m);
+                setMessage(`${m.name.split(" ")[0]} is Insiders+ now.`);
+              }}
+            />
+          )}
           {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
           {coffee && <CoffeeToday coffee={coffee} />}
           <MemberRewards key={member.id} memberId={member.id} onRewardLine={onRewardLine} />

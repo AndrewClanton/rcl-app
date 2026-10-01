@@ -5,6 +5,7 @@ import { exactEmail } from "@/lib/email-match";
 import { currentMemberId } from "@/lib/member-forward";
 import { setMarketingOptIn } from "@/lib/email/consent";
 import { memberJoined } from "@/lib/email/automations";
+import { markLegacyOnboarded } from "@/lib/legacy-plus-server";
 
 // Makes the member Insiders+ once their Stripe checkout for it completes:
 // the member named in the checkout (signed in), else the one with that
@@ -54,6 +55,10 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
   if (existing) {
     await supabase.from("members").update(memberFields).eq("id", existing.id);
     await turnOnEmail(existing.id);
+    // A former unlimited member (lib/legacy-plus.ts) is set up now: from the
+    // link staff gave them, or on the website by themselves. Only touches
+    // someone who was unlimited on the old site; never fails this.
+    await markLegacyOnboarded(existing.id as string, session.metadata?.legacy_finish === "1" ? "phone" : "online", null);
     return existing.id as string;
   }
   const { data: made, error } = await supabase

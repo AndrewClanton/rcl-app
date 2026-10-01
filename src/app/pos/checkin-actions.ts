@@ -190,11 +190,16 @@ export async function confirmVisit(cardMemberId: string): Promise<VisitConfirm> 
 // link to review it in Back office for an owner or admin (the merge page
 // is theirs; anyone else gets the line without the link). Nothing is
 // merged from here. Null almost always, and whenever it can't tell.
-export async function getDuplicateHint(memberId: string): Promise<{ href: string | null } | null> {
+// unlimited: the older account paid for unlimited on the old site and has
+// nothing paying here (lib/legacy-plus.ts); the register can open it to set
+// that up. Most of those have no phone on file, which is why the tablet
+// made a new account.
+export async function getDuplicateHint(memberId: string): Promise<{ href: string | null; olderId: string; unlimited: boolean } | null> {
   const staff = await assertStaff();
   const hit = await tabletDuplicateOf(memberId);
   if (!hit) return null;
-  return { href: hasAdminAccess(staff.role) ? mergeHref(hit.olderId, memberId) : null };
+  const older = await getPosMember(hit.olderId).catch(() => null);
+  return { href: hasAdminAccess(staff.role) ? mergeHref(hit.olderId, memberId) : null, olderId: hit.olderId, unlimited: !!older?.legacyUnlimited };
 }
 
 export interface HereToday {

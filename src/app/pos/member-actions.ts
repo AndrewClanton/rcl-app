@@ -11,6 +11,7 @@ import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
 import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { currentMemberId } from "@/lib/member-forward";
 import type { DailyCoffeeState } from "@/lib/daily-perk";
+import { legacyNeedsSetup } from "@/lib/legacy-plus";
 
 // What the register needs to know about an attached member -- looked up on
 // demand instead of shipping every member's contact details to the register
@@ -39,6 +40,10 @@ export interface PosMember {
   // Has a website login. Without one, their receipt gets a "claim your
   // account" QR code (claim-actions.ts).
   hasLogin: boolean;
+  // Paid for unlimited on the old website and nothing here is paying for it
+  // yet (lib/legacy-plus.ts): the register shows "No payment on file for
+  // unlimited membership" with ways to set it up.
+  legacyUnlimited: boolean;
 }
 
 // `*` rather than a column list, so the register keeps working before a
@@ -69,6 +74,10 @@ type Row = {
   flair_sticker?: string | null;
   birthday?: string | null;
   birthday_party?: boolean | null;
+  plus_gift_until?: string | null;
+  legacy_plus?: boolean | null;
+  // From the legacy_unlimited_onboarding migration on.
+  legacy_onboarded_at?: string | null;
 };
 
 function toPosMember(r: Row): PosMember {
@@ -91,6 +100,7 @@ function toPosMember(r: Row): PosMember {
     partyWeek: r.birthday_party !== false && birthdayWeekYear(r.birthday, visitBusinessDate(new Date())) !== null,
     // Only whether there is one: the login's id never goes to the register.
     hasLogin: !!r.auth_user_id,
+    legacyUnlimited: legacyNeedsSetup({ ...r, comped: !!r.comped }),
   };
 }
 

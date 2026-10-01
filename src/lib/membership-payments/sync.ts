@@ -117,6 +117,20 @@ export async function recordCheckoutPayment(session: Stripe.Checkout.Session): P
   }
 }
 
+// The first charge of an Insiders+ subscription made at the register (a
+// former unlimited member's card on the reader, pos/legacy-plus-actions.ts):
+// there's no checkout session, just its first invoice.
+export async function recordInvoicePayment(invoiceId: string): Promise<void> {
+  if (!paymentsSyncAllowed() || !invoiceId) return;
+  try {
+    const e = await engine();
+    const invoice = await e.stripe.invoices.retrieve(invoiceId, { expand: ["payments"] });
+    await recordInvoice(e, invoice as unknown as InvoiceLike);
+  } catch (err) {
+    console.warn("member payments: first payment not recorded (the next read will):", errorMessage(err));
+  }
+}
+
 // A gift membership, once it's paid (lib/gift-membership.ts).
 export async function recordGiftPayment(giftId: string): Promise<void> {
   if (!paymentsSyncAllowed()) return;
