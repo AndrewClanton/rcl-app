@@ -71,7 +71,8 @@ export default function CustomerDisplay({
         .channel(registerTopic)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
-        .on("broadcast", { event: "rickroll" }, () => setRickroll(Date.now()))
+        .on("broadcast", { event: "rickroll" }, () => setRickroll((on) => (on ? null : Date.now())))
+        .on("broadcast", { event: "rickroll-stop" }, () => setRickroll(null))
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
