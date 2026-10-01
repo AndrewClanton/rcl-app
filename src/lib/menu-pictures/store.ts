@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { PHOTO_TARGETS, type PhotoTarget, type PictureCredit, type PictureSource } from "./shared";
+import { PHOTO_TARGETS, pictureOf, textIconOf, type PhotoTarget, type PictureCredit, type PictureResult, type PictureSource } from "./shared";
 
 // Where menu photos live, and putting one on a register button (an item) or
 // tab (a category), or taking it off. Shared by Back office → Menu and the
@@ -51,7 +51,7 @@ export async function deleteStoredPhotos(supabase: Db, urls: unknown[]) {
   if (error) console.error("menu: old photos not deleted", paths, error);
 }
 
-// A photo from the browser (squared and shrunk to a ~480px JPEG there):
+// A photo from the browser (squared and shrunk to a ~640px JPEG there):
 // checks what actually arrived (a real JPEG, 2 MB at most) before storing it.
 export async function jpegFromForm(formData: unknown): Promise<{ ok: true; jpeg: Buffer } | { ok: false; error: string }> {
   const file = formData instanceof FormData ? formData.get("photo") : null;
@@ -70,7 +70,7 @@ export async function jpegFromForm(formData: unknown): Promise<{ ok: true; jpeg:
 // replaced automatically); a found one keeps its credit, its search and its
 // place in the results, and is approved only when a manager keeps it.
 export interface PictureMeta {
-  source: Exclude<PictureSource, "label">;
+  source: Exclude<PictureSource, "label" | "text">;
   credit: PictureCredit | null;
   query: string | null;
   index: number | null;
@@ -79,7 +79,59 @@ export interface PictureMeta {
 
 const UPLOAD: PictureMeta = { source: "upload", credit: null, query: null, index: null, approved: true };
 
-export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer, meta: PictureMeta = UPLOAD): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+// ---------- Pixabay and Pexels wait for the database update ----------
+// Their pictures are saved as image_source 'pixabay' or 'pexels', which the
+// database takes only after 20261001130000_menu_text_icons.sql. Until then
+// the finder leaves those two libraries out (sources.ts), so setting their
+// keys first changes nothing. Checked by reading the image_text column the
+// same update adds: once it's there that's remembered; until then it's
+// checked again every few minutes. If a save is turned down anyway (the
+// update only partly ran), they're left out for an hour.
+const NEW_LIBRARIES = new Set<string>(["pixabay", "pexels"]);
+const LIBRARY_NEEDS_MIGRATION = "Pictures from Pixabay and Pexels need the database update (20261001130000_menu_text_icons.sql) first. Pick one from another library.";
+let newLibrariesReady = false;
+let checkAgainAt = 0;
+let checking: Promise<boolean> | null = null;
+let refusedUntil = 0;
+
+async function checkNewLibraries(): Promise<boolean> {
+  try {
+    const { error } = await createAdminClient().from("menu_items").select("image_text").limit(1);
+    if (!error) return (newLibrariesReady = true);
+    // 42703: no such column yet. Anything else: the database didn't answer; sooner.
+    if (error.code !== "42703" && error.code !== "PGRST204") {
+      console.warn("menu pictures: couldn't check for the database update", error.code);
+      checkAgainAt = Date.now() + 60_000;
+    }
+  } catch {
+    checkAgainAt = Date.now() + 60_000;
+  }
+  return false;
+}
+
+export async function newLibrariesStorable(): Promise<boolean> {
+  if (Date.now() < refusedUntil) return false;
+  if (newLibrariesReady) return true;
+  if (checking) return checking;
+  if (Date.now() < checkAgainAt) return false;
+  checkAgainAt = Date.now() + 5 * 60_000;
+  checking = checkNewLibraries().finally(() => (checking = null));
+  return checking;
+}
+
+function newLibraryRefused() {
+  refusedUntil = Date.now() + 60 * 60_000;
+  console.warn("menu pictures: the database turned down a Pixabay or Pexels picture; leaving them out for an hour (apply 20261001130000_menu_text_icons.sql)");
+}
+
+// `needsMigration`: the database doesn't take this library's pictures yet
+// (finding pictures on its own tries another library's instead).
+export async function storePhoto(
+  target: PhotoTarget,
+  id: string,
+  jpeg: Buffer,
+  meta: PictureMeta = UPLOAD,
+): Promise<{ ok: true; url: string } | { ok: false; error: string; needsMigration?: true }> {
   const table = photoTable(target);
   if (!table || !isRowId(id)) return NOT_THERE as { ok: false; error: string };
   const supabase = createAdminClient();
@@ -118,6 +170,11 @@ export async function storePhoto(target: PhotoTarget, id: string, jpeg: Buffer, 
   const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
   if (error || !saved?.length) {
     await deleteStoredPhotos(supabase, [url]);
+    // 23514: the image_source check doesn't allow this library yet.
+    if (error?.code === "23514" && NEW_LIBRARIES.has(meta.source)) {
+      newLibraryRefused();
+      return { ok: false, error: LIBRARY_NEEDS_MIGRATION, needsMigration: true };
+    }
     if (error) console.error("menu: photo not saved", error);
     return error ? { ok: false, error: "Couldn't save that photo. Try again." } : (PHOTO_RACE as { ok: false; error: string });
   }
@@ -155,4 +212,48 @@ export async function removePhoto(target: PhotoTarget, id: string): Promise<Resu
   if (!saved?.length) return PHOTO_RACE;
   await deleteStoredPhotos(supabase, [old]);
   return { ok: true };
+}
+
+// A text icon instead of a photo ("$5" glowing red): no file, just its
+// words, color and style, drawn by the app. Chosen by a person, so it counts
+// as approved and finding pictures for everything leaves it alone. The photo
+// it replaces is deleted, landing only over the photo that was there when
+// this started, like a new photo.
+const NEEDS_MIGRATION = "Text icons need the database update (20261001130000_menu_text_icons.sql) first.";
+
+export async function storeTextIcon(target: PhotoTarget, id: string, raw: unknown): Promise<PictureResult> {
+  const icon = textIconOf(raw);
+  if (!icon) return { ok: false, error: "Type 1 to 16 characters, and pick a color and a style." };
+  const table = photoTable(target);
+  if (!table || !isRowId(id)) return NOT_THERE as { ok: false; error: string };
+  const supabase = createAdminClient();
+  const key = id.toLowerCase();
+  const { data: row, error: readErr } = await supabase.from(table).select("image_url").eq("id", key).maybeSingle();
+  if (readErr) {
+    console.error("menu: photo row not read", readErr);
+    return { ok: false, error: "Couldn't save the text icon. Try again." };
+  }
+  if (!row) return NOT_THERE as { ok: false; error: string };
+  const old = (row.image_url as string | null) ?? null;
+  const fields = {
+    image_url: null,
+    image_source: "text" as const,
+    image_text: icon,
+    image_credit: null,
+    image_query: null,
+    image_index: null,
+    image_approved_at: new Date().toISOString(),
+  };
+  const update = supabase.from(table).update(fields).eq("id", key);
+  const { data: saved, error } = await (old === null ? update.is("image_url", null) : update.eq("image_url", old)).select("id");
+  if (error) {
+    // Before the migration: no image_text column yet (PGRST204, 42703), or
+    // 'text' not allowed as a source yet (23514).
+    if (error.code === "PGRST204" || error.code === "42703" || error.code === "23514") return { ok: false, error: NEEDS_MIGRATION };
+    console.error("menu: text icon not saved", error);
+    return { ok: false, error: "Couldn't save the text icon. Try again." };
+  }
+  if (!saved?.length) return PHOTO_RACE as { ok: false; error: string };
+  await deleteStoredPhotos(supabase, [old]);
+  return { ok: true, picture: pictureOf(fields) };
 }

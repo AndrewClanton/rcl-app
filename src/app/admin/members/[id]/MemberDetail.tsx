@@ -9,6 +9,7 @@ import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
 import GiftCard from "./GiftCard";
+import ProfileModeration from "./ProfileModeration";
 import InfoTip from "@/components/help/InfoTip";
 import type { HelpTopicKey } from "@/lib/help/topics";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
@@ -198,7 +199,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             Monthly
           </span>
         )}
-        {member.tagline && <span className="basis-full text-sm italic">“{member.tagline}” <span className="not-italic text-xs text-[var(--muted)]">(their line, shown at check-in)</span></span>}
+        <ProfileModeration member={member} />
         <span className="ml-auto text-xs text-[var(--muted)]">
           Member since {new Date(member.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
         </span>
@@ -718,7 +719,7 @@ function RemovePersonalInfo({
             </li>
             <li>
               Also clears their name and contact details from ticket, booth and private-event bookings, gift memberships, bar tabs and custom
-              items on their orders, their profile quote, and the old-site copy.
+              items on their orders, their profile line, shared profile page and check-in effect, and the old-site copy.
             </li>
           </ul>
           <label className="block text-sm">

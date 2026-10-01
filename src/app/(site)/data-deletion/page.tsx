@@ -49,6 +49,10 @@ export default async function DataDeletionPage() {
         <ul>
           <li>Your name, email address and phone number</li>
           <li>Your photo</li>
+          <li>
+            Your profile line, your check-in effect, and your shared profile page (its link stops working; the link name is held for 90 days, no longer
+            tied to you, so no one else can take it over)
+          </li>
           <li>Your sign-in connections: password, Google and Facebook</li>
           <li>Your points and points history</li>
           <li>Your email preferences</li>

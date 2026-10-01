@@ -50,6 +50,22 @@
   --font-display: var(--font-archivo-black);
 }
 
+/* A neon text icon's slow glow (components/menu/TextIcon.tsx): opacity
+   only, so the register's browser does it without redrawing anything, and
+   only for people who haven't asked for less motion (motion-safe:). */
+@theme {
+  --animate-neon-breathe: neon-breathe 3.2s ease-in-out infinite;
+  @keyframes neon-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);

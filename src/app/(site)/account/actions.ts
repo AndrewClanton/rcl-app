@@ -11,6 +11,9 @@ import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
 import { birthdayFromInput } from "@/lib/visits";
+import { cleanDisplayName, cleanProfileLine, handleProblem, normalizeHandle } from "@/lib/member-profile";
+import { flairColor, isFlairEffect, isSticker } from "@/lib/flair";
+import { allowAttempt } from "@/lib/rate-limit";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -98,10 +101,11 @@ export async function startBillingPortal(): Promise<BillingPortalResult> {
 
 export type ProfileResult = { ok: true } | { ok: false; error: string };
 
-// Members can fix their own name and phone, write a short line about
-// themselves (staff see it when they check in), and give their birthday
-// (month and day, "12-30", for the Birthday Visit badge; "" removes it).
-// Email is how they sign in, so it isn't editable here.
+// Members can fix their own name and phone, write their profile line (on
+// their shared profile page and the check-in screen; lib/member-profile.ts),
+// and give their birthday (month and day, "12-30", for the Birthday Visit
+// badge; "" removes it). Email is how they sign in, so it isn't editable
+// here. A line staff hid stays hidden when it's edited.
 export async function updateMyProfile(fields: { name: string; phone: string; tagline?: string; birthday?: string }): Promise<ProfileResult> {
   const member = await requireMember();
   const name = fields.name.trim();
@@ -109,8 +113,9 @@ export async function updateMyProfile(fields: { name: string; phone: string; tag
   if (name.length > 80) return { ok: false, error: "That name is too long." };
   const phone = fields.phone.trim();
   if (phone && phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
-  const tagline = (fields.tagline ?? "").replace(/\s+/g, " ").trim();
-  if (tagline.length > 120) return { ok: false, error: "Keep your line to 120 characters." };
+  const line = cleanProfileLine(fields.tagline);
+  if (!line.ok) return { ok: false, error: line.error };
+  const tagline = line.value ?? "";
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
   if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of your birthday (or neither)." };
   const { error } = await createAdminClient()
@@ -234,4 +239,72 @@ export async function switchToYearly(): Promise<{ ok: true } | { ok: false; erro
     const message = e && typeof e === "object" && "message" in e && typeof (e as { message: unknown }).message === "string" && "type" in e ? (e as { message: string }).message : null;
     return { ok: false, error: message ? `The switch didn't go through: ${message}` : "The switch didn't go through. Nothing was changed." };
   }
+}
+
+// ---------- the shared profile page and check-in flair ----------
+// (lib/member-profile.ts, lib/flair.ts)
+
+// Before the member_profiles migration the columns aren't there yet.
+function missingColumn(error: { code?: string } | null): boolean {
+  return error?.code === "42703" || error?.code === "PGRST204";
+}
+const NOT_YET = "Profile pages and check-in effects aren't switched on yet. Try again soon.";
+
+export type SharingResult = { ok: true; handle: string | null; displayName: string | null } | { ok: false; error: string };
+
+// Their profile page: on or off, its link name and the name on it.
+// Turning it off keeps the link name for next time. A new link name works
+// at once and the old one stops (pages are found by the current name
+// only); the database holds the old one for them for HANDLE_HOLD_DAYS
+// (member_retired_handles), so nobody else can take it over meanwhile.
+// Staff can turn a page off; then it stays off until they allow it.
+// Returns what was saved, tidied, for the form to show.
+export async function updateSharing(fields: { share: boolean; handle: string; displayName: string }): Promise<SharingResult> {
+  const member = await requireMember();
+  if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
+  if (!(await allowAttempt(`profile-sharing:${member.id}`, 20, 600))) return { ok: false, error: "That's a lot of changes. Try again in a few minutes." };
+  const share = fields.share === true;
+  if (share && member.profile_hidden_at) {
+    return { ok: false, error: "Our staff turned off your profile page. Email info@royalecinemajoplin.com if you think that's a mistake." };
+  }
+  const handle = normalizeHandle(fields.handle);
+  if (share || handle) {
+    const problem = handleProblem(handle);
+    if (problem) return { ok: false, error: problem };
+  }
+  const name = cleanDisplayName(fields.displayName);
+  if (!name.ok) return { ok: false, error: name.error };
+  const { error } = await createAdminClient()
+    .from("members")
+    .update({ share_profile: share, profile_handle: handle || null, display_name: name.value })
+    .eq("id", member.id)
+    .is("erased_at", null);
+  // Taken, or held for whoever had it until recently: the same answer.
+  if (error?.code === "23505") return { ok: false, error: "Someone has (or recently had) that link. Try another." };
+  if (missingColumn(error)) return { ok: false, error: NOT_YET };
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account", "layout");
+  return { ok: true, handle: handle || null, displayName: name.value };
+}
+
+// Their check-in flair: a color from the palette (null for the Royale's
+// own), an effect, a sticker for Floating reactions, and whether their
+// birthday week gets the party.
+export async function updateFlair(fields: { color: string | null; effect: string; sticker: string; birthdayParty: boolean }): Promise<ProfileResult> {
+  const member = await requireMember();
+  if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
+  if (!(await allowAttempt(`profile-flair:${member.id}`, 30, 600))) return { ok: false, error: "That's a lot of changes. Try again in a few minutes." };
+  const color = fields.color === null ? null : (flairColor(fields.color)?.key ?? undefined);
+  if (color === undefined) return { ok: false, error: "Pick one of the colors." };
+  if (!isFlairEffect(fields.effect)) return { ok: false, error: "Pick one of the effects." };
+  if (!isSticker(fields.sticker)) return { ok: false, error: "Pick one of the stickers." };
+  const { error } = await createAdminClient()
+    .from("members")
+    .update({ flair_color: color, flair_effect: fields.effect, flair_sticker: fields.sticker, birthday_party: fields.birthdayParty !== false })
+    .eq("id", member.id)
+    .is("erased_at", null);
+  if (missingColumn(error)) return { ok: false, error: NOT_YET };
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account", "layout");
+  return { ok: true };
 }

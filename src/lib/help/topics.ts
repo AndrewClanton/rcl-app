@@ -196,7 +196,7 @@ export const HELP_TOPICS = {
     title: "Check-in for points",
     area: "Register: members and the door",
     body:
-      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone.",
+      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone. Once you confirm, the screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color) with their profile line; it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
   },
   "points-and-badges": {

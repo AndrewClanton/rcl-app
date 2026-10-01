@@ -1,0 +1,406 @@
+/* Check-in flair (FlairEffect.tsx). Every layer is see-through to taps
+   (pointer-events: none) and sized in container units, so one effect fills
+   the customer screen, a preview box on the account page, or the header
+   of a shared profile page. Reduced motion gets a short, still version:
+   the moving parts stop where they are and the layer fades in and out. */
+
+.layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  container-type: size;
+  z-index: 1;
+}
+/* The customer screen: over everything but the register's Celebrate
+   streamers (z-index 60), and never in the way of the keypad. */
+.screen {
+  position: fixed;
+  z-index: 55;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- unicorn run ---------- */
+
+.run {
+  position: absolute;
+  left: 0;
+  bottom: var(--ground);
+  width: calc(var(--uw) * 1cqw);
+  aspect-ratio: 248 / 200;
+  transform: translateX(calc(var(--uw) * -1cqw));
+  animation: run var(--run) linear var(--run-delay) both;
+  will-change: transform;
+}
+@keyframes run {
+  from {
+    transform: translateX(calc(var(--uw) * -1cqw));
+  }
+  to {
+    transform: translateX(100cqw);
+  }
+}
+.bounce {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 88%;
+  animation: bounce var(--gait) ease-in-out infinite;
+}
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1.5deg);
+  }
+  50% {
+    transform: translateY(-9%) rotate(2deg);
+  }
+}
+.unicorn {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 0 calc(var(--uw) * 0.06cqw) rgba(var(--rgb), 0.55));
+}
+
+/* The gallop: front and hind pairs out of step, far legs a beat behind
+   the near ones. Angles are about each hip and knee (inline origins). */
+.legFrontNear,
+.legFrontFar,
+.legBackNear,
+.legBackFar,
+.kneeFrontNear,
+.kneeFrontFar,
+.kneeBackNear,
+.kneeBackFar,
+.tail,
+.mane {
+  transform-box: view-box;
+  animation-duration: var(--gait);
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+.legFrontNear,
+.legFrontFar {
+  animation-name: frontLeg;
+}
+.kneeFrontNear,
+.kneeFrontFar {
+  animation-name: frontKnee;
+}
+.legBackNear,
+.legBackFar {
+  animation-name: backLeg;
+}
+.kneeBackNear,
+.kneeBackFar {
+  animation-name: backKnee;
+}
+.legFrontFar,
+.kneeFrontFar,
+.legBackFar,
+.kneeBackFar {
+  animation-delay: calc(var(--gait) * -0.14);
+}
+@keyframes frontLeg {
+  0%,
+  100% {
+    transform: rotate(-38deg);
+  }
+  35% {
+    transform: rotate(0deg);
+  }
+  62% {
+    transform: rotate(32deg);
+  }
+}
+@keyframes frontKnee {
+  0%,
+  100% {
+    transform: rotate(6deg);
+  }
+  45% {
+    transform: rotate(0deg);
+  }
+  72% {
+    transform: rotate(52deg);
+  }
+  90% {
+    transform: rotate(26deg);
+  }
+}
+@keyframes backLeg {
+  0%,
+  100% {
+    transform: rotate(30deg);
+  }
+  45% {
+    transform: rotate(-6deg);
+  }
+  68% {
+    transform: rotate(-30deg);
+  }
+}
+@keyframes backKnee {
+  0%,
+  100% {
+    transform: rotate(8deg);
+  }
+  30% {
+    transform: rotate(52deg);
+  }
+  60% {
+    transform: rotate(18deg);
+  }
+  80% {
+    transform: rotate(0deg);
+  }
+}
+.tail {
+  animation-name: tailWave;
+  animation-timing-function: ease-in-out;
+  animation-duration: calc(var(--gait) * 1);
+}
+@keyframes tailWave {
+  0%,
+  100% {
+    transform: rotate(-9deg);
+  }
+  50% {
+    transform: rotate(10deg);
+  }
+}
+.mane {
+  animation-name: maneWave;
+  animation-timing-function: ease-in-out;
+}
+@keyframes maneWave {
+  0%,
+  100% {
+    transform: rotate(-3deg) skewX(2deg);
+  }
+  50% {
+    transform: rotate(3deg) skewX(-3deg);
+  }
+}
+.glint {
+  opacity: 0;
+  animation: glint 1.1s ease-in-out 0.3s infinite;
+}
+@keyframes glint {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.95;
+  }
+}
+
+/* The sparkle trail: each one pops where the unicorn just was. */
+.spark {
+  position: absolute;
+  left: calc(var(--x) * 1cqw);
+  bottom: calc(var(--ground) + var(--y) * 1cqw);
+  width: calc(var(--sz) * 1cqmin);
+  aspect-ratio: 1;
+  margin-left: calc(var(--sz) * -0.5cqmin);
+  opacity: 0;
+  color: var(--tone);
+  filter: drop-shadow(0 0 calc(var(--sz) * 0.25cqmin) var(--tone));
+  animation: spark var(--life) ease-out var(--d) forwards;
+}
+.spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+@keyframes spark {
+  0% {
+    opacity: 0;
+    transform: scale(0.2) rotate(0deg);
+  }
+  18% {
+    opacity: 1;
+    transform: scale(1.25) rotate(40deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(calc(var(--fall) * 1cqh)) scale(0.45) rotate(170deg);
+  }
+}
+
+/* ---------- floating reactions (and the party's balloons) ---------- */
+
+.float {
+  position: absolute;
+  bottom: calc(var(--sz) * -1.1cqmin);
+  left: calc(var(--x) * 1%);
+  width: calc(var(--sz) * 1cqmin);
+  margin-left: calc(var(--sz) * -0.5cqmin);
+  aspect-ratio: 1;
+  opacity: 0;
+  animation: floatUp var(--dur) cubic-bezier(0.22, 0.61, 0.36, 1) var(--d) forwards;
+  will-change: transform, opacity;
+}
+.balloon {
+  aspect-ratio: 60 / 118;
+  animation-name: balloonUp;
+  animation-timing-function: cubic-bezier(0.35, 0.1, 0.55, 1);
+}
+@keyframes floatUp {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.3);
+  }
+  9% {
+    opacity: 1;
+    transform: translateY(calc(var(--rise) * -0.08cqh)) scale(1.18);
+  }
+  17% {
+    transform: translateY(calc(var(--rise) * -0.16cqh)) scale(1);
+  }
+  62% {
+    opacity: 1;
+  }
+  /* "evaporates": keeps rising, swells a little and fades */
+  100% {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * -1cqh)) scale(1.35);
+  }
+}
+@keyframes balloonUp {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  8% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(calc(var(--rise) * -1cqh));
+  }
+}
+.sway {
+  width: 100%;
+  height: 100%;
+  animation: sway var(--sw) ease-in-out calc(var(--sw) * -0.5) infinite alternate;
+}
+@keyframes sway {
+  from {
+    transform: translateX(calc(var(--amp) * -1cqmin)) rotate(-9deg);
+  }
+  to {
+    transform: translateX(calc(var(--amp) * 1cqmin)) rotate(9deg);
+  }
+}
+.sway svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.35));
+}
+
+/* ---------- the birthday banner ---------- */
+
+.banner {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translate(-50%, -50%) rotate(-3deg);
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(16px, 6.5cqw, 88px);
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--c);
+  -webkit-text-stroke: clamp(1.5px, 0.35cqw, 3px) #14110c;
+  text-shadow: clamp(2px, 0.5cqw, 6px) clamp(2px, 0.5cqw, 6px) 0 #14110c;
+  animation: pop 3.3s ease-out 0.15s both;
+}
+@keyframes pop {
+  0% {
+    transform: translate(-50%, -50%) rotate(-3deg) scale(0.3);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(-50%, -50%) rotate(-3deg) scale(1.08);
+    opacity: 1;
+  }
+  20% {
+    transform: translate(-50%, -50%) rotate(-3deg) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(-3deg) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ---------- reduced motion: short and still ---------- */
+
+@keyframes still {
+  0% {
+    opacity: 0;
+  }
+  15%,
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .layer {
+    animation: still 1.8s ease both;
+  }
+  .run {
+    animation: none;
+    transform: translateX(calc(50cqw - 50%));
+  }
+  .bounce,
+  .legFrontNear,
+  .legFrontFar,
+  .legBackNear,
+  .legBackFar,
+  .kneeFrontNear,
+  .kneeFrontFar,
+  .kneeBackNear,
+  .kneeBackFar,
+  .tail,
+  .mane,
+  .glint,
+  .sway,
+  .banner {
+    animation: none;
+  }
+  .spark {
+    animation: none;
+    opacity: 0.9;
+  }
+  .spark:not(.near) {
+    display: none;
+  }
+  .float {
+    animation: none;
+    opacity: 1;
+    transform: translateY(calc(var(--hold) * -1cqh));
+  }
+  .extra {
+    display: none;
+  }
+}
