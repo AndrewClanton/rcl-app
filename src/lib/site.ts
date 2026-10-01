@@ -2,7 +2,7 @@
 // metadata (lib/seo/page-meta.ts), robots.ts, sitemap.ts, and structured
 // data. Update SITE_URL if the app moves to a custom domain (e.g.
 // royalecinemajoplin.com): canonicals, link previews and JSON-LD all follow.
-export const SITE_URL = "https://rcl-app.vercel.app";
+export const SITE_URL = "https://www.royalecinemajoplin.com";
 export const SITE_NAME = "Royale Cinema Lounge";
 
 // The one-sentence pitch: the home page's description and the fallback for
