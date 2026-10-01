@@ -29,7 +29,7 @@ export interface PosMember {
   // screen. Null while staff have it hidden.
   tagline: string | null;
   // Their check-in flair (lib/flair.ts) as catalog keys: the customer
-  // screen plays it when they're confirmed, and Here today shows their
+  // screen plays it when they're confirmed, and Checked in today shows their
   // color. partyWeek: it's their birthday week and they want the party.
   flair?: FlairKeys;
   partyWeek?: boolean;

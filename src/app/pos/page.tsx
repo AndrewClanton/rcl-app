@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
-import { requireStaff } from "@/lib/auth";
+import { hasAdminAccess, requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
@@ -77,6 +77,8 @@ export default async function PosPage() {
           defaultReaderId={defaultReaderId()}
           initialScreenings={showings.ok ? showings.screenings : []}
           registerTopic={registerTopic()}
+          // Dev note only while an admin is signed in (submitting checks again).
+          canNote={hasAdminAccess(session.role)}
         />
       </ItemSettingsProvider>
     </div>

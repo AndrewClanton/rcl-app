@@ -4,17 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import { getRegulars, searchPosMembers, type PosMember, type Regular } from "./member-actions";
 
-// Full-screen "find by face" lookup for the register. Opens on the regulars
-// (most visits in the last 90 days first), and searching turns the grid
-// into matches -- tap a face to attach that member to the order.
+// "Find by face", the bottom of the register's Customers tab. Opens on the
+// regulars (most visits in the last 90 days first), and searching turns the
+// grid into matches -- tap a face to put that member on the order. It used
+// to be a full-screen window of its own; it lives in the tab now, next to
+// who's checked in, so all the faces are in one place.
 export default function MemberFinder({
+  current,
   onPick,
-  onClose,
   loadRegulars = getRegulars,
   search = searchPosMembers,
 }: {
+  current: PosMember | null;
   onPick: (m: PosMember) => void;
-  onClose: () => void;
   loadRegulars?: () => Promise<Regular[]>;
   search?: (q: string, limit: number) => Promise<PosMember[]>;
 }) {
@@ -32,12 +34,6 @@ export default function MemberFinder({
         setError("Couldn't load members. Check the connection.");
       });
   }, [loadRegulars]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   useEffect(() => {
     const q = query.trim();
@@ -58,58 +54,59 @@ export default function MemberFinder({
     : (regulars ?? []).map((r) => ({ member: r.member, note: r.visits ? `${r.visits} visit${r.visits === 1 ? "" : "s"}` : r.member.tier }));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label="Find a member">
-      <div className="card flex max-h-full w-full max-w-4xl flex-col !p-0 shadow-2xl">
-        <div className="flex items-center gap-3 border-b p-4" style={{ borderColor: "var(--border)" }}>
-          <input
-            autoFocus
-            className="input flex-1 !py-3 !text-base"
-            placeholder="Search by name, email or phone"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              if (e.target.value.trim().length < 2) setResults(null);
-            }}
-          />
-          <button className="btn-secondary" onClick={onClose}>
-            Close
-          </button>
-        </div>
-        <div className="overflow-y-auto p-4">
-          <div className="eyebrow mb-3">{searching ? "Matches" : "Regulars · most visits in the last 90 days"}</div>
-          {error && (
-            <div className="mb-3 text-sm" style={{ color: "var(--danger-text)" }}>
-              {error}
-            </div>
-          )}
-          {(searching ? results === null : regulars === null) ? (
-            <div className="py-10 text-center text-sm" style={{ color: "var(--muted)" }}>
-              Loading…
-            </div>
-          ) : cards.length === 0 ? (
-            <div className="py-10 text-center text-sm" style={{ color: "var(--muted)" }}>
-              {searching ? "No member matches that." : "No visit history yet. Search above, or ask members to add a photo on their account."}
-            </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-6">
-              {cards.map(({ member, note }) => (
-                <button
-                  key={member.id}
-                  className="flex flex-col items-center gap-2 rounded-xl border p-3 text-center transition-colors hover:border-[var(--foreground)] hover:bg-[var(--surface-hover)]"
-                  style={{ borderColor: "var(--border)" }}
-                  onClick={() => onPick(member)}
-                >
-                  <MemberAvatar name={member.name} url={member.avatar_url} size={76} plus={member.tier === "Insiders+"} />
-                  <span className="line-clamp-2 text-sm font-bold leading-tight">{member.name}</span>
-                  <span className="text-[11px]" style={{ color: "var(--muted)" }}>
-                    {note}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+    <section aria-labelledby="customers-find">
+      <h2 id="customers-find" className="eyebrow mb-2">
+        Find a customer
+      </h2>
+      <input
+        type="search"
+        className="input !py-3 !text-base"
+        placeholder="Search by name, email or phone"
+        aria-label="Search members by name, email or phone"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          if (e.target.value.trim().length < 2) setResults(null);
+        }}
+      />
+      <div className="mb-2 mt-3 text-xs font-bold" style={{ color: "var(--muted)" }}>
+        {searching ? "Matches" : "Regulars · most visits in the last 90 days"}
       </div>
-    </div>
+      {error && (
+        <div className="mb-3 text-sm" style={{ color: "var(--danger-text)" }}>
+          {error}
+        </div>
+      )}
+      {(searching ? results === null : regulars === null) ? (
+        <div className="py-8 text-center text-sm" style={{ color: "var(--muted)" }}>
+          Loading…
+        </div>
+      ) : cards.length === 0 ? (
+        <div className="py-8 text-center text-sm" style={{ color: "var(--muted)" }}>
+          {searching ? "No member matches that." : "No visit history yet. Search above, or ask members to add a photo on their account."}
+        </div>
+      ) : (
+        // As many columns as the panel has room for, whichever way the iPad is held.
+        <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(6.5rem,1fr))]">
+          {cards.map(({ member, note }) => {
+            const on = current?.id === member.id;
+            return (
+              <button
+                key={member.id}
+                className="flex flex-col items-center gap-2 rounded-xl border p-3 text-center transition-colors hover:border-[var(--foreground)] hover:bg-[var(--surface-hover)]"
+                style={{ borderColor: on ? "var(--success-border)" : "var(--border)" }}
+                onClick={() => onPick(member)}
+              >
+                <MemberAvatar name={member.name} url={member.avatar_url} size={72} plus={member.tier === "Insiders+"} />
+                <span className="line-clamp-2 text-sm font-bold leading-tight">{member.name}</span>
+                <span className="text-[11px]" style={{ color: on ? "var(--success-text)" : "var(--muted)" }}>
+                  {on ? "✓ On order" : note}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }

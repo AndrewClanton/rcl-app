@@ -64,6 +64,20 @@
       opacity: 0.55;
     }
   }
+
+  /* The register's Customers tab while a check-in waits to be confirmed:
+     a soft red ring that swells and fades, so staff notice it without
+     anything covering the menu. */
+  --animate-checkin-pulse: checkin-pulse 2.2s ease-out infinite;
+  @keyframes checkin-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgb(237 28 36 / 0.45);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 9px rgb(237 28 36 / 0);
+    }
+  }
 }
 
 body {
