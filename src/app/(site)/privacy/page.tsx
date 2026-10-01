@@ -75,6 +75,12 @@ export default async function PrivacyPage() {
             <strong>Points:</strong> every point you earn or use, and any adjustment, with the reason.
           </li>
           <li>
+            <strong>Points for past visits:</strong> before our new system, we took cards through our old payment processor. To credit regulars for
+            those visits, we matched past card purchases to member accounts using the name on the card, or the email or phone given with the payment.
+            From those cards we keep only the first six and last four digits, never the full number, plus the dates and amounts of the purchases,
+            which count as your past visits for points and rankings.
+          </li>
+          <li>
             <strong>Membership:</strong> whether you&apos;re an Insider or Insider+, your rate, and your billing status. If staff give you the senior
             or student rate, they check your ID in person. We record that the rate was set and which staff member set it, but we don&apos;t copy or
             keep your ID.
@@ -101,7 +107,7 @@ export default async function PrivacyPage() {
       <section>
         <h2 id="dont-collect">What we don&apos;t collect</h2>
         <ul>
-          <li>We don&apos;t store card numbers. Card payments are handled by Stripe.</li>
+          <li>We don&apos;t store full card numbers. Card payments are handled by Stripe.</li>
           <li>We don&apos;t use advertising cookies or ad-tracking pixels, and we don&apos;t sell or trade your information with data brokers.</li>
         </ul>
       </section>
