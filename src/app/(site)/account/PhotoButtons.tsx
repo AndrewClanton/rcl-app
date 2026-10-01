@@ -91,7 +91,7 @@ export function RemovePhotoButton() {
   return (
     <button
       type="button"
-      className="text-xs text-[var(--muted)] hover:underline"
+      className="min-h-11 text-xs text-[var(--muted)] hover:underline sm:px-2"
       disabled={busy}
       onClick={async () => {
         setBusy(true);

@@ -125,7 +125,7 @@ export default function CheckinFlairPanel({
                     }}
                   />
                   <span
-                    className={`grid size-10 place-items-center rounded-full border-2 border-[var(--foreground)] text-sm font-black transition-transform peer-focus-visible:shadow-[3px_3px_0_var(--accent)] ${on ? "scale-110 shadow-[2px_2px_0_var(--foreground)]" : "hover:scale-105"}`}
+                    className={`grid size-11 place-items-center rounded-full border-2 border-[var(--foreground)] text-sm font-black transition-transform peer-focus-visible:shadow-[3px_3px_0_var(--accent)] ${on ? "scale-110 shadow-[2px_2px_0_var(--foreground)]" : "hover:scale-105"}`}
                     style={{ background: c.hex }}
                   >
                     {on ? "✓" : ""}
@@ -234,7 +234,7 @@ export default function CheckinFlairPanel({
         </label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className="btn-primary !px-5 !py-2 text-sm" disabled={!ready || busy || !dirty} onClick={() => void save()}>
+          <button type="button" className="btn-primary min-h-11 !px-5 !py-2 text-sm" disabled={!ready || busy || !dirty} onClick={() => void save()}>
             {busy ? "Saving…" : "Save my check-in"}
           </button>
           {msg && (
@@ -252,11 +252,11 @@ export default function CheckinFlairPanel({
           <FlairEffect key={show.run} entrance={show.entrance} color={hex} sticker={sticker} mode={show.where} seed={show.run} onDone={() => setShow(null)} />
         )}
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" onClick={() => play(effect)}>
+          <button type="button" className="btn-secondary min-h-11 !px-3 !py-1.5 text-sm" onClick={() => play(effect)}>
             ▶ Play
           </button>
           {party && (
-            <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" onClick={() => play("party")}>
+            <button type="button" className="btn-secondary min-h-11 !px-3 !py-1.5 text-sm" onClick={() => play("party")}>
               🎂 Birthday week
             </button>
           )}
