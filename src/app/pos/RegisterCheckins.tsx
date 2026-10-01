@@ -7,7 +7,8 @@ import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
 import { REWARD_LABEL, badgeList } from "@/lib/visits";
-import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
+import { entranceFor, flairColor, parseFlair } from "@/lib/flair";
+import { confirmVisit, createCheckinMember, getDuplicateHint, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
@@ -94,6 +95,10 @@ export default function RegisterCheckins({
   // Tickets bought online for today by whoever just checked in: one tap
   // prints them, instead of scanning.
   const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
+  // Someone the tablet just made an account for who's probably an older
+  // member it couldn't find by phone: a quiet line with a Back office link.
+  // Nothing is merged from the register.
+  const [dupHint, setDupHint] = useState<{ name: string; href: string | null } | null>(null);
   const [printing, setPrinting] = useState(false);
   const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
@@ -155,6 +160,10 @@ export default function RegisterCheckins({
         : {}),
       // No website login yet: the tablet shows a QR code to set one up.
       ...(r?.ok && r.claimUrl ? { claimUrl: r.claimUrl } : {}),
+      // Their entrance and profile line (keys and their own words only; the
+      // tablet checks both). A hidden line is already null.
+      ...(m.flair ? { flair: { color: m.flair.color, entrance: entranceFor(parseFlair(m.flair), !!m.partyWeek), sticker: m.flair.sticker } } : {}),
+      ...(m.tagline ? { line: m.tagline } : {}),
     };
     answer(p.id, "checkin-confirmed", confirmed);
     // Their tickets for today, if they bought any online: a Print row here,
@@ -166,6 +175,15 @@ export default function RegisterCheckins({
         setTonight({ member: m, tickets: t.tickets });
         const shown: CheckinTickets = { id: p.id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
         send("checkin-tickets", shown);
+      })
+      .catch(() => {});
+    // Possibly a second account for an older member (made at the tablet,
+    // same name, the old one has no usable phone). Also its own message,
+    // after the confirmation.
+    setDupHint(null);
+    void getDuplicateHint(m.id)
+      .then((h) => {
+        if (h) setDupHint({ name: m.name, href: h.href });
       })
       .catch(() => {});
     const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
@@ -313,6 +331,7 @@ export default function RegisterCheckins({
       firstName: firstNameOf(m.name),
       earned,
       balance: Math.round(fresh ? fresh.points : m.points + sale.subtotal),
+      color: m.flair?.color ?? null,
     };
     send("points-earned", payload);
   });
@@ -325,7 +344,7 @@ export default function RegisterCheckins({
 
   const showRecent = !!recent && !member && pending.length === 0;
   const showHere = here.length > 0 && pending.length === 0 && (hereHiddenAt === null || here.length > hereHiddenAt);
-  const showStack = pending.length > 0 || !!notice || showRecent || !!tonight;
+  const showStack = pending.length > 0 || !!notice || showRecent || !!tonight || !!dupHint;
   if (!showStack && !showHere) return null;
 
   return (
@@ -359,6 +378,28 @@ export default function RegisterCheckins({
           )}
 
           {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
+
+          {dupHint && (
+            <div className="flex w-full items-start gap-2 rounded-lg border bg-[var(--surface)] p-2 text-xs shadow-lg" style={{ borderColor: "var(--border)" }}>
+              <span className="min-w-0 flex-1" style={{ color: "var(--muted)" }}>
+                <strong style={{ color: "var(--foreground)" }}>{dupHint.name}</strong> · Possibly the same person as an older account
+                {dupHint.href ? (
+                  <>
+                    :{" "}
+                    {/* A new tab, so the register (and its open sale) stays put. */}
+                    <a href={dupHint.href} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "var(--foreground)" }}>
+                      review in Back office
+                    </a>
+                  </>
+                ) : (
+                  "; let an owner or admin know."
+                )}
+              </span>
+              <button className="shrink-0 px-1 text-base leading-none" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={() => setDupHint(null)}>
+                ×
+              </button>
+            </div>
+          )}
 
           {showRecent && recent && (
             <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
@@ -530,7 +571,8 @@ function HereTodayPanel({
       {open && (
         <ul className="max-h-[60dvh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
           {here.map((h) => (
-            <li key={h.member.id} className="flex items-center gap-3 px-3 py-2.5">
+            // Their favorite color (lib/flair.ts), as a stripe down the left.
+            <li key={h.member.id} className="flex items-center gap-3 px-3 py-2.5" style={accent(h.member)}>
               <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={52} plus={h.member.tier === "Insiders+"} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-base font-bold leading-tight">{h.member.name}</div>
@@ -572,7 +614,8 @@ function HereTodayPanel({
 }
 
 // Big face and name, so staff can put the two together and greet them by
-// name next time. Their own line from their account, if they wrote one.
+// name next time. Their profile line, if they wrote one (and staff haven't
+// hidden it).
 function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
   return (
     <div className="flex items-center gap-3">
@@ -755,4 +798,9 @@ function NewCard({
       )}
     </>
   );
+}
+
+function accent(m: PosMember): React.CSSProperties | undefined {
+  const c = flairColor(m.flair?.color);
+  return c ? { boxShadow: `inset 5px 0 0 ${c.hex}` } : undefined;
 }

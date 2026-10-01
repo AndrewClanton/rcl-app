@@ -14,6 +14,7 @@ import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
 import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
 import { checkSaleTotals, flagSale, verifyCardPayment, type TotalsCheck } from "@/lib/register-sale-checks";
+import { currentMemberId } from "@/lib/member-forward";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -198,9 +199,13 @@ export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: n
 export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals): Promise<PaymentCheck> {
   await assertStaff();
   const supabase = createAdminClient();
+  // The account a merged-away member became (lib/member-forward.ts), so the
+  // points and the totals check read the account completeOrder will pay.
+  const needsMember = !!fields.memberId && ((fields.pointsRedeemed && totals.redemption_discount > 0) || ENFORCE_REGISTER_TOTALS);
+  const memberId = needsMember ? await currentMemberId(fields.memberId) : fields.memberId;
   if (fields.pointsRedeemed && totals.redemption_discount > 0) {
-    if (!fields.memberId) return { ok: false, error: "A points reward needs a member on the order. Attach the member, or uncheck the reward." };
-    const points = await memberPoints(supabase, fields.memberId);
+    if (!memberId) return { ok: false, error: "A points reward needs a member on the order. Attach the member, or uncheck the reward." };
+    const points = await memberPoints(supabase, memberId);
     if (points !== undefined && (points ?? 0) < POINTS_PER_REWARD) {
       return {
         ok: false,
@@ -210,7 +215,7 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
     }
   }
   if (ENFORCE_REGISTER_TOTALS) {
-    const check = await checkSaleTotals({ ...fields, totals });
+    const check = await checkSaleTotals({ ...fields, memberId, totals });
     if (check.problems.length) return { ok: false, error: `This order doesn't add up, so it can't be paid yet: ${check.problems[0]} Clear it and ring it up again, or get a manager.` };
   }
   return { ok: true };
@@ -228,12 +233,16 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   const supabase = createAdminClient();
   // To the cent, like everything the card is charged for.
   const tip = cents(params.tip ?? 0);
+  // The member on the sale, or the account they were merged into while the
+  // sale was open (lib/member-forward.ts): the old id would fail after
+  // they've paid.
+  const memberId = await currentMemberId(params.memberId);
 
   const orderFields = {
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
-    member_id: params.memberId,
+    member_id: memberId,
     order_name: params.orderName || null,
     subtotal: params.totals.subtotal,
     tier_discount: params.totals.tier_discount,
@@ -277,7 +286,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // enforcing, a sale whose card is already charged is still saved (and
   // flagged): the register checked before payment, and losing the record
   // of a charged card is worse.
-  const saleForCheck = { ...params, tip };
+  const saleForCheck = { ...params, memberId, tip };
   let totalsCheck: TotalsCheck | null = null;
   if (ENFORCE_REGISTER_TOTALS) {
     totalsCheck = await checkSaleTotals(saleForCheck);
@@ -373,24 +382,24 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // 1 point per $1 of the order after discounts, and 100 back out when a
   // reward was used. Each change lands in the member's points history, tied
   // to this order.
-  if (params.memberId) {
+  if (memberId) {
     if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
       // The register checked the balance before payment; this catches a
       // reward used meanwhile (or a register that skipped the check). The
       // customer has paid by now, so the sale stands, but the balance never
       // goes below zero: the points aren't taken, and a manager is told.
-      const balance = await memberPoints(supabase, params.memberId);
+      const balance = await memberPoints(supabase, memberId);
       if (balance === undefined || (balance ?? 0) >= POINTS_PER_REWARD) {
-        await applyPoints({ memberId: params.memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+        await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
       } else {
-        after(() => flagSale("points_short", { ...saved, details: { memberId: params.memberId, points: balance, reward: params.totals.redemption_discount } }));
+        after(() => flagSale("points_short", { ...saved, details: { memberId, points: balance, reward: params.totals.redemption_discount } }));
       }
     }
     const earned = pointsEarned(params.totals);
-    if (earned > 0) await applyPoints({ memberId: params.memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
+    if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
-  await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
+  await syncTicketBookings(supabase, { id: orderId, memberId, name: params.orderName || null }, params.lines);
 
   // A closed tab's card on file comes off file, however the tab was paid.
   // (A tab closed elsewhere had its card released there.)
@@ -472,6 +481,7 @@ const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_dis
 export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields, totals: CheckoutTotals = ZERO_TOTALS): Promise<string> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
   if (numberErr) throw numberErr;
 
@@ -482,7 +492,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       source: "pos",
       status,
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: status === "tab" ? fields.orderName || null : null,
       tax_free: fields.taxFree,
@@ -529,11 +539,12 @@ export type DraftSaveResult = { ok: true } | { ok: false; error: string; closed?
 export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals, opts?: { kitchen?: "hold" | "now" }): Promise<DraftSaveResult> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: updated, error } = await supabase
     .from("orders")
     .update({
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: fields.orderName || null,
       tax_free: fields.taxFree,

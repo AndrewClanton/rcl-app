@@ -2,26 +2,29 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { findMenuPictures, keepMenuPicture, pickMenuPicture, removeMenuPhoto, uploadMenuPhoto } from "./actions";
+import { findMenuPictures, keepMenuPicture, pickMenuPicture, removeMenuPhoto, saveMenuTextIcon, uploadMenuPhoto } from "./actions";
 import MenuPicture from "@/components/menu/MenuPicture";
 import PicturePicker from "@/components/menu/PicturePicker";
+import TextIconDesigner from "@/components/menu/TextIconDesigner";
 import { usePhotoUpload } from "@/components/menu/usePhotoUpload";
 import { useTouchScreen } from "@/lib/menu-pictures/photo-file";
-import { creditLine, isFound, type PhotoTarget, type PictureState } from "@/lib/menu-pictures/shared";
+import { creditLine, isFound, textIconShown, type PhotoTarget, type PictureState } from "@/lib/menu-pictures/shared";
 
 // The picture on a register button (an item) or tab (a category): its
-// thumbnail (the label tile when there's no photo), and for managers Find a
-// picture (free-to-use ones, ◀ ▶), Take photo / Choose photo, and Remove.
+// thumbnail (its text icon or label tile when there's no photo), and for
+// managers Find a picture (free-to-use ones, ◀ ▶), Text icon (a button's
+// own, like "$5" glowing red), Take photo / Choose photo, and Remove.
 // A picture that was found automatically and hasn't been looked at yet says
 // so, with Keep one tap away (or the Photo walk does them all in a row).
 //
-// Photos are squared and shrunk to a 480px JPEG in the browser before they
+// Photos are squared and shrunk to a 640px JPEG in the browser before they
 // go up (lib/menu-pictures/photo-file.ts); found ones are downloaded by the
 // server. Either way the file lives in our own bucket.
 export default function MenuPhoto({
   target,
   id,
   name,
+  price = null,
   picture,
   category,
   parent,
@@ -31,6 +34,7 @@ export default function MenuPhoto({
   target: PhotoTarget;
   id: string;
   name: string;
+  price?: number | null; // an item's, for the text icon's preview of its button
   picture: PictureState;
   category?: string | null;
   parent?: string | null;
@@ -40,6 +44,7 @@ export default function MenuPhoto({
   const router = useRouter();
   const touch = useTouchScreen();
   const [finding, setFinding] = useState(false);
+  const [designing, setDesigning] = useState(false);
   const [busy, setBusy] = useState<"remove" | "keep" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const photo = usePhotoUpload((form) => uploadMenuPhoto(target, id, form), () => router.refresh());
@@ -47,6 +52,7 @@ export default function MenuPhoto({
   const url = picture.image_url;
   const credit = creditLine(picture.image_source, picture.image_credit);
   const unchecked = !!url && isFound(picture.image_source) && !picture.image_approved_at;
+  const textIcon = textIconShown(picture);
 
   async function act(what: "remove" | "keep", fn: () => Promise<{ ok: true } | { ok: false; error: string }>) {
     setBusy(what);
@@ -65,7 +71,7 @@ export default function MenuPhoto({
   const working = busy ?? (photo.busy ? "upload" : null);
   const thumb = (
     <div className="relative shrink-0 overflow-hidden rounded-md border border-[var(--border)]" style={{ width: size, height: size }} title={credit ?? undefined}>
-      <MenuPicture url={url} name={name} category={category} parent={parent} sizes={`${size}px`} small className="h-full w-full" />
+      <MenuPicture url={url} text={textIcon} name={name} category={category} parent={parent} sizes={`${size}px`} small className="h-full w-full" />
       {working && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-[10px] font-bold text-white">
           {working === "upload" ? "Uploading…" : working === "keep" ? "Saving…" : "Removing…"}
@@ -84,6 +90,12 @@ export default function MenuPhoto({
           <button type="button" className={`${button} font-bold`} disabled={!!working} onClick={() => setFinding(true)}>
             Find picture
           </button>
+          {/* Items only: category tabs show an icon (components/menu/CategoryIcon). */}
+          {target === "item" && (
+            <button type="button" className={button} disabled={!!working} onClick={() => setDesigning(true)}>
+              Text icon
+            </button>
+          )}
           {touch && (
             <button type="button" className={button} disabled={!!working} onClick={photo.takePhoto}>
               Take photo
@@ -95,11 +107,11 @@ export default function MenuPhoto({
           {/* Holds its space with no photo, so rows of these line up. */}
           <button
             type="button"
-            className={`${button} text-[var(--danger-text)] ${url ? "" : "invisible"}`}
-            disabled={!!working || !url}
-            aria-hidden={!url}
+            className={`${button} text-[var(--danger-text)] ${url || textIcon ? "" : "invisible"}`}
+            disabled={!!working || !(url || textIcon)}
+            aria-hidden={!(url || textIcon)}
             onClick={() => {
-              if (confirm(`Take the picture off "${name}"? It shows its label tile instead.`)) void act("remove", () => removeMenuPhoto(target, id));
+              if (confirm(`Take the ${url ? "picture" : "text icon"} off "${name}"? It shows its label tile instead.`)) void act("remove", () => removeMenuPhoto(target, id));
             }}
           >
             Remove
@@ -130,6 +142,25 @@ export default function MenuPhoto({
                 router.refresh();
               }}
               onCancel={() => setFinding(false)}
+            />
+          </div>
+        </div>
+      )}
+      {designing && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-3 sm:p-8" role="dialog" aria-modal="true" aria-label={`Text icon for ${name}`}>
+          <div className="card w-full max-w-md shadow-2xl">
+            <div className="eyebrow">Text icon</div>
+            <h2 className="mb-3 font-display text-2xl leading-tight">{name}</h2>
+            <TextIconDesigner
+              name={name}
+              price={price}
+              current={picture}
+              save={(icon) => saveMenuTextIcon(target, id, icon)}
+              onSaved={() => {
+                setDesigning(false);
+                router.refresh();
+              }}
+              onCancel={() => setDesigning(false)}
             />
           </div>
         </div>

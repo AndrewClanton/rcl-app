@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import BirthdayPicker from "@/components/BirthdayPicker";
 import { badgeFor, birthdayFromInput } from "@/lib/visits";
 import { setEmailOptIn, updateMyProfile } from "../../actions";
+import { PROFILE_LINE_MAX } from "@/lib/member-profile";
 
 // birthday is "12-30" or "" (see BirthdayPicker).
 export function ProfileDetailsForm({
@@ -13,11 +15,14 @@ export function ProfileDetailsForm({
   phone: initialPhone,
   tagline: initialTagline,
   birthday: initialBirthday,
+  lineHidden = false,
 }: {
   name: string;
   phone: string;
   tagline: string;
   birthday: string;
+  // Staff hid their profile line: it shows nowhere until they show it again.
+  lineHidden?: boolean;
 }) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
@@ -62,16 +67,23 @@ export function ProfileDetailsForm({
         </div>
       </div>
       <label className="block sm:col-span-2">
-        <div className="label-xs">Your line (optional)</div>
+        <div className="label-xs">Profile line (optional)</div>
         <input
           id="profile-tagline"
           className="input"
           value={tagline}
-          maxLength={120}
+          maxLength={PROFILE_LINE_MAX}
           onChange={(e) => setTagline(e.target.value)}
           placeholder={'A favorite movie quote, a signature, "Horror or nothing"'}
         />
-        <div className="mt-1 text-xs text-[var(--muted)]">Our staff see this when you check in. It isn&apos;t shown publicly. {tagline.length}/120</div>
+        <div className="mt-1 text-xs text-[var(--muted)]">
+          Just for fun: it shows on your profile page if you share it, and on the check-in screen when you check in. {tagline.length}/{PROFILE_LINE_MAX}
+        </div>
+        {lineHidden && (
+          <div className="mt-1 text-xs font-bold text-[var(--danger-text)]">
+            Hidden by our staff, so it isn&apos;t showing anywhere right now. Questions? Email info@royalecinemajoplin.com.
+          </div>
+        )}
       </label>
       <div className="flex items-center gap-3 sm:col-span-2">
         <button className="btn-primary !px-5 !py-2 text-sm" disabled={busy || !dirty}>
@@ -165,6 +177,9 @@ export function EmailPreference({ optIn }: { optIn: boolean }) {
       <span className="text-sm">
         <strong>Weekly lineup and member news</strong>
         <span className="block text-[var(--muted)]">What&apos;s playing each week, including the members-only classics. We&apos;ll still send receipts and account notices.</span>
+        <Link href="/account/email" className="mt-1 inline-block font-bold text-[var(--accent)] hover:underline">
+          Choose which emails, or pause them
+        </Link>
       </span>
     </label>
   );

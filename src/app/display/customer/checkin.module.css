@@ -28,6 +28,13 @@
     overlay-out 0.5s ease-in 6s forwards;
 }
 
+/* Rewind's welcome back: the same burst, up for longer. */
+.overlayLong {
+  animation:
+    overlay-in 0.25s ease-out both,
+    overlay-out 0.5s ease-in 10s forwards;
+}
+
 .burst {
   position: relative;
   width: min(60vw, 340px);
@@ -94,6 +101,14 @@
   line-height: 1.05;
   transform: rotate(-2deg);
   animation: rise 0.5s ease-out 0.45s both;
+}
+
+.detail {
+  max-width: 34rem;
+  font-family: var(--font-archivo-black), "Arial Black", sans-serif;
+  font-size: clamp(1.2rem, 3.4vw, 1.8rem);
+  line-height: 1.2;
+  animation: rise-straight 0.5s ease-out 0.6s both;
 }
 
 .balance {

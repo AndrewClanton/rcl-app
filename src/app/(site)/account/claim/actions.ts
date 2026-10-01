@@ -7,6 +7,8 @@ import { checkClaimDigits, claimMemberForUser, type ClaimFailure } from "@/lib/m
 import { DIGITS_PROOF_COOKIE } from "@/lib/member-claim-token";
 import { CLAIM_PATH } from "@/lib/claim-link";
 import { allowAttempt } from "@/lib/rate-limit";
+import { recordConsentSource } from "@/lib/email/consent";
+import { memberJoined } from "@/lib/email/automations";
 
 // The claim page's steps (lib/member-claim.ts has the rules). Public: the
 // link and the phone digits are the proof, and both are checked again on
@@ -51,6 +53,11 @@ export async function finishClaim(token: string): Promise<FinishAnswer> {
   const r = await claimMemberForUser(user, String(token ?? ""), store.get(DIGITS_PROOF_COOKIE)?.value);
   if (!r.ok) return r;
   store.set(proofCookie("", 0));
+  // Claiming is a yes to hearing from us in their own words: recorded as
+  // the consent source (their email setting itself isn't changed), and the
+  // welcome email follows if email is on.
+  await recordConsentSource(r.memberId, "claim").catch(() => null);
+  memberJoined(r.memberId);
   revalidatePath("/", "layout");
   return { ok: true };
 }

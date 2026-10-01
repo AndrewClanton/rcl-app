@@ -69,6 +69,16 @@ export async function requireDisplayScreen(returnTo: string): Promise<StaffSessi
   return session;
 }
 
+// requireDisplayScreen() for the Server Actions a display screen itself
+// calls (the customer screen's check-in). Only for actions safe to hand an
+// unattended screen: nothing that returns member details or touches sales,
+// staff or money -- those stay behind assertStaff().
+export async function assertDisplayScreen(): Promise<StaffSession> {
+  const session = await getEmployeeSession();
+  if (!session) throw new Error("Not authorized");
+  return session;
+}
+
 // For the top of every Server Action. A page/layout check (requireStaff()
 // below) only gates *rendering* -- an action defined under it is still a
 // public POST endpoint anyone holding its action ID can call (see Next's

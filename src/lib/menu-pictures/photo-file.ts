@@ -3,11 +3,11 @@
 import { useSyncExternalStore } from "react";
 
 // A photo someone takes or chooses, made ready to upload in the browser:
-// squared (cut from the middle) and shrunk to a 480px JPEG, so the register
+// squared (cut from the middle) and shrunk to a 640px JPEG, so the register
 // loads it fast and a 12-megapixel phone photo never has to cross the
 // network. Shared by Back office → Menu and the register's item settings.
 
-const OUT_SIZE = 480;
+const OUT_SIZE = 640;
 const MAX_BYTES = 2_000_000;
 const CANT_OPEN = "This browser can't open that photo (iPhone photos are sometimes HEIC). Try a JPEG or a screenshot of it.";
 export const UPLOAD_FAILED = "The photo didn't upload. Check the connection and try again.";

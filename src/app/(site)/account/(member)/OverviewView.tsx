@@ -96,7 +96,7 @@ export default function OverviewView({
           <div className="max-w-xl">
             <h2 className="font-display text-xl">Add your photo</h2>
             <p className="mt-1 text-[15px] text-[var(--muted)]">
-              Staff can find your account at the register by your photo, so you don&apos;t have to spell your name over the music. Only our staff see it.
+              Staff can find your account at the register by your photo, so you don&apos;t have to spell your name over the music. It&apos;s on your profile page too, if you share one.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
