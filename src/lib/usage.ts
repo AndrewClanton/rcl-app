@@ -54,6 +54,9 @@ export function isUuid(s: unknown): s is string {
 // everything else (a training's name, "old-site") stays as it is. With more
 // than one id, the last one is kept.
 export function normalizePath(path: string): { path: string; pattern: string; entityId: string | null } {
+  // A member's shared profile (/m/<their link name>): counted as one page,
+  // never by whose it is.
+  if (/^\/m\/[^/]+\/?$/i.test(path)) return { path: "/m/[handle]", pattern: "/m/[handle]", entityId: null };
   const clean = path.length > 1 ? path.replace(/\/+$/, "") || "/" : path;
   let entityId: string | null = null;
   const pattern = clean

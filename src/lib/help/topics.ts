@@ -196,7 +196,7 @@ export const HELP_TOPICS = {
     title: "Check-in for points",
     area: "Register: members and the door",
     body:
-      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone.",
+      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone. Once you confirm, the screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color) with their profile line; it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
   },
   "points-and-badges": {
@@ -346,6 +346,13 @@ export const HELP_TOPICS = {
   },
 
   // ---------- reports and money ----------
+  "membership-payments": {
+    title: "Memberships in Reports",
+    area: "Reports and money",
+    body:
+      "Insiders+ is charged by Stripe on its own (a new member's first charge, each monthly or yearly renewal, a switch to yearly), and gift memberships are paid on Stripe's page, so none of it goes through the register. Reports read those charges from Stripe every 10 minutes while they're open and each morning before the daily email, and count each one once, on the business day it was charged. They're in Collected and net sales as their own line, with their tax on the Sales tax tab. A refund comes off the day of the charge, like a register refund. Insiders+ paid in cash or set by hand isn't here: Stripe never sees it.",
+    links: [{ label: "Reports → Members", href: "/admin/reports/members" }],
+  },
   "box-office-csv": {
     title: "The box office report for distributors",
     area: "Reports and money",

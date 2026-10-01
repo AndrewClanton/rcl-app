@@ -7,6 +7,7 @@ import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
 import { REWARD_LABEL, badgeList } from "@/lib/visits";
+import { entranceFor, flairColor, parseFlair } from "@/lib/flair";
 import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
@@ -155,6 +156,10 @@ export default function RegisterCheckins({
         : {}),
       // No website login yet: the tablet shows a QR code to set one up.
       ...(r?.ok && r.claimUrl ? { claimUrl: r.claimUrl } : {}),
+      // Their entrance and profile line (keys and their own words only; the
+      // tablet checks both). A hidden line is already null.
+      ...(m.flair ? { flair: { color: m.flair.color, entrance: entranceFor(parseFlair(m.flair), !!m.partyWeek), sticker: m.flair.sticker } } : {}),
+      ...(m.tagline ? { line: m.tagline } : {}),
     };
     answer(p.id, "checkin-confirmed", confirmed);
     // Their tickets for today, if they bought any online: a Print row here,
@@ -313,6 +318,7 @@ export default function RegisterCheckins({
       firstName: firstNameOf(m.name),
       earned,
       balance: Math.round(fresh ? fresh.points : m.points + sale.subtotal),
+      color: m.flair?.color ?? null,
     };
     send("points-earned", payload);
   });
@@ -530,7 +536,8 @@ function HereTodayPanel({
       {open && (
         <ul className="max-h-[60dvh] divide-y overflow-y-auto" style={{ borderColor: "var(--border)" }}>
           {here.map((h) => (
-            <li key={h.member.id} className="flex items-center gap-3 px-3 py-2.5">
+            // Their favorite color (lib/flair.ts), as a stripe down the left.
+            <li key={h.member.id} className="flex items-center gap-3 px-3 py-2.5" style={accent(h.member)}>
               <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={52} plus={h.member.tier === "Insiders+"} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-base font-bold leading-tight">{h.member.name}</div>
@@ -572,7 +579,8 @@ function HereTodayPanel({
 }
 
 // Big face and name, so staff can put the two together and greet them by
-// name next time. Their own line from their account, if they wrote one.
+// name next time. Their profile line, if they wrote one (and staff haven't
+// hidden it).
 function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
   return (
     <div className="flex items-center gap-3">
@@ -755,4 +763,9 @@ function NewCard({
       )}
     </>
   );
+}
+
+function accent(m: PosMember): React.CSSProperties | undefined {
+  const c = flairColor(m.flair?.color);
+  return c ? { boxShadow: `inset 5px 0 0 ${c.hex}` } : undefined;
 }

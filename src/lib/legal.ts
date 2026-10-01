@@ -7,7 +7,7 @@ import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 // open them and they aren't linked anywhere. When the text changes, update
 // LEGAL_EFFECTIVE_DATE.
 export const LEGAL_PAGES_PUBLISHED = true;
-export const LEGAL_EFFECTIVE_DATE: string | null = "September 24, 2026";
+export const LEGAL_EFFECTIVE_DATE: string | null = "October 1, 2026";
 
 export async function canViewLegalPages(): Promise<boolean> {
   if (LEGAL_PAGES_PUBLISHED) return true;

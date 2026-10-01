@@ -229,12 +229,25 @@ export interface Member {
   // When a gifted year of Insiders+ runs out (lib/gift-membership.ts).
   // Optional: not every members query selects it.
   plus_gift_until?: string | null;
-  // Their own short line (profile), shown to staff at check-in. Optional:
-  // not every members query selects it.
+  // Their profile line (lib/member-profile.ts): on their shared profile page
+  // and the check-in screen, unless staff hid it (tagline_hidden_at).
+  // Optional: not every members query selects it.
   tagline?: string | null;
   // "2000-MM-DD": only the month and day mean anything (lib/visits.ts), for
   // the Birthday Visit badge. Optional: not every members query selects it.
   birthday?: string | null;
+  // Their shared profile page and check-in flair (lib/member-profile.ts,
+  // lib/flair.ts). Optional: missing until the member_profiles migration,
+  // and not every members query selects them.
+  share_profile?: boolean;
+  profile_handle?: string | null;
+  display_name?: string | null;
+  tagline_hidden_at?: string | null;
+  profile_hidden_at?: string | null;
+  flair_color?: string | null;
+  flair_effect?: string | null;
+  flair_sticker?: string | null;
+  birthday_party?: boolean;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;
