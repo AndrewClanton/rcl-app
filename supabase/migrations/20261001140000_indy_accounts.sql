@@ -30,6 +30,10 @@ create table if not exists indy_accounts (
   indy_type text,             -- standard / marketing / member-guest / day-pass
   indy_points numeric,        -- kept for Andrew's decision; never imported
   -- Yes to all four of Indy's email questions. Anything less is a no.
+  -- Information only (Andrew, 9/30): every new member from Indy joins with
+  -- email on whatever this says, and a member already here keeps the email
+  -- setting they have with us. It becomes their consent source (indy_yes /
+  -- indy_no) where nothing better is recorded.
   said_yes boolean not null,
 
   -- The loader's sort:
@@ -62,19 +66,12 @@ create table if not exists indy_accounts (
   -- load or choice. The import works it out again from the member as they
   -- are then, and never overwrites anything.
   planned_fills jsonb not null default '[]'::jsonb,
-  -- Said no on Indy, but the matched member is opted in only by our old
-  -- default (email_opt_in true, email_opt_in_changed_at null). Andrew picks
-  -- 'honor' (turn their email off) or 'leave'; 'pending' holds the row out
-  -- of the import until he does. Null on every other row.
-  said_no_review boolean not null default false,
-  said_no_decision text check (said_no_decision in ('pending', 'honor', 'leave')),
   decided_by uuid references employees(id) on delete set null,
   decided_at timestamptz,
 
   -- What the import did.
   imported_member_id uuid references members(id) on delete set null,
   imported_at timestamptz,
-  said_no_honored_at timestamptz,   -- the import turned their email off
   -- The fields the import actually wrote on a member who was already here
   -- (["phone", "birthday", "name"]), so a wrong fill can be undone exactly
   -- later. Null for a new member, and before the import.
@@ -92,13 +89,15 @@ create table if not exists indy_accounts (
   loaded_at timestamptz not null default now()
 );
 
--- (For a database that ran an earlier copy of this file.)
+-- (For a database that ran an earlier copy of this file. That copy also
+-- had said_no_review, said_no_decision and said_no_honored_at, for an
+-- "honor the Indy no" review that's gone: nothing reads them now, and
+-- they're left in place rather than dropped.)
 alter table indy_accounts add column if not exists filled_fields jsonb;
 
 create index if not exists indy_accounts_group_idx on indy_accounts (classification, shuffle);
 create index if not exists indy_accounts_decision_idx on indy_accounts (decision);
 create index if not exists indy_accounts_email_idx on indy_accounts (lower(email));
-create index if not exists indy_accounts_said_no_idx on indy_accounts (shuffle) where said_no_review;
 
 alter table indy_accounts enable row level security;
 
@@ -107,10 +106,10 @@ alter table indy_accounts enable row level security;
 -- first). Their Indy answer stays in indy_accounts.said_yes.
 alter table members add column if not exists indy_user_id text unique;
 
--- After an import batch: mark each row with its member, whether its "no"
--- was honored, which fields it filled, and whether its answer reached the
--- email-marketing tables, in one statement.
--- p_rows: [{indy_user_id, member_id, honored, consent, filled}].
+-- After an import batch: mark each row with its member, which fields it
+-- filled, and whether its answer reached the email-marketing tables, in
+-- one statement.
+-- p_rows: [{indy_user_id, member_id, consent, filled}].
 -- Only fills in what's still empty, so a retried batch changes nothing.
 -- Service role only.
 create or replace function public.mark_indy_accounts(p_rows jsonb)
@@ -123,10 +122,9 @@ as $$
     update indy_accounts ia
     set imported_member_id = coalesce(ia.imported_member_id, r.member_id),
         imported_at = coalesce(ia.imported_at, case when r.member_id is not null then now() end),
-        said_no_honored_at = coalesce(ia.said_no_honored_at, case when r.honored then now() end),
         filled_fields = coalesce(ia.filled_fields, r.filled),
         consent_recorded_at = coalesce(ia.consent_recorded_at, case when r.consent then now() end)
-    from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r(indy_user_id text, member_id uuid, honored boolean, consent boolean, filled jsonb)
+    from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as r(indy_user_id text, member_id uuid, consent boolean, filled jsonb)
     where ia.indy_user_id = r.indy_user_id
     returning 1
   )
@@ -160,7 +158,6 @@ begin
       birthday = null, indy_last_visit = null, indy_points = null,
       classification = 'skip', reasons = array['removed at their request'],
       decision = 'skip', import_as = null, target_member_id = null, planned_fills = '[]'::jsonb,
-      said_no_review = false, said_no_decision = null,
       erased_at = now()
   where erased_at is null
     and ((new.indy_user_id is not null and indy_user_id = new.indy_user_id)

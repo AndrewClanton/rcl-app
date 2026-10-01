@@ -7,8 +7,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 // People from Indy, the ticketing system before this app: review the
-// automatic sort, pick for the conflicts and the "said no"s, then copy the
-// approved ones into Members. Admin/owner only -- this lists ~1,500
+// automatic sort, pick for the conflicts, approve the new people, then copy
+// them into Members. (An old ?tab=said_no link lands on New.) Admin/owner only -- this lists ~1,500
 // people's contact details.
 export default async function IndyImportPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; page?: string }> }) {
   await requireAdmin();

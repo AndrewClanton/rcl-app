@@ -10,7 +10,6 @@ import {
   type IndyImportAs,
   type IndyImportPreview,
   type IndyPreviewRow,
-  type IndySaidNo,
 } from "@/lib/indy-rules";
 
 // People from Indy's customer export, waiting to be reviewed and imported
@@ -18,8 +17,8 @@ import {
 // src/lib/indy-rules.ts). Service-role reads only -- this holds ~1,500
 // people's contact details. Admin-only surfaces.
 
-export type IndyTab = "new" | "fill" | "conflict" | "said_no" | "skip";
-export const INDY_TABS: IndyTab[] = ["new", "fill", "conflict", "said_no", "skip"];
+export type IndyTab = "new" | "fill" | "conflict" | "skip";
+export const INDY_TABS: IndyTab[] = ["new", "fill", "conflict", "skip"];
 export const INDY_PAGE_SIZE = 50;
 
 // A member an Indy row matched, as the review shows it.
@@ -49,8 +48,6 @@ export interface IndyAccount {
   phone_member_id: string | null;
   target_member_id: string | null;
   planned_fills: IndyFillField[];
-  said_no_review: boolean;
-  said_no_decision: IndySaidNo | null;
   decision: IndyDecision;
   import_as: IndyImportAs | null;
   decided_by: string | null;
@@ -64,10 +61,11 @@ export interface IndyAccount {
 export interface IndySummary {
   classes: Record<IndyClass, number>;
   skippedByHand: number; // fill / new / conflict rows a person set to Skip
+  // What they said on Indy. Information only: every new member joins with
+  // email on, and members already here keep the setting they have with us.
   saidYes: number;
   saidNo: number;
-  saidNoReview: number; // said no on Indy, opted in here only by the old default
-  saidNoPending: number; // ...and still waiting for Honor or Leave (not skipped)
+  saidNoNew: number; // said no on Indy, sorted New: they join with email on anyway
   newUnapproved: number; // new rows on the automatic default: they wait for Approve
   toImport: number; // ready for the Import button
   preview: IndyImportPreview; // what pressing Import would do now
@@ -124,14 +122,12 @@ function counter(supabase: SupabaseClient) {
   // Not imported yet and not removed.
   const notIn = (q: Q) => q.is("imported_member_id", null).is("imported_at", null).is("erased_at", null);
   const ready = (q: Q) => notIn(q.eq("decision", "import").not("import_as", "is", null)).or(READY_FILTER);
-  // A "said no" still waiting for Honor or Leave (a skipped one isn't).
-  const saidNoWaiting = (q: Q) => notIn(q.eq("said_no_review", true).eq("said_no_decision", "pending").neq("decision", "skip"));
   // New on the automatic default, waiting for Approve.
   const newWaiting = (q: Q) => notIn(q.eq("classification", "new").eq("import_as", "new").eq("decision", "import").is("decided_by", null));
-  return { count, notIn, ready, saidNoWaiting, newWaiting };
+  return { count, notIn, ready, newWaiting };
 }
 
-const PREVIEW_COLUMNS = "decision, import_as, said_yes, said_no_review, said_no_decision, planned_fills, decided_by, imported_member_id, imported_at, erased_at";
+const PREVIEW_COLUMNS = "decision, import_as, planned_fills, decided_by, imported_member_id, imported_at, erased_at";
 
 // Every row set to import and not in yet, for the dry run (no contact
 // details: just what decides what Import does).
@@ -166,7 +162,7 @@ async function erasuresBeforeLastLoad(supabase: SupabaseClient): Promise<number 
 
 export async function getIndySummary(): Promise<IndySummary> {
   const supabase = createAdminClient();
-  const { count, notIn, saidNoWaiting, newWaiting } = counter(supabase);
+  const { count, notIn, newWaiting } = counter(supabase);
   const [
     fill,
     fresh,
@@ -175,8 +171,7 @@ export async function getIndySummary(): Promise<IndySummary> {
     skippedByHand,
     saidYes,
     saidNo,
-    saidNoReview,
-    saidNoPending,
+    saidNoNew,
     newUnapproved,
     pending,
     imported,
@@ -193,8 +188,7 @@ export async function getIndySummary(): Promise<IndySummary> {
     count((q) => notIn(q.eq("decision", "skip").neq("classification", "skip"))),
     count((q) => q.eq("said_yes", true)),
     count((q) => q.eq("said_yes", false)),
-    count((q) => q.eq("said_no_review", true)),
-    count(saidNoWaiting),
+    count((q) => q.eq("said_yes", false).eq("classification", "new")),
     count(newWaiting),
     pendingImportRows(supabase),
     count((q) => q.not("imported_member_id", "is", null)),
@@ -210,8 +204,7 @@ export async function getIndySummary(): Promise<IndySummary> {
     skippedByHand,
     saidYes,
     saidNo,
-    saidNoReview,
-    saidNoPending,
+    saidNoNew,
     newUnapproved,
     toImport: preview.ready,
     preview,
@@ -228,16 +221,15 @@ export async function getIndySummary(): Promise<IndySummary> {
 // the table isn't there (so that page never fails because of this one).
 export async function getIndyOverview(): Promise<{ total: number; imported: number; toImport: number; needsChoice: number } | null> {
   try {
-    const { count, notIn, ready, saidNoWaiting, newWaiting } = counter(createAdminClient());
-    const [total, imported, toImport, review, saidNo, unapproved] = await Promise.all([
+    const { count, notIn, ready, newWaiting } = counter(createAdminClient());
+    const [total, imported, toImport, review, unapproved] = await Promise.all([
       count((q) => q),
       count((q) => q.not("imported_member_id", "is", null)),
       count(ready),
       count((q) => notIn(q.eq("decision", "review"))),
-      count(saidNoWaiting),
       count(newWaiting),
     ]);
-    return total > 0 ? { total, imported, toImport, needsChoice: review + saidNo + unapproved } : null;
+    return total > 0 ? { total, imported, toImport, needsChoice: review + unapproved } : null;
   } catch {
     return null;
   }
@@ -246,7 +238,7 @@ export async function getIndyOverview(): Promise<{ total: number; imported: numb
 const MATCH = "id, name, email, phone";
 const COLUMNS = [
   "indy_user_id, email, first_name, last_name, phone, birthday, indy_created_at, indy_last_visit, indy_membership, indy_type, indy_points, said_yes",
-  "classification, reasons, email_member_id, phone_member_id, target_member_id, planned_fills, said_no_review, said_no_decision, decision, import_as, decided_by",
+  "classification, reasons, email_member_id, phone_member_id, target_member_id, planned_fills, decision, import_as, decided_by",
   "imported_member_id, erased_at",
   `email_member:members!indy_accounts_email_member_id_fkey(${MATCH})`,
   `phone_member:members!indy_accounts_phone_member_id_fkey(${MATCH})`,
@@ -259,7 +251,7 @@ export async function getIndyPage(opts: { tab: IndyTab; query?: string; page?: n
   let q = supabase.from("indy_accounts").select(COLUMNS, { count: "exact" });
   // Skip lists the automatic skips and the ones a person skipped (a skip
   // row's decision is always skip).
-  q = opts.tab === "said_no" ? q.eq("said_no_review", true) : opts.tab === "skip" ? q.eq("decision", "skip") : q.eq("classification", opts.tab);
+  q = opts.tab === "skip" ? q.eq("decision", "skip") : q.eq("classification", opts.tab);
   // Commas and parentheses would break the or() filter itself (PostgREST
   // doesn't take a backslash before them), so they become spaces, as in
   // src/lib/data/members.ts. %, _ and \ are escaped for ilike.

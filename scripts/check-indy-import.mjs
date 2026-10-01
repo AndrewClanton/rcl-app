@@ -3,8 +3,9 @@
 // made-up people only: the CSV reader with quotes, commas and line breaks
 // inside fields; cleaning up names, emails, phones and birthdays; each sort
 // (fill / new / conflict / skip), including two Indy accounts with one
-// email; that a fill never overwrites anything or sets an email; the "said
-// no on Indy" rule; that new people wait for a person's approval; that
+// email; that a fill never overwrites anything, sets an email or touches
+// the email setting; that everyone new from Indy joins with email on,
+// whatever they said there; that new people wait for a person's approval; that
 // READY_FILTER (the database side) picks exactly what readyToImport does;
 // the review screen's dry-run counts; and that a re-run keeps decisions and
 // leaves imported rows alone. Also runs the loader offline and checks it
@@ -242,51 +243,44 @@ check("fill plan: an old-site placeholder name and empty birthday get filled; th
 check("fill plan: a member with everything gets nothing", rules.plannedFills(people[14], members.find((m) => m.id === "m-full")).length === 0);
 check("fill plan: a real name is never replaced", !rules.plannedFills(people[1], members.find((m) => m.id === "m-phone-only")).includes("name"));
 {
-  const row = { ...by.get("1"), imported_member_id: null, erased_at: null, said_no_decision: "leave" };
-  const now = "2026-10-01T15:00:00.000Z";
+  const row = { ...by.get("1"), imported_member_id: null, erased_at: null };
   // At import time the member has since added a birthday themselves.
   const since = { ...members[0], birthday: "2000-02-02" };
-  const plan = rules.fillPlan(row, since, now);
+  const plan = rules.fillPlan(row, since);
   check("import: re-reads the member and fills only what's still empty", !("birthday" in plan.patch) && plan.patch.name === "Blake Fenn" && !("phone" in plan.patch));
   check("import: never sets an email", !("email" in plan.patch));
   check("import: links the Indy account where none is linked", plan.patch.indy_user_id === "1");
-  check("import: never re-links a member linked elsewhere", rules.fillPlan(row, { ...since, indy_user_id: "777" }, now).problem !== null);
-  check("import: a removed or missing member isn't filled", rules.fillPlan(row, { ...since, erased_at: now }, now).problem !== null && rules.fillPlan(row, null, now).problem !== null);
-  check("import: 'leave' doesn't touch email", !("email_opt_in" in plan.patch));
-  const pending = rules.fillPlan({ ...row, said_no_decision: "pending" }, since, now);
-  check("import: 'pending' doesn't touch email", !("email_opt_in" in pending.patch));
-  const honor = rules.fillPlan({ ...row, said_no_decision: "honor" }, since, now);
-  check("import: 'honor' turns email off, dated now", honor.honored && honor.patch.email_opt_in === false && honor.patch.email_opt_in_changed_at === now);
-  const chose = rules.fillPlan({ ...row, said_no_decision: "honor" }, { ...since, email_opt_in_changed_at: "2026-09-25T00:00:00Z" }, now);
-  check("import: 'honor' never overrides a choice the member made themselves", !chose.honored && chose.keptTheirChoice && !("email_opt_in" in chose.patch));
-  const yesRow = { ...by.get("9001"), imported_member_id: null, erased_at: null };
-  const yesPlan = rules.fillPlan(yesRow, members.find((m) => m.id === "m-linked"), now);
-  check("import: a yes never changes an existing member's email setting", !("email_opt_in" in yesPlan.patch) && !("indy_user_id" in yesPlan.patch));
-  // An earlier press linked the member and turned email off, then stopped
-  // before marking the row: the retry still counts the "no" as honored.
-  const retried = rules.fillPlan(
-    { ...row, said_no_decision: "honor" },
-    { ...since, name: "Blake Fenn", birthday: "2000-10-10", indy_user_id: "1", email_opt_in: false, email_opt_in_changed_at: "2026-10-01T14:59:00.000Z" },
-    now
+  check("import: never re-links a member linked elsewhere", rules.fillPlan(row, { ...since, indy_user_id: "777" }).problem !== null);
+  check("import: a removed or missing member isn't filled", rules.fillPlan(row, { ...since, erased_at: "2026-10-01T15:00:00Z" }).problem !== null && rules.fillPlan(row, null).problem !== null);
+  // Said no on Indy or yes; on by our default, on by choice, or off (an
+  // opt-out they gave us): the member's email setting is never touched.
+  const settings = [
+    { email_opt_in: true, email_opt_in_changed_at: null },
+    { email_opt_in: true, email_opt_in_changed_at: "2026-09-01T00:00:00Z" },
+    { email_opt_in: false, email_opt_in_changed_at: "2026-09-25T00:00:00Z" },
+    { email_opt_in: false, email_opt_in_changed_at: null },
+  ];
+  const touched = [false, true].flatMap((said_yes) =>
+    settings.filter((s) => Object.keys(rules.fillPlan({ ...row, said_yes }, { ...since, ...s }).patch).some((k) => /^email/.test(k)))
   );
-  check("import: a retry after an honored 'no' went in still counts it honored", retried.honored && !retried.keptTheirChoice && Object.keys(retried.patch).length === 0);
+  check("import: a fill never changes the member's email setting, whatever they said on Indy", touched.length === 0, JSON.stringify(touched));
+  const yesRow = { ...by.get("9001"), imported_member_id: null, erased_at: null };
+  const yesPlan = rules.fillPlan(yesRow, members.find((m) => m.id === "m-linked"));
+  check("import: a member already linked and full gets nothing written", Object.keys(yesPlan.patch).length === 0);
 }
 
-// ---------- said no on Indy ----------
-check("said no: flagged when opted in only by the old default", by.get("1").said_no_review === true && by.get("1").said_no_decision === "pending");
-check("said no: not flagged for a yes", by.get("2").said_no_review === false && by.get("2").said_no_decision === null);
-check("said no: not flagged when the member chose themselves", !rules.saidNoReview({ said_yes: false }, { email_opt_in: true, email_opt_in_changed_at: "2026-09-01T00:00:00Z" }));
-check("said no: not flagged when email is already off", !rules.saidNoReview({ said_yes: false }, { email_opt_in: false, email_opt_in_changed_at: null }));
-check("said no: new members aren't flagged (their answer is used as is)", by.get("11").said_no_review === false);
+// ---------- everyone from Indy comes in opted in ----------
+check("everyone on: no row is held back for its Indy answer", sortedRows.every((r) => !("said_no_review" in r) && !("said_no_decision" in r)));
+check("everyone on: a no on Indy still sorts as fill or new like a yes", cls("1") === "fill" && by.get("1").said_yes === false && cls("11") === "new" && by.get("11").said_yes === false);
 {
-  const base = { decision: "import", import_as: "fill", imported_member_id: null, erased_at: null, said_no_review: true };
-  check("ready: a said-no waiting for Honor or Leave is held back", !rules.readyToImport({ ...base, said_no_decision: "pending" }));
-  check("ready: once picked it goes", rules.readyToImport({ ...base, said_no_decision: "honor" }) && rules.readyToImport({ ...base, said_no_decision: "leave" }));
-  check("ready: review, skip and imported rows never go", !rules.readyToImport({ ...base, said_no_review: false, decision: "review" }) && !rules.readyToImport({ ...base, said_no_review: false, decision: "skip" }) && !rules.readyToImport({ ...base, said_no_review: false, imported_member_id: "x" }));
-  check("ready: a row marked imported never goes again, even if its member link was cleared", !rules.readyToImport({ ...base, said_no_review: false, imported_at: "2026-10-01T15:00:00Z" }));
-  const fresh = { decision: "import", import_as: "new", said_no_review: false, said_no_decision: null, imported_member_id: null, erased_at: null };
+  const base = { decision: "import", import_as: "fill", imported_member_id: null, erased_at: null };
+  check("ready: a fill goes on the default (it only fills empty details)", rules.readyToImport({ ...base, decided_by: null }));
+  check("ready: a no on Indy doesn't hold a fill back", rules.readyToImport({ ...base, said_yes: false, decided_by: null }));
+  check("ready: review, skip and imported rows never go", !rules.readyToImport({ ...base, decision: "review" }) && !rules.readyToImport({ ...base, decision: "skip" }) && !rules.readyToImport({ ...base, imported_member_id: "x" }));
+  check("ready: a row marked imported never goes again, even if its member link was cleared", !rules.readyToImport({ ...base, imported_at: "2026-10-01T15:00:00Z" }));
+  check("ready: a removed row never goes", !rules.readyToImport({ ...base, erased_at: "2026-10-01T15:00:00Z" }));
+  const fresh = { decision: "import", import_as: "new", imported_member_id: null, erased_at: null };
   check("ready: a new row on the loader's default waits; once a person approves it goes", !rules.readyToImport({ ...fresh, decided_by: null }) && rules.readyToImport({ ...fresh, decided_by: "emp-1" }));
-  check("ready: a fill goes on the default (it only fills empty details)", rules.readyToImport({ ...base, said_no_review: false, said_no_decision: null, decided_by: null }));
 }
 
 // ---------- READY_FILTER says what readyToImport says ----------
@@ -357,39 +351,33 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
     const mismatches = [];
     for (const decision of ["import", "skip", "review"])
       for (const import_as of [null, "fill", "new"])
-        for (const said_no_review of [false, true])
-          for (const said_no_decision of [null, "pending", "honor", "leave"])
-            for (const decided_by of [null, "emp-1"])
-              for (const imported_member_id of [null, "m-1"])
-                for (const imported_at of [null, "2026-10-01T15:00:00Z"])
-                  for (const erased_at of [null, "2026-10-01T15:00:00Z"]) {
-                    const r = { decision, import_as, said_no_review, said_no_decision, decided_by, imported_member_id, imported_at, erased_at };
-                    const inDb = decision === "import" && import_as !== null && !imported_member_id && !imported_at && !erased_at && truth(tree, r) === true;
-                    rowsTried++;
-                    if (inDb !== rules.readyToImport(r)) mismatches.push(JSON.stringify(r));
-                  }
+        for (const said_yes of [false, true])
+          for (const decided_by of [null, "emp-1"])
+            for (const imported_member_id of [null, "m-1"])
+              for (const imported_at of [null, "2026-10-01T15:00:00Z"])
+                for (const erased_at of [null, "2026-10-01T15:00:00Z"]) {
+                  const r = { decision, import_as, said_yes, decided_by, imported_member_id, imported_at, erased_at };
+                  const inDb = decision === "import" && import_as !== null && !imported_member_id && !imported_at && !erased_at && truth(tree, r) === true;
+                  rowsTried++;
+                  if (inDb !== rules.readyToImport(r)) mismatches.push(JSON.stringify(r));
+                }
     check(`READY_FILTER: picks exactly the rows readyToImport does (${rowsTried} combinations)`, mismatches.length === 0, mismatches.slice(0, 2).join(" "));
   }
 }
 
 // ---------- the dry run on the review screen ----------
 {
-  const row = (over) => ({ decision: "import", import_as: "fill", said_yes: true, said_no_review: false, said_no_decision: null, planned_fills: [], decided_by: null, imported_member_id: null, imported_at: null, erased_at: null, ...over });
+  const row = (over) => ({ decision: "import", import_as: "fill", said_yes: true, planned_fills: [], decided_by: null, imported_member_id: null, imported_at: null, erased_at: null, ...over });
   const p = rules.importPreview([
     row({ import_as: "new", decided_by: "emp-1" }),
-    row({ import_as: "new", decided_by: "emp-1", said_yes: false }),
+    row({ import_as: "new", decided_by: "emp-1", said_yes: false }), // joins with email on all the same
     row({ import_as: "new" }), // waits for approval
     row({ planned_fills: ["phone"] }),
     row({ planned_fills: [] }),
-    row({ said_yes: false, said_no_review: true, said_no_decision: "honor", planned_fills: ["birthday"] }),
-    row({ said_yes: false, said_no_review: true, said_no_decision: "pending" }), // held back
+    row({ said_yes: false, planned_fills: ["birthday"] }), // a no on Indy: filled like anyone else
     row({ decision: "skip" }),
   ]);
-  check(
-    "preview: counts what Import would do",
-    same(p, { ready: 5, newMembers: 2, newEmailOn: 1, newEmailOff: 1, fills: 2, links: 1, honor: 1, newWaiting: 1 }),
-    JSON.stringify(p)
-  );
+  check("preview: counts what Import would do", same(p, { ready: 5, newMembers: 2, fills: 2, links: 1, newWaiting: 1 }), JSON.stringify(p));
 }
 
 // ---------- a new member ----------
@@ -397,7 +385,9 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
   const row = { ...by.get("11"), imported_member_id: null, erased_at: null };
   const m = rules.newMemberRow(row, "2026-10-01T15:00:00.000Z");
   check("new member: a free Insider with no points", m.tier === "Insiders" && m.points === 0 && m.name === "Kai Lark");
-  check("new member: email on or off as they answered, dated when they answered", m.email_opt_in === false && m.email_opt_in_changed_at === row.indy_created_at && !!row.indy_created_at);
+  check("new member: said no on Indy, joins with email on, on by default (no choice date)", row.said_yes === false && m.email_opt_in === true && m.email_opt_in_changed_at === null);
+  const yes = rules.newMemberRow({ ...row, said_yes: true }, "2026-10-01T15:00:00.000Z");
+  check("new member: said yes on Indy, email on, dated when they said it", yes.email_opt_in === true && yes.email_opt_in_changed_at === row.indy_created_at && !!row.indy_created_at);
   check("new member: carries the Indy link and birthday, no Indy points", m.indy_user_id === "11" && m.birthday === "2000-12-24" && !("indy_points" in m));
   check("consent: yes and no map to the marketing sources", rules.indyConsentSource(true) === "indy_yes" && rules.indyConsentSource(false) === "indy_no");
   check("consent: only replaces nothing or 'unknown'", rules.takesIndyConsent(undefined) && rules.takesIndyConsent("unknown") && !rules.takesIndyConsent("join_form"));
@@ -411,15 +401,17 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
   const fresh3 = by.get("3");
   const untouched = { ...fresh3, classification: "conflict", decision: "review", decided_by: null, imported_member_id: null, erased_at: null };
   check("re-run: an undecided row is sorted afresh", rules.mergeIndyRow(fresh3, untouched, membersById) === fresh3);
-  const decided = { ...untouched, decision: "import", import_as: "fill", target_member_id: "m-a", decided_by: "emp-1", said_no_decision: null };
+  const decided = { ...untouched, decision: "import", import_as: "fill", target_member_id: "m-a", decided_by: "emp-1" };
   const kept = rules.mergeIndyRow(fresh3, decided, membersById);
   check("re-run: a decided row keeps its decision and pick", kept.decision === "import" && kept.import_as === "fill" && kept.target_member_id === "m-a" && kept.classification === "conflict");
   check("re-run: a decided row's fills are worked out against the member now", same(kept.planned_fills, rules.plannedFills(fresh3, membersById.get("m-a"))));
   check("re-run: an imported row is left alone", rules.mergeIndyRow(fresh3, { ...decided, imported_member_id: "m-a" }, membersById) === null);
   check("re-run: a row marked imported is left alone, even with its member link cleared", rules.mergeIndyRow(fresh3, { ...decided, imported_at: "2026-10-01T15:00:00Z" }, membersById) === null);
   check("re-run: a removed row is left alone", rules.mergeIndyRow(fresh3, { ...untouched, erased_at: "2026-09-30T00:00:00Z" }, membersById) === null);
-  const saidNoKept = rules.mergeIndyRow(by.get("1"), { ...by.get("1"), decided_by: "emp-1", said_no_decision: "honor", imported_member_id: null, erased_at: null }, membersById);
-  check("re-run: an Honor pick survives", saidNoKept.said_no_decision === "honor" && saidNoKept.said_no_review);
+  // A row from an earlier load that still carries the old "said no" fields
+  // (said_no_review, said_no_decision) is written back without them.
+  const oldCopy = rules.mergeIndyRow(by.get("1"), { ...by.get("1"), decided_by: "emp-1", said_no_review: true, said_no_decision: "honor", imported_member_id: null, erased_at: null }, membersById);
+  check("re-run: an old said-no pick isn't carried forward", !("said_no_review" in oldCopy) && !("said_no_decision" in oldCopy) && oldCopy.decision === "import");
   // After an import, members carry their Indy ids: a re-load finds them linked.
   const afterImport = members.map((m) => (m.id === "m-email" ? { ...m, indy_user_id: "1", name: "Blake Fenn", birthday: "2000-10-10" } : m));
   const reloaded = rules.classifyIndy(people, afterImport).find((r) => r.indy_user_id === "1");
@@ -441,13 +433,13 @@ check("said no: new members aren't flagged (their answer is used as is)", by.get
     const csv = [cols.join(","), ...csvRows.map((r) => cols.map((c) => quote(r[c] ?? "")).join(","))].join("\n");
     writeFileSync(join(dir, "indy.csv"), csv);
     writeFileSync(join(dir, "members.json"), JSON.stringify(members));
-    writeFileSync(join(dir, "staging.json"), JSON.stringify([{ indy_user_id: "11", classification: "new", reasons: [], decision: "skip", import_as: "new", said_no_decision: null, decided_by: "emp-1", imported_member_id: null, erased_at: null }]));
+    writeFileSync(join(dir, "staging.json"), JSON.stringify([{ indy_user_id: "11", classification: "new", reasons: [], decision: "skip", import_as: "new", decided_by: "emp-1", imported_member_id: null, erased_at: null }]));
     const loader = fileURLToPath(new URL("./load-indy-accounts.mjs", import.meta.url));
     const run = (extra) => execFileSync(process.execPath, [loader, join(dir, "indy.csv"), ...extra], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const out = run(["--dry", "--members-file", join(dir, "members.json"), "--staging-file", join(dir, "staging.json")]);
     check("loader: reads the quoted CSV (4 accounts)", /4 Indy accounts/.test(out), out.split("\n")[0]);
     check("loader: prints counts per group", /groups: .*fill: 1/.test(out) && /conflict: 1/.test(out) && /skip: 1/.test(out), out.match(/groups:.*/)?.[0]);
-    check("loader: prints the said-no count", /old default \(for Andrew to honor or leave\): 1/.test(out));
+    check("loader: prints Indy answers as information only, with no honor-or-leave count", /said no: 1 \(information only/.test(out) && /all join with email on/.test(out) && !/honor/i.test(out));
     check("loader: prints fills by field", /fills by field: .*birthday: 1/.test(out) && /name: 1/.test(out));
     check("loader: a hand-made decision is kept", /1 keep a decision made by hand/.test(out) && /decisions: .*skip: 2/.test(out));
     check("loader: dry run writes nothing", /Dry run: nothing was written/.test(out));

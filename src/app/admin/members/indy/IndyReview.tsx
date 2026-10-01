@@ -9,42 +9,37 @@ import { NEVER_MAIL_REASON, type IndyFillField, type IndyImportPreview } from "@
 import { birthdayLabel } from "@/lib/visits";
 import PageHeader from "@/components/admin/PageHeader";
 import ConfirmModal from "@/components/ConfirmModal";
-import { approveAllNewIndy, importApprovedIndyAccounts, setAllIndySaidNo, setIndyChoice, setIndySaidNo, type IndyChoice } from "./actions";
+import { approveAllNewIndy, importApprovedIndyAccounts, setIndyChoice, type IndyChoice } from "./actions";
 
 const TAB_INFO: Record<IndyTab, { label: string; hint: string }> = {
   new: {
     label: "New",
-    hint: "No member matches. Nobody here goes in until you approve them (one by one, or Approve all new). Then Import makes each a free Insider, with email on or off the way they answered on Indy.",
+    hint: "No member matches. Nobody here goes in until you approve them (one by one, or Approve all new). Then Import makes each a free Insider with email on, whatever they answered on Indy. Anyone on our never-mail list (unsubscribed from us, bounced or complained) goes back to Conflict instead.",
   },
   fill: {
     label: "Fill",
-    hint: "Matched to one member. These go in at the next Import unless you skip them: Import fills only what that member has empty (phone, birthday, a placeholder name) and never changes their email address.",
+    hint: "Matched to one member. These go in at the next Import unless you skip them: Import fills only what that member has empty (phone, birthday, a placeholder name) and never changes their email address or email setting.",
   },
   conflict: { label: "Conflict", hint: "The matches disagree. Pick the member to fill, add them as a new member, or skip." },
-  said_no: {
-    label: "Said no on Indy",
-    hint: "Said no to Royale email on Indy, but get our email here only because everyone started opted in. Honor the no to turn their email off at import, or leave it as is. These wait until you pick.",
-  },
   skip: {
     label: "Skip",
     hint: "Staff and owner accounts, test accounts, people with no email or phone, anyone removed at their request, and the ones you skipped. Not imported.",
   },
 };
-const ORDER: IndyTab[] = ["new", "fill", "conflict", "said_no", "skip"];
+const ORDER: IndyTab[] = ["new", "fill", "conflict", "skip"];
 const FIELD_LABEL: Record<IndyFillField, string> = { phone: "phone", birthday: "birthday", name: "name" };
 
 function tabCount(summary: IndySummary, tab: IndyTab) {
-  return tab === "said_no" ? summary.saidNoReview : tab === "skip" ? summary.classes.skip + summary.skippedByHand : summary.classes[tab];
+  return tab === "skip" ? summary.classes.skip + summary.skippedByHand : summary.classes[tab];
 }
 
-// What pressing Import would do, in words ("adds 12 new Insiders (9 with
-// email on, 3 off), fills details on 40 members, ...").
+// What pressing Import would do, in words ("adds 12 new Insiders with
+// email on, fills details on 40 members, ...").
 function previewWords(p: IndyImportPreview): string[] {
   return [
-    p.newMembers ? `adds ${p.newMembers.toLocaleString()} new Insider${p.newMembers === 1 ? "" : "s"} (${p.newEmailOn.toLocaleString()} with email on, ${p.newEmailOff.toLocaleString()} off)` : null,
+    p.newMembers ? `adds ${p.newMembers.toLocaleString()} new Insider${p.newMembers === 1 ? "" : "s"} with email on` : null,
     p.fills ? `fills details on ${p.fills.toLocaleString()} member${p.fills === 1 ? "" : "s"}` : null,
     p.links ? `links ${p.links.toLocaleString()} with nothing to fill` : null,
-    p.honor ? `turns email off for up to ${p.honor.toLocaleString()} (the “no”s you chose to honor)` : null,
   ].filter((x): x is string => !!x);
 }
 
@@ -109,7 +104,8 @@ export default function IndyReview({
         purpose={
           <>
             Everyone from Indy, the ticketing system before this app, sorted against Members. Nothing changes in Members until you press Import, and
-            importing doesn&apos;t send any email or create logins. Points, visits, photos, addresses and paid Indy plans are not brought over.
+            importing doesn&apos;t send any email or create logins. New people join with email on; members already here keep their email setting.
+            Points, visits, photos, addresses and paid Indy plans are not brought over.
           </>
         }
       />
@@ -127,9 +123,6 @@ export default function IndyReview({
             {TAB_INFO[t].label} <span className="opacity-70">{tabCount(summary, t).toLocaleString()}</span>
             {t === "conflict" && summary.awaitingReview > 0 && (
               <span className="ml-1.5 rounded-full bg-[var(--accent)] px-1.5 text-[10px] font-bold text-white">{summary.awaitingReview} left</span>
-            )}
-            {t === "said_no" && summary.saidNoPending > 0 && (
-              <span className="ml-1.5 rounded-full bg-[var(--accent)] px-1.5 text-[10px] font-bold text-white">{summary.saidNoPending} waiting</span>
             )}
           </Link>
         ))}
@@ -151,7 +144,7 @@ export default function IndyReview({
 
         <div className="divide-y divide-[var(--border)]">
           {page.rows.map((r) => (
-            <Row key={r.indy_user_id} row={r} tab={tab} />
+            <Row key={r.indy_user_id} row={r} />
           ))}
           {page.rows.length === 0 && <div className="px-4 py-6 text-sm text-[var(--muted)]">Nothing here{query ? " matches that search" : ""}.</div>}
         </div>
@@ -212,15 +205,16 @@ function SummaryPanel({ summary }: { summary: IndySummary }) {
           note={summary.skippedByHand > 0 ? `not imported · ${summary.skippedByHand.toLocaleString()} more skipped by you` : "not imported"}
         />
       </div>
-      <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-[var(--border)] pt-3 text-sm">
-        <span>
-          {total.toLocaleString()} from Indy: <span className="font-semibold">{summary.saidYes.toLocaleString()}</span> said yes to email,{" "}
+      <div className="space-y-1 border-t border-[var(--border)] pt-3 text-sm">
+        <div>
+          {total.toLocaleString()} from Indy: <span className="font-semibold">{summary.saidYes.toLocaleString()}</span> said yes to email there,{" "}
           <span className="font-semibold">{summary.saidNo.toLocaleString()}</span> said no
-        </span>
-        <span>
-          <span className="font-semibold">{summary.saidNoReview.toLocaleString()}</span> said no but are opted in here by our old default
-          {summary.saidNoPending > 0 && <span className="text-[var(--accent)]"> ({summary.saidNoPending} waiting for you)</span>}
-        </span>
+          {summary.saidNoNew > 0 && <> ({summary.saidNoNew.toLocaleString()} of them in New)</>}.
+        </div>
+        <div className="text-[var(--muted)]">
+          For information only: Indy answers don&apos;t decide anyone&apos;s email here. New people join with email on. Members already here keep the
+          email setting they have with us. Anyone who unsubscribed from us, bounced or complained stays off.
+        </div>
       </div>
     </div>
   );
@@ -247,10 +241,8 @@ function ImportPanel({ summary }: { summary: IndySummary }) {
         r.added ? `added ${r.added.toLocaleString()} new members` : null,
         r.filled ? `filled details on ${r.filled.toLocaleString()}` : null,
         r.linked ? `linked ${r.linked.toLocaleString()} with nothing to fill` : null,
-        r.honored ? `turned email off for ${r.honored.toLocaleString()}` : null,
       ].filter(Boolean);
       let msg = parts.length ? `Done: ${parts.join(", ")}.` : "Nothing new to import.";
-      if (r.keptTheirChoice) msg += ` ${r.keptTheirChoice} honored "no"s weren't applied: those members have set their email themselves since.`;
       if (r.sentBack.length)
         msg += ` Sent ${r.sentBack.length} back to Conflict: ${r.sentBack.slice(0, 3).join("; ")}${r.sentBack.length > 3 ? "…" : ""}.`;
       if (r.consentRecorded) msg += ` Recorded ${r.consentRecorded.toLocaleString()} Indy email answers.`;
@@ -289,11 +281,6 @@ function ImportPanel({ summary }: { summary: IndySummary }) {
             The never-mail list isn&apos;t set up yet (it comes with email marketing), so Import can&apos;t check new people against it.
           </div>
         )}
-        {summary.saidNoPending > 0 && (
-          <div className="mt-1 text-[var(--muted)]">
-            {summary.saidNoPending} said no on Indy and wait for Honor or Leave. They&apos;re held back until you pick.
-          </div>
-        )}
         {summary.awaitingReview > 0 && (
           <div className="mt-1 text-[var(--muted)]">{summary.awaitingReview} conflicts still need a pick. You can import now and do those later.</div>
         )}
@@ -309,7 +296,7 @@ function ImportPanel({ summary }: { summary: IndySummary }) {
           title={n > 0 ? `Import ${n.toLocaleString()} from Indy?` : `Record ${catchUp.toLocaleString()} Indy answers?`}
           description={
             n > 0
-              ? `This ${words.join(", ")}. Matched members get only their empty details filled; no email address changes. Nothing is emailed and no logins are made.${summary.newUnapproved > 0 ? ` The ${summary.newUnapproved.toLocaleString()} new people you haven't approved stay out.` : ""} This can't be undone from here.`
+              ? `This ${words.join(", ")}. New people join with email on, whatever they said on Indy, unless they're on our never-mail list (those go back to Conflict). Matched members get only their empty details filled; their email address and email setting don't change. Nothing is emailed and no logins are made.${summary.newUnapproved > 0 ? ` The ${summary.newUnapproved.toLocaleString()} new people you haven't approved stay out.` : ""} This can't be undone from here.`
               : "Writes each imported person's Indy email answer into the email tables. Nobody's email setting changes."
           }
           confirmLabel={n > 0 ? "Import" : "Record"}
@@ -326,49 +313,23 @@ function ImportPanel({ summary }: { summary: IndySummary }) {
 
 function BulkButtons({ tab, summary }: { tab: IndyTab; summary: IndySummary }) {
   const [pending, run] = useRefreshingAction();
-  const [confirmHonor, setConfirmHonor] = useState(false);
   const [confirmApprove, setConfirmApprove] = useState(false);
-  if (tab === "new") {
-    const waiting = summary.newUnapproved;
-    return (
-      <>
-        <button className="btn-secondary !px-3 !py-1.5 text-xs" disabled={pending || waiting === 0} onClick={() => setConfirmApprove(true)}>
-          Approve all new ({waiting.toLocaleString()})
-        </button>
-        {confirmApprove && (
-          <ConfirmModal
-            title={`Approve ${waiting.toLocaleString()} new?`}
-            description="Each becomes a free Insider the next time you press Import, with email on or off the way they answered on Indy. Ones you skipped stay skipped. Nothing changes in Members until Import."
-            confirmLabel="Approve all"
-            onCancel={() => setConfirmApprove(false)}
-            onConfirm={() => {
-              setConfirmApprove(false);
-              run(() => approveAllNewIndy());
-            }}
-          />
-        )}
-      </>
-    );
-  }
-  if (tab !== "said_no") return null;
-  const waiting = summary.saidNoPending;
+  if (tab !== "new") return null;
+  const waiting = summary.newUnapproved;
   return (
     <>
-      <button className="btn-secondary !px-3 !py-1.5 text-xs" disabled={pending || waiting === 0} onClick={() => setConfirmHonor(true)}>
-        Honor all said-no ({waiting.toLocaleString()})
+      <button className="btn-secondary !px-3 !py-1.5 text-xs" disabled={pending || waiting === 0} onClick={() => setConfirmApprove(true)}>
+        Approve all new ({waiting.toLocaleString()})
       </button>
-      <button className="btn-secondary !px-3 !py-1.5 text-xs" disabled={pending || waiting === 0} onClick={() => run(() => setAllIndySaidNo("leave"))}>
-        Leave all said-no ({waiting.toLocaleString()})
-      </button>
-      {confirmHonor && (
+      {confirmApprove && (
         <ConfirmModal
-          title={`Honor ${waiting.toLocaleString()} “no”s?`}
-          description="At import, each of these members' email turns off, unless they've set it themselves by then. Ones you already picked one by one keep your pick."
-          confirmLabel="Honor all"
-          onCancel={() => setConfirmHonor(false)}
+          title={`Approve ${waiting.toLocaleString()} new?`}
+          description="Each becomes a free Insider with email on the next time you press Import, whatever they answered on Indy. Anyone on our never-mail list goes back to Conflict instead. Ones you skipped stay skipped. Nothing changes in Members until Import."
+          confirmLabel="Approve all"
+          onCancel={() => setConfirmApprove(false)}
           onConfirm={() => {
-            setConfirmHonor(false);
-            run(() => setAllIndySaidNo("honor"));
+            setConfirmApprove(false);
+            run(() => approveAllNewIndy());
           }}
         />
       )}
@@ -400,20 +361,11 @@ function outcome(row: IndyAccount): string {
   if (row.decision === "review" || !row.import_as) return "Needs a pick.";
   if (row.import_as === "new") {
     const extras = [row.phone && "phone", row.birthday && "birthday"].filter((x): x is string => !!x);
-    const adds = `a new Insider with email ${row.said_yes ? "on" : "off"}${extras.length ? `, with their ${listWords(extras)}` : ""}`;
+    const adds = `a new Insider with email on${extras.length ? `, with their ${listWords(extras)}` : ""}`;
     return row.decided_by ? `Adds ${adds}.` : `Waits for you to approve. Then Import adds ${adds}.`;
   }
   const fields = row.planned_fills.map((f) => FIELD_LABEL[f]);
-  let text = fields.length ? `Fills ${listWords(fields)} on the member below.` : "Nothing to fill; links the Indy account to the member below.";
-  if (row.said_no_review) {
-    text +=
-      row.said_no_decision === "honor"
-        ? " Their email turns off."
-        : row.said_no_decision === "leave"
-          ? " Their email stays on."
-          : " Held back until you pick Honor or Leave.";
-  }
-  return text;
+  return `${fields.length ? `Fills ${listWords(fields)} on the member below.` : "Nothing to fill; links the Indy account to the member below."} Their email setting stays as it is.`;
 }
 
 function Toggle({ on, danger, disabled, onClick, children }: { on: boolean; danger?: boolean; disabled: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -426,13 +378,12 @@ function Toggle({ on, danger, disabled, onClick, children }: { on: boolean; dang
   );
 }
 
-function Row({ row, tab }: { row: IndyAccount; tab: IndyTab }) {
+function Row({ row }: { row: IndyAccount }) {
   const [pending, run, error] = useRefreshingAction();
   const name = [row.first_name, row.last_name].filter(Boolean).join(" ") || "(no name)";
   const bday = birthdayLabel(row.birthday);
   const plan = row.indy_membership && row.indy_membership.toLowerCase() !== "royale insiders" ? row.indy_membership : null;
   const choose = (choice: IndyChoice) => run(() => setIndyChoice(row.indy_user_id, choice), { quiet: true });
-  const saidNo = (decision: "honor" | "leave") => run(() => setIndySaidNo(row.indy_user_id, decision), { quiet: true });
   const importing = row.decision === "import";
   // A new row is only approved once a person said so: the loader's default
   // doesn't count.
@@ -448,24 +399,6 @@ function Row({ row, tab }: { row: IndyAccount; tab: IndyTab }) {
     );
   } else if (row.erased_at || row.classification === "skip") {
     controls = null;
-  } else if (tab === "said_no" && row.decision === "skip") {
-    // Skipped: Honor or Leave wouldn't do anything.
-    controls = (
-      <Toggle on={false} disabled={pending} onClick={() => choose("import")}>
-        Un-skip
-      </Toggle>
-    );
-  } else if (tab === "said_no") {
-    controls = (
-      <>
-        <Toggle on={row.said_no_decision === "honor"} danger disabled={pending} onClick={() => saidNo("honor")}>
-          Honor the no
-        </Toggle>
-        <Toggle on={row.said_no_decision === "leave"} disabled={pending} onClick={() => saidNo("leave")}>
-          Leave as is
-        </Toggle>
-      </>
-    );
   } else if (row.classification === "conflict") {
     controls = (
       <>
@@ -508,9 +441,10 @@ function Row({ row, tab }: { row: IndyAccount; tab: IndyTab }) {
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate font-medium">{name}</span>
           <span
-            className={`shrink-0 rounded border px-1.5 py-0.5 text-[11px] ${row.said_yes ? "border-[var(--success-border)] text-[var(--success-text)]" : "border-[var(--border)] text-[var(--muted)]"}`}
+            className="shrink-0 rounded border border-[var(--border)] px-1.5 py-0.5 text-[11px] text-[var(--muted)]"
+            title="What they answered on Indy. Information only: it doesn't decide their email here."
           >
-            {row.said_yes ? "said yes to email" : "said no to email"}
+            {row.said_yes ? "said yes on Indy" : "said no on Indy"}
           </span>
         </div>
         <div className="truncate text-xs text-[var(--muted)]">

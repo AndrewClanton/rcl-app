@@ -86,9 +86,9 @@ for (const r of records) {
 }
 
 // ---- Members and what's already staged (read only) --------------------------
-const MEMBER_COLUMNS = ["id", "name", "email", "phone", "birthday", "email_opt_in", "email_opt_in_changed_at", "indy_user_id", "erased_at"];
+const MEMBER_COLUMNS = ["id", "name", "email", "phone", "birthday", "indy_user_id", "erased_at"];
 const STAGING_COLUMNS =
-  "indy_user_id, email, classification, reasons, email_member_id, phone_member_id, target_member_id, import_as, decision, said_no_decision, decided_by, decided_at, imported_member_id, imported_at, erased_at";
+  "indy_user_id, email, classification, reasons, email_member_id, phone_member_id, target_member_id, import_as, decision, decided_by, decided_at, imported_member_id, imported_at, erased_at";
 const asMember = (m) => Object.fromEntries(MEMBER_COLUMNS.map((c) => [c, m[c] ?? null]));
 const isMissingTable = (e) => e?.code === "PGRST205" || e?.code === "42P01";
 
@@ -176,9 +176,8 @@ console.log(`members read: ${members.filter((m) => !m.erased_at).length} (plus $
 console.log("groups:", s.byClass);
 console.log("reasons:", sorted(s.byReason));
 console.log("decisions:", s.decisions);
-console.log(`said yes to Indy email: ${s.saidYes}; said no: ${s.saidNo}`);
-console.log(`new members: ${s.newSaidYes} said yes (email on), ${s.newSaidNo} said no (email off)`);
-console.log(`said no on Indy but opted in here by the old default (for Andrew to honor or leave): ${s.saidNoReview}`);
+console.log(`said yes to Indy email: ${s.saidYes}; said no: ${s.saidNo} (information only: Indy answers decide nobody's email here)`);
+console.log(`new members: ${s.newSaidYes} said yes, ${s.newSaidNo} said no on Indy (once approved, all join with email on, unless on our never-mail list)`);
 console.log("fills by field:", s.fillsByField);
 console.log(`to write: ${rows.length} (${keptDecision} keep a decision made by hand); left alone: ${leftAlone} (already imported or removed)`);
 if (stagingMissing) console.log("(indy_accounts isn't there yet, so this counted as a first load.)");

@@ -9,11 +9,18 @@
 // No imports and no server code, so the loader, its offline checks
 // (scripts/check-indy-import.mjs), the review screen and the import action
 // all run this same file. (Node 23.6+ runs the .ts directly.)
+//
+// Email (Andrew's call, 9/30, reconfirmed 10/1): Indy's "no" answers are
+// ignored. They told Indy, not us. Every new member from Indy joins with
+// email on, whatever their four Indy switches said; their answer is kept
+// only as information (said_yes, and consent source indy_yes / indy_no).
+// What people told US still wins: nobody on our never-mail list
+// (email_suppressions: unsubscribes, bounces, complaints) is added, and a
+// member who's already here keeps the email setting they have with us.
 
 export type IndyClass = "fill" | "new" | "conflict" | "skip";
 export type IndyDecision = "import" | "skip" | "review";
 export type IndyImportAs = "fill" | "new";
-export type IndySaidNo = "pending" | "honor" | "leave";
 export type IndyFillField = "phone" | "birthday" | "name";
 
 // The columns the loader needs; the rest of the export is ignored
@@ -37,7 +44,8 @@ export const INDY_COLUMNS = [
   "date_of_birth",
 ] as const;
 
-// Indy asked four email questions. Only a yes to all four counts as a yes.
+// Indy asked four email questions. Only a yes to all four counts as a yes
+// (information only: it doesn't decide anyone's email here).
 export const INDY_EMAIL_SWITCHES = ["email_showtimes", "email_last_chance", "email_promotions", "email_newsletter"] as const;
 
 // Indy's everyday free plan. Anything else (Insiders+, Monthly Membership,
@@ -52,8 +60,6 @@ export interface IndyMember {
   email: string | null;
   phone: string | null;
   birthday: string | null;
-  email_opt_in: boolean | null;
-  email_opt_in_changed_at: string | null;
   indy_user_id: string | null;
   erased_at: string | null;
 }
@@ -102,8 +108,6 @@ export interface IndyStagingRow {
   phone_member_id: string | null;
   target_member_id: string | null;
   planned_fills: IndyFillField[];
-  said_no_review: boolean;
-  said_no_decision: IndySaidNo | null;
   decision: IndyDecision;
   import_as: IndyImportAs | null;
 }
@@ -118,7 +122,6 @@ export interface IndyExisting {
   target_member_id: string | null;
   import_as: IndyImportAs | null;
   decision: IndyDecision;
-  said_no_decision: IndySaidNo | null;
   decided_by: string | null;
   imported_member_id: string | null;
   imported_at?: string | null;
@@ -385,12 +388,6 @@ export function plannedFills(
   return fills;
 }
 
-// Said no on Indy, but the member is getting email only because of our old
-// default (opted in, with no recorded choice). Andrew decides these.
-export function saidNoReview(p: Pick<IndyPerson, "said_yes">, m: Pick<IndyMember, "email_opt_in" | "email_opt_in_changed_at"> | null | undefined): boolean {
-  return !!m && !p.said_yes && m.email_opt_in !== false && !m.email_opt_in_changed_at;
-}
-
 // ---------- sorting everyone ----------
 const MATCH_REASONS = new Set(["matched by email", "matched by phone (member has no email)", "no member matches"]);
 
@@ -449,8 +446,6 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[], import
       reasons: [...reasons, ...p.notes],
       target_member_id: target?.id ?? null,
       planned_fills: target ? plannedFills(p, target) : [],
-      said_no_review: target ? saidNoReview(p, target) : false,
-      said_no_decision: null,
       decision: classification === "skip" ? "skip" : classification === "conflict" ? "review" : "import",
       import_as: classification === "fill" ? "fill" : classification === "new" ? "new" : null,
     });
@@ -500,7 +495,6 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[], import
       r.reasons = [reason, ...r.reasons.filter((x) => !MATCH_REASONS.has(x))];
       r.target_member_id = null;
       r.planned_fills = [];
-      r.said_no_review = false;
       r.decision = "review";
       r.import_as = null;
     }
@@ -517,7 +511,6 @@ export function classifyIndy(people: IndyPerson[], members: IndyMember[], import
     const importedAs = importedEmails.get(email);
     if (importedAs) toConflict(group.filter((r) => r.indy_user_id !== importedAs), IMPORTED_EMAIL_REASON, 1);
   }
-  for (const r of rows) if (r.said_no_review) r.said_no_decision = "pending";
   return rows;
 }
 
@@ -532,7 +525,6 @@ export function mergeIndyRow(fresh: IndyStagingRow, existing: IndyExisting | und
   if (!existing.decided_by) return fresh;
   const target = existing.target_member_id ? membersById.get(existing.target_member_id) : undefined;
   const liveTarget = target && !target.erased_at ? target : null;
-  const review = saidNoReview(fresh, liveTarget);
   return {
     ...fresh,
     classification: existing.classification,
@@ -543,8 +535,6 @@ export function mergeIndyRow(fresh: IndyStagingRow, existing: IndyExisting | und
     import_as: existing.import_as,
     decision: existing.decision,
     planned_fills: liveTarget ? plannedFills(fresh, liveTarget) : [],
-    said_no_review: review,
-    said_no_decision: existing.said_no_decision ?? (review ? "pending" : null),
   };
 }
 
@@ -558,7 +548,6 @@ export function summarizeIndy(rows: IndyStagingRow[]) {
     decisions: tally(rows.map((r) => r.decision)),
     saidYes: rows.filter((r) => r.said_yes).length,
     saidNo: rows.filter((r) => !r.said_yes).length,
-    saidNoReview: rows.filter((r) => r.said_no_review).length,
     fillsByField: tally(rows.filter((r) => r.import_as === "fill").flatMap((r) => r.planned_fills)),
     newSaidYes: rows.filter((r) => r.classification === "new" && r.said_yes).length,
     newSaidNo: rows.filter((r) => r.classification === "new" && !r.said_yes).length,
@@ -577,120 +566,94 @@ export type IndyImportRow = Pick<
   | "birthday"
   | "indy_created_at"
   | "said_yes"
-  | "said_no_review"
-  | "said_no_decision"
   | "decision"
   | "import_as"
   | "target_member_id"
   | "classification"
 > & { decided_by: string | null; imported_member_id: string | null; imported_at: string | null; erased_at: string | null };
 
-type ReadyFields = Pick<IndyImportRow, "decision" | "import_as" | "said_no_review" | "said_no_decision" | "imported_member_id" | "erased_at"> & {
+type ReadyFields = Pick<IndyImportRow, "decision" | "import_as" | "imported_member_id" | "erased_at"> & {
   decided_by?: string | null;
   imported_at?: string | null;
 };
 
-// Ready for the Import button: set to import, not in yet, not a "said no
-// on Indy" still waiting for Honor or Leave, and, for a new member, approved
-// by a person (Approve, Approve all new, or Add as new on a conflict). The
-// loader's automatic default never adds anyone by itself. A fill is ready on
-// the default: it only fills a matched member's empty details.
-// (imported_at as well as imported_member_id: the member link is cleared if
-// that member is ever deleted, and the row must not go in twice.)
+// Ready for the Import button: set to import, not in yet, and, for a new
+// member, approved by a person (Approve, Approve all new, or Add as new on a
+// conflict). The loader's automatic default never adds anyone by itself. A
+// fill is ready on the default: it only fills a matched member's empty
+// details. (imported_at as well as imported_member_id: the member link is
+// cleared if that member is ever deleted, and the row must not go in twice.)
 export function readyToImport(r: ReadyFields): boolean {
   if (r.decision !== "import" || !r.import_as || r.imported_member_id || r.imported_at || r.erased_at) return false;
-  if (r.import_as === "new" && !r.decided_by) return false;
-  return !r.said_no_review || r.said_no_decision === "honor" || r.said_no_decision === "leave";
+  return r.import_as !== "new" || !!r.decided_by;
 }
 
 // The same as a PostgREST filter, for .or(): the database narrows to these
 // rows, then readyToImport checks each one. Used with decision = 'import',
 // import_as not null, imported_member_id null, imported_at null and
 // erased_at null (scripts/check-indy-import.mjs checks they agree).
-export const READY_FILTER = "and(or(said_no_review.eq.false,said_no_decision.in.(honor,leave)),or(import_as.eq.fill,decided_by.not.is.null))";
+export const READY_FILTER = "import_as.eq.fill,decided_by.not.is.null";
 
 // What pressing Import would do right now, from the rows not in yet: the
 // review screen's dry run. Fills and links are as of the last load or pick
-// (the import works them out again and never overwrites), and an honored
-// "no" is skipped for a member who has set their email themselves by then.
+// (the import works them out again and never overwrites). Every new member
+// joins with email on, whatever they said on Indy; an address on the
+// never-mail list is checked at Import and goes back to Conflict instead.
 export interface IndyImportPreview {
   ready: number;
-  newMembers: number;
-  newEmailOn: number;
-  newEmailOff: number;
+  newMembers: number; // all with email on
   fills: number; // members who get a detail filled in
   links: number; // members only linked, nothing to fill
-  honor: number; // "no"s to honor (email off at import)
   newWaiting: number; // new, still waiting for a person to approve
 }
-export type IndyPreviewRow = ReadyFields & Pick<IndyStagingRow, "said_yes" | "planned_fills">;
+export type IndyPreviewRow = ReadyFields & Pick<IndyStagingRow, "planned_fills">;
 
 export function importPreview(rows: IndyPreviewRow[]): IndyImportPreview {
-  const p: IndyImportPreview = { ready: 0, newMembers: 0, newEmailOn: 0, newEmailOff: 0, fills: 0, links: 0, honor: 0, newWaiting: 0 };
+  const p: IndyImportPreview = { ready: 0, newMembers: 0, fills: 0, links: 0, newWaiting: 0 };
   for (const r of rows) {
     if (!readyToImport(r)) {
       if (r.import_as === "new" && !r.decided_by && readyToImport({ ...r, decided_by: "anyone" })) p.newWaiting++;
       continue;
     }
     p.ready++;
-    if (r.import_as === "new") {
-      p.newMembers++;
-      if (r.said_yes) p.newEmailOn++;
-      else p.newEmailOff++;
-    } else {
-      if ((r.planned_fills ?? []).length) p.fills++;
-      else p.links++;
-      if (r.said_no_review && r.said_no_decision === "honor") p.honor++;
-    }
+    if (r.import_as === "new") p.newMembers++;
+    else if ((r.planned_fills ?? []).length) p.fills++;
+    else p.links++;
   }
   return p;
 }
 
 export interface IndyFillPlan {
-  patch: Record<string, string | boolean>;
+  patch: Record<string, string>;
   filled: IndyFillField[];
-  // An honored "no" that the member's own newer choice overrides.
-  keptTheirChoice: boolean;
-  honored: boolean;
   // Why this row can't go in now (it goes back to review with this reason).
   problem: string | null;
 }
 
 // What pressing Import does to a member who's already here, worked out
 // against the member as they are right now: fill only what's still empty,
-// never the email, link the Indy account if nothing's linked, and turn email
-// off only for a "no" Andrew said to honor, and only if the member is still
-// opted in by the old default rather than by their own choice.
-export function fillPlan(row: IndyImportRow, member: IndyMember | null | undefined, now: string): IndyFillPlan {
-  const none = (problem: string): IndyFillPlan => ({ patch: {}, filled: [], keptTheirChoice: false, honored: false, problem });
+// never the email, and link the Indy account if nothing's linked. Their
+// email setting is never touched, whatever they said on Indy: on stays on,
+// and off (an opt-out they gave us) stays off.
+export function fillPlan(row: IndyImportRow, member: IndyMember | null | undefined): IndyFillPlan {
+  const none = (problem: string): IndyFillPlan => ({ patch: {}, filled: [], problem });
   if (!member) return none("the matched member is gone");
   if (member.erased_at) return none("the matched member was removed");
   if (member.indy_user_id && member.indy_user_id !== row.indy_user_id) return none("that member is linked to a different Indy account");
   const filled = plannedFills(row, member);
-  const patch: Record<string, string | boolean> = {};
+  const patch: Record<string, string> = {};
   if (filled.includes("phone") && row.phone) patch.phone = row.phone;
   if (filled.includes("birthday") && row.birthday) patch.birthday = row.birthday;
   const name = fullName(row.first_name, row.last_name);
   if (filled.includes("name") && name) patch.name = name;
   if (!member.indy_user_id) patch.indy_user_id = row.indy_user_id;
-  let honored = false;
-  let keptTheirChoice = false;
-  if (row.said_no_review && row.said_no_decision === "honor") {
-    if (saidNoReview(row, member)) {
-      patch.email_opt_in = false;
-      patch.email_opt_in_changed_at = now;
-      honored = true;
-    } else if (member.indy_user_id === row.indy_user_id && member.email_opt_in === false) {
-      // An earlier press already linked them and turned email off, then
-      // stopped before marking the row: that "no" was honored.
-      honored = true;
-    } else keptTheirChoice = true;
-  }
-  return { patch, filled, keptTheirChoice, honored, problem: null };
+  return { patch, filled, problem: null };
 }
 
-// A new free Insider from an approved Indy account. Their Indy answer is a
-// recorded choice, dated when they gave it.
+// A new free Insider from an approved Indy account, with email on whatever
+// they answered on Indy (the import has already checked the address isn't
+// on our never-mail list). A yes on Indy is dated as their choice; a no
+// leaves no date, so they read as on by default, like everyone else.
 export function newMemberRow(row: IndyImportRow, now: string) {
   const email = row.email as string;
   return {
@@ -702,13 +665,14 @@ export function newMemberRow(row: IndyImportRow, now: string) {
     points: 0,
     indy_user_id: row.indy_user_id,
     imported_at: now,
-    email_opt_in: row.said_yes,
-    email_opt_in_changed_at: row.indy_created_at ?? now,
+    email_opt_in: true,
+    email_opt_in_changed_at: row.said_yes ? (row.indy_created_at ?? now) : null,
   };
 }
 
-// For the email-marketing tables (member_email_prefs.consent_source): an
-// Indy answer only goes where nothing better is recorded.
+// For the email-marketing tables (member_email_prefs.consent_source): what
+// they said on Indy, kept as information (indy_no puts someone at the back
+// of the warm-up order). It only goes where nothing better is recorded.
 export function indyConsentSource(saidYes: boolean): "indy_yes" | "indy_no" {
   return saidYes ? "indy_yes" : "indy_no";
 }
