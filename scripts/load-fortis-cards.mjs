@@ -4,11 +4,19 @@
 // in src/lib/fortis-backfill.ts). Loading grants nothing: an owner or admin
 // reviews the matches in Back office and presses Grant there.
 //
+// It also fills fortis_sales: one row per approved sale or refund (card
+// key, business date, time, amount as charged; no names), keyed by Fortis's
+// transaction id, which Rewind (src/lib/fortis-lookup.ts) searches by day
+// and amount, and which counts as the member's past visits once their card
+// is theirs. Re-loading updates rows in place, and takes out a sale the
+// file now says was voided.
+//
 // The export stays where it is (it holds customers' names and card
 // details); this only reads it. Prints counts, never names or card digits.
 //
-// Safe to re-run: rows are upserted by card. A card's totals are rebuilt
-// from the file each time; a decision staff made by hand (approve, skip,
+// Safe to re-run: cards are upserted by card, sales by Fortis's id. A
+// card's totals are rebuilt from the file each time; a decision staff made
+// by hand (approve, skip,
 // pick) is kept, a granted card stays granted, and a card whose member's
 // info was removed doesn't get its name back. A file that would shrink what's
 // loaded (a partial export) is refused unless you pass --replace.
@@ -31,6 +39,7 @@ register(
     ),
 );
 const L = await import("../src/lib/fortis-backfill.ts");
+const LK = await import("../src/lib/fortis-lookup.ts");
 
 config({ path: ".env.local", quiet: true });
 const args = process.argv.slice(2);
@@ -49,6 +58,7 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_
 // ---- Read and add up the export ---------------------------------------------
 const [header, ...raw] = L.parseCsv(readFileSync(file, "utf8"));
 const COLUMNS = {
+  id: "id",
   statusId: "status id",
   typeId: "type id",
   firstSix: "first six",
@@ -100,6 +110,20 @@ try {
   process.exit(1);
 }
 const existing = new Map(existingRows.map((r) => [r.card_key, r]));
+
+// Rewind's per-purchase rows, and what's in fortis_sales now.
+const saleRows = LK.fortisSaleRows(rows);
+let loadedSales;
+try {
+  loadedSales = new Map((await readAll("fortis_sales", "id, fortis_id, card_key, business_date, amount_cents, created_at, kind")).map((r) => [r.fortis_id, r]));
+} catch (e) {
+  console.error(`Couldn't read fortis_sales (${e.message}). Apply supabase/migrations/20261001190000_fortis_lookup.sql first.`);
+  process.exit(1);
+}
+const sameSale = (a, b) =>
+  a.card_key === b.cardKey && a.business_date === b.businessDate && a.amount_cents === b.amountCents && a.kind === b.kind && Date.parse(a.created_at) === Date.parse(b.createdAt);
+const salesToWrite = saleRows.sales.filter((s) => !loadedSales.has(s.fortisId) || !sameSale(loadedSales.get(s.fortisId), s));
+const salesToRemove = saleRows.gone.filter((id) => loadedSales.has(id));
 
 // A partial export (a date range, a 5,000-row cap) would quietly shrink cards.
 const inFile = new Map(cards.map((c) => [c.cardKey, c]));
@@ -178,6 +202,11 @@ const t = L.planTotals(plan);
 console.log(`If every match were approved, at 1 point per $1 before tax: ${t.points} points to ${t.members} members ($${t.dollars.toFixed(2)})`);
 console.log(`  top 10: ${plan.slice(0, 10).map((p) => p.points).join(", ")}; 300+: ${plan.filter((p) => p.points >= 300).length}; 500+: ${plan.filter((p) => p.points >= 500).length}`);
 
+console.log(
+  `\nfortis_sales: ${saleRows.sales.length} in the file (${saleRows.sales.filter((s) => s.kind === "sale").length} sales, ${saleRows.sales.filter((s) => s.kind === "refund").length} refunds; ${saleRows.skipped} left out); ` +
+    `${loadedSales.size} loaded now, ${salesToWrite.filter((s) => !loadedSales.has(s.fortisId)).length} new, ${salesToWrite.filter((s) => loadedSales.has(s.fortisId)).length} changed, ${salesToRemove.length} to take out (voided since)`,
+);
+
 if (!APPLY) {
   console.log("\nDry run: nothing written. Pass --apply to load.");
   process.exit(0);
@@ -195,4 +224,31 @@ for (const batch of [matched, kept]) {
     written += Math.min(500, batch.length - i);
   }
 }
-console.log(`\nLoaded ${written} cards. Nothing was granted.`);
+// ---- Sales, for Rewind -----------------------------------------------------------
+const loadedAt = new Date().toISOString();
+let salesWritten = 0;
+for (let i = 0; i < salesToWrite.length; i += 500) {
+  const batch = salesToWrite.slice(i, i + 500).map((s) => ({
+    fortis_id: s.fortisId,
+    card_key: s.cardKey,
+    business_date: s.businessDate,
+    amount_cents: s.amountCents,
+    created_at: s.createdAt,
+    kind: s.kind,
+    loaded_at: loadedAt,
+  }));
+  const { error } = await supabase.from("fortis_sales").upsert(batch, { onConflict: "fortis_id" });
+  if (error) {
+    console.error(`Loaded ${written} cards, then stopped after ${salesWritten} sales: ${error.message}. Run it again to finish (it's safe).`);
+    process.exit(1);
+  }
+  salesWritten += batch.length;
+}
+for (let i = 0; i < salesToRemove.length; i += 200) {
+  const { error } = await supabase.from("fortis_sales").delete().in("fortis_id", salesToRemove.slice(i, i + 200));
+  if (error) {
+    console.error(`Couldn't take out voided sales: ${error.message}. Run it again to finish (it's safe).`);
+    process.exit(1);
+  }
+}
+console.log(`\nLoaded ${written} cards and ${salesWritten} new or changed sales (${salesToRemove.length} taken out). Nothing was granted.`);

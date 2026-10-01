@@ -31,7 +31,9 @@ function showtime(iso: string) {
 //   broadcasts cart snapshots; nothing is saved until the sale), or,
 //   between orders, a Royale welcome: tonight's movies and what checking in
 //   earns (points and badges, lib/visits.ts).
-// The register's ✨ Celebrate throws streamers across the whole screen.
+// The register's ✨ Celebrate throws streamers across the whole screen, and
+// so does Rewind (Back office found a regular's visits from before the new
+// system), under the kiosk's "Welcome back".
 // previewCart / previewStep / previewTickets are for previews only.
 export default function CustomerDisplay({
   movies,
@@ -47,7 +49,7 @@ export default function CustomerDisplay({
   previewTickets?: TicketsShown;
 }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
-  const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[] } | null>(null);
+  const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[]; banner?: string | null } | null>(null);
   // Online tickets for whoever just checked in, beside the order for a bit.
   const [tickets, setTickets] = useState<TicketsShown | null>(previewTickets ?? null);
   useEffect(() => {
@@ -82,15 +84,16 @@ export default function CustomerDisplay({
 
   const hasOrder = !!cart && cart.items.length > 0;
   const clearBurst = useCallback(() => setBurst(null), []);
+  const rewindStreamers = useCallback(() => setBurst({ id: Date.now(), pieces: makeStreamers(90), banner: null }), []);
 
   return (
     <div className={k.screen}>
-      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} />
+      <CheckinKiosk registerTopic={registerTopic} initialStep={previewStep} onTickets={setTickets} onRewind={rewindStreamers} />
       <aside className={k.side}>
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
         {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
       </aside>
-      {burst && <Streamers key={burst.id} pieces={burst.pieces} onDone={clearBurst} />}
+      {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
     </div>
   );
 }

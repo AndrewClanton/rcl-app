@@ -2,7 +2,7 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
+import { checkinTopic, formatPhone, isFullPhone, type CheckinConfirmed, type CheckinRequest, type PointsEarned, type RewindFound } from "@/lib/checkin";
 import { createKioskMember, startCheckin } from "./actions";
 import PointsCelebration from "./PointsCelebration";
 import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
@@ -89,14 +89,18 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 // initialStep is for previews only.
 // onTickets: someone's online tickets for today, after staff confirm their
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
+// onRewind: Back office's Rewind just gave someone points for their visits
+// before the new system ("Welcome back" plays here; streamers there).
 export default function CheckinKiosk({
   registerTopic,
   initialStep,
   onTickets,
+  onRewind,
 }: {
   registerTopic: string;
   initialStep?: CheckinStep;
   onTickets?: (shown: TicketsShown) => void;
+  onRewind?: () => void;
 }) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   const [digits, setDigits] = useState("");
@@ -105,7 +109,9 @@ export default function CheckinKiosk({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [celebration, setCelebration] = useState<(PointsEarned & { key: number; accent: string | null }) | null>(null);
+  const [celebration, setCelebration] = useState<
+    (Pick<PointsEarned, "firstName" | "earned" | "balance"> & { key: number; accent: string | null; headline?: string; detail?: string; long?: boolean }) | null
+  >(null);
   // The member's entrance (lib/flair.ts), playing over the whole screen.
   // Two people confirmed close together (a couple at the door) each get
   // theirs in turn instead of the second cutting the first off: the rest
@@ -242,13 +248,33 @@ export default function CheckinKiosk({
     const balance = Math.round(Number(p?.balance));
     if (!p || typeof p.firstName !== "string" || !(earned > 0) || !Number.isFinite(balance)) return;
     setCelebration({
-      orderNumber: Number(p.orderNumber) || 0,
       firstName: p.firstName.slice(0, 40),
       earned,
       balance: Math.max(0, balance),
       key: Date.now(),
       accent: flairColor(p.color)?.hex ?? null,
     });
+  });
+
+  // "Welcome back, Jane! We found 37 visits since March 2023. +412 points."
+  const onRewindFound = useEffectEvent((p: Partial<RewindFound> | null) => {
+    const earned = Math.round(Number(p?.earned));
+    const balance = Math.round(Number(p?.balance));
+    const visits = Math.round(Number(p?.visits));
+    if (!p || typeof p.firstName !== "string" || !(earned > 0) || !Number.isFinite(balance)) return;
+    const name = p.firstName.slice(0, 40);
+    const since = typeof p.since === "string" && /^[A-Za-z]+ \d{4}$/.test(p.since) ? ` since ${p.since}` : "";
+    setCelebration({
+      firstName: name,
+      earned,
+      balance: Math.max(0, balance),
+      key: Date.now(),
+      accent: flairColor(p.color)?.hex ?? null,
+      headline: `Welcome back, ${name}!`,
+      detail: visits > 0 ? `We found ${visits.toLocaleString("en-US")} visit${visits === 1 ? "" : "s"}${since}.` : "We found your visits from before.",
+      long: true,
+    });
+    onRewind?.();
   });
 
   // Joined, back after a dropped connection, or a register (re)joined:
@@ -279,6 +305,7 @@ export default function CheckinKiosk({
         .on("broadcast", { event: "checkin-tickets" }, (msg) => onTicketsMessage(msg.payload))
         .on("broadcast", { event: "checkin-sync" }, () => resendAll(false))
         .on("broadcast", { event: "points-earned" }, (msg) => onPoints(msg.payload))
+        .on("broadcast", { event: "rewind" }, (msg) => onRewindFound(msg.payload))
         .subscribe((status) => {
           if (status === "SUBSCRIBED") resendAll(false);
         });
@@ -507,6 +534,9 @@ export default function CheckinKiosk({
           earned={celebration.earned}
           balance={celebration.balance}
           accent={celebration.accent}
+          headline={celebration.headline}
+          detail={celebration.detail}
+          long={celebration.long}
           onDone={() => setCelebration(null)}
         />
       )}
