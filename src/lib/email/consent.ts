@@ -128,7 +128,12 @@ async function upsertPrefs(memberId: string, fields: Record<string, unknown>) {
 
 // Anything queued here or scheduled at Resend for this member stops (only
 // the given kinds of email, when `categories` is passed). A scheduled email
-// Resend already sent can't be stopped, and that's fine.
+// Resend already sent can't be stopped, and that's fine. One Resend
+// couldn't call back just now (busy, or not answering) is marked on its row
+// and tried again on the next cron run (retryPendingCancels), as long as
+// it's still ahead.
+export const CANCEL_RETRY = "Cancel pending at Resend: ";
+
 export async function cancelPendingSends(memberId: string, why: string, categories?: readonly string[]): Promise<number> {
   const admin = createAdminClient();
   const { data: found } = await admin.from("email_sends").select("id, status, resend_email_id, deliver_at, campaign_id").eq("member_id", memberId).in("status", ["queued", "scheduled"]);
@@ -141,13 +146,47 @@ export async function cancelPendingSends(memberId: string, why: string, categori
   }
   let n = 0;
   for (const s of rows) {
-    if (s.status === "scheduled" && s.resend_email_id) {
+    if (s.status === "scheduled") {
       if (!s.deliver_at || Date.parse(s.deliver_at) <= Date.now()) continue;
-      const r = await cancelEmail(s.resend_email_id);
-      if (!r.ok) continue;
+      const r = s.resend_email_id ? await cancelEmail(s.resend_email_id) : null;
+      if (!r?.ok) {
+        // Resend says it can't be (it went already): nothing to do.
+        // Otherwise (Resend busy, no answer, no id saved yet): try again later.
+        if (!r || ![400, 404, 409, 422].includes(r.status)) {
+          await admin.from("email_sends").update({ error: `${CANCEL_RETRY}${why}`.slice(0, 300) }).eq("id", s.id).eq("status", "scheduled");
+        }
+        continue;
+      }
     }
     const { data } = await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("id", s.id).in("status", ["queued", "scheduled"]).select("id");
     n += data?.length ?? 0;
+  }
+  return n;
+}
+
+// The cron's second try at cancels Resend didn't take the first time (an
+// unsubscribe, a pause, a category turned off, a blocked address), for
+// email still waiting there for later.
+export async function retryPendingCancels(deadline: number): Promise<number> {
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from("email_sends")
+    .select("id, resend_email_id, error")
+    .eq("status", "scheduled")
+    .gt("deliver_at", new Date(Date.now() + 60_000).toISOString())
+    .like("error", `${CANCEL_RETRY}%`)
+    .order("deliver_at")
+    .limit(500);
+  if (error) throw new Error("Couldn't read the cancels still to do.");
+  let n = 0;
+  for (const s of (data ?? []) as { id: string; resend_email_id: string | null; error: string | null }[]) {
+    if (Date.now() > deadline) break;
+    if (!s.resend_email_id) continue;
+    const r = await cancelEmail(s.resend_email_id);
+    if (!r.ok) continue;
+    const why = (s.error ?? "").slice(CANCEL_RETRY.length) || "Cancelled";
+    const { data: done } = await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("id", s.id).eq("status", "scheduled").select("id");
+    n += done?.length ?? 0;
   }
   return n;
 }

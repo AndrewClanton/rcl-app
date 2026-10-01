@@ -13,11 +13,13 @@ export default function CampaignActions({ id, status, kind, canSend, waitingAtRe
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgOk, setMsgOk] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   const act = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>, after?: (r: unknown) => void) =>
     start(async () => {
       setMsg(null);
+      setMsgOk(false);
       const r = await fn().catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
       if (!r.ok) setMsg(r.error);
       else {
@@ -47,7 +49,7 @@ export default function CampaignActions({ id, status, kind, canSend, waitingAtRe
           Stop the rest
         </button>
       )}
-      {msg && <span className="text-sm text-[var(--danger-text)]">{msg}</span>}
+      {msg && <span className={`text-sm ${msgOk ? "" : "text-[var(--danger-text)]"}`}>{msg}</span>}
       {confirmCancel && (
         <ConfirmModal
           title="Stop this email?"
@@ -57,14 +59,30 @@ export default function CampaignActions({ id, status, kind, canSend, waitingAtRe
           onCancel={() => setConfirmCancel(false)}
           onConfirm={() => {
             setConfirmCancel(false);
-            act(
-              () => cancelCampaign(id),
-              (r) => {
-                // A big list takes more than one go (Resend cancels one at a time).
-                const left = (r as { left?: number }).left ?? 0;
-                if (left > 0) setMsg(`${left} still waiting at Resend: press "Stop the rest" again.`);
-              },
-            );
+            start(async () => {
+              setMsg(null);
+              setMsgOk(false);
+              // A big list takes more than one go (Resend cancels one email
+              // at a time): carry on, round after round, while the page is open.
+              let stopped = 0;
+              let r = await cancelCampaign(id).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+              for (let round = 0; r.ok && r.left > 0 && r.stopped > 0 && !r.busy && round < 30; round++) {
+                stopped += r.stopped;
+                setMsg(`Stopping: ${stopped.toLocaleString()} called back from Resend so far, about ${r.left.toLocaleString()} to go. Keep this page open.`);
+                r = await cancelCampaign(id).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+              }
+              if (!r.ok) setMsg(stopped ? `${stopped.toLocaleString()} called back, then it stopped: ${r.error} Press "Stop the rest" to carry on.` : r.error);
+              else if (r.busy)
+                setMsg(
+                  `Stopped, but another call-back from Resend is running right now, so ${r.left.toLocaleString()} of this email's still wait there. Press "Stop the rest" again in a few minutes.`,
+                );
+              else if (r.left > 0) setMsg(`${(stopped + r.stopped).toLocaleString()} called back from Resend; ${r.left.toLocaleString()} still waiting there: press "Stop the rest" again.`);
+              else {
+                setMsgOk(true);
+                setMsg(`Stopped.${stopped + r.stopped ? ` ${(stopped + r.stopped).toLocaleString()} called back from Resend.` : ""}`);
+              }
+              router.refresh();
+            });
           }}
         />
       )}

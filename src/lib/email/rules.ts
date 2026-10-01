@@ -150,7 +150,7 @@ export function hardFilter(f: MemberFacts, c: CampaignShape, now: Date): Exclusi
   if (f.suppressed) return "suppressed";
   if (c.category !== "account" && !f.prefs[c.category as PrefCategory]) return "pref_off";
   if (f.pausedUntil && Date.parse(f.pausedUntil) > now.getTime()) return "paused";
-  if (f.engagement === "dormant" && c.kind !== "reconfirm") return "dormant";
+  if (f.engagement === "dormant" && c.kind !== "reconfirm" && c.automation !== "reconfirm") return "dormant";
   if (!looksDeliverable(f.email)) return "bad_address";
   return null;
 }
@@ -206,7 +206,7 @@ function isWelcome(a: Automation | null) {
 export function capCheck(sends: SendRecord[], c: CampaignShape, at: Date, member: { createdAt: string; imported: boolean }): Exclusion | null {
   if (c.category === "account") return null;
   const t = at.getTime();
-  const marketing = sends.filter((s) => (c.kind === "automation" || s.c !== c.id) && SENT_STATUSES.has(s.s) && s.g !== "account");
+  const marketing = sends.filter((s) => (c.kind === "automation" || !!c.automation || s.c !== c.id) && SENT_STATUSES.has(s.s) && s.g !== "account");
   const times = (list: SendRecord[]) => list.map((s) => Date.parse(s.t)).filter(Number.isFinite);
 
   if (times(marketing).some((x) => Math.abs(x - t) < CAP.gapHours * HOUR)) return "cap_day";

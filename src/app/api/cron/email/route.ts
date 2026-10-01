@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       blocked: summary.blocked,
       recall: summary.recall ?? null,
+      cancelsRetried: summary.cancelsRetried ?? 0,
       daily: summary.daily,
       queued: summary.queued,
       runs: summary.runs.map((r) => ({ id: r.id, ran: r.ran, submitted: r.submitted, cancelled: r.cancelled, status: r.status, note: r.note })),

@@ -41,7 +41,11 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
     <div className="space-y-6">
       <PageHeader area="guests" back={{ href: c.automation ? "/admin/email/automations" : "/admin/email", label: c.automation ? "Automations" : "Email" }} title={title} purpose={`${KIND_LABEL[c.kind]} · ${c.status}`} />
       {c.error && <p className="notice notice-warn text-sm">{c.error}</p>}
-      {pause && <p className="notice notice-warn text-sm">Sending is paused by a guardrail: {pause.reason}</p>}
+      {pause && (
+        <p className="notice notice-warn text-sm">
+          {pause.by === "Stopped" ? "Sending is stopped" : "Sending is paused by a guardrail"}: {pause.reason.replace(/[.!?]?\s*$/, ".")} Resume sending on the Email page first.
+        </p>
+      )}
       {editable && (
         <Composer
           // A fresh key each time the page loads: a double click on Send reuses it.

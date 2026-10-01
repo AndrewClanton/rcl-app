@@ -9,7 +9,7 @@ import { runCampaign, sendingGate } from "./campaign-send";
 import { addDays, birthdayWithin, sunsetDue } from "./rules";
 import { AUTOMATION_STARTERS, lineupStarter } from "./templates";
 import { nextLineupSlot, nextSendSlot, SLOT } from "./timing";
-import { AUTOMATIONS, type Automation, type MemberFacts } from "./types";
+import { AUTOMATIONS, SENT_STATUSES, type Automation, type MemberFacts } from "./types";
 
 // The automatic emails. Each is one long-lived email_campaigns row
 // (kind 'automation', status 'active' or 'off') that keeps collecting
@@ -26,6 +26,12 @@ export async function ensureAutomations(): Promise<CampaignRow[]> {
   const admin = createAdminClient();
   const { data: existing } = await admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).not("automation", "is", null);
   const have = new Set((existing ?? []).map((r) => (r as CampaignRow).automation));
+  // An early "Still want these?" row was made with kind 'reconfirm', which
+  // the sender took for a one-off and never ran: every automation row is
+  // kind 'automation'.
+  if ((existing ?? []).some((r) => (r as CampaignRow).kind !== "automation")) {
+    await admin.from("email_campaigns").update({ kind: "automation" }).not("automation", "is", null).neq("kind", "automation");
+  }
   for (const a of AUTOMATIONS) {
     if (have.has(a)) continue;
     const s = AUTOMATION_STARTERS[a];
@@ -95,6 +101,10 @@ export function automationKey(a: Automation, f: MemberFacts, now: Date, today: s
       if (f.sends.some((s) => s.a === "winback_90" && daysSinceIso(s.t, now) < 180)) return null;
       return `winback90:${f.lastVisitOn}`;
     case "reconfirm":
+      // Once a round: not again while one is queued, waiting at Resend or
+      // recently sent (its 14 days only start once it's handed over), or
+      // held back (if it ever has a holdout).
+      if (f.sends.some((s) => s.a === "reconfirm" && (SENT_STATUSES.has(s.s) || s.s === "held_out") && daysSinceIso(s.t, now) < 30)) return null;
       return sunsetDue(f, now) ? `reconfirm:${today}` : null;
   }
 }
@@ -123,23 +133,10 @@ export async function queueAutomation(row: CampaignRow, now = new Date(), facts?
     { at, now, facts: facts ?? (await loadFacts()), dedupeKey: (f) => automationKey(a, f, now, today) },
   );
   const n = await queueSends(row.id, resolved, at);
-  const admin = createAdminClient();
-  await admin.from("email_campaigns").update({ excluded: resolved.excluded, updated_at: now.toISOString() }).eq("id", row.id);
-  // "Still want these?" starts their 14 days now; the daily engagement
-  // check turns them quiet if nothing happens.
-  if (a === "reconfirm" && n > 0) {
-    const ids = resolved.send.filter((s) => !s.heldOut).map((s) => s.facts.memberId);
-    for (let i = 0; i < ids.length; i += 500) {
-      const chunk = ids.slice(i, i + 500);
-      await admin
-        .from("member_email_prefs")
-        .upsert(
-          chunk.map((member_id) => ({ member_id, engagement: "reconfirm_sent", reconfirm_sent_at: at.toISOString(), updated_at: now.toISOString() })),
-          { onConflict: "member_id" },
-        );
-      await admin.from("email_consent_log").insert(chunk.map((member_id) => ({ member_id, action: "reconfirm", source: "sunset" })));
-    }
-  }
+  await createAdminClient().from("email_campaigns").update({ excluded: resolved.excluded, updated_at: now.toISOString() }).eq("id", row.id);
+  // "Still want these?" doesn't start anyone's 14 days here: that happens
+  // when it's handed to Resend (campaign-send.ts), so one that's cancelled,
+  // dropped or held back never makes anyone go quiet.
   return n;
 }
 

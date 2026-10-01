@@ -433,8 +433,8 @@ $$;
 -- ---------- the sender's lease ----------
 -- Only one run works on a campaign at a time. A one-off campaign goes
 -- 'scheduled' -> 'sending' (or a 'sending' run whose lease ran out is taken
--- over); an automation stays 'active' and only takes the lease. Returns
--- true for the run that won.
+-- over); an automation (any row with `automation` set) stays 'active' and
+-- only takes the lease. Returns true for the run that won.
 create or replace function public.email_claim_campaign(p_campaign uuid, p_seconds int)
 returns boolean
 language plpgsql
@@ -443,13 +443,13 @@ set search_path = public
 as $$
 begin
   update email_campaigns
-  set status = case when kind = 'automation' then status else 'sending' end,
+  set status = case when automation is not null or kind = 'automation' then status else 'sending' end,
       locked_until = now() + make_interval(secs => greatest(p_seconds, 30)),
       updated_at = now()
   where id = p_campaign
     and (
-      (kind <> 'automation' and (status = 'scheduled' or (status = 'sending' and (locked_until is null or locked_until < now()))))
-      or (kind = 'automation' and status = 'active' and (locked_until is null or locked_until < now()))
+      (automation is null and kind <> 'automation' and (status = 'scheduled' or (status = 'sending' and (locked_until is null or locked_until < now()))))
+      or ((automation is not null or kind = 'automation') and status = 'active' and (locked_until is null or locked_until < now()))
     );
   return found;
 end;
@@ -533,7 +533,30 @@ $$;
 -- ticket, completed order or website sign-in. Anyone who was sent the
 -- "Still want these?" email and has engaged since goes back to active; if
 -- 14 days passed with nothing, they go quiet (dormant: no marketing, still
--- receipts). Both are logged. Returns {bumped, reactivated, dormant}.
+-- receipts). Both are logged. Returns {bumped, reactivated, reset, dormant}.
+--
+-- Only someone that email really went to can go quiet: the app starts the
+-- 14 days when it's handed to Resend, and anyone marked 'reconfirm_sent'
+-- whose email was then called back, cancelled, refused or bounced (no
+-- reconfirm send that went) is simply active again ('reset').
+create or replace function public.email_reconfirm_went(p_member uuid, p_since timestamptz)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from email_sends es
+    join email_campaigns ec on ec.id = es.campaign_id
+    where es.member_id = p_member
+      and ec.automation = 'reconfirm'
+      and (es.status in ('submitted', 'delivered') or (es.status = 'scheduled' and es.deliver_at <= now()))
+      and coalesce(es.deliver_at, es.submitted_at) >= coalesce(p_since, '-infinity'::timestamptz) - interval '1 day'
+  );
+$$;
+
 create or replace function public.email_refresh_engagement()
 returns jsonb
 language plpgsql
@@ -543,6 +566,7 @@ as $$
 declare
   n_bumped int := 0;
   n_active int := 0;
+  n_reset int := 0;
   n_dormant int := 0;
 begin
   with latest as (
@@ -579,17 +603,31 @@ begin
   select member_id, 'reactivate', 'engagement' from r;
   get diagnostics n_active = row_count;
 
+  -- Marked as sent "Still want these?", but it never went (called back,
+  -- cancelled, refused, bounced): their 14 days never started.
+  with u as (
+    update member_email_prefs p set engagement = 'active', reconfirm_sent_at = null, updated_at = now()
+    where p.engagement = 'reconfirm_sent'
+      and (p.reconfirm_sent_at is null or p.reconfirm_sent_at < now() - interval '1 day')
+      and not email_reconfirm_went(p.member_id, p.reconfirm_sent_at)
+    returning p.member_id
+  )
+  insert into email_consent_log (member_id, action, source, detail)
+  select member_id, 'reactivate', 'sunset', '{"why":"the reconfirm email never went"}'::jsonb from u;
+  get diagnostics n_reset = row_count;
+
   with d as (
-    update member_email_prefs set engagement = 'dormant', updated_at = now()
-    where engagement = 'reconfirm_sent' and reconfirm_sent_at < now() - interval '14 days'
-      and (last_engaged_at is null or last_engaged_at <= reconfirm_sent_at)
-    returning member_id
+    update member_email_prefs p set engagement = 'dormant', updated_at = now()
+    where p.engagement = 'reconfirm_sent' and p.reconfirm_sent_at < now() - interval '14 days'
+      and (p.last_engaged_at is null or p.last_engaged_at <= p.reconfirm_sent_at)
+      and email_reconfirm_went(p.member_id, p.reconfirm_sent_at)
+    returning p.member_id
   )
   insert into email_consent_log (member_id, action, source)
   select member_id, 'dormant', 'sunset' from d;
   get diagnostics n_dormant = row_count;
 
-  return jsonb_build_object('bumped', n_bumped, 'reactivated', n_active, 'dormant', n_dormant);
+  return jsonb_build_object('bumped', n_bumped, 'reactivated', n_active, 'reset', n_reset, 'dormant', n_dormant);
 end;
 $$;
 
@@ -711,6 +749,7 @@ revoke execute on function public.email_queue_sends(uuid, jsonb) from public, an
 revoke execute on function public.email_mark_submitted(jsonb) from public, anon, authenticated;
 revoke execute on function public.email_bump_send(uuid, text, timestamptz) from public, anon, authenticated;
 revoke execute on function public.email_refresh_engagement() from public, anon, authenticated;
+revoke execute on function public.email_reconfirm_went(uuid, timestamptz) from public, anon, authenticated;
 revoke execute on function public.email_campaign_outcomes(uuid, int) from public, anon, authenticated;
 grant execute on function public.member_email_facts(int, int, uuid, uuid) to service_role;
 grant execute on function public.email_claim_campaign(uuid, int) to service_role;
@@ -718,4 +757,5 @@ grant execute on function public.email_queue_sends(uuid, jsonb) to service_role;
 grant execute on function public.email_mark_submitted(jsonb) to service_role;
 grant execute on function public.email_bump_send(uuid, text, timestamptz) to service_role;
 grant execute on function public.email_refresh_engagement() to service_role;
+grant execute on function public.email_reconfirm_went(uuid, timestamptz) to service_role;
 grant execute on function public.email_campaign_outcomes(uuid, int) to service_role;

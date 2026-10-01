@@ -4,10 +4,11 @@ import PageHeader from "@/components/admin/PageHeader";
 import { getOverview, type CampaignSummary } from "@/lib/email/reports";
 import { CONSENT_LABEL, KIND_LABEL, type ConsentSource } from "@/lib/email/types";
 import { whenLabel } from "@/lib/email/format";
-import { NewEmailButtons, ResumeSending, StopSending } from "./OverviewControls";
+import { NewEmailButtons, RecallWaiting, ResumeSending, StopSending } from "./OverviewControls";
 
 export const dynamic = "force-dynamic";
-// "Stop all sending" calls back email waiting at Resend inside the action.
+// "Stop all sending", "Call back" and "Resume sending" call back or hand
+// over email inside the action (up to 4 minutes each).
 export const maxDuration = 300;
 
 // Back office -> Email: how the list is doing, what's next, and how the
@@ -89,19 +90,53 @@ export default async function EmailPage() {
       {o.paused_by_guardrail && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            <strong>Sending is paused.</strong> {o.paused_by_guardrail.reason} Nothing goes to a list until an admin has looked and resumed it. Check the latest
-            emails below and Google Postmaster Tools first.
+            <strong>{o.paused_by_guardrail.by === "Stopped" ? "Sending is stopped." : "Sending is paused by a guardrail."}</strong> {o.paused_by_guardrail.reason.replace(/[.!?]?\s*$/, ".")} Nothing goes
+            to a list until an admin has looked and resumed it. Check the latest emails below and Google Postmaster Tools first.
           </p>
+          <p>
+            {o.waitingAtResend > 0
+              ? `${o.waitingAtResend.toLocaleString()} ${o.waitingAtResend === 1 ? "email is" : "emails are"} still waiting at Resend to go out later${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : ""}.`
+              : "Nothing is waiting at Resend to go out later."}
+          </p>
+          {admin && o.waitingAtResend > 0 && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
           {admin && <ResumeSending />}
         </div>
       )}
-      {!o.gate.ok && <p className="notice notice-warn text-sm">Not sending to lists yet: {o.gate.reason}</p>}
-      {admin && !o.paused_by_guardrail && (
+      {!o.gate.ok && (
+        <div className="notice notice-warn space-y-2 text-sm">
+          <p>
+            Not sending to lists yet: {o.gate.reason}
+            {o.waitingAtResend > 0 && !o.paused_by_guardrail
+              ? ` ${o.waitingAtResend.toLocaleString()} handed to Resend earlier ${o.waitingAtResend === 1 ? "is" : "are"} still waiting to go out${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : "; they're called back on the next morning run, or now with the button below"}.`
+              : ""}
+          </p>
+          {admin && o.waitingAtResend > 0 && !o.paused_by_guardrail && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
+        </div>
+      )}
+      {o.pausedEmails.length > 0 && (
+        <div className="notice notice-warn text-sm">
+          <p className="font-semibold">Paused, waiting for an admin to decide:</p>
+          <ul className="mt-1 list-disc pl-5">
+            {o.pausedEmails.map((c) => (
+              <li key={c.id}>
+                <Link href={`/admin/email/${c.id}`} className="font-semibold hover:underline">
+                  {c.name}
+                </Link>
+                {c.error ? <span className="text-[var(--muted)]"> · {c.error.length > 160 ? `${c.error.slice(0, 157)}…` : c.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {admin && (
         <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
-          <summary className="cursor-pointer font-semibold">Emergency stop</summary>
+          <summary className="cursor-pointer font-semibold">
+            Emergency stop
+            {o.waitingAtResend > 0 ? <span className="font-normal text-[var(--muted)]"> · {o.waitingAtResend.toLocaleString()} waiting at Resend for later</span> : null}
+          </summary>
           <p className="my-2 text-[var(--muted)]">
-            Pauses every email to a list and calls back what Resend is holding for later. Switching EMAIL_SENDING_ENABLED off in Vercel only stops new
-            hand-overs until the next morning run; this is immediate.
+            Pauses every email to a list and calls back everything Resend is holding for later (a big list takes a few minutes; it carries on until none is
+            left). Switching EMAIL_SENDING_ENABLED off in Vercel only stops new hand-overs until the next morning run; this is immediate. It can be pressed again.
           </p>
           <StopSending />
         </details>

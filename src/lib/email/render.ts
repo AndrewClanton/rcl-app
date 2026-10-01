@@ -233,12 +233,15 @@ function happeningText(h: HappeningData, L: RenderLinks): string {
   return `${dayLabel(h.startsAt)}, ${timeLabel(h.startsAt)}: ${h.title}${h.note ? ` (${h.note})` : ""}\n  Add to my calendar: ${L.href(calendarUrl(h.id), `Calendar: ${h.title}`)}`;
 }
 
+// The money off matches the register (memberDiscountRate in pos/PosApp.tsx):
+// 5% for Insiders, 10% for Insiders+, on the whole order.
 const INSIDER_PERKS: [string, string][] = [
+  ["5% off everything", "Scan your member card at the register and 5% comes off the whole order: bar, kitchen and box office."],
   ["Points on everything", "1 point for every $1 at the bar, kitchen and box office. 100 points = $5 off."],
   ["Check in, get points", "Scan in at the door: every visit earns 5 points, and badges earn more."],
   ["The weekly lineup", "Every week's films, including the Film Archive classics we only share with members."],
 ];
-const PLUS_PERKS = ["Free entry to every screening", "2 free booth reservations a month", "Bar and merch discounts", "First dibs on special events"];
+const PLUS_PERKS = ["Free entry to every screening", "2 free booth reservations a month", "10% off everything at the register", "First dibs on special events"];
 
 function perksHtml(kind: "insiders" | "plus", L: RenderLinks): string {
   if (kind === "insiders") {
@@ -423,7 +426,7 @@ ${line ? `<div style="padding-top:4px;font-family:${BODY};font-size:15px;line-he
         break;
       }
       case "signoff": {
-        const from = b.from?.trim() || "Andrew & the Royale crew";
+        const from = b.from?.trim() || "The Royale crew";
         html.push(row(`<div style="font-family:${BODY};font-size:16px;line-height:24px;color:${C.ink};">See you at the movies,<br><strong>${esc(from)}</strong></div>`, "padding:10px 28px 26px;"));
         text.push(`See you at the movies,\n${from}`);
         break;
@@ -544,7 +547,7 @@ export function newBlock(t: BlockType): Block {
     case "ticketStub":
       return { t, label: "Welcome gift", big: "50 points", sub: "" };
     case "signoff":
-      return { t, from: "Andrew & the Royale crew" };
+      return { t, from: "The Royale crew" };
     case "divider":
     case "lineup":
     case "claim":

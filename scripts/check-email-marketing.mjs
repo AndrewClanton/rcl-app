@@ -533,7 +533,7 @@ const automations = await load("lib/email/automations.ts");
   const m = mkMember(107);
   const c = mkCampaign({ name: "Waiting at Resend", status: "sent" });
   const row = mkQueued(c, m, { status: "scheduled", resend_email_id: "re_waiting", batch_no: 1, batch_key: "k", deliver_at: new Date(Date.now() + 3 * HOUR).toISOString() });
-  const r = await sender.recallScheduledSends("Guardrail: test.", { pause: true });
+  const r = await sender.recallScheduledSends("Guardrail: test.");
   const s = db.email_sends.find((x) => x.id === row.id);
   check("recall: email waiting at Resend is cancelled there and put back in the queue", resend.cancelled.includes("re_waiting") && s.status === "queued" && !s.resend_email_id && !s.batch_key && r.recalled >= 1, JSON.stringify(r));
   check("recall: its email is paused until an admin resumes", db.email_campaigns.find((x) => x.id === c.id).status === "paused");
@@ -594,6 +594,156 @@ const automations = await load("lib/email/automations.ts");
   const li = mkQueued(mkCampaign({ name: "Lineup later", status: "sent", kind: "lineup", category: "lineup" }), p, { status: "scheduled", resend_email_id: "re_li_later", deliver_at: later });
   await consent.updatePrefs(p.id, { events: false }, "prefs_page");
   check("prefs: turning events off cancels an events email waiting at Resend, not the lineup", resend.cancelled.includes("re_ev_later") && !resend.cancelled.includes("re_li_later") && db.email_sends.find((s) => s.id === ev.id).status === "cancelled" && db.email_sends.find((s) => s.id === li.id).status === "scheduled");
+}
+
+// ===================== 5c. too late, the emergency stop, "Still want these?" =====================
+const dispatch = await load("lib/email/dispatch.ts");
+const BLOCKS = [{ t: "paragraph", text: "Hi {first name}" }, { t: "button", label: "See it", link: "/showtimes" }, { t: "signoff" }];
+const later = (h) => new Date(Date.now() + h * HOUR).toISOString();
+const sendOf = (id) => db.email_sends.find((s) => s.id === id);
+const campaignOf = (id) => db.email_campaigns.find((x) => x.id === id);
+const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).date === timing.centralParts(new Date()).date;
+{
+  // The latest each kind of one-off may arrive.
+  const by = (c) => timing.sendByFor(c);
+  const tonight = by({ kind: "alert", content: { alert: "tonight" }, scheduled_for: cdt("2026-10-15", "15:00").toISOString() });
+  check("too late: a \"tonight\" alert only goes on its own day", tonight.hard && tonight.at.toISOString() === cdt("2026-10-16", "00:00").toISOString(), JSON.stringify(tonight));
+  const weekend = by({ kind: "alert", content: { alert: "weekend" }, scheduled_for: cdt("2026-10-15", "10:30").toISOString() });
+  check("too late: a \"this weekend\" alert only goes before that Sunday is over", weekend.hard && weekend.at.toISOString() === cdt("2026-10-19", "00:00").toISOString(), JSON.stringify(weekend));
+  const ev = by({ kind: "event", content: { eventDate: "2026-10-22" }, scheduled_for: cdt("2026-10-15", "10:30").toISOString() });
+  check("too late: an event email only goes up to the day of the event", ev.hard && ev.at.toISOString() === cdt("2026-10-23", "00:00").toISOString(), JSON.stringify(ev));
+  const lineupBy = by({ kind: "lineup", content: { lineup: { start: "2026-10-13", days: 7 } }, scheduled_for: cdt("2026-10-13", "10:30").toISOString() });
+  check("too late: a lineup only goes during the week it covers (before the next one)", lineupBy.hard && lineupBy.at.toISOString() === cdt("2026-10-20", "00:00").toISOString(), JSON.stringify(lineupBy));
+  const ann = by({ kind: "announcement", scheduled_for: cdt("2026-10-17", "15:00").toISOString() });
+  check("too late: anything else by the end of the next sending day (Saturday's go on Monday, never Sunday)", !ann.hard && ann.at.toISOString() === cdt("2026-10-20", "00:00").toISOString(), JSON.stringify(ann));
+  check("too late: automations have their own rule (2 days from being queued)", by({ kind: "automation", automation: "birthday" }) === null);
+
+  // Yesterday's "tonight" alert, with some of the list still queued.
+  const m1 = mkMember(400);
+  const yesterday = new Date(Date.now() - DAY).toISOString();
+  const alert = mkCampaign({ name: "Tonight, yesterday", kind: "alert", category: "alerts", content: { blocks: BLOCKS, alert: "tonight" }, scheduled_for: yesterday, recipients: 1 });
+  const row1 = mkQueued(alert, m1, { deliver_at: yesterday });
+  const before1 = resend.sent.length;
+  const r1 = await sender.runCampaign(alert.id, Date.now() + 30_000);
+  check("too late: yesterday's \"tonight\" alert is cancelled at hand-over, not sent today with the wrong day's words", sendOf(row1.id).status === "cancelled" && /Too late/.test(sendOf(row1.id).error ?? "") && resend.sent.length === before1 && /too late/.test(r1.note ?? ""), JSON.stringify([sendOf(row1.id).status, r1.note]));
+
+  // An announcement whose rest would now arrive days late: an admin decides.
+  const m2 = mkMember(401);
+  const old = new Date(Date.now() - 4 * DAY).toISOString();
+  const news = mkCampaign({ name: "Old news", kind: "announcement", category: "events", scheduled_for: old, recipients: 1 });
+  const row2 = mkQueued(news, m2, { deliver_at: old });
+  const before2 = resend.sent.length;
+  const r2 = await sender.runCampaign(news.id, Date.now() + 30_000);
+  check("too late: anything else that would arrive days late pauses for an admin (nothing sent, nothing cancelled)", r2.status === "paused" && campaignOf(news.id).status === "paused" && sendOf(row2.id).status === "queued" && resend.sent.length === before2 && /Resume/.test(r2.note ?? ""), JSON.stringify(r2));
+  const res2 = await actions.resumeCampaign(news.id);
+  const went2 = ["submitted", "scheduled"].includes(sendOf(row2.id).status);
+  check("too late: Resume sends the rest anyway (its day becomes today)", res2.ok && campaignOf(news.id).status !== "paused" && timing.sendByFor(campaignOf(news.id)).at.getTime() > Date.now() && (goesToday() ? went2 : sendOf(row2.id).status === "queued"), JSON.stringify([res2, campaignOf(news.id).status, sendOf(row2.id).status]));
+
+  // One that never started and is already past its day.
+  const stale = mkCampaign({ name: "Tonight, two days ago", kind: "alert", category: "alerts", content: { blocks: BLOCKS, alert: "tonight" }, scheduled_for: new Date(Date.now() - 2 * DAY).toISOString() });
+  const r3 = await sender.runCampaign(stale.id, Date.now() + 30_000);
+  check("too late: one that never started and is past its day doesn't start: paused, nobody queued", r3.status === "paused" && /Too late to start/.test(r3.note ?? "") && !db.email_sends.some((s) => s.campaign_id === stale.id), JSON.stringify(r3));
+}
+{
+  // Resuming after a stop runs what's due today right away, not on tomorrow morning's run.
+  const m = mkMember(403);
+  const c = mkCampaign({ name: "Stopped mid-list", kind: "invite", category: "account", recipients: 1 });
+  const row = mkQueued(c, m);
+  await actions.stopAllSending("Testing resume");
+  check("stop all: what was going pauses", campaignOf(c.id).status === "paused" && /^Stopped:/.test(campaignOf(c.id).error ?? ""));
+  const before = resend.sent.length;
+  const res = await actions.resumeAllSending("Checked, all fine");
+  if (goesToday()) check("resume all: emails due today are handed to Resend right away", res.ok && resend.sent.length - before >= 1 && ["submitted", "scheduled"].includes(sendOf(row.id).status) && /back on/.test(res.message ?? ""), JSON.stringify([res, sendOf(row.id).status]));
+  else check("resume all: emails due tomorrow are scheduled again for the morning run", res.ok && campaignOf(c.id).status === "scheduled" && sendOf(row.id).status === "queued", JSON.stringify(res));
+}
+{
+  // Sending switched off: what's waiting at Resend comes back, and its email pauses for an admin.
+  const m = mkMember(404);
+  const c = mkCampaign({ name: "Handed over for later", status: "sent", recipients: 1 });
+  const row = mkQueued(c, m, { status: "scheduled", resend_email_id: "re_switch_off", batch_no: 1, batch_key: "k-off", deliver_at: later(5) });
+  process.env.EMAIL_SENDING_ENABLED = "false";
+  const cron = await dispatch.runEmailCron(Date.now() + 30_000);
+  process.env.EMAIL_SENDING_ENABLED = "true";
+  check("switched off: email waiting at Resend is called back, and its email pauses (it doesn't go by itself once sending is back on)", resend.cancelled.includes("re_switch_off") && sendOf(row.id).status === "queued" && campaignOf(c.id).status === "paused", JSON.stringify([cron.recall, sendOf(row.id).status, campaignOf(c.id).status]));
+
+  // Only one call-back at a time.
+  const m2 = mkMember(405);
+  const c2 = mkCampaign({ name: "Busy recall", status: "sent", recipients: 1 });
+  const row2 = mkQueued(c2, m2, { status: "scheduled", resend_email_id: "re_busy", deliver_at: later(5) });
+  db.email_settings.push({ key: "recall_lease", value: { run: "another", until: new Date(Date.now() + 60_000).toISOString() }, updated_at: new Date().toISOString() });
+  const busy = await sender.recallScheduledSends("Stopped: test");
+  check("recall: only one call-back runs at a time (a second says so and touches nothing)", busy.busy === true && busy.left >= 1 && !resend.cancelled.includes("re_busy") && sendOf(row2.id).status === "scheduled", JSON.stringify(busy));
+  db.email_settings.splice(db.email_settings.findIndex((s) => s.key === "recall_lease"), 1);
+  db.email_settings.push({ key: "recall_lease", value: { run: "died", until: new Date(Date.now() - 1000).toISOString() }, updated_at: new Date().toISOString() });
+  const freed = await sender.recallScheduledSends("Stopped: test");
+  check("recall: a call-back that died lets go when its lease runs out", !freed.busy && resend.cancelled.includes("re_busy") && !db.email_settings.some((s) => s.key === "recall_lease"), JSON.stringify(freed));
+
+  // A big list: what one run can't reach stays counted, and the page's button carries on.
+  const refused = await actions.recallWaiting();
+  check("call back: refused while sending isn't stopped", !refused.ok);
+  const big = mkCampaign({ name: "Big list", status: "sent", recipients: 3 });
+  const rows = [0, 1, 2].map((i) => mkQueued(big, mkMember(410 + i), { status: "scheduled", resend_email_id: `re_big_${i}`, deliver_at: later(6) }));
+  await sender.pauseAllSending("Big list test", { prefix: "Stopped" });
+  const part = await sender.recallScheduledSends("Stopped: Big list test", { deadline: Date.now() - 1 });
+  check("recall: what a run can't reach is counted (left) and stays counted for the Email page", part.left >= 3 && (await sender.waitingAtResend(big.id)) === 3, JSON.stringify(part));
+  const again = await actions.recallWaiting();
+  check("call back: the Email page's button carries on while sending is stopped (and can be pressed again)", again.ok && again.recalled >= 3 && (await sender.waitingAtResend(big.id)) === 0 && rows.every((r) => sendOf(r.id).status === "queued"), JSON.stringify(again));
+  const overview = await load("lib/email/reports.ts").then((r) => r.getOverview());
+  check("Email page: the stop, the count still at Resend and the paused emails show after a refresh", overview.paused_by_guardrail?.by === "Stopped" && overview.waitingAtResend === 0 && overview.pausedEmails.some((p) => p.id === big.id), JSON.stringify([overview.paused_by_guardrail, overview.waitingAtResend]));
+
+  // An email cancelled meanwhile: what comes back is cancelled, not left queued.
+  const m3 = mkMember(415);
+  const gone = mkCampaign({ name: "Cancelled meanwhile", status: "cancelled", recipients: 1 });
+  const row3 = mkQueued(gone, m3, { status: "scheduled", resend_email_id: "re_cancelled_meanwhile", deliver_at: later(5) });
+  await actions.recallWaiting();
+  check("recall: one from an email stopped meanwhile is cancelled, not left queued", sendOf(row3.id).status === "cancelled" && campaignOf(gone.id).status === "cancelled", JSON.stringify(sendOf(row3.id)));
+  await actions.resumeAllSending("Checked the big list");
+}
+{
+  // An unsubscribe whose cancel Resend didn't take is tried again by the cron.
+  const m = mkMember(416);
+  const c = mkCampaign({ name: "Cancel retry", status: "sent", recipients: 1 });
+  const row = mkQueued(c, m, { status: "scheduled", resend_email_id: "re_retry_cancel", deliver_at: later(5) });
+  resend.cancelFailNext = 2; // the request and its one retry
+  await consent.setMarketingOptIn(m.id, false, "prefs_page");
+  check("unsubscribe: a cancel Resend didn't take is marked to try again (still waiting there)", sendOf(row.id).status === "scheduled" && (sendOf(row.id).error ?? "").startsWith(consent.CANCEL_RETRY), JSON.stringify(sendOf(row.id)));
+  const n = await consent.retryPendingCancels(Date.now() + 30_000);
+  check("unsubscribe: ...and the next cron run cancels it", n === 1 && sendOf(row.id).status === "cancelled" && resend.cancelled.includes("re_retry_cancel"), JSON.stringify([n, sendOf(row.id)]));
+}
+{
+  // "Still want these?": nobody's 14 days start until it's really on its way.
+  const rc = db.email_campaigns.find((x) => x.automation === "reconfirm") ?? mkCampaign({ name: "Still want these?", kind: "automation", automation: "reconfirm", category: "account" });
+  Object.assign(rc, { status: "active", kind: "automation", category: "account", audience: { include: [{ r: "sunset_due" }] }, holdout_pct: 0, locked_until: null });
+  const prefOf = (id) => db.member_email_prefs.find((p) => p.member_id === id);
+  const quiet = (m) => facts({ memberId: m.id, email: m.email, emailHash: hash.hashEmail(m.email), consentSource: "indy_yes", deliveredSinceEngaged: 12, lastEngagedAt: new Date(Date.now() - 120 * DAY).toISOString() });
+  const a = mkMember(420);
+  const b = mkMember(421);
+  for (const m of [a, b]) db.member_email_prefs.push({ member_id: m.id, lineup: true, alerts: true, events: true, offers: true, rewards: true, consent_source: "indy_yes", engagement: "active", reconfirm_sent_at: null });
+  const n = await automations.queueAutomation(rc, new Date(), [quiet(a)]);
+  check("reconfirm: queueing it doesn't start anyone's 14 days", n === 1 && prefOf(a.id).engagement === "active" && !prefOf(a.id).reconfirm_sent_at, JSON.stringify([n, prefOf(a.id)]));
+  eq("reconfirm: due for someone gone quiet", automations.automationKey("reconfirm", quiet(a), new Date(), "2026-10-15"), "reconfirm:2026-10-15");
+  const queuedFacts = { ...quiet(a), sends: [{ c: rc.id, t: new Date().toISOString(), k: "automation", a: "reconfirm", g: "account", x: null, s: "queued", ck: false }] };
+  eq("reconfirm: not queued again while one is waiting (its 14 days haven't started yet)", automations.automationKey("reconfirm", queuedFacts, new Date(), "2026-10-15"), null);
+  const rowB = mkQueued(rc, b, { dedupe_key: "reconfirm:test", deliver_at: later(3) });
+  await sender.runCampaign(rc.id, Date.now() + 30_000);
+  const rowA = db.email_sends.find((s) => s.campaign_id === rc.id && s.member_id === a.id);
+  check("reconfirm: handed to Resend, their 14 days start, from when it arrives", ["submitted", "scheduled"].includes(rowA.status) && prefOf(a.id).engagement === "reconfirm_sent" && prefOf(a.id).reconfirm_sent_at === rowA.deliver_at, JSON.stringify([rowA.status, prefOf(a.id)]));
+  check("reconfirm: (one for later waits at Resend)", sendOf(rowB.id).status === "scheduled" && prefOf(b.id).engagement === "reconfirm_sent", JSON.stringify([sendOf(rowB.id).status, prefOf(b.id)]));
+  await sender.recallScheduledSends("Stopped: test");
+  check("reconfirm: called back before it arrived, they're simply active again", sendOf(rowB.id).status === "queued" && prefOf(b.id).engagement === "active" && prefOf(b.id).reconfirm_sent_at === null, JSON.stringify(prefOf(b.id)));
+  await sender.runCampaign(rc.id, Date.now() + 30_000);
+  check("reconfirm: (handed over again)", sendOf(rowB.id).status === "scheduled" && prefOf(b.id).engagement === "reconfirm_sent");
+  const off = await actions.setAutomationOn("reconfirm", false);
+  check("reconfirm: switching it off cancels what waits at Resend, and nobody it never reached goes quiet", off.ok && sendOf(rowB.id).status === "cancelled" && prefOf(b.id).engagement === "active", JSON.stringify([sendOf(rowB.id).status, prefOf(b.id)]));
+  rc.status = "active";
+  const c = mkMember(422);
+  const rowC = mkQueued(rc, c, { dedupe_key: "reconfirm:old", created_at: new Date(Date.now() - 3 * DAY).toISOString() });
+  await sender.runCampaign(rc.id, Date.now() + 30_000);
+  check("reconfirm: one dropped for being 2 days late leaves them active", sendOf(rowC.id).status === "cancelled" && (prefOf(c.id)?.engagement ?? "active") === "active");
+  rc.status = "off";
+  const mig = readFileSync(path.join(root, "supabase/migrations/20261001090000_email_marketing.sql"), "utf8");
+  const eng = mig.slice(mig.indexOf("function public.email_refresh_engagement"), mig.indexOf('-- ---------- "came in after"'));
+  check("reconfirm: the daily check only turns quiet someone it really went to, and resets anyone it never reached", /and email_reconfirm_went\(p\.member_id, p\.reconfirm_sent_at\)/.test(eng) && /and not email_reconfirm_went\(p\.member_id, p\.reconfirm_sent_at\)/.test(eng));
 }
 
 // ===================== 6. one-click unsubscribe =====================

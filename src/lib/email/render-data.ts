@@ -78,7 +78,7 @@ export async function composerOptions(): Promise<ComposerOptions> {
     admin.from("screenings").select("starts_at, movie:movies(id, title, release_year)").gte("starts_at", now.toISOString()).lt("starts_at", in14).order("starts_at"),
     admin.from("house_events").select("id, title, starts_at").gte("starts_at", now.toISOString()).lt("starts_at", in60).order("starts_at"),
     admin.from("menu_items").select("id, name, price").eq("active", true).order("name"),
-    admin.from("email_campaigns").select("id, name").neq("kind", "automation").in("status", ["sending", "sent", "scheduled"]).order("created_at", { ascending: false }).limit(40),
+    admin.from("email_campaigns").select("id, name").is("automation", null).in("status", ["sending", "sent", "scheduled"]).order("created_at", { ascending: false }).limit(40),
     restrictedTitles().catch(() => [] as string[]),
   ]);
   const films = new Map<string, ComposerOptions["films"][number]>();

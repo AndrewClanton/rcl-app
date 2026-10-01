@@ -232,9 +232,10 @@ const RPC = {
     const c = db.email_campaigns.find((x) => x.id === p_campaign);
     const now = Date.now();
     const free = !c?.locked_until || Date.parse(c.locked_until) < now;
-    const ok = c && (c.kind !== "automation" ? c.status === "scheduled" || (c.status === "sending" && free) : c.status === "active" && free);
+    const auto = !!c?.automation || c?.kind === "automation";
+    const ok = c && (!auto ? c.status === "scheduled" || (c.status === "sending" && free) : c.status === "active" && free);
     if (!ok) return { data: false, error: null };
-    if (c.kind !== "automation") c.status = "sending";
+    if (!auto) c.status = "sending";
     c.locked_until = new Date(now + Math.max(p_seconds, 30) * 1000).toISOString();
     return { data: true, error: null };
   },
@@ -378,7 +379,7 @@ export function createAdminClient() {
 // An address containing "reject" is refused (422), the way Resend refuses
 // a malformed `to`: the whole batch, or that one email alone. onBatch runs
 // after each accepted batch (to change things mid-run).
-export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, onBatch: null };
+export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, cancelFailNext: 0, onBatch: null };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 export async function fakeFetch(url, init = {}) {
@@ -420,6 +421,11 @@ export async function fakeFetch(url, init = {}) {
     return json(200, { id: `re_${randomUUID()}` });
   }
   if ((m = path.match(/^\/emails\/([^/]+)\/cancel$/)) && method === "POST") {
+    // cancelFailNext: Resend busy for that many cancel requests.
+    if (resend.cancelFailNext > 0) {
+      resend.cancelFailNext--;
+      return json(503, { name: "application_error", message: "busy" });
+    }
     resend.cancelled.push(m[1]);
     return json(200, { object: "email", id: m[1] });
   }

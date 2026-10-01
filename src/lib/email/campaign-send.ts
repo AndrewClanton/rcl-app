@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
@@ -13,7 +14,7 @@ import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render
 import { cancelEmail, deliver, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
 import { sendEmail } from "./send";
-import { nextSendSlot } from "./timing";
+import { nextSendSlot, sendByFor, type SendBy } from "./timing";
 import { emailTokensReady, listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "./tokens";
 import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, type Category, type ConsentSource, type PrefCategory, type SendRecord, type SendStatus } from "./types";
 
@@ -33,6 +34,9 @@ import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, typ
 // Central, Monday to Saturday; a row whose time has passed moves to the next
 // open slot and goes with scheduled_at), and it still fits the caps against
 // what they've had since. Automated emails more than 2 days late are dropped.
+// A one-off email has a "too late" time (timing.ts, sendByFor): past it, a
+// "tonight" alert, an event email or a lineup whose words would be wrong is
+// cancelled, and anything else pauses for an admin to decide.
 // Between batches the run checks the campaign is still going, no guardrail
 // has tripped and sending is still on, and stops if not.
 //
@@ -52,7 +56,9 @@ import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, typ
 // call back email already waiting at Resend for later. Turning
 // EMAIL_SENDING_ENABLED off stops new hand-overs at once, but email Resend
 // already holds for later is only called back on the next cron run; "Stop
-// all sending" on the Email page calls it back at once.
+// all sending" on the Email page calls it back at once. Resend cancels one
+// email per request, so a big call-back carries on in fresh runs of
+// /api/email/recall until nothing is left (recallAll).
 
 export const LEASE_SECONDS = 300;
 export const BATCH_SIZE = 100;
@@ -137,10 +143,12 @@ export async function guardrailStatus(now = new Date()): Promise<GuardrailStatus
   return { delivered, complaints, hardBounces, tripped: !!reason, reason };
 }
 
-export async function guardrailPause(): Promise<{ at: string; reason: string } | null> {
+// The pause every run checks: set by a guardrail ("Guardrail") or by an
+// admin's "Stop all sending" ("Stopped").
+export async function guardrailPause(): Promise<{ at: string; reason: string; by: "Guardrail" | "Stopped" } | null> {
   const { data } = await createAdminClient().from("email_settings").select("value").eq("key", "guardrail_pause").maybeSingle();
-  const v = data?.value as { at?: string; reason?: string } | undefined;
-  return v?.at ? { at: v.at, reason: v.reason ?? "" } : null;
+  const v = data?.value as { at?: string; reason?: string; by?: string } | undefined;
+  return v?.at ? { at: v.at, reason: v.reason ?? "", by: v.by === "Stopped" ? "Stopped" : "Guardrail" } : null;
 }
 
 // Stops every list email until an admin resumes (the guardrail, or "Stop
@@ -153,7 +161,10 @@ export async function pauseAllSending(reason: string, opts: { byEmployee?: strin
   if (fresh) {
     const { error } = await admin
       .from("email_settings")
-      .upsert({ key: "guardrail_pause", value: { at: now.toISOString(), reason }, updated_at: now.toISOString(), ...(opts.byEmployee ? { updated_by: opts.byEmployee } : {}) }, { onConflict: "key" });
+      .upsert(
+        { key: "guardrail_pause", value: { at: now.toISOString(), reason, by: opts.prefix ?? "Guardrail" }, updated_at: now.toISOString(), ...(opts.byEmployee ? { updated_by: opts.byEmployee } : {}) },
+        { onConflict: "key" },
+      );
     if (error) throw new Error("Couldn't pause sending.");
   }
   await admin
@@ -177,13 +188,13 @@ function inBackground(label: string, task: () => Promise<unknown>) {
 // Checked before every run and after every bounce or complaint: over the
 // line, every scheduled campaign pauses, nothing goes to a list until an
 // admin resumes it, and email already waiting at Resend for later is called
-// back (in the background, the first time it trips; the cron does that
-// itself, so it passes recall: false).
+// back (in the background, the first time it trips, carrying on until it's
+// all back; the cron does that itself, so it passes recall: false).
 export async function enforceGuardrails(now = new Date(), opts: { recall?: boolean } = {}): Promise<GuardrailStatus> {
   const g = await guardrailStatus(now);
   if (!g.tripped) return g;
   const fresh = await pauseAllSending(g.reason ?? "Complaints or bounces ran too high.", { prefix: "Guardrail", now });
-  if (fresh && opts.recall !== false) inBackground("email recall", () => recallScheduledSends(`Guardrail: ${g.reason}`, { pause: true }));
+  if (fresh && opts.recall !== false) inBackground("email recall", () => recallAll(`Guardrail: ${g.reason}`));
   return g;
 }
 
@@ -191,108 +202,265 @@ export async function enforceGuardrails(now = new Date(), opts: { recall?: boole
 export interface RecallResult {
   recalled: number;
   failed: number; // Resend wouldn't cancel it (usually: it had already gone)
-  left: number; // not reached before the deadline; run it again
+  left: number; // not reached before the deadline
+  busy?: boolean; // another call-back was already running; nothing was done
+  continuing?: boolean; // the rest carry on in a fresh run of /api/email/recall
+}
+
+// Resend cancels one email per request (about 5 a second here), so calling
+// back a big list takes several runs of a few minutes. Only one call-back
+// runs at a time (a lease in email_settings), so two can't race over the
+// same email or double the load on Resend. A run that dies lets go when its
+// lease runs out.
+const RECALL_LEASE = "recall_lease";
+export const RECALL_MAX_HOPS = 25;
+const GONE = "Resend couldn't call it back: it had already gone.";
+
+async function takeRecallLease(untilMs: number): Promise<string | null> {
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  await admin.from("email_settings").delete().eq("key", RECALL_LEASE).lt("value->>until", now);
+  const run = randomUUID();
+  const { error } = await admin.from("email_settings").insert({ key: RECALL_LEASE, value: { run, until: new Date(untilMs).toISOString() }, updated_at: now });
+  return error ? null : run;
+}
+
+async function dropRecallLease(run: string) {
+  await createAdminClient().from("email_settings").delete().eq("key", RECALL_LEASE).eq("value->>run", run);
+}
+
+export async function recallRunning(): Promise<boolean> {
+  const { data } = await createAdminClient().from("email_settings").select("value").eq("key", RECALL_LEASE).maybeSingle();
+  const until = (data?.value as { until?: string } | undefined)?.until;
+  return !!until && Date.parse(until) > Date.now();
+}
+
+// How many emails are waiting at Resend for later (handed over with
+// scheduled_at, not due for another minute).
+export async function waitingAtResend(campaignId?: string): Promise<number> {
+  let q = createAdminClient().from("email_sends").select("id", { count: "exact", head: true }).eq("status", "scheduled").gt("deliver_at", new Date(Date.now() + 60_000).toISOString());
+  if (campaignId) q = q.eq("campaign_id", campaignId);
+  const { count, error } = await q;
+  if (error) throw new Error("Couldn't count the email waiting at Resend.");
+  return count ?? 0;
+}
+
+// Why email waiting at Resend should come back right now, if it should:
+// sending is stopped (an admin or a guardrail) or switched off.
+export async function recallReason(): Promise<string | null> {
+  const gate = sendingGate();
+  if (!gate.ok) return `Sending is switched off: ${gate.reason}`;
+  const p = await guardrailPause();
+  return p ? `${p.by}: ${p.reason}` : null;
+}
+
+// One email waiting at Resend: "ok" (called back), "gone" (Resend says it
+// can't be: it went already), "retry" (no answer, Resend busy, or no id
+// saved yet for it).
+async function callBack(resendId: string | null): Promise<"ok" | "gone" | "retry"> {
+  if (!resendId) return "retry";
+  const r = await cancelEmail(resendId);
+  if (r.ok) return "ok";
+  return [400, 404, 409, 422].includes(r.status) ? "gone" : "retry";
+}
+
+// "Still want these?" called back or cancelled before it arrived: their 14
+// days never started, so they're simply active again.
+async function undoReconfirm(memberIds: string[]) {
+  const ids = [...new Set(memberIds)];
+  const admin = createAdminClient();
+  for (let i = 0; i < ids.length; i += 150) {
+    await admin
+      .from("member_email_prefs")
+      .update({ engagement: "active", reconfirm_sent_at: null, updated_at: new Date().toISOString() })
+      .in("member_id", ids.slice(i, i + 150))
+      .eq("engagement", "reconfirm_sent");
+  }
+}
+
+async function reconfirmCampaignId(): Promise<string | null> {
+  const { data } = await createAdminClient().from("email_campaigns").select("id").eq("automation", "reconfirm").maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
+// "Still want these?" has been handed over (to arrive at `arrives`): their
+// 14 days start then. Set here, when it's handed to Resend, not when it's
+// queued, so one that's cancelled, dropped, held back or refused never makes
+// anyone go quiet (email_refresh_engagement also checks it really went).
+async function startReconfirmClock(list: { memberId: string; arrives: string }[]) {
+  const admin = createAdminClient();
+  const now = new Date().toISOString();
+  for (let i = 0; i < list.length; i += 500) {
+    const chunk = list.slice(i, i + 500);
+    const { error } = await admin
+      .from("member_email_prefs")
+      .upsert(
+        chunk.map((x) => ({ member_id: x.memberId, engagement: "reconfirm_sent", reconfirm_sent_at: x.arrives, updated_at: now })),
+        { onConflict: "member_id" },
+      );
+    // Not fatal: they stay active (and aren't sent it again for 30 days).
+    if (error) console.error("reconfirm clock not started:", error.message);
+    else await admin.from("email_consent_log").insert(chunk.map((x) => ({ member_id: x.memberId, action: "reconfirm", source: "sunset" })));
+  }
 }
 
 // Email handed to Resend with scheduled_at that's still ahead is cancelled
 // there and put back in the queue (so a resume sends it, if it's still in
-// time and within the caps). Soonest first. Resend takes one cancel at a
-// time (about 5 a second here), so a big list can take more than one go.
-// One-off emails with anything called back are paused (`pause`), or put
-// back to scheduled (sending switched off: they go once it's back on).
-export async function recallScheduledSends(reason: string, opts: { pause: boolean; deadline?: number } = { pause: true }): Promise<RecallResult> {
+// time and within the caps). Soonest first, until the deadline (`left`: how
+// many weren't reached), or until sending is back on (`stillStopped`). The
+// one-off emails it touched are paused, whatever stopped sending, so an
+// admin decides whether the rest still go. One Resend says has already gone
+// is marked so, and not tried again.
+export async function recallScheduledSends(reason: string, opts: { deadline?: number; stillStopped?: () => Promise<boolean> } = {}): Promise<RecallResult> {
   const admin = createAdminClient();
   const deadline = opts.deadline ?? Date.now() + 200_000;
-  const out: RecallResult = { recalled: 0, failed: 0, left: 0 };
-  const soon = new Date(Date.now() + 60_000).toISOString();
-  const rows: { id: string; campaign_id: string; resend_email_id: string | null }[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await admin
-      .from("email_sends")
-      .select("id, campaign_id, resend_email_id, deliver_at")
-      .eq("status", "scheduled")
-      .gt("deliver_at", soon)
-      .order("deliver_at")
-      .order("id")
-      .range(from, from + 999);
-    if (error) throw new Error("Couldn't read the email waiting at Resend.");
-    rows.push(...((data ?? []) as typeof rows));
-    if ((data ?? []).length < 1000) break;
-  }
-  const touched = new Set<string>();
-  for (let i = 0; i < rows.length; i++) {
-    if (Date.now() > deadline) {
-      out.left = rows.length - i;
-      break;
+  const lease = await takeRecallLease(deadline + 60_000);
+  if (!lease) return { recalled: 0, failed: 0, left: await waitingAtResend().catch(() => 0), busy: true };
+  try {
+    const out: RecallResult = { recalled: 0, failed: 0, left: 0 };
+    const soon = new Date(Date.now() + 60_000).toISOString();
+    const rows: { id: string; campaign_id: string; member_id: string | null; resend_email_id: string | null }[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin
+        .from("email_sends")
+        .select("id, campaign_id, member_id, resend_email_id, deliver_at")
+        .eq("status", "scheduled")
+        .gt("deliver_at", soon)
+        .order("deliver_at")
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw new Error("Couldn't read the email waiting at Resend.");
+      rows.push(...((data ?? []) as typeof rows));
+      if ((data ?? []).length < 1000) break;
     }
-    const r = rows[i];
-    const c = r.resend_email_id ? await cancelEmail(r.resend_email_id) : null;
-    if (!c?.ok) {
-      out.failed++;
-      continue;
+    const reconfirm = rows.length ? await reconfirmCampaignId() : null;
+    const undo: string[] = [];
+    const touched = new Set<string>();
+    for (let i = 0; i < rows.length; i++) {
+      if (Date.now() > deadline || (opts.stillStopped && i > 0 && i % 25 === 0 && !(await opts.stillStopped()))) {
+        out.left = rows.length - i;
+        break;
+      }
+      const r = rows[i];
+      const c = await callBack(r.resend_email_id);
+      if (c !== "ok") {
+        if (c === "gone") await admin.from("email_sends").update({ status: "submitted", error: GONE }).eq("id", r.id).eq("status", "scheduled");
+        out.failed++;
+        continue;
+      }
+      const { error } = await admin
+        .from("email_sends")
+        .update({ status: "queued", resend_email_id: null, batch_no: null, batch_key: null, batch_at: null, submitted_at: null, error: `Called back from Resend. ${reason}`.slice(0, 300) })
+        .eq("id", r.id)
+        .eq("status", "scheduled");
+      if (error) {
+        out.failed++;
+        continue;
+      }
+      out.recalled++;
+      touched.add(r.campaign_id);
+      if (r.campaign_id === reconfirm && r.member_id) undo.push(r.member_id);
     }
-    const { error } = await admin
-      .from("email_sends")
-      .update({ status: "queued", resend_email_id: null, batch_no: null, batch_key: null, batch_at: null, submitted_at: null, error: `Called back from Resend. ${reason}`.slice(0, 300) })
-      .eq("id", r.id)
-      .eq("status", "scheduled");
-    if (error) {
-      out.failed++;
-      continue;
+    if (undo.length) await undoReconfirm(undo);
+    if (touched.size) {
+      await admin
+        .from("email_campaigns")
+        .update({ status: "paused", error: `${reason} Email waiting at Resend was called back; an admin decides whether the rest still go (Resume).`, updated_at: new Date().toISOString() })
+        .in("id", [...touched])
+        .is("automation", null)
+        .in("status", ["sent", "scheduled", "sending"]);
+      // One that was stopped meanwhile (an email cancelled, an automation
+      // switched off) never sends again: what came back is cancelled, not
+      // left queued (where it would count against the caps).
+      const { data: ended } = await admin.from("email_campaigns").select("id").in("id", [...touched]).in("status", ["cancelled", "failed", "off"]);
+      const endedIds = (ended ?? []).map((x) => x.id as string);
+      if (endedIds.length) {
+        await admin.from("email_sends").update({ status: "cancelled", error: `Called back from Resend after the email was stopped. ${reason}`.slice(0, 300) }).in("campaign_id", endedIds).eq("status", "queued").is("batch_key", null);
+      }
     }
-    out.recalled++;
-    touched.add(r.campaign_id);
+    return out;
+  } finally {
+    await dropRecallLease(lease);
   }
-  if (touched.size) {
-    const at = new Date().toISOString();
-    const note = opts.pause ? `${reason} Email waiting at Resend was called back; resume to send the rest.` : `${reason} Email waiting at Resend was called back; it goes once sending is back on.`;
-    await admin
-      .from("email_campaigns")
-      .update({ status: opts.pause ? "paused" : "scheduled", error: note, updated_at: at })
-      .in("id", [...touched])
-      .neq("kind", "automation")
-      .in("status", ["sent", "scheduled", "sending"]);
-  }
-  return out;
+}
+
+// Calls back what's waiting at Resend, and when one run can't reach it all,
+// hands the rest to a fresh run of /api/email/recall (its own few minutes),
+// which does the same, until nothing is left, sending is back on, or
+// RECALL_MAX_HOPS runs have gone by. Used by "Stop all sending", a tripped
+// guardrail and the cron while sending is stopped or switched off.
+export async function recallAll(reason: string, opts: { deadline?: number; hop?: number } = {}): Promise<RecallResult> {
+  const r = await recallScheduledSends(reason, { deadline: opts.deadline, stillStopped: async () => (await recallReason()) !== null });
+  if (r.left > 0 && !r.busy && r.recalled > 0 && (await recallReason())) r.continuing = await continueRecall((opts.hop ?? 0) + 1);
+  return r;
+}
+
+// Starts the next run of /api/email/recall. Only in production, and only
+// with CRON_SECRET set (the route refuses anything unsigned); elsewhere the
+// Email page's button carries on instead.
+async function continueRecall(hop: number): Promise<boolean> {
+  const secret = process.env.CRON_SECRET;
+  const host = process.env.VERCEL_ENV === "production" ? process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "";
+  if (!secret || !host || hop > RECALL_MAX_HOPS) return false;
+  const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  const res = await fetch(`https://${host}/api/email/recall?hop=${hop}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}`, ...(bypass ? { "x-vercel-protection-bypass": bypass } : {}) },
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  }).catch(() => null);
+  return res?.status === 202;
 }
 
 // One email's sends that haven't gone: queued ones are cancelled here, and
 // ones waiting at Resend for later are cancelled there (soonest first,
-// until the deadline; `left` says how many are still waiting).
-export async function stopCampaignSends(campaignId: string, why: string, deadline = Date.now() + 200_000): Promise<{ atResend: number; couldnt: number; left: number }> {
+// until the deadline; `left` says how many are still waiting). `busy`: a
+// call-back of everything was already running, so only the queued ones
+// were cancelled.
+export async function stopCampaignSends(campaignId: string, why: string, deadline = Date.now() + 200_000): Promise<{ atResend: number; couldnt: number; left: number; busy?: boolean }> {
   const admin = createAdminClient();
   await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("campaign_id", campaignId).eq("status", "queued");
-  const later: { id: string; resend_email_id: string | null }[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await admin
-      .from("email_sends")
-      .select("id, resend_email_id, deliver_at")
-      .eq("campaign_id", campaignId)
-      .eq("status", "scheduled")
-      .gt("deliver_at", new Date(Date.now() + 30_000).toISOString())
-      .order("deliver_at")
-      .order("id")
-      .range(from, from + 999);
-    if (error) throw new Error("Couldn't read what's waiting at Resend.");
-    later.push(...((data ?? []) as typeof later));
-    if ((data ?? []).length < 1000) break;
-  }
-  const out = { atResend: 0, couldnt: 0, left: 0 };
-  for (let i = 0; i < later.length; i++) {
-    if (Date.now() > deadline) {
-      out.left = later.length - i;
-      break;
+  const lease = await takeRecallLease(deadline + 60_000);
+  if (!lease) return { atResend: 0, couldnt: 0, left: await waitingAtResend(campaignId).catch(() => 0), busy: true };
+  try {
+    const later: { id: string; member_id: string | null; resend_email_id: string | null }[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await admin
+        .from("email_sends")
+        .select("id, member_id, resend_email_id, deliver_at")
+        .eq("campaign_id", campaignId)
+        .eq("status", "scheduled")
+        .gt("deliver_at", new Date(Date.now() + 30_000).toISOString())
+        .order("deliver_at")
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw new Error("Couldn't read what's waiting at Resend.");
+      later.push(...((data ?? []) as typeof later));
+      if ((data ?? []).length < 1000) break;
     }
-    const s = later[i];
-    const r = s.resend_email_id ? await cancelEmail(s.resend_email_id) : null;
-    if (!r?.ok) {
-      out.couldnt++;
-      continue;
+    const undo = later.length && campaignId === (await reconfirmCampaignId()) ? ([] as string[]) : null;
+    const out = { atResend: 0, couldnt: 0, left: 0 };
+    for (let i = 0; i < later.length; i++) {
+      if (Date.now() > deadline) {
+        out.left = later.length - i;
+        break;
+      }
+      const s = later[i];
+      const r = await callBack(s.resend_email_id);
+      if (r !== "ok") {
+        if (r === "gone") await admin.from("email_sends").update({ status: "submitted", error: GONE }).eq("id", s.id).eq("status", "scheduled");
+        out.couldnt++;
+        continue;
+      }
+      await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("id", s.id).eq("status", "scheduled");
+      out.atResend++;
+      if (undo && s.member_id) undo.push(s.member_id);
     }
-    await admin.from("email_sends").update({ status: "cancelled", error: why }).eq("id", s.id).eq("status", "scheduled");
-    out.atResend++;
+    if (undo?.length) await undoReconfirm(undo);
+    return out;
+  } finally {
+    await dropRecallLease(lease);
   }
-  return out;
 }
 
 // ---------- the lease ----------
@@ -301,12 +469,18 @@ export async function claimCampaign(id: string): Promise<boolean> {
   return !error && data === true;
 }
 
+// An automation is the long-lived row for one step ('welcome_1', ...,
+// 'reconfirm'): it stays 'active' and keeps collecting sends.
+export function isAutomation(c: { kind: CampaignKind; automation: Automation | null }): boolean {
+  return c.kind === "automation" || !!c.automation;
+}
+
 // Runs whose lease ran out go back to the queue.
 export async function settleStuck(now = new Date()): Promise<void> {
   const admin = createAdminClient();
   const iso = now.toISOString();
   await admin.from("email_campaigns").update({ status: "scheduled", locked_until: null, updated_at: iso }).eq("status", "sending").lt("locked_until", iso);
-  await admin.from("email_campaigns").update({ locked_until: null }).eq("kind", "automation").lt("locked_until", iso);
+  await admin.from("email_campaigns").update({ locked_until: null }).not("automation", "is", null).lt("locked_until", iso);
 }
 
 export async function getCampaign(id: string): Promise<CampaignRow | null> {
@@ -375,7 +549,7 @@ export async function lintStored(c: CampaignInput, data?: RenderData): Promise<L
 export async function prepareCampaign(c: CampaignRow, data: RenderData, now = new Date()): Promise<CampaignRow> {
   const admin = createAdminClient();
   const patch: Partial<CampaignRow> = {};
-  if (c.kind !== "automation" && c.recipients === null) {
+  if (!isAutomation(c) && c.recipients === null) {
     const planned = c.scheduled_for && Date.parse(c.scheduled_for) > now.getTime() ? new Date(c.scheduled_for) : now;
     const at = nextSendSlot(planned);
     const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now });
@@ -445,7 +619,7 @@ function stillWanted(c: CampaignRow, m: MemberRow | undefined, p: PrefsRow | und
   if (p) {
     if (c.category !== "account" && p[c.category as PrefCategory] === false) return { ok: false, status: "cancelled", why: "Turned this kind of email off" };
     if (p.paused_until && Date.parse(p.paused_until) > now.getTime()) return { ok: false, status: "cancelled", why: "Paused" };
-    if (p.engagement === "dormant" && c.kind !== "reconfirm") return { ok: false, status: "cancelled", why: "Gone quiet" };
+    if (p.engagement === "dormant" && c.kind !== "reconfirm" && c.automation !== "reconfirm") return { ok: false, status: "cancelled", why: "Gone quiet" };
   }
   return { ok: true };
 }
@@ -540,7 +714,7 @@ async function stopReason(c: CampaignRow): Promise<string | null> {
   if (await guardrailPause()) return "Paused by a guardrail.";
   const { data, error } = await createAdminClient().from("email_campaigns").select("status").eq("id", c.id).maybeSingle();
   if (error) return "Couldn't check the email is still going.";
-  const want = c.kind === "automation" ? "active" : "sending";
+  const want = isAutomation(c) ? "active" : "sending";
   if (!data || data.status !== want) return `The email is ${data?.status ?? "gone"} now.`;
   return null;
 }
@@ -568,6 +742,13 @@ export interface DeliverResult {
   done: boolean; // nothing left queued for this campaign
   error: string | null;
   stopped: string | null; // the campaign was paused or cancelled, or sending stopped, mid-run
+  tooLate: number; // cancelled: they'd have arrived after the email's words stopped being true
+  tooLateWhy: string | null;
+  late: string | null; // the rest would arrive over a day late: paused for an admin
+}
+
+export function lateNote(by: SendBy): string {
+  return `Paused: ${by.why}. Resume to send the rest anyway, or Stop the rest.`;
 }
 
 // Hands this campaign's queued sends to Resend, 100 at a time, until none
@@ -575,17 +756,20 @@ export interface DeliverResult {
 export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: number, now = new Date()): Promise<DeliverResult> {
   const admin = createAdminClient();
   const from = process.env.EMAIL_FROM?.trim() ?? "";
-  const result: DeliverResult = { submitted: 0, cancelled: 0, failed: 0, unsure: 0, batches: 0, done: false, error: null, stopped: null };
+  const result: DeliverResult = { submitted: 0, cancelled: 0, failed: 0, unsure: 0, batches: 0, done: false, error: null, stopped: null, tooLate: 0, tooLateWhy: null, late: null };
   const href = (sendId: string) => trackedLinks(c.links ?? [], sendId);
   const input = asInput(c);
   const shape: CampaignShape = shapeOf(c);
   const shapes = new Map<string, CampaignBits>([[c.id, { kind: c.kind, automation: c.automation, category: c.category, alert: c.content?.alert ?? null }]]);
   const needsSpend = (c.content?.blocks ?? []).some((b) => b.t === "ticketSpend");
   const needsClaim = (c.content?.blocks ?? []).some((b) => b.t === "claim");
+  // The latest a one-off may arrive (automations: the 2-day rule below).
+  const sendBy = isAutomation(c) ? null : sendByFor(c);
+  const tooLate = (r: QueuedRow, t: Date) => !!sendBy && effectiveDeliverAt(r.deliver_at, t).getTime() > sendBy.at.getTime();
   let failures = 0;
 
   // A late welcome or birthday is worse than none.
-  if (c.kind === "automation") {
+  if (isAutomation(c)) {
     const { count } = await admin
       .from("email_sends")
       .update({ status: "cancelled", error: `Couldn't go within ${AUTOMATION_MAX_AGE_HOURS / 24} days of being queued, so it was dropped` }, { count: "exact" })
@@ -638,6 +822,30 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         result.unsure += rows.length;
         continue;
       }
+      // Too late now to try again (the words would be wrong, or it's over a
+      // day late): not sent again. Whether the first try reached Resend
+      // can't be known; if it did, it went then.
+      if (sendBy && rows.some((r) => tooLate(r, t))) {
+        if (!sendBy.hard) {
+          result.late = lateNote(sendBy);
+          return result;
+        }
+        const { error: lateErr } = await admin
+          .from("email_sends")
+          .update({ status: "cancelled", error: `Too late to try again: ${sendBy.why}. If the earlier try reached Resend, it went then.`.slice(0, 300) })
+          .in(
+            "id",
+            rows.map((r) => r.id),
+          )
+          .eq("status", "queued");
+        if (lateErr) {
+          result.error = "Couldn't save the queue.";
+          return result;
+        }
+        result.tooLate += rows.length;
+        result.tooLateWhy = sendBy.why;
+        continue;
+      }
     } else {
       const { data: fresh, error } = await admin
         .from("email_sends")
@@ -656,6 +864,33 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         const { count } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).eq("status", "queued");
         result.done = (count ?? 0) === 0;
         break;
+      }
+      // Too late: a "tonight" alert tomorrow, last week's lineup, an event
+      // email after the event are cancelled; anything else that would now
+      // arrive over a day late pauses the email for an admin to decide.
+      const late = (fresh as QueuedRow[]).filter((r) => tooLate(r, t));
+      if (sendBy && late.length) {
+        if (!sendBy.hard) {
+          result.late = lateNote(sendBy);
+          return result;
+        }
+        const { data: gone, error: lateErr } = await admin
+          .from("email_sends")
+          .update({ status: "cancelled", error: `Too late: ${sendBy.why}.`.slice(0, 300) })
+          .in(
+            "id",
+            late.map((r) => r.id),
+          )
+          .eq("status", "queued")
+          .is("batch_key", null)
+          .select("id");
+        if (lateErr) {
+          result.error = "Couldn't save the queue.";
+          return result;
+        }
+        result.tooLate += gone?.length ?? 0;
+        result.tooLateWhy = sendBy.why;
+        continue;
       }
       // The send window, again at hand-over: a row whose time has passed
       // (a list that ran long, a resume, a switch turned back on) moves to
@@ -681,9 +916,11 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       if (!due.length) continue;
       const { data: top } = await admin.from("email_sends").select("batch_no").eq("campaign_id", c.id).not("batch_no", "is", null).order("batch_no", { ascending: false }).limit(1);
       const batchNo = (top?.[0]?.batch_no ?? 0) + 1;
-      // Saved on the rows, so a retry uses the same key; the stamp keeps a
-      // re-formed batch from ever reusing a key Resend has seen.
-      key = `${c.id}:${batchNo}:${t.getTime().toString(36)}`;
+      // Saved on the rows, so a retry uses the same key; the stamp (and a few
+      // random characters, in case two runs overlap after a lease ran out
+      // and pick the same number) keeps a re-formed batch from ever reusing a
+      // key Resend has seen.
+      key = `${c.id}:${batchNo}:${t.getTime().toString(36)}${randomUUID().slice(0, 6)}`;
       const { data: numbered } = await admin
         .from("email_sends")
         .update({ batch_no: batchNo, batch_key: key, batch_at: t.toISOString() })
@@ -789,9 +1026,9 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     }
     if (!items.length) continue;
 
-    const markAccepted = (list: { row: QueuedRow; item: OutgoingEmail; id: string | null }[], note: string | null) => {
+    const markAccepted = async (list: { row: QueuedRow; item: OutgoingEmail; id: string | null }[], note: string | null) => {
       const at = new Date().toISOString();
-      return mark(
+      const ok = await mark(
         list.map(({ row, item, id }) => ({
           id: row.id,
           resend_email_id: id,
@@ -802,6 +1039,11 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
           error: note,
         })),
       );
+      // "Still want these?" is on its way: their 14 days start when it arrives.
+      if (ok && c.automation === "reconfirm") {
+        await startReconfirmClock(list.filter((x) => x.row.member_id).map((x) => ({ memberId: x.row.member_id as string, arrives: x.item.scheduled_at ?? at })));
+      }
+      return ok;
     };
 
     // Each alone, under its own key (after Resend refused the batch
@@ -923,6 +1165,8 @@ function runNote(r: DeliverResult): string | null {
   const bits = [
     r.error,
     r.stopped ? `Stopped: ${r.stopped}` : null,
+    r.late,
+    r.tooLate ? `${r.tooLate} weren't sent because they'd have arrived too late: ${r.tooLateWhy ?? "past its time"}.` : null,
     r.failed ? `${r.failed} refused by Resend (see each member's email history).` : null,
     r.unsure ? `${r.unsure} were handed to Resend over 20 hours ago with no answer and weren't sent again.` : null,
   ].filter(Boolean);
@@ -937,7 +1181,7 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
   if (!first) return { id, name: "?", ran: false, submitted: 0, cancelled: 0, status: "missing", note: "No such campaign." };
   const gate = sendingGate();
   if (!gate.ok) {
-    if (first.kind !== "automation" && first.error !== gate.reason) await admin.from("email_campaigns").update({ error: gate.reason }).eq("id", id).eq("status", "scheduled");
+    if (!isAutomation(first) && first.error !== gate.reason) await admin.from("email_campaigns").update({ error: gate.reason }).eq("id", id).eq("status", "scheduled");
     return { id, name: first.name, ran: false, submitted: 0, cancelled: 0, status: first.status, note: gate.reason };
   }
   if (await guardrailPause()) return { id, name: first.name, ran: false, submitted: 0, cancelled: 0, status: first.status, note: "Paused by a guardrail." };
@@ -945,14 +1189,28 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
 
   let c = (await getCampaign(id)) as CampaignRow;
   try {
+    // A one-off that hasn't started and is already past its "too late"
+    // time: nobody is queued, and it waits for an admin (a new time, a
+    // copy, or for one that's only late, Resume).
+    const by = isAutomation(c) || c.recipients !== null ? null : sendByFor(c);
+    if (by && nextSendSlot(new Date()).getTime() > by.at.getTime()) {
+      const note = by.hard ? `Too late to start: ${by.why}. Pick a new time, or make a copy.` : lateNote(by);
+      await admin.from("email_campaigns").update({ status: "paused", locked_until: null, error: note, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
+      return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: (await getCampaign(id))?.status ?? "paused", note };
+    }
     const data = await loadRenderData(c.content ?? { blocks: [] });
     c = await prepareCampaign(c, data, now);
     const r = await deliverQueued(c, data, deadline, now);
     const iso = new Date().toISOString();
     const note = runNote(r);
     let status: string = c.status;
-    if (c.kind === "automation") {
+    if (isAutomation(c)) {
       await admin.from("email_campaigns").update({ locked_until: null, error: note, updated_at: iso }).eq("id", id);
+    } else if (r.late) {
+      // The rest would now arrive over a day late: an admin decides.
+      status = "paused";
+      await admin.from("email_campaigns").update({ status, locked_until: null, error: note, updated_at: iso }).eq("id", id).eq("status", "sending");
     } else if (r.stopped) {
       // Paused, cancelled or stopped from elsewhere: leave that as it is.
       // (Sending switched off mid-run: back to scheduled, to go later.)
@@ -972,7 +1230,7 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
     return { id, name: c.name, ran: true, submitted: r.submitted, cancelled: r.cancelled, status, note };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Something went wrong.";
-    if (c.kind === "automation") {
+    if (isAutomation(c)) {
       await admin.from("email_campaigns").update({ locked_until: null, error: msg }).eq("id", id);
     } else {
       // Only a run still in progress goes back to the queue: an exception
@@ -980,7 +1238,7 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
       await admin.from("email_campaigns").update({ status: "scheduled", locked_until: null, error: msg }).eq("id", id).eq("status", "sending");
       await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
     }
-    const statusNow = c.kind === "automation" ? c.status : ((await getCampaign(id))?.status ?? "scheduled");
+    const statusNow = isAutomation(c) ? c.status : ((await getCampaign(id))?.status ?? "scheduled");
     return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: statusNow, note: msg };
   }
 }

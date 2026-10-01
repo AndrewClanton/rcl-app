@@ -1,9 +1,9 @@
 // The first campaigns, ready to start from (the marketing plan, A8). The
 // composer fills in the real week's films when it's time to send.
 //
-// Voice: Andrew talking to a regular at the bar. The real film, night and
-// price, one job per email, no ALL CAPS, no fake urgency, signed "Andrew &
-// the Royale crew". Subject lines and preview text only ever name this
+// Voice: the crew talking to a regular at the bar. The real film, night and
+// price, one job per email, no ALL CAPS, no fake urgency, signed "The
+// Royale crew" (no one's name: Andrew, 10/1). Subject lines and preview text only ever name this
 // year's titles (MPLC); archive titles live in the members-only section.
 // No server code.
 import type { CampaignContent } from "./render";
@@ -25,7 +25,7 @@ export interface Starter {
   holdoutPct: number;
 }
 
-const SIGNOFF = { t: "signoff" as const, from: "Andrew & the Royale crew" };
+const SIGNOFF = { t: "signoff" as const, from: "The Royale crew" };
 
 export function lineupStarter(start: string, days = 7): Starter {
   return {
@@ -317,7 +317,9 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     holdoutPct: 10,
   },
   reconfirm: {
-    kind: "reconfirm",
+    // An automation like the others (kind 'automation'), so it's run the
+    // same way: queued once a day, sent while 'active'.
+    kind: "automation",
     category: "account",
     automation: "reconfirm",
     name: "Still want these?",

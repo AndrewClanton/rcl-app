@@ -2,7 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CAMPAIGN_COLUMNS, outcomeWindowDays, type CampaignRow } from "./campaign";
 import { loadFacts } from "./audience";
-import { guardrailPause, guardrailStatus, senderStatus, sendingGate, type GuardrailStatus } from "./campaign-send";
+import { guardrailPause, guardrailStatus, recallRunning, senderStatus, sendingGate, waitingAtResend, type GuardrailStatus } from "./campaign-send";
 import { hardFilter } from "./rules";
 import type { ConsentSource } from "./types";
 
@@ -57,6 +57,8 @@ export async function summarize(c: CampaignRow): Promise<CampaignSummary> {
   return { campaign: c, ...o, opened: opened.count ?? 0, hardBounces: hardBounces.count ?? 0 };
 }
 
+export type PausedEmail = { id: string; name: string; error: string | null };
+
 export interface Overview {
   mailable: number;
   onList: number;
@@ -70,7 +72,10 @@ export interface Overview {
   drafts: CampaignRow[];
   recent: CampaignSummary[];
   guardrail: GuardrailStatus | null;
-  paused_by_guardrail: { at: string; reason: string } | null;
+  paused_by_guardrail: { at: string; reason: string; by: "Guardrail" | "Stopped" } | null;
+  waitingAtResend: number; // handed to Resend with scheduled_at, not yet due
+  recallRunning: boolean; // calling that back right now (in the background)
+  pausedEmails: PausedEmail[]; // one-off emails waiting for an admin
   rates30: { delivered: number; complaints: number; hardBounces: number };
   lastWebhookAt: string | null;
   sender: ReturnType<typeof senderStatus>;
@@ -83,9 +88,9 @@ export async function getOverview(): Promise<Overview> {
   const since30 = new Date(now.getTime() - 30 * 86_400_000).toISOString();
   const lineupShape = { id: "", kind: "lineup" as const, category: "lineup" as const, automation: null };
 
-  const [facts, campaigns, left, delivered, complaints, hardBounces, lastHook, guardrail, pause] = await Promise.all([
+  const [facts, campaigns, left, delivered, complaints, hardBounces, lastHook, guardrail, pause, waiting, recalling, pausedRows] = await Promise.all([
     loadFacts().catch(() => []),
-    admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).neq("kind", "automation").order("created_at", { ascending: false }).limit(40),
+    admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).is("automation", null).order("created_at", { ascending: false }).limit(40),
     admin.from("email_consent_log").select("id", { count: "exact", head: true }).eq("action", "opt_out").gte("at", since30),
     admin.from("email_sends").select("id", { count: "exact", head: true }).gte("delivered_at", since30),
     admin.from("email_sends").select("id", { count: "exact", head: true }).gte("complained_at", since30),
@@ -93,6 +98,9 @@ export async function getOverview(): Promise<Overview> {
     admin.from("email_events").select("received_at").not("svix_id", "is", null).order("received_at", { ascending: false }).limit(1),
     guardrailStatus(now).catch(() => null),
     guardrailPause().catch(() => null),
+    waitingAtResend().catch(() => 0),
+    recallRunning().catch(() => false),
+    admin.from("email_campaigns").select("id, name, error").is("automation", null).eq("status", "paused").order("updated_at", { ascending: false }).limit(10),
   ]);
 
   let mailable = 0;
@@ -134,6 +142,9 @@ export async function getOverview(): Promise<Overview> {
     recent,
     guardrail,
     paused_by_guardrail: pause,
+    waitingAtResend: waiting,
+    recallRunning: recalling,
+    pausedEmails: (pausedRows.data ?? []) as PausedEmail[],
     rates30: { delivered: delivered.count ?? 0, complaints: complaints.count ?? 0, hardBounces: hardBounces.count ?? 0 },
     lastWebhookAt: (lastHook.data?.[0]?.received_at as string | undefined) ?? null,
     sender: senderStatus(),
