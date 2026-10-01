@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createClient, createImplicitFlowClient } from "@/lib/supabase/client";
 import { plainResetError } from "@/lib/auth-email-errors";
+import { inAppBrowserName, openInChromeHref } from "@/lib/in-app-browser";
 import { linkMemberAccount } from "../actions";
 import { askSignInHelp } from "./actions";
 
@@ -43,6 +44,48 @@ type Provider = "google" | "facebook";
 
 const AFTER_SIGN_IN_COOKIE = "rcl_after_sign_in";
 
+const noSubscribe = () => () => {};
+
+// Stands in for "Continue with Google" inside Facebook's (or another app's)
+// built-in browser, where Google won't sign anyone in.
+function GoogleInAppNote({ app }: { app: string }) {
+  const [copied, setCopied] = useState(false);
+  const chromeHref = useSyncExternalStore(
+    noSubscribe,
+    () => openInChromeHref(window.location.href, navigator.userAgent),
+    () => null,
+  );
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] p-4 text-sm" role="note">
+      <p className="font-semibold">
+        <GoogleMark /> <span className="align-[3px]">Signing in with Google?</span>
+      </p>
+      <p className="mt-1.5 text-[var(--muted)]">
+        Google doesn&apos;t allow it inside {app === "this app" ? "an app's" : `${app}'s`} built-in browser. Tap the ••• menu and choose
+        &ldquo;Open in browser&rdquo;, then sign in from there. Signing in with your email works right here.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {chromeHref && (
+          <a href={chromeHref} className="btn-secondary min-h-11">
+            Open in Chrome
+          </a>
+        )}
+        <button type="button" onClick={copy} className="btn-secondary min-h-11">
+          {copied ? "Link copied" : "Copy this page's link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // claimToken: signing in from a "claim your account" link (/account/claim,
 // lib/member-claim.ts). `next` is then that link. The login isn't matched
 // to an account by email here: the claim page attaches it to the account
@@ -69,6 +112,8 @@ export default function AccountForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const [oauthBusy, setOauthBusy] = useState<Provider | null>(null);
+  // Only known in the browser; the server render shows the Google button.
+  const inApp = useSyncExternalStore(noSubscribe, () => inAppBrowserName(navigator.userAgent), () => null);
 
   async function handleOAuth(provider: Provider) {
     setOauthBusy(provider);
@@ -216,7 +261,8 @@ export default function AccountForm({
       {(providers.google || providers.facebook) && (
         <>
           <div className="space-y-2.5">
-            {providers.google && (
+            {providers.google && inApp && <GoogleInAppNote app={inApp} />}
+            {providers.google && !inApp && (
               <button
                 type="button"
                 onClick={() => handleOAuth("google")}
