@@ -1327,6 +1327,7 @@ export default function PosApp({
               onPick={setFlourish}
               canPrint={!!printTarget && devices.autoPrint}
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
+              onRickroll={() => registerChannelRef.current?.send({ type: "broadcast", event: "rickroll", payload: {} })}
             />
             {/* Admins only. Docked here, in the row's spare cells, rather than
                 floating over the menu buttons the way it used to. */}
