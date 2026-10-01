@@ -117,18 +117,23 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"]
 // onFinish: a former unlimited member's "add your card on your phone" QR
 // code from the register, or null to take it down (they paid, or staff
 // took it down). CustomerDisplay shows it beside the order.
+// onPlusWelcome: someone's Insiders+ was just set up at the register. True
+// when CustomerDisplay celebrated it beside the order (they're the member
+// on it); otherwise the banner here says so.
 export default function CheckinKiosk({
   registerTopic,
   initialStep,
   onTickets,
   onRewind,
   onFinish,
+  onPlusWelcome: onPlusWelcomeShown,
 }: {
   registerTopic: string;
   initialStep?: CheckinStep;
   onTickets?: (shown: TicketsShown) => void;
   onRewind?: () => void;
   onFinish?: (shown: FinishShown | null) => void;
+  onPlusWelcome?: (firstName: string) => boolean;
 }) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   const [digits, setDigits] = useState("");
@@ -216,7 +221,9 @@ export default function CheckinKiosk({
   const onPlusWelcome = useEffectEvent((p: Partial<PlusWelcome> | null) => {
     if (!p || typeof p.firstName !== "string") return;
     onFinish?.(null);
-    toast({ title: `🎉 ${p.firstName.slice(0, 40)}, you're Insiders+!`, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
+    const name = p.firstName.slice(0, 40);
+    if (onPlusWelcomeShown?.(name)) return;
+    toast({ title: `🎉 ${name}, you're Insiders+!`, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
   });
 
   const onSeen = useEffectEvent((id: unknown) => {

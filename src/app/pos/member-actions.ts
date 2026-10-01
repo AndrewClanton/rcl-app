@@ -12,6 +12,7 @@ import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { currentMemberId } from "@/lib/member-forward";
 import type { DailyCoffeeState } from "@/lib/daily-perk";
 import { legacyNeedsSetup } from "@/lib/legacy-plus";
+import { plusPaidFor } from "@/lib/plus-status";
 
 // What the register needs to know about an attached member -- looked up on
 // demand instead of shipping every member's contact details to the register
@@ -44,6 +45,11 @@ export interface PosMember {
   // yet (lib/legacy-plus.ts): the register shows "No payment on file for
   // unlimited membership" with ways to set it up.
   legacyUnlimited: boolean;
+  // Something pays for their Insiders+ (lib/plus-status.ts plusPaidFor: a
+  // live subscription, complimentary, or a gifted year): the register's gold
+  // Insiders+ look (member-signal.ts). Optional for a member put together on
+  // the register before this was added.
+  plusPaid?: boolean;
 }
 
 // `*` rather than a column list, so the register keeps working before a
@@ -101,6 +107,7 @@ function toPosMember(r: Row): PosMember {
     // Only whether there is one: the login's id never goes to the register.
     hasLogin: !!r.auth_user_id,
     legacyUnlimited: legacyNeedsSetup({ ...r, comped: !!r.comped }),
+    plusPaid: plusPaidFor({ ...r, comped: !!r.comped, plus_gift_until: r.plus_gift_until ?? null }),
   };
 }
 
