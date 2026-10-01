@@ -247,6 +247,9 @@ const REFS = [
   "booth_reservations.member_id",
   "email_consent_log.member_id",
   "email_sends.member_id",
+  "fortis_backfill_grants.member_id",
+  "fortis_cards.granted_member_id",
+  "fortis_cards.matched_member_id",
   "gift_memberships.recipient_member_id",
   "legacy_accounts.imported_member_id",
   "member_badges.member_id",
@@ -389,6 +392,7 @@ check(
   ["lineup", "alerts", "events", "offers", "rewards"].every((c) => body.includes(`${c} = kp.${c} and dp.${c}`)) && body.includes("paused_until = greatest(kp.paused_until, dp.paused_until)"),
 );
 check("an unsubscribed email that doesn't stay goes on the never-mail list", flat.includes("d.email_opt_in = false then insert into email_suppressions (email_hash, reason, note)"));
+check("a card waiting for a pick lists the kept account instead (candidate_member_ids has no foreign key)", flat.includes("set candidate_member_ids = array( select x from unnest(array_replace(candidate_member_ids, p_drop, p_keep))") && flat.includes("where p_drop = any(candidate_member_ids)"));
 check("the email choice is the later one recorded", body.includes("if d.email_opt_in_changed_at is not null and (k.email_opt_in_changed_at is null or d.email_opt_in_changed_at > k.email_opt_in_changed_at) then"));
 check(
   "points the duplicate's history didn't hold get a 'merge' row, so balance = history",

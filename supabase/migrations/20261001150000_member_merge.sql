@@ -483,6 +483,27 @@ begin
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('claim_links', n);
 
+  -- Points for past card purchases (20261001180000): the grants and the
+  -- cards matched to the duplicate become the kept account's (a member's
+  -- cap counts every earlier grant, so both accounts' grants count), and
+  -- a card waiting for staff to pick between accounts lists the kept one
+  -- instead. That migration comes after this one, so only once it's there.
+  n := 0;
+  n2 := 0;
+  if to_regclass('public.fortis_cards') is not null then
+    update fortis_backfill_grants set member_id = p_keep where member_id = p_drop;
+    get diagnostics n = row_count;
+    update fortis_cards set matched_member_id = p_keep where matched_member_id = p_drop;
+    get diagnostics n2 = row_count;
+    update fortis_cards set granted_member_id = p_keep where granted_member_id = p_drop;
+    update fortis_cards
+       set candidate_member_ids = array(
+             select x from unnest(array_replace(candidate_member_ids, p_drop, p_keep)) with ordinality as t(x, i)
+              group by x order by min(i))
+     where p_drop = any(candidate_member_ids);
+  end if;
+  v_moved := v_moved || jsonb_build_object('card_grants', n, 'cards', n2);
+
   -- Email (20261001090000). The consent record and the emails sent are the
   -- person's, so they move. One email per campaign (or automation step)
   -- per member: where both accounts got the same one, the kept account's
