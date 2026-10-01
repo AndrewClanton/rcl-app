@@ -6,8 +6,9 @@ import { GooglePhotoButton, PhotoUploadButton, RemovePhotoButton } from "../../P
 import { EmailPreference, PasswordForm, ProfileDetailsForm } from "./ProfileForms";
 import { LinkedCards } from "./LinkedCards";
 import type { MyLinkedCard } from "@/lib/data/member-account";
-import { Panel } from "../ui";
+import { Panel, TAP } from "../ui";
 import { birthdayToInput } from "@/lib/visits";
+import ProfilePanels from "./ProfilePanels";
 
 export default function ProfileView({
   member,
@@ -24,26 +25,29 @@ export default function ProfileView({
 }) {
   const has = new Set(providers);
   return (
-    <div className="grid gap-8 lg:grid-cols-2">
+    <div className="grid grid-cols-1 gap-8 sm:gap-10 lg:grid-cols-2">
       <Panel title="Your photo" className="lg:col-span-2">
-        <div className="flex flex-wrap items-center gap-6 p-5">
-          <MemberAvatar name={member.name} url={member.avatar_url} size={104} plus={member.tier === "Insiders+"} />
-          <div className="min-w-0 flex-1 space-y-3">
-            <p className="max-w-lg text-[15px] text-[var(--muted)]">
-              Staff use your photo to find your account at the register, and it shows on the screen facing you when you check out. Only staff and you see it.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <PhotoUploadButton label={member.avatar_url ? "Change photo" : "Upload a photo"} className={`${member.avatar_url ? "btn-secondary" : "btn-primary"} px-4 py-2.5`} />
-              {googlePhoto && <GooglePhotoButton />}
-              {member.avatar_url && <RemovePhotoButton />}
-            </div>
+        {/* The photo beside the words; on a phone the buttons go full width
+            under both, from a tablet up they sit under the words. */}
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-4 p-5 sm:gap-x-6">
+          <div className="sm:row-span-2">
+            <MemberAvatar name={member.name} url={member.avatar_url} size={80} plus={member.tier === "Insiders+"} className="sm:hidden" />
+            <MemberAvatar name={member.name} url={member.avatar_url} size={104} plus={member.tier === "Insiders+"} className="hidden sm:block" />
+          </div>
+          <p className="max-w-lg text-[15px] text-[var(--muted)]">
+            Staff use your photo to find your account at the register. If you share your profile page, it shows there too.
+          </p>
+          <div className="col-span-2 grid gap-3 sm:col-span-1 sm:col-start-2 sm:flex sm:flex-wrap sm:items-center">
+            <PhotoUploadButton label={member.avatar_url ? "Change photo" : "Upload a photo"} className={`${member.avatar_url ? "btn-secondary" : "btn-primary"} ${TAP} px-4 py-2.5`} />
+            {googlePhoto && <GooglePhotoButton className={`btn-secondary ${TAP} px-4 py-2.5`} />}
+            {member.avatar_url && <RemovePhotoButton />}
           </div>
         </div>
       </Panel>
 
       <Panel title="Your details">
         <div className="p-5">
-          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} tagline={member.tagline ?? ""} birthday={birthdayToInput(member.birthday)} />
+          <ProfileDetailsForm name={member.name} phone={member.phone ?? ""} tagline={member.tagline ?? ""} birthday={birthdayToInput(member.birthday)} lineHidden={!!member.tagline_hidden_at} />
           <div className="mt-5 border-t-2 border-dashed border-[var(--border)] pt-4">
             <div className="label-xs">Email</div>
             <div className="font-bold">{member.email}</div>
@@ -79,6 +83,8 @@ export default function ProfileView({
           <PasswordForm hasPassword={has.has("email")} />
         </div>
       </Panel>
+
+      <ProfilePanels member={member} />
 
       <Panel title="Emails">
         <div className="p-5">

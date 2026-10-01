@@ -5,6 +5,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
+import { flairKeys, parseFlair, type FlairKeys } from "@/lib/flair";
+import { visibleLine } from "@/lib/member-profile";
+import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
 
 // What the register needs to know about an attached member -- looked up on
 // demand instead of shipping every member's contact details to the register
@@ -22,14 +25,23 @@ export interface PosMember {
   price_tier_set_at: string | null;
   price_tier_set_by_name: string | null;
   avatar_url: string | null;
-  tagline: string | null; // their own line from their account, for staff
+  // Their profile line (lib/member-profile.ts), for staff and the check-in
+  // screen. Null while staff have it hidden.
+  tagline: string | null;
+  // Their check-in flair (lib/flair.ts) as catalog keys: the customer
+  // screen plays it when they're confirmed, and Checked in today shows their
+  // color. partyWeek: it's their birthday week and they want the party.
+  flair?: FlairKeys;
+  partyWeek?: boolean;
   // Has a website login. Without one, their receipt gets a "claim your
   // account" QR code (claim-actions.ts).
   hasLogin: boolean;
 }
 
-const POS_MEMBER_SELECT =
-  "id, name, email, phone, tier, points, comped, avatar_url, tagline, auth_user_id, stripe_subscription_id, subscription_status, price_tier, price_tier_set_at, set_by:employees!members_price_tier_set_by_fkey(name)";
+// `*` rather than a column list, so the register keeps working before a
+// migration adds a column it reads (the profile ones are simply missing
+// until then). toPosMember picks out only what the register gets.
+const POS_MEMBER_SELECT = "*, set_by:employees!members_price_tier_set_by_fkey(name)";
 
 type Row = {
   id: string;
@@ -47,6 +59,13 @@ type Row = {
   tagline: string | null;
   auth_user_id: string | null;
   set_by: { name: string } | { name: string }[] | null;
+  // From the member_profiles migration on.
+  tagline_hidden_at?: string | null;
+  flair_color?: string | null;
+  flair_effect?: string | null;
+  flair_sticker?: string | null;
+  birthday?: string | null;
+  birthday_party?: boolean | null;
 };
 
 function toPosMember(r: Row): PosMember {
@@ -64,7 +83,9 @@ function toPosMember(r: Row): PosMember {
     price_tier_set_at: r.price_tier_set_at,
     price_tier_set_by_name: setBy?.name ?? null,
     avatar_url: r.avatar_url,
-    tagline: r.tagline ?? null,
+    tagline: visibleLine(r),
+    flair: flairKeys(parseFlair(r)),
+    partyWeek: r.birthday_party !== false && birthdayWeekYear(r.birthday, visitBusinessDate(new Date())) !== null,
     // Only whether there is one: the login's id never goes to the register.
     hasLogin: !!r.auth_user_id,
   };

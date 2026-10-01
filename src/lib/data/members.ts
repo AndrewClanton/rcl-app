@@ -53,7 +53,13 @@ export async function getMembersPage(opts: {
 
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
-  const { data, error, count } = await q.order("name").range(from, to);
+  // Most recently active first (a check-in, points, a purchase or a booking;
+  // kept by the database, see migration 20261001050000), so whoever just
+  // came in is at the top. Everyone with no activity yet follows by name.
+  const { data, error, count } = await q
+    .order("last_activity_at", { ascending: false, nullsFirst: false })
+    .order("name")
+    .range(from, to);
   if (error) throw error;
   const members = ((data ?? []) as unknown as Member[]).map((m) => contactForRole(m, opts.viewerRole));
   return { members, total: count ?? 0, page, pageSize };
@@ -125,7 +131,7 @@ const one = <T,>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ?
 // Unified purchase history (POS/web orders + ticket bookings) for a single
 // member's detail page -- lets staff spot "they were charged twice" at a
 // glance and refund the extra one from the same screen. Before migration
-// 20261001100000, without the card details.
+// 20261001220000, without the card details.
 export async function getMemberPurchaseHistory(memberId: string): Promise<MemberPurchase[]> {
   const supabase = createAdminClient();
   const orderBase = "id, order_number, total, status, payment_method, stripe_payment_intent_id, created_at, items:order_items(quantity)";
@@ -238,7 +244,7 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
 // A member's linked cards for their page in Back office: the ones in use,
 // then the ones removed (by them or by staff), with who linked each and how
 // many of the member's sales it paid. Never the fingerprint. Empty before
-// migration 20261001100000.
+// migration 20261001220000.
 export interface MemberCard {
   id: string;
   label: string; // "Visa •••• 4242"; just "Card" once the member removed it

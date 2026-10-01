@@ -14,8 +14,9 @@ const TABS = [
   { href: "/admin/reports/tax", label: "Sales tax" },
   { href: "/admin/reports/bar", label: "Bar usage" },
   { href: "/admin/reports/members", label: "Members" },
-  // Managers and up (the page checks too).
+  // Managers and up (the pages check too).
   { href: "/admin/reports/usage", label: "Website usage", managers: true },
+  { href: "/admin/reports/register-checks", label: "Register checks", managers: true },
 ];
 
 function activeTab(pathname: string) {

@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type Stripe from "stripe";
@@ -8,6 +8,7 @@ import { activatePlusFromCheckout } from "@/lib/plus-activate";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
+import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -50,6 +51,9 @@ export async function POST(request: NextRequest) {
       // bar earns their points even when nobody attaches them. Never fails
       // the webhook.
       await linkPlusCard(plusMemberId, session);
+      // Its first charge, into Reports right away (after the answer to
+      // Stripe; best effort: the Reports sync reads it anyway).
+      after(() => recordCheckoutPayment(session));
     } else {
       const bookingId = session.metadata?.booking_id;
       if (bookingId) {
@@ -105,8 +109,10 @@ export async function POST(request: NextRequest) {
 
       // A year of Insiders+ someone bought for a friend at the box office.
       if (session.metadata?.gift_membership_id) {
+        const giftId = session.metadata.gift_membership_id;
         const gift = await activateGiftFromCheckout(session);
         if (!gift.ok) failed.push("gift membership");
+        else after(() => recordGiftPayment(giftId));
       }
     }
   }
@@ -168,6 +174,9 @@ export async function POST(request: NextRequest) {
         .gt("plus_gift_until", new Date().toISOString())
         .then(check("membership gift"));
     }
+    // "Cancelled" on Reports -> Members, Week and Month (best effort, after
+    // the answer; the Reports sync reads these events too).
+    if (event.type === "customer.subscription.deleted") after(() => recordSubscriptionEnd(subscription));
   }
 
   if (failed.length) return NextResponse.json({ error: `Couldn't save: ${failed.join(", ")}` }, { status: 500 });

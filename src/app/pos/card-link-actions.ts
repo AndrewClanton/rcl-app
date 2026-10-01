@@ -5,7 +5,7 @@ import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { openApproval } from "@/lib/approval-token";
 import { cardLabel, cardOwners, firstName, pointsText, type CardNotice } from "@/lib/card-match";
-import { candidatesFor, cardSaleScope, creditCardSale, isCardOwner, loadCardLinks, loadSaleOrder, noticeTiming, staffAccount, storedCard } from "@/lib/member-cards";
+import { candidatesFor, cardSaleScope, creditCardSale, isCardOwner, loadCardLinks, loadSaleOrder, noticeTiming, salePoints, staffAccount, storedCard } from "@/lib/member-cards";
 
 // The buttons on a card sale's notice at the register (CardNotice.tsx):
 // Undo a card match (someone else paid, or it isn't their card at all),
@@ -68,7 +68,7 @@ export async function undoCardMatch(orderId: string, token: string, unlink: bool
       firstName: who,
       taken: Number(taken),
       unlinked: doUnlink,
-      points: Number(sale.order.subtotal),
+      points: salePoints(sale.order),
       candidates: await candidatesFor(db, others),
       ...noticeTiming(orderId, sale.order.completed_at, staff.employeeId),
     },

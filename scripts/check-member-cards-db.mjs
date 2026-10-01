@@ -1,4 +1,4 @@
-// Card-linked points in the database (migration 20261001100000): is it
+// Card-linked points in the database (migration 20261001220000): is it
 // applied, and is it locked down? Read-only: every query runs inside a
 // read-only transaction that is rolled back, and it prints yes/no answers
 // and counts only, never a card, a fingerprint or a name. Run it after the
@@ -12,7 +12,9 @@
 //    undo_card_booking exist, run as their owner, and the website's public
 //    roles (anon, authenticated) can't call them.
 //  - Removing a member's personal info also removes their cards (the
-//    members_erase_cards trigger).
+//    members_erase_cards trigger); merging two accounts moves them
+//    (member_cards_member_merged), and nothing here has a foreign key to
+//    members that would make merge_members refuse.
 //  - Counts: cards linked (live and test), removed links, card payments
 //    saved, points paid by a card, undone.
 //
@@ -44,7 +46,7 @@ try {
 
   const table = await one("select to_regclass('public.member_cards') is not null as ok");
   if (!table.ok) {
-    console.log("member_cards isn't there: migration 20261001100000 isn't applied yet. Nothing else to check.");
+    console.log("member_cards isn't there: migration 20261001220000 isn't applied yet. Nothing else to check.");
   } else {
     for (const t of ["member_cards", "card_payments"]) {
       const there = await one("select to_regclass($1) is not null as ok", [`public.${t}`]);
@@ -90,6 +92,18 @@ try {
 
     const trig = await one("select count(*)::int as n from pg_trigger where tgname = 'members_erase_cards' and tgrelid = 'public.members'::regclass and not tgisinternal");
     check("removing a member's personal info removes their cards", trig.n === 1);
+    const merged = await one(
+      "select count(*)::int as n from pg_trigger where tgname = 'member_cards_member_merged' and tgrelid = to_regclass('public.member_merges') and not tgisinternal",
+    );
+    check("merging two accounts moves the duplicate's cards", merged.n === 1);
+    const deleted = await one("select count(*)::int as n from pg_trigger where tgname = 'members_delete_cards' and tgrelid = 'public.members'::regclass and not tgisinternal");
+    check("deleting an account removes its linked cards", deleted.n === 1);
+    // merge_members refuses an account any foreign key to members points at.
+    const fks = await one(
+      `select count(*)::int as n from pg_constraint
+       where contype = 'f' and confrelid = 'public.members'::regclass and conrelid in ('public.member_cards'::regclass, 'public.card_payments'::regclass)`,
+    );
+    check("no foreign key to members that would block a merge", fks.n === 0, `${fks.n} found`);
 
     const n = await one(
       `select count(*) filter (where removed_at is null and livemode)::int as live,

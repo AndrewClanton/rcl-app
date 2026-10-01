@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { pointsText, type CardNotice } from "@/lib/card-match";
 import { giveCardSalePoints, giveUndoneSalePoints, undoCardMatch, unlinkSaleCard } from "./card-link-actions";
 import MemberFinder from "./MemberFinder";
@@ -136,8 +136,35 @@ export default function CardNoticeBanner({ notice, onClose }: { notice: CardNoti
         </div>
       )}
       {finding && token && current.kind === "undone" && (
-        <MemberFinder onPick={(m) => run(() => giveUndoneSalePoints(current.orderId, m.id, token))} onClose={() => setFinding(false)} />
+        <FinderDialog onClose={() => setFinding(false)}>
+          <MemberFinder current={null} onPick={(m) => run(() => giveUndoneSalePoints(current.orderId, m.id, token))} />
+        </FinderDialog>
       )}
+    </div>
+  );
+}
+
+// The register's member finder (the one at the bottom of the Customers
+// tab), in a window of its own over the register, for picking who gets an
+// undone sale's points without leaving the sale on screen. Escape or Close
+// puts it away.
+function FinderDialog({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label="Give the points to a member">
+      <div className="card flex max-h-full w-full max-w-4xl flex-col !p-0 shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b p-4" style={{ borderColor: "var(--border)" }}>
+          <span className="text-sm font-bold">Who gets the points?</span>
+          <button className="btn-secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4">{children}</div>
+      </div>
     </div>
   );
 }

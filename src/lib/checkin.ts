@@ -7,8 +7,10 @@
 // request carries only an opaque, sealed reference (lib/checkin-server.ts)
 // that the register trades for the details through a staff-only server
 // action. After staff confirm, the screen gets a first name and a points
-// balance, never anything else -- plus, for a member with no website login
-// yet, a claim link (lib/claim-link.ts) to show as a QR code.
+// balance, their profile line (unless staff hid it) and their check-in
+// flair as catalog keys (lib/flair.ts), never anything else -- plus, for a
+// member with no website login yet, a claim link (lib/claim-link.ts) to
+// show as a QR code.
 //
 // Events:
 //   screen -> register  "checkin-request"   CheckinRequest (resent until seen)
@@ -18,6 +20,9 @@
 //   register -> screen  "checkin-declined"  { id }  Not them / Cancel
 //   register -> screen  "checkin-sync"      {}  a register (re)joined: resend
 //   register -> screen  "points-earned"     PointsEarned (a member's sale)
+//   server -> screen    "rewind"            RewindFound (Back office's Rewind
+//                       gave a member points for their visits before the new
+//                       system; sent by the server, lib/tablet-broadcast.ts)
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
@@ -44,6 +49,19 @@ export interface CheckinConfirmed {
   // by staff (pos/checkin-actions.ts confirmVisit). The screen only shows it
   // if it passes isClaimUrl.
   claimUrl?: string;
+  // Their entrance (lib/flair.ts): catalog keys only, which the screen looks
+  // up in its own catalog (anything unknown plays as classic). entrance is
+  // their effect, or "party" in their birthday week. Missing from an older
+  // register.
+  flair?: CheckinFlair;
+  // Their profile line (lib/member-profile.ts), unless staff hid it.
+  line?: string;
+}
+
+export interface CheckinFlair {
+  color: string | null;
+  entrance: string;
+  sticker: string;
 }
 
 export interface PointsEarned {
@@ -51,6 +69,18 @@ export interface PointsEarned {
   firstName: string;
   earned: number;
   balance: number;
+  color?: string | null; // their flair color's key, for the confetti
+}
+
+// "Welcome back, Jane! We found 37 visits since March 2023. +412 points."
+// First name, counts and a month only: never contact details or card digits.
+export interface RewindFound {
+  firstName: string;
+  visits: number;
+  since: string; // "March 2023"
+  earned: number;
+  balance: number;
+  color?: string | null; // their flair color's key, for the confetti
 }
 
 export function checkinTopic(registerTopic: string): string {

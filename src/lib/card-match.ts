@@ -27,7 +27,7 @@ export const LINK_AFTER_DAYS = 2;
 export const MAX_AUTO_LINKED_CARDS = 4;
 
 // The note on the points taken back by an Undo (undo_card_sale and
-// undo_card_booking in migration 20261001100000). The member's points
+// undo_card_booking in migration 20261001220000). The member's points
 // history shows it as "Taken back: this purchase wasn't yours".
 export const CARD_UNDO_NOTE = "Card match undone";
 

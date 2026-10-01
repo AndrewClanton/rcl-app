@@ -120,13 +120,27 @@ eq("short name, one word", shortName("Cher"), "Cher");
 eq("1 point", pointsText(1), "1 point");
 eq("23 points (rounded)", pointsText(23.4), "23 points");
 // Copies of these live outside the app code: keep them in step.
-const migration = await readFile(new URL("../supabase/migrations/20261001100000_member_cards.sql", import.meta.url), "utf8");
+const migration = await readFile(new URL("../supabase/migrations/20261001220000_member_cards.sql", import.meta.url), "utf8");
 check("undo note matches the migration", migration.includes(`'${CARD_UNDO_NOTE}'`), CARD_UNDO_NOTE);
 for (const fn of ["credit_card_sale", "credit_card_booking", "undo_card_sale", "undo_card_booking"]) {
   check(`the migration has ${fn}, server only`, migration.includes(`function public.${fn}(`) && new RegExp(`revoke execute on function public\\.${fn}\\([^)]*\\) from public, anon, authenticated`).test(migration));
 }
 check("card codes live in their own server-only table, not on orders", /alter table card_payments enable row level security/.test(migration) && !/alter table orders add column if not exists card_fingerprint/.test(migration));
 check("tickets on a card-matched sale stay off the member's account", !/update bookings set member_id/.test(migration));
+// The register pays 1 point per $1 after the member, monthly and reward
+// discounts (pointsEarned in lib/register-totals.ts); a card match pays the same.
+check(
+  "a card match pays points the way the register does (after discounts)",
+  /greatest\(0, round\(coalesce\(o\.subtotal, 0\) - coalesce\(o\.tier_discount, 0\) - coalesce\(o\.monthly_discount, 0\) - coalesce\(o\.redemption_discount, 0\), 2\)\)/.test(migration),
+);
+const { pointsEarned } = await import("../src/lib/register-totals.ts");
+eq("pointsEarned: $20 less a $2 monthly discount is 18 points", pointsEarned({ subtotal: 20, tier_discount: 0, monthly_discount: 2, redemption_discount: 0 }), 18);
+// merge_members (20261001150000) refuses to merge an account any foreign
+// key to members still points at: these tables have none, and a trigger
+// moves them instead.
+check("no foreign key to members on linked cards or card payments", !/member_id uuid not null references members/.test(migration) && !/credited_member_id uuid references members/.test(migration));
+check("a merge moves linked cards to the kept account", /create trigger member_cards_member_merged after insert on member_merges/.test(migration));
+check("deleting an account removes its linked cards", /create trigger members_delete_cards after delete on members/.test(migration));
 const backfill = await readFile(new URL("./card-points-backfill.mjs", import.meta.url), "utf8");
 eq("the backfill dry run uses the same card limit", Number(/MAX_AUTO_LINKED_CARDS = (\d+)/.exec(backfill)?.[1]), MAX_AUTO_LINKED_CARDS);
 eq("the backfill dry run uses the same 2-day rule", Number(/LINK_AFTER_DAYS = (\d+)/.exec(backfill)?.[1]), LINK_AFTER_DAYS);

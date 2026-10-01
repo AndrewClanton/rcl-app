@@ -44,13 +44,23 @@
 --     say it isn't the member's card at all.
 --   - Removing a member's personal info also deletes their linked cards
 --     and the card details of their sales.
+--   - Merging two accounts (merge_members, 20261001150000) moves the
+--     duplicate's linked cards and card points onto the kept account. Like
+--     the roadmap tables (20261001210000), member_cards and card_payments
+--     have no foreign key to members on purpose: merge_members refuses to
+--     merge an account any foreign key still points at. Triggers below keep
+--     them right instead (a merge moves them; deleting an account removes
+--     its linked cards).
 --
--- Additive and safe to run more than once.
+-- Comes after 20261001150000 (member_merges, which a trigger here is on);
+-- it was 20261001100000 on the card-points branch, renamed when it was
+-- brought up to date with main. Additive and safe to run more than once.
 
 -- ---------- linked cards ----------
 create table if not exists member_cards (
   id uuid primary key default gen_random_uuid(),
-  member_id uuid not null references members(id) on delete cascade,
+  -- No foreign key: see the top (merges and deletes are handled below).
+  member_id uuid not null,
   -- Stripe's card fingerprint. Never a card number.
   fingerprint text not null,
   -- Test-mode payments must never match real ones.
@@ -99,7 +109,8 @@ create table if not exists card_payments (
   -- 'card' (the card's only member), 'picked' (a card on more than one
   -- account; the cashier asked who was paying), or 'given' (after an
   -- undo, the cashier gave the points to the right member).
-  credited_member_id uuid references members(id) on delete set null,
+  -- No foreign key: see the top (merges and deletes are handled below).
+  credited_member_id uuid,
   credited_how text check (credited_how in ('card', 'picked', 'given')),
   credited_at timestamptz,
   credited_by uuid references employees(id) on delete set null,
@@ -116,6 +127,12 @@ create index if not exists card_payments_credited_idx on card_payments (credited
 -- orders, because signed-in staff screens can read orders.)
 alter table card_payments enable row level security;
 
+-- A copy of this file from before the merge with main (20261001100000) put
+-- foreign keys to members on these two columns. Gone, so a merge isn't
+-- refused over them.
+alter table member_cards drop constraint if exists member_cards_member_id_fkey;
+alter table card_payments drop constraint if exists card_payments_credited_member_id_fkey;
+
 -- ---------- how the member got on a sale ----------
 -- null: attached by staff (or no member). 'card': put there by its card
 -- (credit_card_sale). 'backfill': reserved for a later, reviewed catch-up
@@ -129,8 +146,10 @@ alter table members add column if not exists link_cards boolean not null default
 -- A completed register sale with nobody on it, whose card was read from
 -- Stripe (card_payments). p_how:
 --   'card' / 'picked': the sale's first points: a 'purchase' row, like a
---     sale rung up with the member attached (1 point per $1 of the
---     subtotal), only if nobody has earned this sale's points yet.
+--     sale rung up with the member attached (1 point per $1 after the
+--     member, monthly and reward discounts, before tax and tip: pointsEarned
+--     in lib/register-totals.ts, what completeOrder pays), only if nobody
+--     has earned this sale's points yet.
 --   'given': after an undo on this sale, the points go to the right
 --     member instead. A sale earns one 'purchase' row, ever, so this is an
 --     'adjustment' row tied to the order (a refund later takes it back).
@@ -171,7 +190,8 @@ begin
   end if;
 
   update orders set member_id = p_member, member_source = 'card' where id = p_order;
-  pts := coalesce(o.subtotal, 0);
+  -- pointsEarned (lib/register-totals.ts): never negative, to the cent.
+  pts := greatest(0, round(coalesce(o.subtotal, 0) - coalesce(o.tier_discount, 0) - coalesce(o.monthly_discount, 0) - coalesce(o.redemption_discount, 0), 2));
   if pts > 0 then
     perform public.apply_member_points(p_member, pts, case when p_how = 'given' then 'adjustment' else 'purchase' end, p_order, null, p_note, p_by);
   end if;
@@ -327,6 +347,66 @@ drop trigger if exists members_erase_cards on members;
 create trigger members_erase_cards after update of erased_at on members
   for each row execute function public.members_erase_cards();
 
+-- ---------- merging two accounts ----------
+-- merge_members (20261001150000) logs the merge in member_merges just
+-- before it deletes the duplicate (the roadmap tables use the same moment,
+-- 20261001210000). The duplicate's linked cards, and the card points it was
+-- given, become the kept account's. A card on both accounts stays one link;
+-- removed on either (the person said it isn't theirs, or not to use it), it
+-- stays removed. Card linking turned off on either account stays off.
+create or replace function public.member_cards_member_merged()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update member_cards k
+     set removed_at = d.removed_at, removed_by = d.removed_by, removed_by_member = d.removed_by_member,
+         brand = null, last4 = null, wallet = null
+    from member_cards d
+   where k.member_id = new.keep_id and d.member_id = new.dropped_id
+     and k.fingerprint = d.fingerprint and k.livemode = d.livemode
+     and k.removed_at is null and d.removed_at is not null;
+  update member_cards k
+     set last_used_at = d.last_used_at
+    from member_cards d
+   where k.member_id = new.keep_id and d.member_id = new.dropped_id
+     and k.fingerprint = d.fingerprint and k.livemode = d.livemode
+     and k.removed_at is null and d.last_used_at > coalesce(k.last_used_at, '-infinity'::timestamptz);
+  delete from member_cards d using member_cards k
+   where d.member_id = new.dropped_id and k.member_id = new.keep_id
+     and k.fingerprint = d.fingerprint and k.livemode = d.livemode;
+  update member_cards set member_id = new.keep_id where member_id = new.dropped_id;
+  update card_payments set credited_member_id = new.keep_id where credited_member_id = new.dropped_id;
+  update members k set link_cards = false
+    from members d
+   where k.id = new.keep_id and d.id = new.dropped_id and k.link_cards and not d.link_cards;
+  return null;
+end;
+$$;
+drop trigger if exists member_cards_member_merged on member_merges;
+create trigger member_cards_member_merged after insert on member_merges
+  for each row execute function public.member_cards_member_merged();
+
+-- An account deleted outright (a merge has already moved everything): its
+-- linked cards go, and points its cards were given point at no one.
+create or replace function public.members_delete_cards()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from member_cards where member_id = old.id;
+  update card_payments set credited_member_id = null where credited_member_id = old.id;
+  return old;
+end;
+$$;
+drop trigger if exists members_delete_cards on members;
+create trigger members_delete_cards after delete on members
+  for each row execute function public.members_delete_cards();
+
 -- Server-only plumbing: Supabase grants new public functions to anon and
 -- authenticated by default.
 revoke execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) from public, anon, authenticated;
@@ -334,6 +414,8 @@ revoke execute on function public.credit_card_booking(uuid, uuid, text) from pub
 revoke execute on function public.undo_card_sale(uuid, boolean, uuid) from public, anon, authenticated;
 revoke execute on function public.undo_card_booking(uuid, boolean, uuid) from public, anon, authenticated;
 revoke execute on function public.members_erase_cards() from public, anon, authenticated;
+revoke execute on function public.member_cards_member_merged() from public, anon, authenticated;
+revoke execute on function public.members_delete_cards() from public, anon, authenticated;
 grant execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) to service_role;
 grant execute on function public.credit_card_booking(uuid, uuid, text) to service_role;
 grant execute on function public.undo_card_sale(uuid, boolean, uuid) to service_role;

@@ -1,12 +1,15 @@
-import { requireStaff } from "@/lib/auth";
+import { requireDisplayScreen } from "@/lib/auth";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import CustomerDisplay from "./CustomerDisplay";
 import { registerTopic } from "@/lib/register-topic";
 
 export const dynamic = "force-dynamic";
 
+// The tablet facing the customer at the register. Runs on its own
+// display-only login (Staff page, role "Display screen"), which can't open
+// the back office or the register; a staff login works here too.
 export default async function CustomerDisplayPage() {
-  await requireStaff();
+  await requireDisplayScreen("/display/customer");
   const screenings = await getPubliclyVisibleScreenings();
 
   const seen = new Set<string>();

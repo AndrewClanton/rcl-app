@@ -18,7 +18,7 @@ import type { EmployeeRole } from "@/lib/types";
 // Every figure is read on its own and a failed read is just left out, so a
 // hiccup on one count never takes a page down with it.
 
-export type BadgeKey = "tabs" | "itemsOut" | "printersOffline" | "devNotes" | "oldSite" | "pin";
+export type BadgeKey = "tabs" | "itemsOut" | "printersOffline" | "devNotes" | "oldSite" | "pin" | "roadmap";
 // count: plain information. warn and danger are the status colors.
 export type BadgeTone = "count" | "warn" | "danger";
 
@@ -37,6 +37,7 @@ export interface Signals {
   printers: { offline: string[]; open: boolean } | null; // open: someone is on shift, so printers should be on
   devNotes: number | null;
   oldSite: number | null;
+  roadmap: number | null; // new suggestions in the Roadmap inbox (owners and admins)
 }
 
 async function quietly<T>(read: () => Promise<T>): Promise<T | null> {
@@ -59,7 +60,7 @@ export const getSignals = cache(async (role: EmployeeRole): Promise<Signals> => 
     return n ?? 0;
   };
 
-  const [tabs, held, itemsOut, printers, devNotes, oldSite] = await Promise.all([
+  const [tabs, held, itemsOut, printers, devNotes, oldSite, roadmap] = await Promise.all([
     quietly(async () => {
       const { data, error } = await db.from("orders").select("created_at").eq("status", "tab");
       if (error) throw error;
@@ -85,9 +86,10 @@ export const getSignals = cache(async (role: EmployeeRole): Promise<Signals> => 
       : null,
     hasAdminAccess(role) ? quietly(() => count(db.from("dev_notes").select("id", { count: "exact", head: true }).eq("status", "new"))) : null,
     hasAdminAccess(role) ? quietly(() => count(db.from("legacy_accounts").select("legacy_user_id", { count: "exact", head: true }).eq("decision", "review"))) : null,
+    hasAdminAccess(role) ? quietly(() => count(db.from("roadmap_suggestions").select("id", { count: "exact", head: true }).eq("status", "new"))) : null,
   ]);
 
-  return { tabs, held, itemsOut, printers, devNotes, oldSite };
+  return { tabs, held, itemsOut, printers, devNotes, oldSite, roadmap };
 });
 
 // The little counts on the menu. Red only for something broken right now
@@ -107,6 +109,7 @@ export function navBadges(s: Signals, pin: PinStatus | null): NavBadges {
   }
   if (s.devNotes) b.devNotes = { text: `${s.devNotes} new`, tone: "count", title: `${plural(s.devNotes, "new note")} to review` };
   if (s.oldSite) b.oldSite = { text: s.oldSite.toLocaleString(), tone: "count", title: `${plural(s.oldSite, "account")} to review` };
+  if (s.roadmap) b.roadmap = { text: `${s.roadmap} new`, tone: "count", title: `${plural(s.roadmap, "new suggestion")} in the Roadmap inbox` };
   if (pin === "default" || pin === "temporary") b.pin = { text: "Set it", tone: "warn", title: pin === "default" ? "Your PIN is still 9999" : "You're on a temporary PIN" };
   return b;
 }

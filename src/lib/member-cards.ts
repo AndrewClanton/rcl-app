@@ -5,6 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sealApproval } from "@/lib/approval-token";
 import { businessDay } from "@/lib/ops/time";
 import { sameEmail } from "@/lib/email-match";
+import { currentMemberId } from "@/lib/member-forward";
+import { pointsEarned } from "@/lib/register-totals";
 import {
   CARD_UNDO_MS,
   bookingCreditNote,
@@ -27,7 +29,7 @@ import {
 // Card-linked points, the server side (the rules are in lib/card-match.ts).
 // The card always comes from Stripe, read by the server from a payment it
 // already has: a register never sends card details, and nothing here
-// takes a fingerprint from a browser. Needs migration 20261001100000.
+// takes a fingerprint from a browser. Needs migration 20261001220000.
 
 type Db = ReturnType<typeof createAdminClient>;
 
@@ -74,22 +76,31 @@ function cardFromPaymentMethod(pm: Stripe.PaymentMethod | null): SaleCard | null
 // ---------- who has a card ----------
 
 // Every link to this card, removed or not, with what matters about each
-// member.
+// member. (Two reads: member_cards has no foreign key to members, so a
+// merge isn't blocked by it; see the migration.)
 export async function loadCardLinks(db: Db, fingerprint: string): Promise<CardLinkRow[]> {
-  const { data, error } = await db
-    .from("member_cards")
-    .select("member_id, livemode, removed_at, linked_order_id, member:members(erased_at, link_cards)")
-    .eq("fingerprint", fingerprint);
+  const { data, error } = await db.from("member_cards").select("member_id, livemode, removed_at, linked_order_id").eq("fingerprint", fingerprint);
   if (error) throw error;
-  type Row = { member_id: string; livemode: boolean; removed_at: string | null; linked_order_id: string | null; member: { erased_at: string | null; link_cards: boolean | null } | null };
-  return ((data ?? []) as unknown as Row[]).map((r) => ({
-    memberId: r.member_id,
-    livemode: r.livemode,
-    removed: !!r.removed_at,
-    memberErased: !r.member || !!r.member.erased_at,
-    memberLinksCards: r.member?.link_cards !== false,
-    linkedOrderId: r.linked_order_id,
-  }));
+  const links = (data ?? []) as { member_id: string; livemode: boolean; removed_at: string | null; linked_order_id: string | null }[];
+  const ids = [...new Set(links.map((r) => r.member_id))];
+  const members = new Map<string, { erased_at: string | null; link_cards: boolean | null }>();
+  if (ids.length) {
+    const { data: rows, error: membersErr } = await db.from("members").select("id, erased_at, link_cards").in("id", ids);
+    if (membersErr) throw membersErr;
+    for (const m of rows ?? []) members.set(m.id as string, { erased_at: m.erased_at ?? null, link_cards: m.link_cards ?? null });
+  }
+  return links.map((r) => {
+    const m = members.get(r.member_id) ?? null;
+    return {
+      memberId: r.member_id,
+      livemode: r.livemode,
+      removed: !!r.removed_at,
+      // A link whose member is gone counts as no one's.
+      memberErased: !m || !!m.erased_at,
+      memberLinksCards: m?.link_cards !== false,
+      linkedOrderId: r.linked_order_id,
+    };
+  });
 }
 
 // Whether this member can be given a sale by this card: they own it now.
@@ -223,6 +234,9 @@ export type SaleOrder = {
   member_id: string | null;
   member_source: string | null;
   subtotal: number;
+  tier_discount: number;
+  monthly_discount: number;
+  redemption_discount: number;
   completed_at: string | null;
   payment_card_amount: number | null;
   stripe_payment_intent_id: string | null;
@@ -240,7 +254,20 @@ export type SalePayment = {
   undone_at: string | null;
 };
 
-const SALE_ORDER = "id, order_number, status, employee_id, member_id, member_source, subtotal, completed_at, payment_card_amount, stripe_payment_intent_id";
+const SALE_ORDER =
+  "id, order_number, status, employee_id, member_id, member_source, subtotal, tier_discount, monthly_discount, redemption_discount, completed_at, payment_card_amount, stripe_payment_intent_id";
+
+// The points a sale earns, as completeOrder pays them and credit_card_sale
+// gives them (pointsEarned: 1 per $1 after the member, monthly and reward
+// discounts, before tax and tip).
+export function salePoints(o: Pick<SaleOrder, "subtotal" | "tier_discount" | "monthly_discount" | "redemption_discount">): number {
+  return pointsEarned({
+    subtotal: Number(o.subtotal),
+    tier_discount: Number(o.tier_discount ?? 0),
+    monthly_discount: Number(o.monthly_discount ?? 0),
+    redemption_discount: Number(o.redemption_discount ?? 0),
+  });
+}
 const SALE_PAYMENT = "id, fingerprint, livemode, brand, last4, wallet, credited_member_id, credited_how, undone_at";
 
 // A register sale and the card that paid it (null until it's been read).
@@ -357,7 +384,7 @@ export async function settleSaleCard(p: {
       return { ...base, kind: "matched", firstName: firstName(m?.name), points: paid, how: "card" };
     }
     case "choose":
-      return { ...base, kind: "choose", points: Number(o.subtotal), candidates: await candidatesFor(db, decision.memberIds) };
+      return { ...base, kind: "choose", points: salePoints(o), candidates: await candidatesFor(db, decision.memberIds) };
   }
 }
 
@@ -391,7 +418,8 @@ export async function settleBookingCard(p: { bookingId: string; paymentIntentId:
     const sale = { orderId: "", status: "completed", memberId: booking.member_id as string | null, memberSource: null, undone: !!payment?.undone_at };
 
     if (booking.member_id) {
-      if (!p.signedInMemberId || p.signedInMemberId !== booking.member_id) return;
+      // (Or the account they were merged into since they paid.)
+      if (!p.signedInMemberId || (p.signedInMemberId !== booking.member_id && (await currentMemberId(p.signedInMemberId)) !== booking.member_id)) return;
       const attached = await attachedMember(db, booking.member_id, card, true);
       const d = decideCardOutcome(sale, card, links, attached);
       if (d.kind === "link") await linkCard(db, { memberId: d.memberId, card, source: "online", bookingId: booking.id });
@@ -414,10 +442,13 @@ export async function settleBookingCard(p: { bookingId: string; paymentIntentId:
 // link_card_member, lib/plus-checkout.ts): someone who typed a member's
 // email on the join form may be paying for them. Checkout usually sets the
 // card as the subscription's; failing that, the customer's default card,
-// or their only saved card. Never throws.
+// or their only saved card. The member it was started for may have been
+// merged into another account since (lib/member-forward.ts), as
+// activatePlusFromCheckout follows too. Never throws.
 export async function linkPlusCard(memberId: string | null, session: Stripe.Checkout.Session): Promise<void> {
   try {
-    if (!memberId || session.metadata?.link_card_member !== memberId) return;
+    const startedFor = session.metadata?.link_card_member || null;
+    if (!memberId || !startedFor || (startedFor !== memberId && (await currentMemberId(startedFor)) !== memberId)) return;
     const stripe = getStripe();
     const subscriptionId = typeof session.subscription === "string" ? session.subscription : session.subscription?.id;
     const customerId = typeof session.customer === "string" ? session.customer : session.customer?.id;

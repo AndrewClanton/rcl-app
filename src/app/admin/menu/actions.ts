@@ -9,7 +9,7 @@ import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth
 import { logOpsChange } from "@/lib/ops/changes";
 import { putBackOnSale } from "@/lib/ops/outages";
 import { after } from "next/server";
-import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto, storeTextIcon } from "@/lib/menu-pictures/store";
 import { approvePicture, defaultQuery, fillMissingPictures, storeFoundPicture, type FillReport } from "@/lib/menu-pictures/found";
 import { findCandidates, toView } from "@/lib/menu-pictures/sources";
 import { cleanQuery } from "@/lib/menu-pictures/query";
@@ -242,7 +242,7 @@ export async function deleteItem(id: string): Promise<DeleteItemResult> {
 
 // ---------- photos ----------
 // The product photo on a register button (an item) or tab (a category). The
-// Menu page squares and shrinks it to a ~480px JPEG in the browser; the
+// Menu page squares and shrinks it to a ~640px JPEG in the browser; the
 // store (src/lib/menu-pictures/store.ts, shared with the register's item
 // settings) checks what actually arrived, stores it under a name it makes
 // (the browser never picks the path), saves its address, and deletes the
@@ -279,15 +279,25 @@ export async function findMenuPictures(target: PhotoTarget, id: string, query: s
   if (!photoTable(target)) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
   const q = cleanQuery(query) || (await defaultQuery(target, id));
   if (!q) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
-  const { candidates, complete } = await findCandidates(q);
+  const { candidates, complete, sources } = await findCandidates(q);
   if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
-  return { ok: true, query: q, candidates: candidates.map(toView) };
+  return { ok: true, query: q, candidates: candidates.map(toView), sources };
 }
 
 export async function pickMenuPicture(target: PhotoTarget, id: string, query: string, index: number, page: string | null): Promise<PictureResult> {
   const no = await denied();
   if (no) return no as { ok: false; error: string };
   const r = await storeFoundPicture(target, id, query, index, page, true);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// A text icon instead of a photo ("$5" glowing red). The server checks it
+// again (lib/menu-pictures/text-icon.ts).
+export async function saveMenuTextIcon(target: PhotoTarget, id: string, icon: unknown): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await storeTextIcon(target, id, icon);
   if (r.ok) revalidate();
   return r;
 }

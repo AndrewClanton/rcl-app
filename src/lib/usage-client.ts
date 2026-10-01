@@ -245,6 +245,9 @@ function install() {
 // A new page is on screen (the tracker calls this on every route change).
 export function startView(pathname: string) {
   if (typeof window === "undefined" || !isEnabled()) return;
+  // The email preference page is opened from a personal link in an email:
+  // it isn't counted at all.
+  if (pathname.startsWith("/email/")) return;
   const path = asciiPath(pathname);
   if (current?.path === path) return;
   install();

@@ -1,6 +1,6 @@
 // Card-linked points, looking back: which past register card sales with
 // nobody attached WOULD have earned a member's points if card matching had
-// been on (lib/card-match.ts, migration 20261001100000). A dry run: it only
+// been on (lib/card-match.ts, migration 20261001220000). A dry run: it only
 // reads, from the database inside a read-only transaction that is rolled
 // back, and from Stripe with retrieve calls. Nothing is written anywhere,
 // and nothing is paid. It prints counts and order numbers only: no names,
@@ -160,7 +160,7 @@ try {
     }
     console.log(`Cards already linked: ${linked.filter((r) => !r.removed).length} (${linked.filter((r) => r.removed).length} removed)`);
   } else {
-    console.log("Cards already linked: none yet (migration 20261001100000 isn't applied).");
+    console.log("Cards already linked: none yet (migration 20261001220000 isn't applied).");
   }
 
   // 2. Cards on card sales that had a member attached by staff, oldest
@@ -204,7 +204,10 @@ try {
 
   // The sales with nobody on them, whose points nobody has had yet.
   const sales = await rows(
-    `select o.order_number, o.subtotal, o.stripe_payment_intent_id, o.payment_card_amount, cp.fingerprint, cp.livemode, cp.wallet
+    // The points as a sale pays them (pointsEarned in lib/register-totals.ts,
+    // credit_card_sale in the migration): 1 per $1 after discounts.
+    `select o.order_number, greatest(0, round(o.subtotal - o.tier_discount - o.monthly_discount - o.redemption_discount, 2)) as points,
+            o.stripe_payment_intent_id, o.payment_card_amount, cp.fingerprint, cp.livemode, cp.wallet
      from orders o
      ${saved}
      where o.status = 'completed' and o.member_id is null and o.stripe_payment_intent_id is not null
@@ -231,7 +234,7 @@ try {
     else if (who.size > 1) put("shared card: would ask who at the register", s.order_number);
     else {
       put("WOULD MATCH one member", s.order_number);
-      points += Number(s.subtotal);
+      points += Number(s.points);
       gainers.add([...who][0]);
     }
   }

@@ -37,7 +37,7 @@ export interface PurchaseRow {
 // attached them: one whose points a linked card paid them (member_source
 // 'card', lib/member-cards.ts) may have been someone else paying, so it
 // shows only as points in their points history. Before migration
-// 20261001100000 there's no member_source, and every sale is theirs.
+// 20261001220000 there's no member_source, and every sale is theirs.
 
 export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
   const supabase = createAdminClient();
@@ -434,8 +434,17 @@ export interface LedgerEntry {
 
 export async function getPointsLedger(memberId: string, limit = 300): Promise<LedgerEntry[]> {
   const base = "id, delta, balance_after, reason, note, created_at, order_id, booking_id";
-  const ledger = (columns: string) => createAdminClient().from("points_ledger").select(columns).eq("member_id", memberId).order("created_at", { ascending: false }).limit(limit);
-  // Who each sale or booking is on now, and how (migration 20261001100000);
+  const ledger = (columns: string) =>
+    createAdminClient()
+      .from("points_ledger")
+      .select(columns)
+      .eq("member_id", memberId)
+      .order("created_at", { ascending: false })
+      // A check-in and its badges share one moment; the bigger balance came
+      // after (they only add).
+      .order("balance_after", { ascending: false })
+      .limit(limit);
+  // Who each sale or booking is on now, and how (migration 20261001220000);
   // before it, every one of them is theirs, as it always was.
   let { data, error } = await ledger(`${base}, order:orders(member_id, member_source), booking:bookings(member_id)`);
   const withOwners = !schemaMissing(error);
@@ -495,7 +504,7 @@ export async function getMyLinkedCards(memberId: string): Promise<MyLinkedCard[]
     .is("removed_at", null);
   if (stripeKeyMode() === "live") query = query.eq("livemode", true);
   const { data, error } = await query.order("created_at", { ascending: false });
-  // Before migration 20261001100000: no cards yet.
+  // Before migration 20261001220000: no cards yet.
   if (schemaMissing(error)) return [];
   if (error) throw error;
   return (data ?? []).map((c) => ({
@@ -520,7 +529,7 @@ export interface YearStatement {
 }
 
 // Points history reasons that count as earned on a statement.
-const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge"];
+const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge", "backfill"];
 
 export async function getYearStatement(memberId: string, year: number): Promise<YearStatement> {
   const [purchases, ledger] = await Promise.all([getPurchases(memberId), getPointsLedger(memberId, 5000)]);
