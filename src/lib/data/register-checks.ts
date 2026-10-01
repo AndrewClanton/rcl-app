@@ -165,7 +165,10 @@ export async function getCardPaymentsWithNoSale(date: string): Promise<OrphansRe
     // Stripe's search can't mix AND with OR, so one search per source.
     const search = (source: string) =>
       stripe.paymentIntents
-        .search({ query: `status:'succeeded' AND metadata['source']:'${source}' AND created>=${from} AND created<${to}`, limit: 100, expand: ["data.latest_charge"] })
+        // A few seconds at most per page: a slow Stripe shows an error on
+        // this card instead of holding up the whole report (the library's
+        // own default waits over a minute, with retries).
+        .search({ query: `status:'succeeded' AND metadata['source']:'${source}' AND created>=${from} AND created<${to}`, limit: 100, expand: ["data.latest_charge"] }, { timeout: 8000, maxNetworkRetries: 1 })
         .autoPagingToArray({ limit: MAX_PAYMENTS });
     const [reader, onFile] = await Promise.all([search("pos"), search("pos-tab")]);
     intents = [...reader, ...onFile];

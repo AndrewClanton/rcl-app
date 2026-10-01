@@ -110,6 +110,11 @@ export interface SaleForCheck {
   totals: { subtotal: number; tier_discount: number; monthly_discount: number; redemption_discount: number; tax: number; total: number };
   payment?: { cash: number; card: number; voucher?: number };
   tip?: number;
+  // The member's points before this sale moved them, for a check that runs
+  // after the sale's reward and purchase points have landed (log-only mode):
+  // a reward is judged on the balance it was taken from. Left out (or not a
+  // number), the member's balance now is used.
+  memberPointsBefore?: number | null;
 }
 
 type ServerTotals = SaleForCheck["totals"];
@@ -176,7 +181,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   for (const g of (groups.data ?? []) as unknown as Group[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
   const ticketPrice = new Map(((screenings.data ?? []) as { id: string; ticket_price: number }[]).map((s) => [s.id, Number(s.ticket_price)]));
   const m = memberRow.data as { tier: MemberTier; points: number } | null;
-  const member: TotalsMember = m ? { tier: m.tier, points: Number(m.points) } : null;
+  const member: TotalsMember = m ? { tier: m.tier, points: typeof sale.memberPointsBefore === "number" ? sale.memberPointsBefore : Number(m.points) } : null;
 
   const problems: string[] = [];
   if (sale.memberId && !member) problems.push("The member on the order wasn't found.");

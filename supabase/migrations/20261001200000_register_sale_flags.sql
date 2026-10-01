@@ -27,7 +27,9 @@
 --
 -- kind is free text, so a new kind needs no migration (list it here and in
 -- SaleFlagKind). `details` holds what the register sent and what the server
--- figured.
+-- figured, but no customer names (no order or tab name): an order is found by
+-- its number, a tab by its id, so erasing a member's details
+-- (erase_member_personal_info) has no names to clear here.
 --
 -- Named 20261001200000 (it was written as 20260929210000, then
 -- 20261001100000; both prefixes are taken by other migrations). The app

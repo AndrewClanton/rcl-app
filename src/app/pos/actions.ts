@@ -168,11 +168,20 @@ async function syncTicketBookings(
 }
 
 // A paid sale's items. By now the order row is saved as paid, so a failure
-// here is logged, not thrown: throwing would show a paid sale as failed, and
-// a retry finds the order by its payment and stops before reaching this.
-async function saveSaleItems(supabase: ReturnType<typeof createAdminClient>, orderId: string, lines: CheckoutLine[]) {
-  const r = await replaceOrderItems(supabase, orderId, lines);
-  if (!r.ok) console.error("sale items not saved", orderId, r.error);
+// here is flagged for a manager (Reports -> Register checks), not thrown:
+// throwing would show a paid sale as failed, and a retry finds the order by
+// its payment and stops before reaching this.
+async function saveSaleItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  sale: { orderId: string; orderNumber: number; employeeId: string; paymentIntentId: string | null },
+  lines: CheckoutLine[],
+) {
+  const r = await replaceOrderItems(supabase, sale.orderId, lines);
+  if (r.ok) return;
+  console.error("sale items not saved", sale.orderId, r.error);
+  const items = lines.slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`);
+  const summary = `Order #${sale.orderNumber} saved as paid, but its items didn't. Put them back by hand: ${items.join(", ")}${lines.length > items.length ? ", ..." : ""}.`;
+  after(() => flagSale("items_not_saved", { ...sale, details: { summary, items, error: r.error } }));
 }
 
 export type CompleteOrderInput = DraftFields & {
@@ -278,7 +287,9 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   const flagBase = { employeeId: params.employeeId, paymentIntentId };
   const card = await verifyCardPayment(params.payment, params.draftOrderId ?? null);
   if (!card.ok) {
-    after(() => flagSale("card_refused", { ...flagBase, details: { reason: card.reason, payment: params.payment, totals: params.totals, tip, orderName: params.orderName } }));
+    // No order or tab name here: the flags keep no customer details (a tab
+    // is found by its id, a sale by its payment).
+    after(() => flagSale("card_refused", { ...flagBase, details: { reason: card.reason, payment: params.payment, totals: params.totals, tip, tabId: params.draftOrderId ?? null } }));
     return { ok: false, error: card.error, cardCharged: card.charged };
   }
 
@@ -321,7 +332,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       orderId = params.draftOrderId;
       orderNumber = Number(existing.order_number);
       wasTab = existing.status === "tab";
-      await saveSaleItems(supabase, orderId, params.lines);
+      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
     } else {
       // This payment's own close may have landed a moment ago (a retry).
       const saved = await orderForPayment();
@@ -350,8 +361,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       throw orderErr;
     }
     orderId = order.id;
-    await saveSaleItems(supabase, orderId, params.lines);
+    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
   }
+
+  // The member's balance before this sale moves it. A reward's points come
+  // out below only if it covers them, and the log-only totals check (run
+  // after the register has its answer, so after the points have moved)
+  // judges the reward on this, not on what's left once it's used.
+  const balanceBefore = memberId && params.pointsRedeemed ? await memberPoints(supabase, memberId) : undefined;
 
   // Anything worth a look is flagged after the register has its answer, so
   // it never slows a sale down.
@@ -361,7 +378,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       await flagSale("tab_closed_elsewhere", {
         ...saved,
         details: {
-          summary: `Possible double charge: tab "${params.orderName || "Tab"}"${closedElsewhere.orderNumber ? ` (#${closedElsewhere.orderNumber})` : ""} was ${closedElsewhere.status === "deleted" ? "cancelled" : "closed"} on another register before this card payment saved, so it was saved as new order #${orderNumber}. Check both and refund one.`,
+          summary: `Possible double charge: a tab${closedElsewhere.orderNumber ? ` (#${closedElsewhere.orderNumber})` : ""} was ${closedElsewhere.status === "deleted" ? "cancelled" : "closed"} on another register before this card payment saved, so it was saved as new order #${orderNumber}. Check both and refund one. Until one is refunded in full, the member's points (and any reward used) and any movie seats count twice.`,
           tabId: closedElsewhere.tabId,
           tabOrderNumber: closedElsewhere.orderNumber,
           tabStatus: closedElsewhere.status,
@@ -372,7 +389,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       });
     }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
-    const check = totalsCheck ?? (await checkSaleTotals(saleForCheck));
+    const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, memberPointsBefore: balanceBefore }));
     if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
     if (check.problems.length) {
       await flagSale("totals_mismatch", { ...saved, details: { problems: check.problems, sent: params.totals, server: check.server, lines: check.lines, member: check.member, payment: params.payment, tip, draft: !!params.draftOrderId } });
@@ -388,7 +405,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       // reward used meanwhile (or a register that skipped the check). The
       // customer has paid by now, so the sale stands, but the balance never
       // goes below zero: the points aren't taken, and a manager is told.
-      const balance = await memberPoints(supabase, memberId);
+      const balance = balanceBefore;
       if (balance === undefined || (balance ?? 0) >= POINTS_PER_REWARD) {
         await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
       } else {
@@ -444,6 +461,17 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   return { ok: true, orderNumber };
 }
 
+// The order a card payment already saved as, if any: a reader payment found
+// after a reload may have saved just before the page went (its sale landed,
+// but the register never heard). Undefined if it couldn't be looked up.
+export async function savedOrderForPayment(paymentIntentId: string): Promise<number | null | undefined> {
+  await assertStaff();
+  if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) return null;
+  const { data, error } = await createAdminClient().from("orders").select("order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+  if (error) return undefined;
+  return data?.[0] ? Number(data[0].order_number) : null;
+}
+
 // "Stop trying" on the register's "card WAS charged" warning: the card
 // stays charged and the sale won't be in Reports, so a manager is told
 // (Reports -> Register checks). The flag itself is best effort (see
@@ -459,7 +487,7 @@ export async function logAbandonedSale(order: CompleteOrderInput, tries: number)
       summary: `The card was charged $${amount.toFixed(2)} but the sale never saved, and someone tapped "Stop trying". The money is in Stripe with no sale in Reports: check with the cashier, and refund it if the customer shouldn't have paid.`,
       amount,
       tip: cents(Number(order.tip) || 0),
-      orderName: String(order.orderName ?? "").slice(0, 120),
+      // No order or tab name: the flags keep no customer details.
       tabId: order.draftOrderId ?? null,
       items: (order.lines ?? []).slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`),
       tries,

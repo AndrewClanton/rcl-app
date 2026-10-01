@@ -72,6 +72,10 @@ export interface PendingReaderSale {
   order: CompleteOrderInput;
   memberName: string | null;
   startedAt: number;
+  // A charged sale that didn't save while the warning above held another
+  // one: `order` is final (card amount and tip included), and it's raised
+  // as is once that one is dealt with.
+  final?: boolean;
 }
 
 const PENDING_KEY = "rcl.register-reader-payments.v1";

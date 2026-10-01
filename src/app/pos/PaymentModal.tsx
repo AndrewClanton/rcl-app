@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
-import { startReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
+import { createReaderPayment, sendReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
 import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
@@ -266,8 +266,8 @@ export default function PaymentModal({
   tipTaken?: boolean; // the register already asked for the tip (it's inside `total`), so it isn't asked again
   tabCard?: { tabId: string; label: string } | null; // the tab's card on file, charged without a tap
   tabName?: string;
-  // A reader payment was sent to the reader: kept by the register so a
-  // reload mid-payment can still find it. `payment` is the sale as it will be
+  // A reader payment was made and is about to go to the reader: kept by the
+  // register so a reload mid-payment can still find it. `payment` is the sale as it will be
   // saved, before any tip picked on the reader.
   onReaderStarted?: (payment: CheckoutPayment) => void;
   onReaderCanceled?: (paymentIntentId: string) => void; // it's over, and nothing was charged
@@ -387,15 +387,34 @@ export default function PaymentModal({
     const tipCents = tipEligible === null ? null : split ? Math.min(Math.round(tipEligible * 100), amountCents) : Math.round(tipEligible * 100);
     setSending(true);
     try {
-      const started = await startReaderPayment(amountCents, readerId, tipCents);
-      if (!started.ok) {
-        setReader({ state: "failed", paymentIntentId: "", message: started.error, split });
+      const created = await createReaderPayment(amountCents, readerId);
+      if (!created.ok) {
+        setReader({ state: "failed", paymentIntentId: "", message: created.error, split });
         return;
       }
-      const { paymentIntentId } = started;
-      // Kept right away, so a reload from here on can still find this payment.
+      const { paymentIntentId } = created;
+      // Kept before it goes to the reader, so a reload from here on can
+      // still find this payment.
       const cardPaid = { card: amountCents / 100, stripePaymentIntentId: paymentIntentId, tip: 0, ...withVoucher };
       onReaderStarted?.(split ? { method: "split", cash: split.cash, tendered: split.tendered, ...cardPaid } : { method: "card", cash: 0, ...cardPaid });
+      let sent: Awaited<ReturnType<typeof sendReaderPayment>> | null;
+      try {
+        sent = await sendReaderPayment(paymentIntentId, readerId, tipCents);
+      } catch (e) {
+        // A deploy landed between the two steps: the payment never reached
+        // the reader, and the reload this asks for stops it.
+        if (isStaleBuildError(e)) return setReader({ state: "failed", paymentIntentId, message: STALE_MID_PAYMENT, split });
+        // No answer: it may be on the reader now, so it's watched like any
+        // other, and Cancel stops it.
+        sent = null;
+      }
+      if (sent && !sent.ok) {
+        // Stopped, so nothing can charge it. (One that couldn't be stopped
+        // stays kept, and is looked up again when the register next loads.)
+        if (sent.canceled) onReaderCanceled?.(paymentIntentId);
+        setReader({ state: "failed", paymentIntentId: "", message: sent.error, split });
+        return;
+      }
       setReader({ state: "waiting", paymentIntentId, split });
       watchReaderPayment(paymentIntentId, split);
     } catch (e) {
@@ -483,10 +502,24 @@ export default function PaymentModal({
   async function handleCardOnFile(tipAmount: number) {
     setOnFileTipOpen(false);
     if (!tabCard || onFile.busy) return;
-    const tipCents = Math.max(0, Math.round(tipAmount * 100));
+    let tipCents = Math.max(0, Math.round(tipAmount * 100));
+    const dueCents = Math.round(due * 100);
     setOnFile({ busy: true, error: null });
-    const r = await chargeTabCard(tabCard.tabId, Math.round(due * 100) + tipCents).catch(() => ({ ok: false as const, error: "Couldn't reach Stripe. Try again." }));
+    // No answer doesn't mean no charge, but charging again is safe: the
+    // server finds this tab's earlier charge instead of making a new one.
+    const r = await chargeTabCard(tabCard.tabId, dueCents + tipCents).catch(() => ({ ok: false as const, error: "Couldn't hear back from Stripe. Tap Charge again: it won't charge twice." }));
     if (!r.ok) return setOnFile({ busy: false, error: r.error });
+    if (r.already && r.amountCents !== dueCents + tipCents) {
+      // The card was charged on an earlier try that never got back here,
+      // with a different tip: what was charged is what's recorded.
+      if (r.amountCents < dueCents) {
+        return setOnFile({
+          busy: false,
+          error: `This tab's card was already charged ${money(r.amountCents / 100)} on an earlier try, less than the ${money(due)} due now. Don't charge it again: get a manager to refund that charge in Stripe (Reports, Register checks), then charge the tab.`,
+        });
+      }
+      tipCents = r.amountCents - dueCents;
+    }
     if (confirmedRef.current) return;
     confirmedRef.current = true;
     // Like a reader sale: the card amount is everything charged, tip included.

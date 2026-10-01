@@ -57,6 +57,7 @@ import {
   completeOrder,
   isDraftOpen,
   logAbandonedSale,
+  savedOrderForPayment,
   saveDraftOrder,
   updateDraftOrder,
   loadDraftOrder,
@@ -738,6 +739,25 @@ export default function PosApp({
     const { payment } = order;
     const allTip = order.tip ?? 0;
     const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
+    // The "card WAS charged" warning holds one sale. It can be holding
+    // another one here: a payment from before a reload, found while this
+    // sale's payment screen was open (recoverReaderPayments). That one is
+    // never wiped or replaced by this sale; if this one needs the warning
+    // too, it waits its turn with the reader payments, already final.
+    const heldOther = () => {
+      const held = currentUnsavedSale();
+      return !!held && held.order.payment.stripePaymentIntentId !== payment.stripePaymentIntentId;
+    };
+    let queued = false;
+    const holdCharged = (s: UnsavedSale, error?: string) => {
+      if (!heldOther()) return keepUnsavedSale(s);
+      keepPendingReaderSale({ readerId: readerId ?? "", order: s.order, memberName: s.memberName, startedAt: Date.now(), final: true });
+      queued = true;
+      setToast(`${error ? `${error} ` : ""}This card WAS charged (${money(s.order.payment.card)}) but the sale didn't save. It comes up for Retry saving once the warning below is dealt with. Don't charge the card again.`);
+    };
+    const clearHeld = () => {
+      if (!heldOther()) keepUnsavedSale(null);
+    };
     let orderNumber: number;
     let warning: string | undefined;
     try {
@@ -746,8 +766,9 @@ export default function PosApp({
         // The server turned the sale down (it checks the card payment with
         // Stripe). Its message says what to do; a card that was charged
         // keeps the warning up so it isn't charged again.
-        keepUnsavedSale(r.cardCharged ? { ...sale, tries: sale.tries + 1 } : null);
-        setToast(r.error);
+        if (r.cardCharged) holdCharged({ ...sale, tries: sale.tries + 1 }, r.error);
+        else clearHeld();
+        if (!queued) setToast(r.error);
         return false;
       }
       orderNumber = r.orderNumber;
@@ -759,7 +780,7 @@ export default function PosApp({
         // saving (one order per payment, so a retry can't make a second
         // sale) and hold off new charges until it's saved. A small toast here
         // used to let the register go back to charging the card again.
-        keepUnsavedSale({ ...sale, tries: sale.tries + 1, stale });
+        holdCharged({ ...sale, tries: sale.tries + 1, stale });
       } else if (stale) {
         setToast("The register was just updated and this sale didn't save. Reload the page, then ring it up again.");
       } else {
@@ -768,10 +789,11 @@ export default function PosApp({
       return false;
     } finally {
       // Saved, or kept in the "card WAS charged" warning: either way the
-      // reader payment isn't in progress anymore.
-      if (payment.stripePaymentIntentId) clearPendingReaderSale(payment.stripePaymentIntentId);
+      // reader payment isn't in progress anymore. (One waiting its turn for
+      // the warning stays in the list.)
+      if (payment.stripePaymentIntentId && !queued) clearPendingReaderSale(payment.stripePaymentIntentId);
     }
-    keepUnsavedSale(null);
+    clearHeld();
     const receipt: ReceiptData = {
       orderNumber,
       at: new Date().toISOString(),
@@ -794,6 +816,7 @@ export default function PosApp({
         { label: "Card", amount: payment.card },
         ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
       ],
+      points: { earned: pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0 },
     };
     setLastReceipt(receipt);
     const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
@@ -882,18 +905,40 @@ export default function PosApp({
           if (!r) return;
         }
         if (r.status === "succeeded") {
+          // Its sale may have saved just before the page went: then there's
+          // nothing to retry (and no receipt or drawer to repeat).
+          const savedAs = await savedOrderForPayment(paymentIntentId).catch(() => undefined);
+          if (typeof savedAs === "number") {
+            clearPendingReaderSale(paymentIntentId);
+            setToast(`The card payment from before the page reloaded went through and was saved as order #${savedAs}. Nothing more to do.`);
+            continue;
+          }
           if (held) return;
           const readerTip = r.tipCents / 100;
           keepUnsavedSale({
-            order: { ...p.order, payment: { ...p.order.payment, card: r.amountCents / 100, tip: readerTip }, tip: cents((p.order.tip ?? 0) + readerTip) },
+            // A sale that waited its turn is already final; one from the
+            // reader gets the amount and tip the customer ended up paying.
+            order: p.final ? p.order : { ...p.order, payment: { ...p.order.payment, card: r.amountCents / 100, tip: readerTip }, tip: cents((p.order.tip ?? 0) + readerTip) },
             memberName: p.memberName,
             tries: 0,
           });
           clearPendingReaderSale(paymentIntentId);
-          setToast("A card payment from before the page reloaded went through but isn't saved yet. Tap Retry saving below.");
+          setToast(
+            p.final
+              ? "Another card payment was charged but isn't saved yet. Tap Retry saving below, and don't charge that card again."
+              : "A card payment from before the page reloaded went through but isn't saved yet. Tap Retry saving below.",
+          );
         } else if (r.status === "canceled") {
           clearPendingReaderSale(paymentIntentId);
-          if (Date.now() - p.startedAt < 30 * 60_000) setToast("The card payment from before the page reloaded didn't go through, so nothing was charged. Take payment again.");
+          if (Date.now() - p.startedAt < 30 * 60_000) {
+            const pay = p.order.payment;
+            // A split's cash part was taken before the card, and the note
+            // that said to hand it back went with the reload.
+            const cashBack = pay.method === "split" && pay.cash > 0 ? ` It was a split: hand back the ${money(pay.tendered ?? pay.cash)} cash they gave you first.` : "";
+            // A tab is still open; a walk-up order went with the reload.
+            const again = p.order.draftOrderId ? "Take payment on the tab again." : "Ring the order up again, then take payment.";
+            setToast(`The card payment from before the page reloaded didn't go through, so nothing was charged.${cashBack} ${again}`);
+          }
         } else {
           // Still going through: looked at again on the next load.
           setToast("A card payment from before the page reloaded is still going through. Don't charge that card again: reload in a minute to see if it went through.");
