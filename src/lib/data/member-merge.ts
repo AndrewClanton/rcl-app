@@ -126,50 +126,73 @@ export interface MergePreview {
     hasLogin: boolean;
     hasBilling: boolean;
     emailOptIn: boolean;
+    // "/m/jake (shared)", "/m/jake (turned off by staff)"... or null.
+    profilePage: string | null;
+    lineHidden: boolean;
   };
   carried: string[]; // "the phone number", "the birthday"...
   notKept: string[]; // what the duplicate has that won't survive
   sentence: string; // "Jake will have 1 account with 65 points and 1 visit."
 }
 
-async function count(q: PromiseLike<{ count: number | null; error: unknown }>): Promise<number> {
+// The preview is what staff confirm an irreversible merge against, so a
+// count that didn't load fails the whole preview (the page says to try
+// again) rather than reading as "nothing to move".
+async function mustCount(q: PromiseLike<{ count: number | null; error: unknown }>): Promise<number> {
   const { count: n, error } = await q;
-  return error ? 0 : (n ?? 0);
+  if (error) throw error;
+  return n ?? 0;
 }
 
 // Everything that points at a member, counted (what merging moves).
 async function memberCounts(db: Db, id: string) {
   const head = { count: "exact" as const, head: true };
   const [visits, orders, allOrders, tickets, allTickets, booths, ledger, badges, rewards, gifts, payments, oldSite] = await Promise.all([
-    count(db.from("member_visits").select("id", head).eq("member_id", id)),
-    count(db.from("orders").select("id", head).eq("member_id", id).in("status", ["completed", "refunded"])),
-    count(db.from("orders").select("id", head).eq("member_id", id)),
+    mustCount(db.from("member_visits").select("id", head).eq("member_id", id)),
+    mustCount(db.from("orders").select("id", head).eq("member_id", id).in("status", ["completed", "refunded"])),
+    mustCount(db.from("orders").select("id", head).eq("member_id", id)),
     // Online tickets (register tickets are part of their order).
-    count(db.from("bookings").select("id", head).eq("member_id", id).is("order_id", null)),
-    count(db.from("bookings").select("id", head).eq("member_id", id)),
-    count(db.from("booth_reservations").select("id", head).eq("member_id", id)),
-    count(db.from("points_ledger").select("id", head).eq("member_id", id)),
-    count(db.from("member_badges").select("id", head).eq("member_id", id)),
-    count(db.from("member_rewards").select("id", head).eq("member_id", id)),
-    count(db.from("gift_memberships").select("id", head).eq("recipient_member_id", id)),
-    count(db.from("member_payments").select("id", head).eq("member_id", id)),
-    count(db.from("legacy_accounts").select("legacy_user_id", head).eq("imported_member_id", id)),
+    mustCount(db.from("bookings").select("id", head).eq("member_id", id).is("order_id", null)),
+    mustCount(db.from("bookings").select("id", head).eq("member_id", id)),
+    mustCount(db.from("booth_reservations").select("id", head).eq("member_id", id)),
+    mustCount(db.from("points_ledger").select("id", head).eq("member_id", id)),
+    mustCount(db.from("member_badges").select("id", head).eq("member_id", id)),
+    mustCount(db.from("member_rewards").select("id", head).eq("member_id", id)),
+    mustCount(db.from("gift_memberships").select("id", head).eq("recipient_member_id", id)),
+    mustCount(db.from("member_payments").select("id", head).eq("member_id", id)),
+    mustCount(db.from("legacy_accounts").select("legacy_user_id", head).eq("imported_member_id", id)),
   ]);
   return { visits, orders, allOrders, tickets, allTickets, booths, ledger, badges, rewards, gifts, payments, oldSite };
 }
 
+// Tickets and booths booked as a guest (no member) under an email: the
+// merge makes them the kept account's when the duplicate's email doesn't
+// stay. Case-insensitive equality, as the database matches them.
+async function guestBookings(db: Db, email: string): Promise<{ tickets: number; booths: number }> {
+  const head = { count: "exact" as const, head: true };
+  const exact = email.trim().replace(/[\\%_]/g, (c) => `\\${c}`);
+  const [tickets, booths] = await Promise.all([
+    mustCount(db.from("bookings").select("id", head).is("member_id", null).ilike("customer_email", exact)),
+    mustCount(db.from("booth_reservations").select("id", head).is("member_id", null).ilike("customer_email", exact)),
+  ]);
+  return { tickets, booths };
+}
+
 async function visitDates(db: Db, id: string): Promise<string[]> {
-  const { data } = await db.from("member_visits").select("business_date").eq("member_id", id).limit(2000);
+  const { data, error } = await db.from("member_visits").select("business_date").eq("member_id", id).limit(2000);
+  if (error) throw error;
   return (data ?? []).map((v) => String(v.business_date));
 }
 
 async function badgeKeys(db: Db, id: string): Promise<{ badge: string; period: string }[]> {
-  const { data } = await db.from("member_badges").select("badge, period").eq("member_id", id);
+  const { data, error } = await db.from("member_badges").select("badge, period").eq("member_id", id);
+  if (error) throw error;
   return (data ?? []) as { badge: string; period: string }[];
 }
 
 async function rewardKeys(db: Db, id: string): Promise<{ badge: string; period: string }[]> {
-  const { data } = await db.from("member_rewards").select("kind, earned_on").eq("member_id", id);
+  const { data, error } = await db.from("member_rewards").select("kind, earned_on").eq("member_id", id);
+  if (error) throw error;
   return (data ?? []).map((r) => ({ badge: String(r.kind), period: String(r.earned_on) }));
 }
 
@@ -187,12 +210,17 @@ function sideView(m: MergeMember, c: Awaited<ReturnType<typeof memberCounts>>, r
   };
 }
 
-// Null if either account doesn't exist (the page says so).
+// Null if either account doesn't exist (the page says so). Throws if
+// anything it counts couldn't be loaded (the page says to try again).
 export async function getMergePreview(keepId: string, dropId: string, role: EmployeeRole): Promise<MergePreview | null> {
   const [keep, drop] = await Promise.all([getMergeMember(keepId), getMergeMember(dropId)]);
   if (!keep || !drop) return null;
   const db = createAdminClient();
-  const [kc, dc, kDates, dDates, kBadges, dBadges, kRewards, dRewards] = await Promise.all([
+  const profile = mergedProfile(keep, drop);
+  // The duplicate's email doesn't stay: its guest bookings come over.
+  const dropEmail = drop.email?.trim() ?? "";
+  const emailGoes = !!dropEmail && dropEmail.toLowerCase() !== (profile.email ?? "").trim().toLowerCase();
+  const [kc, dc, kDates, dDates, kBadges, dBadges, kRewards, dRewards, guests] = await Promise.all([
     memberCounts(db, keep.id),
     memberCounts(db, drop.id),
     visitDates(db, keep.id),
@@ -201,9 +229,9 @@ export async function getMergePreview(keepId: string, dropId: string, role: Empl
     badgeKeys(db, drop.id),
     rewardKeys(db, keep.id),
     rewardKeys(db, drop.id),
+    emailGoes ? guestBookings(db, dropEmail) : Promise.resolve({ tickets: 0, booths: 0 }),
   ]);
 
-  const profile = mergedProfile(keep, drop);
   const visits = mergedVisitCount(kDates, dDates);
   const sameBadges = badgeOverlap(kBadges, dBadges);
   const sameRewards = badgeOverlap(kRewards, dRewards);
@@ -220,21 +248,29 @@ export async function getMergePreview(keepId: string, dropId: string, role: Empl
   add(dc.gifts, "gift membership");
   add(dc.payments, "membership payment");
   add(dc.oldSite, "old-site record");
+  add(guests.tickets, "ticket booking made as a guest under its email", "ticket bookings made as a guest under its email");
+  add(guests.booths, "booth reservation made as a guest under its email", "booth reservations made as a guest under its email");
 
   const overlaps: string[] = [];
   if (visits.sameDay) overlaps.push(`${countText(visits.sameDay, "day")} both accounts checked in: the kept account's visit stays (its points stay in the history).`);
   if (sameBadges) overlaps.push(`${countText(sameBadges, "badge")} both earned: the earlier one stays.`);
   if (sameRewards) overlaps.push(`${countText(sameRewards, "reward")} both earned the same day: one stays (an unused one if there is one).`);
+  if (profile.giftStacked) overlaps.push("Both accounts have gifted Insiders+ time left: it adds up, as gifts do on one account.");
 
   const notKeptText: Record<MergedProfile["notKept"][number], string> = {
     name: `Its name (${drop.name}): the kept account's name stays. Change it after if it's wrong.`,
-    email: "Its email: the kept account's email stays.",
+    email: "Its email: the kept account's email stays. Removing this member's personal info later still covers anything booked under the other one.",
     phone: "Its phone number: the kept account's phone stays.",
     birthday: "Its birthday: the kept account's stays.",
-    photo: "Its photo: the kept account's stays.",
-    tagline: "Its line shown at check-in: the kept account's stays.",
+    photo: "Its photo: the kept account's stays, and the other photo is deleted.",
+    tagline: "Its profile line: the kept account's stays.",
+    profile_page: `Its profile link (/m/${drop.profile_handle ?? ""}): the kept account's link stays. The old one stops working and is held for this member for 90 days, so nobody else can take it.`,
+    flair: "Its check-in flair: the kept account's stays.",
   };
   const result = contactForRole({ email: profile.email, phone: profile.phone }, role);
+  const profilePage = profile.profileHandle
+    ? `/m/${profile.profileHandle} (${profile.pageHidden ? "turned off by staff" : profile.shareProfile ? "shared" : "not shared"})`
+    : null;
 
   return {
     keep: sideView(keep, kc, role),
@@ -253,6 +289,8 @@ export async function getMergePreview(keepId: string, dropId: string, role: Empl
       hasLogin: profile.hasLogin,
       hasBilling: profile.hasBilling,
       emailOptIn: profile.emailOptIn,
+      profilePage,
+      lineHidden: profile.lineHidden && !!profile.tagline,
     },
     carried: profile.carried.map((k) => CARRIED_LABEL[k]),
     notKept: profile.notKept.map((k) => notKeptText[k]),
@@ -269,8 +307,8 @@ export async function mergedInto(droppedId: string): Promise<{ keepId: string; v
   const { data, error } = await db.from("member_merges").select("keep_id").eq("dropped_id", droppedId).limit(1);
   if (error || !data?.length) return null;
   const keepId = data[0].keep_id as string;
-  const visits = await count(db.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", keepId));
-  return { keepId, visits };
+  const { count: visits } = await db.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", keepId);
+  return { keepId, visits: visits ?? 0 };
 }
 
 // ---------- possible duplicates ----------

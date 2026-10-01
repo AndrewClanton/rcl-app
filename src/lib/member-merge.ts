@@ -40,11 +40,24 @@ export interface MergeMember {
   email_opt_in_changed_at: string | null;
   monthly_member: boolean;
   erased_at: string | null;
+  // The profile page and check-in flair (migration 20261001120000).
+  tagline_hidden_at: string | null;
+  share_profile: boolean;
+  profile_handle: string | null;
+  display_name: string | null;
+  profile_hidden_at: string | null;
+  flair_color: string | null;
+  flair_effect: string | null;
+  flair_sticker: string | null;
+  birthday_party: boolean;
 }
 
 // The member columns these rules need (and nothing else).
+// scripts/check-member-merge.mjs holds this to every column the
+// migrations give members: each is either here or listed there with why
+// the preview doesn't need it.
 export const MERGE_MEMBER_COLUMNS =
-  "id, name, tier, points, created_at, last_activity_at, email, phone, auth_user_id, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier, birthday, avatar_url, tagline, comped, plus_gift_until, legacy_user_id, imported_at, email_opt_in, email_opt_in_changed_at, monthly_member, erased_at";
+  "id, name, tier, points, created_at, last_activity_at, email, phone, auth_user_id, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier, birthday, avatar_url, tagline, comped, plus_gift_until, legacy_user_id, imported_at, email_opt_in, email_opt_in_changed_at, monthly_member, erased_at, tagline_hidden_at, share_profile, profile_handle, display_name, profile_hidden_at, flair_color, flair_effect, flair_sticker, birthday_party";
 
 // A phone the door tablet can find them by: ten digits that make a US
 // number (a leading 1 is fine). The old site's placeholder "-" and the odd
@@ -95,7 +108,13 @@ export const CARRIED_LABEL = {
   rate: "the senior or student rate",
   birthday: "the birthday",
   photo: "the photo",
-  tagline: "their line shown at check-in",
+  tagline: "their profile line",
+  line_hidden: "staff's hide on their profile line (it stays hidden)",
+  profile_page: "their profile page and its link",
+  display_name: "the name on their profile page",
+  page_hidden: "staff turning their profile page off (it stays off)",
+  flair: "their check-in flair",
+  party_off: "their birthday party turned off",
   free_membership: "the free (community) membership",
   gift: "the gifted Insiders+ time",
   old_site: "the old-site link",
@@ -121,15 +140,24 @@ export interface MergedProfile {
   birthday: string | null;
   avatarUrl: string | null;
   tagline: string | null;
+  lineHidden: boolean;
+  shareProfile: boolean;
+  profileHandle: string | null;
+  displayName: string | null;
+  pageHidden: boolean;
+  flair: { color: string | null; effect: string | null; sticker: string | null };
+  birthdayParty: boolean;
   comped: boolean;
   giftUntil: string | null;
+  // Both accounts had gifted Insiders+ time left, so it adds up.
+  giftStacked: boolean;
   emailOptIn: boolean;
   // Where each piece comes from.
-  from: { name: From; email: From | null; phone: From | null; login: From | null; billing: From | null; emailOptIn: From };
+  from: { name: From; email: From | null; phone: From | null; login: From | null; billing: From | null; emailOptIn: From; profile: From | null };
   carried: CarriedKey[];
   // What the duplicate has that won't survive, because the kept account
   // already has its own (shown in the preview so nothing is a surprise).
-  notKept: ("name" | "email" | "phone" | "birthday" | "photo" | "tagline")[];
+  notKept: ("name" | "email" | "phone" | "birthday" | "photo" | "tagline" | "profile_page" | "flair")[];
 }
 
 const time = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : NaN);
@@ -138,15 +166,23 @@ const time = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() 
 // - Anything the kept account lacks comes over: a usable phone, an email,
 //   the website login, Stripe billing (with its rate and plan), a
 //   senior/student rate (unless Stripe bills the kept account at its own),
-//   birthday, photo, their line, a free membership, the old-site link.
+//   birthday, photo, their profile line, the profile page (link, on/off and
+//   name together), check-in flair (as a set), a free membership, the
+//   old-site link.
+// - Staff's moderation goes with the person: a profile line or page staff
+//   hid on either account stays hidden (and the page off). A birthday
+//   party turned off on either stays off.
+// - The duplicate's profile link, when the kept account keeps its own, is
+//   held for the member for 90 days (merge_members does that).
 // - A one-word name ("Jake", from a quick sign-up at the register) gives
 //   way to the other account's full name when that starts with it.
-// - The higher tier wins; a gifted year keeps whichever ends later.
+// - The higher tier wins. Gifted Insiders+ time left on both adds up (as
+//   gifts stack on one account); otherwise the later end.
 // - The kept account's email preference stays, unless it never chose one
 //   and the other account did.
 // - Member since is the earlier date, last activity the later; the points
 //   add up.
-export function mergedProfile(keep: MergeMember, drop: MergeMember): MergedProfile {
+export function mergedProfile(keep: MergeMember, drop: MergeMember, now: Date = new Date()): MergedProfile {
   const carried: CarriedKey[] = [];
   const notKept: MergedProfile["notKept"] = [];
 
@@ -205,15 +241,65 @@ export function mergedProfile(keep: MergeMember, drop: MergeMember): MergedProfi
   if (!keep.avatar_url && drop.avatar_url) carried.push("photo");
   else if (keep.avatar_url && drop.avatar_url && keep.avatar_url !== drop.avatar_url) notKept.push("photo");
 
+  // (The database's coalesce: an empty line still counts as one.)
   const tagline = keep.tagline ?? drop.tagline;
-  if (!keep.tagline && drop.tagline) carried.push("tagline");
-  else if (keep.tagline && drop.tagline && keep.tagline !== drop.tagline) notKept.push("tagline");
+  if (keep.tagline == null && drop.tagline != null) carried.push("tagline");
+  else if (keep.tagline != null && drop.tagline != null && keep.tagline !== drop.tagline) notKept.push("tagline");
+  let lineHidden = !!keep.tagline_hidden_at;
+  if (!keep.tagline_hidden_at && drop.tagline_hidden_at) {
+    lineHidden = true;
+    carried.push("line_hidden");
+  }
+
+  let shareProfile = !!keep.share_profile;
+  let profileHandle = keep.profile_handle;
+  let displayName = keep.display_name;
+  let profileFrom: From | null = keep.profile_handle ? "keep" : null;
+  if (keep.profile_handle == null && drop.profile_handle != null) {
+    shareProfile = !!drop.share_profile;
+    profileHandle = drop.profile_handle;
+    displayName = drop.display_name ?? keep.display_name;
+    profileFrom = "drop";
+    carried.push("profile_page");
+  } else if (keep.display_name == null && drop.display_name != null) {
+    displayName = drop.display_name;
+    carried.push("display_name");
+  }
+  if (keep.profile_handle != null && drop.profile_handle != null) notKept.push("profile_page");
+  let pageHidden = !!keep.profile_hidden_at;
+  if (!keep.profile_hidden_at && drop.profile_hidden_at) {
+    pageHidden = true;
+    carried.push("page_hidden");
+  }
+  if (pageHidden) shareProfile = false;
+
+  const kFlair = { color: keep.flair_color, effect: keep.flair_effect, sticker: keep.flair_sticker };
+  const dFlair = { color: drop.flair_color, effect: drop.flair_effect, sticker: drop.flair_sticker };
+  const anyFlair = (f: typeof kFlair) => f.color != null || f.effect != null || f.sticker != null;
+  let flair = kFlair;
+  if (!anyFlair(kFlair) && anyFlair(dFlair)) {
+    flair = dFlair;
+    carried.push("flair");
+  } else if (anyFlair(kFlair) && anyFlair(dFlair) && JSON.stringify(kFlair) !== JSON.stringify(dFlair)) {
+    notKept.push("flair");
+  }
+  const kParty = keep.birthday_party !== false;
+  const dParty = drop.birthday_party !== false;
+  const birthdayParty = kParty && dParty;
+  if (kParty && !dParty) carried.push("party_off");
 
   const comped = keep.comped || drop.comped;
   if (!keep.comped && drop.comped) carried.push("free_membership");
 
   let giftUntil = keep.plus_gift_until;
-  if (drop.plus_gift_until && (!keep.plus_gift_until || time(drop.plus_gift_until) > time(keep.plus_gift_until))) {
+  let giftStacked = false;
+  const kGift = time(keep.plus_gift_until);
+  const dGift = time(drop.plus_gift_until);
+  if (kGift > now.getTime() && dGift > now.getTime()) {
+    giftUntil = new Date(Math.max(kGift, dGift) + (Math.min(kGift, dGift) - now.getTime())).toISOString();
+    giftStacked = true;
+    carried.push("gift");
+  } else if (drop.plus_gift_until && (!keep.plus_gift_until || dGift > kGift)) {
     giftUntil = drop.plus_gift_until;
     carried.push("gift");
   }
@@ -253,10 +339,18 @@ export function mergedProfile(keep: MergeMember, drop: MergeMember): MergedProfi
     birthday,
     avatarUrl,
     tagline,
+    lineHidden,
+    shareProfile,
+    profileHandle,
+    displayName,
+    pageHidden,
+    flair,
+    birthdayParty,
     comped,
     giftUntil,
+    giftStacked,
     emailOptIn,
-    from: { name: nameFrom, email: emailFrom, phone: phoneFrom, login: loginFrom, billing: billingFrom, emailOptIn: optInFrom },
+    from: { name: nameFrom, email: emailFrom, phone: phoneFrom, login: loginFrom, billing: billingFrom, emailOptIn: optInFrom, profile: profileFrom },
     carried,
     notKept,
   };

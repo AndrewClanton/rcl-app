@@ -2,11 +2,14 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { mergeMemberAccounts, type MergeResult } from "../../merge-actions";
 
 // The last step of a merge: the plain-language result, a "they're the same
-// person" tick, and the button. After it's done, a link to the account
-// that stayed (the other one no longer exists).
+// person" tick, and the button. After it's done, the page reloads into its
+// "Merged." view (the side cards and the swap link above point at the
+// account that no longer exists); until then, a link to the account that
+// stayed.
 export default function MergeConfirm({
   keepId,
   dropId,
@@ -23,6 +26,7 @@ export default function MergeConfirm({
   const [sure, setSure] = useState(false);
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<MergeResult | null>(null);
+  const router = useRouter();
 
   if (result?.ok) {
     return (
@@ -57,6 +61,7 @@ export default function MergeConfirm({
             startTransition(async () => {
               const r = await mergeMemberAccounts(keepId, dropId).catch((): MergeResult => ({ ok: false, error: "Couldn't reach the server. Nothing was changed; try again." }));
               setResult(r);
+              if (r.ok) router.refresh();
             });
           }}
         >

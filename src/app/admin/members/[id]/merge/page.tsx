@@ -46,9 +46,18 @@ export default async function MergeMemberPage({ params, searchParams }: { params
 
   const dropId = sp.drop && UUID.test(sp.drop) && sp.drop !== id ? sp.drop : null;
   if (dropId) {
-    const preview = await getMergePreview(id, dropId, session.role);
+    // A preview that didn't fully load is never shown as "nothing moves":
+    // staff confirm an irreversible merge against it.
+    let preview: Awaited<ReturnType<typeof getMergePreview>> = null;
+    let loadFailed = false;
+    try {
+      preview = await getMergePreview(id, dropId, session.role);
+    } catch (e) {
+      console.error("merge preview failed", (e as { code?: string })?.code ?? "", (e as Error)?.message ?? "");
+      loadFailed = true;
+    }
     // Gone: usually because it was just merged (here, or into another).
-    const done = preview ? null : await mergedInto(dropId);
+    const done = preview || loadFailed ? null : await mergedInto(dropId);
     return (
       <div className="space-y-5">
         <PageHeader
@@ -57,7 +66,14 @@ export default async function MergeMemberPage({ params, searchParams }: { params
           title="Merge a duplicate into this account"
           purpose="Check it's the same person, see exactly what moves and what's kept, then merge. The other account is deleted."
         />
-        {!preview && done?.keepId === id ? (
+        {loadFailed ? (
+          <div className="notice notice-warn" role="alert">
+            Couldn&apos;t load everything these accounts have, so there&apos;s nothing to confirm yet. Nothing was changed.{" "}
+            <Link href={mergeHref(id, dropId)} className="underline">
+              Try again
+            </Link>
+          </div>
+        ) : !preview && done?.keepId === id ? (
           <div className="notice notice-success space-y-2 !p-5 text-sm" role="status">
             <p className="text-base font-semibold">Merged.</p>
             <p>{mergeSentence(keep.name, keep.points, done.visits, true)}</p>
@@ -140,6 +156,8 @@ export default async function MergeMemberPage({ params, searchParams }: { params
                     <Row label="Website login" value={yesNo(preview.result.hasLogin)} />
                     <Row label="Stripe billing" value={yesNo(preview.result.hasBilling)} />
                     <Row label="Our emails" value={!preview.result.emailOptIn ? "No" : preview.result.email ? "Yes" : "Yes, once there's an email"} />
+                    <Row label="Profile page" value={preview.result.profilePage ?? "—"} />
+                    {preview.result.lineHidden && <Row label="Profile line" value="Hidden by staff" />}
                   </dl>
                   {preview.carried.length > 0 && (
                     <p className="mt-3 text-sm">

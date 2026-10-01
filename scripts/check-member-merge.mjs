@@ -7,10 +7,15 @@
 //  2. The merge itself, by reading migration 20261001150000: merge_members
 //     moves every table that points at members (and the list of those is
 //     checked against every "references members" in the migrations, so a
-//     new one can't be missed), says no with the same words as the
-//     preview, carries over the same fields, and is locked down to the
-//     server.
-//  3. The app around it: owner/admin only, and the register never merges.
+//     new one can't be missed), decides every members column (the list
+//     comes from every "alter table members add column" in the
+//     migrations, so a new column can't be missed either), says no with
+//     the same words as the preview, carries over the same fields, keeps
+//     profile links held and staff's hides in place, and is locked down to
+//     the server. Removing the kept account's personal info later reaches
+//     what the merged-in account left.
+//  3. The app around it: owner/admin only, the register never merges (and
+//     only links owners/admins to the review), photos follow the merge.
 //
 // Usage: node scripts/check-member-merge.mjs   (Node 23.6+ runs the .ts directly)
 
@@ -77,6 +82,15 @@ const member = (over = {}) => ({
   email_opt_in_changed_at: null,
   monthly_member: false,
   erased_at: null,
+  tagline_hidden_at: null,
+  share_profile: false,
+  profile_handle: null,
+  display_name: null,
+  profile_hidden_at: null,
+  flair_color: null,
+  flair_effect: null,
+  flair_sticker: null,
+  birthday_party: true,
   ...over,
 });
 
@@ -135,7 +149,48 @@ eq("Stripe billing comes over whole", mergedProfile(member(), member({ stripe_su
 eq("a senior rate comes over to an unbilled account", mergedProfile(member(), member({ price_tier: "senior" })).carried, ["rate"]);
 eq("...but not onto one Stripe bills at its own rate", mergedProfile(member({ stripe_customer_id: "cus_1" }), member({ price_tier: "senior" })).carried, []);
 eq("photo, line, free membership, gift and old-site link fill gaps", mergedProfile(member(), member({ avatar_url: "https://x/p.jpg", tagline: "hi", comped: true, plus_gift_until: "2027-01-01T00:00:00Z", legacy_user_id: 7 })).carried, ["photo", "tagline", "free_membership", "gift", "old_site"]);
-eq("the later gift end wins", mergedProfile(member({ plus_gift_until: "2027-06-01T00:00:00Z" }), member({ plus_gift_until: "2027-01-01T00:00:00Z" })).giftUntil, "2027-06-01T00:00:00Z");
+eq("the later gift end wins when only one has time left", mergedProfile(member({ plus_gift_until: "2027-06-01T00:00:00Z" }), member({ plus_gift_until: "2027-01-01T00:00:00Z" }), new Date("2027-02-01T00:00:00Z")).giftUntil, "2027-06-01T00:00:00Z");
+eq("...or the other account's, if it ends later", mergedProfile(member({ plus_gift_until: "2026-01-01T00:00:00Z" }), member({ plus_gift_until: "2027-01-01T00:00:00Z" }), new Date("2026-10-01T00:00:00Z")).carried, ["gift"]);
+eq("gift time left on both adds up (gifts stack)", (() => {
+  const q = mergedProfile(member({ plus_gift_until: "2027-06-01T00:00:00Z" }), member({ plus_gift_until: "2027-01-01T00:00:00Z" }), new Date("2026-10-01T00:00:00Z"));
+  return [q.giftUntil, q.giftStacked, q.carried];
+})(), ["2027-09-01T00:00:00.000Z", true, ["gift"]]);
+
+console.log("-- the profile page, line and flair");
+eq("a hidden line comes over hidden", (() => {
+  const q = mergedProfile(member(), member({ tagline: "rude", tagline_hidden_at: "2026-09-30T00:00:00Z" }));
+  return [q.tagline, q.lineHidden, q.carried];
+})(), ["rude", true, ["tagline", "line_hidden"]]);
+eq("a line hidden on the other account hides the kept one too", (() => {
+  const q = mergedProfile(member({ tagline: "hello" }), member({ tagline: "rude", tagline_hidden_at: "2026-09-30T00:00:00Z" }));
+  return [q.tagline, q.lineHidden, q.carried, q.notKept];
+})(), ["hello", true, ["line_hidden"], ["tagline"]]);
+eq("the kept account's own hide stays", mergedProfile(member({ tagline: "x", tagline_hidden_at: "2026-09-30T00:00:00Z" }), member({ tagline: "y" })).lineHidden, true);
+eq("the profile page comes over whole onto an account with none", (() => {
+  const q = mergedProfile(member(), member({ profile_handle: "jake-b", share_profile: true, display_name: "Jake B." }));
+  return [q.profileHandle, q.shareProfile, q.displayName, q.from.profile, q.carried, q.notKept];
+})(), ["jake-b", true, "Jake B.", "drop", ["profile_page"], []]);
+eq("both have links: the kept one stays, and says so", (() => {
+  const q = mergedProfile(member({ profile_handle: "jake", share_profile: true }), member({ profile_handle: "jake-b", share_profile: true, display_name: "J" }));
+  return [q.profileHandle, q.displayName, q.carried, q.notKept];
+})(), ["jake", "J", ["display_name"], ["profile_page"]]);
+eq("a page staff turned off stays off, wherever it's kept", (() => {
+  const q = mergedProfile(member({ profile_handle: "jake", share_profile: true }), member({ profile_hidden_at: "2026-09-30T00:00:00Z" }));
+  return [q.shareProfile, q.pageHidden, q.carried];
+})(), [false, true, ["page_hidden"]]);
+eq("flair comes over as a set onto an account with none", (() => {
+  const q = mergedProfile(member(), member({ flair_color: "red", flair_sticker: "star" }));
+  return [q.flair, q.carried];
+})(), [{ color: "red", effect: null, sticker: "star" }, ["flair"]]);
+eq("...never mixed with the kept account's", (() => {
+  const q = mergedProfile(member({ flair_color: "blue" }), member({ flair_effect: "confetti" }));
+  return [q.flair, q.notKept];
+})(), [{ color: "blue", effect: null, sticker: null }, ["flair"]]);
+eq("a birthday party turned off on either stays off", [
+  mergedProfile(member(), member({ birthday_party: false })).birthdayParty,
+  mergedProfile(member(), member({ birthday_party: false })).carried,
+  mergedProfile(member({ birthday_party: false }), member()).birthdayParty,
+], [false, ["party_off"], false]);
 eq("a recorded email choice on the other account wins over none", (() => {
   const q = mergedProfile(member({ email_opt_in: true }), member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-25T00:00:00Z" }));
   return [q.emailOptIn, q.carried];
@@ -189,7 +244,9 @@ const REFS = [
   "member_badges.member_id",
   "member_claims.member_id",
   "member_erasures.member_id",
+  "member_merge_emails.keep_id",
   "member_payments.member_id",
+  "member_retired_handles.member_id",
   "member_rewards.member_id",
   "member_subscription_ends.member_id",
   "member_visits.member_id",
@@ -209,8 +266,9 @@ for (const ref of REFS) {
 const found = new Set();
 for (const f of readdirSync(MIGRATIONS).filter((x) => x.endsWith(".sql"))) {
   const text = readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "");
-  for (const m of text.matchAll(/create table (?:if not exists )?(?:public\.)?(\w+)\s*\(([\s\S]*?)\n\);/gi)) {
-    for (const c of m[2].matchAll(/^\s*(\w+)\s+uuid\b[^\n,]*references\s+(?:public\.)?members\s*\(\s*id\s*\)/gim)) found.add(`${m[1]}.${c[1]}`);
+  // (A table written on one line counts too.)
+  for (const m of text.matchAll(/create table (?:if not exists )?(?:public\.)?(\w+)\s*\(([\s\S]*?)\)\s*;/gi)) {
+    for (const c of m[2].matchAll(/(?:^|[,(])\s*(\w+)\s+uuid\b[^\n,]*references\s+(?:public\.)?members\s*\(\s*id\s*\)/gim)) found.add(`${m[1]}.${c[1]}`);
   }
   for (const m of text.matchAll(/alter table (?:if exists )?(?:public\.)?(\w+)\s+add column (?:if not exists )?(\w+)\s+uuid\b[^;]*?references\s+(?:public\.)?members\s*\(\s*id\s*\)/gi)) found.add(`${m[1]}.${m[2]}`);
 }
@@ -231,12 +289,55 @@ check("both rows locked first", /perform 1 from members where id in \(p_keep, p_
 for (const [label, text] of Object.entries({ REFUSE_SAME, REFUSE_MISSING, REFUSE_ERASED, REFUSE_LOGINS, REFUSE_BILLING })) {
   check(`refuses with the preview's words: ${label}`, body.includes(`raise exception '${text.replace(/'/g, "''")}'`));
 }
-const sqlCarried = [...body.matchAll(/array_append\(v_carried, '(\w+)'\)/g)].map((m) => m[1]);
+const sqlCarried = [...new Set([...body.matchAll(/array_append\(v_carried, '(\w+)'\)/g)].map((m) => m[1]))];
 eq("carries over the same fields as the preview, in the same order", sqlCarried, Object.keys(CARRIED_LABEL));
-for (const col of MERGE_MEMBER_COLUMNS.split(",").map((c) => c.trim())) {
-  if (["id", "erased_at", "points", "last_activity_at", "created_at", "subscription_status"].includes(col)) continue;
-  check(`the kept account's ${col} is decided`, new RegExp(`\\b${col} = `).test(body.slice(body.indexOf("update members set"))));
+
+// Every column members has, from the migrations: the first create table,
+// then every "alter table members add column" (one statement can add
+// several). A column added later fails here until the merge decides it.
+const memberColumns = new Set();
+for (const f of readdirSync(MIGRATIONS).filter((x) => x.endsWith(".sql")).sort()) {
+  const text = readFileSync(join(MIGRATIONS, f), "utf8").replace(/--[^\n]*/g, "");
+  const created = text.match(/create table (?:if not exists )?(?:public\.)?members\s*\(([\s\S]*?)\n\);/i);
+  if (created) for (const c of created[1].matchAll(/^\s*(\w+)\s+\w+/gm)) memberColumns.add(c[1]);
+  for (const stmt of text.matchAll(/alter table (?:if exists )?(?:only )?(?:public\.)?members\s+([^;]*);/gi)) {
+    for (const c of stmt[1].matchAll(/add column (?:if not exists )?(\w+)/gi)) memberColumns.add(c[1]);
+  }
 }
+check("the members columns were found", memberColumns.has("name") && memberColumns.has("phone_digits") && memberColumns.size >= 40, `${memberColumns.size} columns`);
+// Not set by the post-delete update, on purpose.
+const NOT_SET = {
+  id: "the kept account's id",
+  phone_digits: "generated from phone",
+  erased_at: "the merge refuses an erased account",
+  erased_by: "the merge refuses an erased account",
+};
+const update = body.slice(body.indexOf("update members set"));
+for (const col of [...memberColumns].sort()) {
+  if (col in NOT_SET) continue;
+  check(`the kept account's ${col} is decided`, new RegExp(`\\b${col} = `).test(update));
+}
+// The preview reads every column too, or it's listed here with why it
+// doesn't need to (it goes with one it does read).
+const PREVIEW_SKIP = {
+  phone_digits: "the preview tests phone itself",
+  erased_by: "erased_at says it all",
+  billing_interval: "comes with Stripe billing",
+  price_tier_set_by: "comes with the rate",
+  price_tier_set_at: "comes with the rate",
+  community_program_id: "comes with the free membership",
+  comp_notes: "comes with the free membership",
+  comped_by: "comes with the free membership",
+  comped_at: "comes with the free membership",
+  legacy_plus: "either account's, like monthly_member",
+  tagline_hidden_by: "comes with tagline_hidden_at",
+  profile_hidden_by: "comes with profile_hidden_at",
+};
+const readCols = MERGE_MEMBER_COLUMNS.split(",").map((c) => c.trim());
+const unread = [...memberColumns].filter((c) => !readCols.includes(c) && !(c in PREVIEW_SKIP));
+check("the preview reads every members column (or says why not)", unread.length === 0, unread.join(", "));
+const unknown = readCols.filter((c) => !memberColumns.has(c));
+check("the preview reads only columns members has", unknown.length === 0, unknown.join(", "));
 
 check("security definer, search_path = public", /security definer\s+set search_path = public/.test(body));
 for (const fn of ["merge_members(uuid, uuid, uuid)", "member_duplicate_pairs(uuid)", "members_erase_merges()"]) {
@@ -246,7 +347,29 @@ check("merge_members and member_duplicate_pairs for the server", sql.includes("g
 check("the merge log has RLS on", /alter table member_merges enable row level security;/.test(sql));
 check("the merge log keeps no contact details", !/create table if not exists member_merges \([^;]*\b(email|phone)\b/.test(sql.replace(/--[^\n]*/g, "")));
 check("removing the kept account's personal info clears the dropped name", /update member_merges set dropped_name = null where keep_id = new\.id/.test(sql));
-check("placeholder phones are cleared, with a count", /update members set phone = null where phone is not null and phone_digits = '';/.test(sql) && /raise notice 'placeholder phones cleared: %'/.test(sql));
+const eraseFn = (() => {
+  const start = sql.indexOf("create or replace function public.members_erase_merges(");
+  return start >= 0 ? sql.slice(start, sql.indexOf("$$;", start)).replace(/\s+/g, " ") : "";
+})();
+check("...and the old-site records imported into it, merged-in ones too", /update legacy_accounts set email = null, username = null, first_name = null, last_name = null, phone = null, subscription_fortis_id = null, decision = 'skip'.*erased_at = now\(\) where erased_at is null and \(imported_member_id = new\.id/.test(eraseFn));
+for (const t of ["bookings", "booth_reservations", "events", "gift_memberships"]) {
+  check(`...and ${t} under a merged-in email`, new RegExp(`update ${t} set [^;]*where lower\\(btrim\\(\\w+\\)\\) in \\(select e\\.email from member_merge_emails e where e\\.keep_id = new\\.id\\)`).test(eraseFn));
+}
+check("...then forgets those emails", /delete from member_merge_emails where keep_id = new\.id/.test(eraseFn));
+check("merged-in emails are kept only when the kept account's email isn't the same", /if nullif\(btrim\(d\.email\), ''\) is not null and lower\(btrim\(d\.email\)\) is distinct from lower\(btrim\(v_email\)\) then/.test(body) && /insert into member_merge_emails \(keep_id, email\) values \(p_keep, lower\(btrim\(d\.email\)\)\)/.test(body));
+check("...and guest bookings under that email come over", /update bookings set member_id = p_keep where member_id is null and lower\(btrim\(customer_email\)\) = lower\(btrim\(d\.email\)\)/.test(body) && /update booth_reservations set member_id = p_keep where member_id is null and lower\(btrim\(customer_email\)\) = lower\(btrim\(d\.email\)\)/.test(body));
+check("the merged-in emails table has RLS on", /alter table member_merge_emails enable row level security;/.test(sql));
+check("the duplicate's own link is held for the member when it doesn't come over", /if d\.profile_handle is not null and v_handle is distinct from d\.profile_handle then\s+insert into member_retired_handles \(handle, member_id, retired_at\)\s+values \(d\.profile_handle, p_keep, now\(\)\)/.test(body));
+check("the profile link comes over with its page, on/off and name", /v_handle := d\.profile_handle;/.test(body) && /v_share := d\.share_profile;/.test(body) && /profile_handle = v_handle/.test(update));
+check("a hidden profile line stays hidden", /tagline_hidden_at = v_line_hidden_at/.test(update) && /tagline_hidden_by = v_line_hidden_by/.test(update) && /if k\.tagline_hidden_at is null and d\.tagline_hidden_at is not null then/.test(body));
+check("a page staff turned off stays off", /profile_hidden_at = v_page_hidden_at/.test(update) && /if v_page_hidden_at is not null then\s+v_share := false;/.test(body));
+check("gift time left on both adds up", /v_gift := greatest\(k\.plus_gift_until, d\.plus_gift_until\) \+ \(least\(k\.plus_gift_until, d\.plus_gift_until\) - now\(\)\);/.test(body));
+check(
+  "only placeholder-shaped phones are cleared, with counts",
+  /update members set phone = null\s+where phone is not null and phone_digits = '' and btrim\(phone\) ~\* '\^\(\[-\.\/x\[:space:\]\]\*\|n\/\?a\|none\)\$';/.test(sql) &&
+    /raise notice 'placeholder phones cleared: %'/.test(sql) &&
+    /raise notice 'phones with no digits left for staff: %'/.test(sql),
+);
 check("the finder's phone test is the preview's usablePhone", sql.includes("right(phone_digits, 10) ~ '^[2-9][0-9]{9}$'") && body.includes("right(coalesce(k.phone_digits, ''), 10) ~ '^[2-9][0-9]{9}$'"));
 check("the finder pairs names of two words or more", /a\.nm ~ ' '/.test(sql));
 
@@ -267,6 +390,12 @@ const writers = allSrc.filter((f) => /from\("member_merges"\)\s*\.(insert|update
 check("only the database writes the merge log", writers.length === 0, writers.join(", "));
 const forward = src("lib/member-forward.ts");
 check("a merged id on an open sale follows to the kept account", /from\("member_merges"\)\.select\("keep_id"\)\.eq\("dropped_id", id\)/.test(forward) && /currentMemberId\(params\.memberId\)/.test(src("app/pos/actions.ts")));
+check("the register links only owners/admins to the review", /href: hasAdminAccess\(staff\.role\) \? mergeHref\(/.test(src("app/pos/checkin-actions.ts")));
+check("after a merge, the duplicate's other photo files go", /removeMemberPhotos\(\[dropId\], \{ extra: \[memberPhotoPath\(before\?\.avatar_url\)\], keep: memberPhotoPath\(kept\.avatar_url\) \}\)/.test(actions));
+const erase = src("lib/member-erase.ts");
+check("erasing removes photos named after merged-in accounts too", /from\("member_merges"\)\.select\("dropped_id"\)\.eq\("keep_id", memberId\)/.test(erase) && /removeMemberPhotos\(ids, \{ extra: \[memberPhotoPath\(m\.avatar_url\)\] \}\)/.test(erase));
+check("the merge page reloads after a merge", /if \(r\.ok\) router\.refresh\(\);/.test(src("app/admin/members/[id]/merge/MergeConfirm.tsx")));
+check("a preview count that fails isn't read as zero", !/error \? 0/.test(src("lib/data/member-merge.ts")) && /if \(error\) throw error;/.test(src("lib/data/member-merge.ts")));
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nAll member-merge checks passed.");
 process.exit(failures ? 1 : 0);

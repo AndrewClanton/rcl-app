@@ -98,7 +98,7 @@ export default function RegisterCheckins({
   // Someone the tablet just made an account for who's probably an older
   // member it couldn't find by phone: a quiet line with a Back office link.
   // Nothing is merged from the register.
-  const [dupHint, setDupHint] = useState<{ name: string; href: string } | null>(null);
+  const [dupHint, setDupHint] = useState<{ name: string; href: string | null } | null>(null);
   const [printing, setPrinting] = useState(false);
   const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
@@ -382,11 +382,18 @@ export default function RegisterCheckins({
           {dupHint && (
             <div className="flex w-full items-start gap-2 rounded-lg border bg-[var(--surface)] p-2 text-xs shadow-lg" style={{ borderColor: "var(--border)" }}>
               <span className="min-w-0 flex-1" style={{ color: "var(--muted)" }}>
-                <strong style={{ color: "var(--foreground)" }}>{dupHint.name}</strong> · Possibly the same person as an older account:{" "}
-                {/* A new tab, so the register (and its open sale) stays put. */}
-                <a href={dupHint.href} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "var(--foreground)" }}>
-                  review in Back office
-                </a>
+                <strong style={{ color: "var(--foreground)" }}>{dupHint.name}</strong> · Possibly the same person as an older account
+                {dupHint.href ? (
+                  <>
+                    :{" "}
+                    {/* A new tab, so the register (and its open sale) stays put. */}
+                    <a href={dupHint.href} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "var(--foreground)" }}>
+                      review in Back office
+                    </a>
+                  </>
+                ) : (
+                  "; let an owner or admin know."
+                )}
               </span>
               <button className="shrink-0 px-1 text-base leading-none" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={() => setDupHint(null)}>
                 ×

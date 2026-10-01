@@ -8,18 +8,27 @@
 --
 --   merge_members(keep, drop, staff)  in one transaction: moves everything
 --     the duplicate has (visits, points history, badges, rewards, orders,
---     tickets, booths, gifts, payments, the old-site record) onto the kept
---     account, carries over whatever the kept account lacks (a usable
---     phone, email, login, Stripe billing, birthday, photo...), logs it in
---     member_merges and deletes the duplicate. The rules are the same as
---     src/lib/member-merge.ts, which shows staff the preview first; change
---     one, change the other (scripts/check-member-merge.mjs checks both).
+--     tickets, booths, gifts, payments, the old-site record, held profile
+--     links) onto the kept account, carries over whatever the kept account
+--     lacks (a usable phone, email, login, Stripe billing, birthday, photo,
+--     profile page, flair...), logs it in member_merges and deletes the
+--     duplicate. Staff's hides on a profile line or page stay in place, and
+--     a profile link that doesn't survive is held for the member for 90
+--     days like any other given-up link (member_retired_handles). The rules
+--     are the same as src/lib/member-merge.ts, which shows staff the
+--     preview first; change one, change the other
+--     (scripts/check-member-merge.mjs checks both).
 --   member_duplicate_pairs([member])  pairs of accounts that may be the
 --     same person, for Back office → Members → Possible duplicates and the
 --     register's gentle hint after a check-in.
 --
--- Also clears the old site's placeholder phones (a phone with no digits
--- in it, like "-"), so they read as "no phone on file".
+-- Removing the kept account's personal info later (erase_member_personal_
+-- info) also reaches what the merged-in account left behind: its old-site
+-- record, and anything booked under an email the merge didn't keep
+-- (member_merge_emails, below).
+--
+-- Also clears the old site's placeholder phones ("-", "n/a" and the like),
+-- so they read as "no phone on file".
 --
 -- Server-only, like the rest: RLS on, no client policies, functions for
 -- service_role only. Safe to run more than once.
@@ -52,8 +61,25 @@ create unique index if not exists member_merges_dropped_idx on member_merges (dr
 create index if not exists member_merges_keep_idx on member_merges (keep_id);
 alter table member_merges enable row level security;
 
+-- The merged-in account's email, when the kept account kept its own: the
+-- erase finds a person's private events, gifts they bought and guest
+-- bookings by their email, and the merged-in email would otherwise be
+-- forgotten with that account. Only the erase trigger below reads it, and
+-- it clears the rows. Server-only, like the rest.
+create table if not exists member_merge_emails (
+  keep_id uuid not null references members(id) on delete cascade,
+  email text not null, -- lowercase, trimmed
+  merged_at timestamptz not null default now(),
+  primary key (keep_id, email)
+);
+alter table member_merge_emails enable row level security;
+
 -- Removing the kept account's personal info (erase_member_personal_info)
--- clears the dropped account's name in the log too.
+-- also reaches what merged-in accounts left: the dropped name in the log,
+-- old-site records imported into this account (the erase itself matches
+-- only the account's own old-site id and email), and anything under an
+-- email the merge didn't keep, cleared the way the erase clears the
+-- person's own. Runs inside the erase's transaction.
 create or replace function public.members_erase_merges()
 returns trigger
 language plpgsql
@@ -62,6 +88,25 @@ set search_path = public
 as $$
 begin
   update member_merges set dropped_name = null where keep_id = new.id and dropped_name is not null;
+
+  update legacy_accounts
+     set email = null, username = null, first_name = null, last_name = null, phone = null,
+         subscription_fortis_id = null, decision = 'skip', decided_by = new.erased_by, decided_at = now(), erased_at = now()
+   where erased_at is null
+     and (imported_member_id = new.id
+          or lower(btrim(email)) in (select e.email from member_merge_emails e where e.keep_id = new.id));
+
+  if exists (select 1 from member_merge_emails where keep_id = new.id) then
+    update bookings set customer_name = null, customer_email = null
+     where lower(btrim(customer_email)) in (select e.email from member_merge_emails e where e.keep_id = new.id);
+    update booth_reservations set customer_name = 'Removed member', customer_email = '', customer_phone = null
+     where lower(btrim(customer_email)) in (select e.email from member_merge_emails e where e.keep_id = new.id);
+    update events set organizer_name = null, organizer_email = '', event_name = 'Private event'
+     where lower(btrim(organizer_email)) in (select e.email from member_merge_emails e where e.keep_id = new.id);
+    update gift_memberships set buyer_name = 'Removed member', buyer_email = '', message = null
+     where lower(btrim(buyer_email)) in (select e.email from member_merge_emails e where e.keep_id = new.id);
+    delete from member_merge_emails where keep_id = new.id;
+  end if;
   return null;
 end;
 $$;
@@ -116,6 +161,17 @@ declare
   v_tier text;
   v_opt_in boolean;
   v_opt_in_at timestamptz;
+  v_line_hidden_at timestamptz;
+  v_line_hidden_by uuid;
+  v_share boolean;
+  v_handle text;
+  v_display text;
+  v_page_hidden_at timestamptz;
+  v_page_hidden_by uuid;
+  v_flair_color text;
+  v_flair_effect text;
+  v_flair_sticker text;
+  v_party boolean;
   v_points numeric;
   v_visits int;
 begin
@@ -209,6 +265,60 @@ begin
   if k.tagline is null and d.tagline is not null then
     v_carried := array_append(v_carried, 'tagline');
   end if;
+  -- Staff hiding the profile line is about the person, not one wording (it
+  -- holds even after they edit the line), so hidden on either account, the
+  -- line stays hidden until staff show it again.
+  v_line_hidden_at := k.tagline_hidden_at;
+  v_line_hidden_by := k.tagline_hidden_by;
+  if k.tagline_hidden_at is null and d.tagline_hidden_at is not null then
+    v_line_hidden_at := d.tagline_hidden_at;
+    v_line_hidden_by := d.tagline_hidden_by;
+    v_carried := array_append(v_carried, 'line_hidden');
+  end if;
+
+  -- The shared profile page: its link, whether it's on, and its name come
+  -- over together, onto an account with no link of its own. Otherwise the
+  -- kept account's link stays and the other is held for this member (below).
+  v_share := k.share_profile;
+  v_handle := k.profile_handle;
+  v_display := k.display_name;
+  if k.profile_handle is null and d.profile_handle is not null then
+    v_share := d.share_profile;
+    v_handle := d.profile_handle;
+    v_display := coalesce(d.display_name, k.display_name);
+    v_carried := array_append(v_carried, 'profile_page');
+  elsif k.display_name is null and d.display_name is not null then
+    v_display := d.display_name;
+    v_carried := array_append(v_carried, 'display_name');
+  end if;
+  -- Staff turning a shared page off stays in place the same way, with the
+  -- page off (as when staff turn it off).
+  v_page_hidden_at := k.profile_hidden_at;
+  v_page_hidden_by := k.profile_hidden_by;
+  if k.profile_hidden_at is null and d.profile_hidden_at is not null then
+    v_page_hidden_at := d.profile_hidden_at;
+    v_page_hidden_by := d.profile_hidden_by;
+    v_carried := array_append(v_carried, 'page_hidden');
+  end if;
+  if v_page_hidden_at is not null then
+    v_share := false;
+  end if;
+
+  -- Check-in flair (color, entrance, sticker) comes over as a set, onto an
+  -- account with none. A birthday-week party turned off on either stays off.
+  v_flair_color := k.flair_color;
+  v_flair_effect := k.flair_effect;
+  v_flair_sticker := k.flair_sticker;
+  if coalesce(k.flair_color, k.flair_effect, k.flair_sticker) is null and coalesce(d.flair_color, d.flair_effect, d.flair_sticker) is not null then
+    v_flair_color := d.flair_color;
+    v_flair_effect := d.flair_effect;
+    v_flair_sticker := d.flair_sticker;
+    v_carried := array_append(v_carried, 'flair');
+  end if;
+  v_party := k.birthday_party and d.birthday_party;
+  if k.birthday_party and not d.birthday_party then
+    v_carried := array_append(v_carried, 'party_off');
+  end if;
 
   v_comped := k.comped;
   v_program := k.community_program_id;
@@ -224,8 +334,13 @@ begin
     v_carried := array_append(v_carried, 'free_membership');
   end if;
 
+  -- Gifted Insiders+ time: gifts on one account stack (each starts where
+  -- the last ends), so time left on both adds up. Otherwise the later end.
   v_gift := k.plus_gift_until;
-  if d.plus_gift_until is not null and (k.plus_gift_until is null or d.plus_gift_until > k.plus_gift_until) then
+  if k.plus_gift_until > now() and d.plus_gift_until > now() then
+    v_gift := greatest(k.plus_gift_until, d.plus_gift_until) + (least(k.plus_gift_until, d.plus_gift_until) - now());
+    v_carried := array_append(v_carried, 'gift');
+  elsif d.plus_gift_until is not null and (k.plus_gift_until is null or d.plus_gift_until > k.plus_gift_until) then
     v_gift := d.plus_gift_until;
     v_carried := array_append(v_carried, 'gift');
   end if;
@@ -317,6 +432,21 @@ begin
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('booths', n);
 
+  -- The duplicate's email, when the kept account keeps its own: tickets
+  -- and booths booked as a guest under it become this member's, and the
+  -- email is kept (server-only) so removing this member's personal info
+  -- later still finds what else was booked under it (events, gifts bought).
+  n := 0;
+  n2 := 0;
+  if nullif(btrim(d.email), '') is not null and lower(btrim(d.email)) is distinct from lower(btrim(v_email)) then
+    update bookings set member_id = p_keep where member_id is null and lower(btrim(customer_email)) = lower(btrim(d.email));
+    get diagnostics n = row_count;
+    update booth_reservations set member_id = p_keep where member_id is null and lower(btrim(customer_email)) = lower(btrim(d.email));
+    get diagnostics n2 = row_count;
+    insert into member_merge_emails (keep_id, email) values (p_keep, lower(btrim(d.email))) on conflict do nothing;
+  end if;
+  v_moved := v_moved || jsonb_build_object('guest_tickets', n, 'guest_booths', n2);
+
   update gift_memberships set recipient_member_id = p_keep where recipient_member_id = p_drop;
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('gifts', n);
@@ -348,6 +478,22 @@ begin
   update member_merges set keep_id = p_keep where keep_id = p_drop;
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('earlier_merges', n);
+  update member_merge_emails set keep_id = p_keep where keep_id = p_drop;
+
+  -- Profile links the duplicate gave up stay held for this person, and its
+  -- current link, when the kept account keeps its own, is held too:
+  -- deleting the duplicate would otherwise free it at once, and someone
+  -- else could take over a link the member already shared.
+  update member_retired_handles set member_id = p_keep where member_id = p_drop;
+  get diagnostics n = row_count;
+  n2 := 0;
+  if d.profile_handle is not null and v_handle is distinct from d.profile_handle then
+    insert into member_retired_handles (handle, member_id, retired_at)
+    values (d.profile_handle, p_keep, now())
+    on conflict (handle) do update set member_id = excluded.member_id, retired_at = excluded.retired_at;
+    n2 := 1;
+  end if;
+  v_moved := v_moved || jsonb_build_object('held_links', n + n2);
 
   -- Anything else still pointing at the duplicate (a table added after
   -- this was written) stops the merge, rather than being deleted with it
@@ -368,8 +514,8 @@ begin
   insert into member_merges (keep_id, dropped_id, dropped_name, dropped_tier, dropped_created_at, dropped_points, moved, carried, merged_by)
   values (p_keep, p_drop, d.name, d.tier, d.created_at, d.points, v_moved, v_carried, p_staff);
 
-  -- Gone before the kept account takes its email, login, Stripe ids and
-  -- old-site link, which are one account each.
+  -- Gone before the kept account takes its email, login, Stripe ids,
+  -- old-site link and profile link, which are one account each.
   delete from members where id = p_drop;
 
   update members set
@@ -389,6 +535,17 @@ begin
     birthday = coalesce(k.birthday, d.birthday),
     avatar_url = coalesce(k.avatar_url, d.avatar_url),
     tagline = coalesce(k.tagline, d.tagline),
+    tagline_hidden_at = v_line_hidden_at,
+    tagline_hidden_by = v_line_hidden_by,
+    share_profile = v_share,
+    profile_handle = v_handle,
+    display_name = v_display,
+    profile_hidden_at = v_page_hidden_at,
+    profile_hidden_by = v_page_hidden_by,
+    flair_color = v_flair_color,
+    flair_effect = v_flair_effect,
+    flair_sticker = v_flair_sticker,
+    birthday_party = v_party,
     comped = v_comped,
     community_program_id = v_program,
     comp_notes = v_comp_notes,
@@ -484,13 +641,18 @@ grant execute on function public.merge_members(uuid, uuid, uuid) to service_role
 grant execute on function public.member_duplicate_pairs(uuid) to service_role;
 
 -- ---------- the old site's placeholder phones ----------
--- "-" and the like (a phone with no digits at all) read as a phone on
--- file; they're nothing. Junk with digits in it is left for staff.
+-- "-", "n/a", "none" and the like read as a phone on file; they're
+-- nothing. Only those shapes: anything else with no digits (something
+-- typed into the wrong box) and junk with digits in it are left for
+-- staff, with a count.
 do $$
 declare
   n int;
 begin
-  update members set phone = null where phone is not null and phone_digits = '';
+  update members set phone = null
+   where phone is not null and phone_digits = '' and btrim(phone) ~* '^([-./x[:space:]]*|n/?a|none)$';
   get diagnostics n = row_count;
   raise notice 'placeholder phones cleared: %', n;
+  select count(*) into n from members where phone is not null and phone_digits = '';
+  raise notice 'phones with no digits left for staff: %', n;
 end $$;

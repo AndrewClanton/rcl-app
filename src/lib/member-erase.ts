@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
+import { memberPhotoPath, removeMemberPhotos } from "@/lib/member-photos";
 
 // Removing a member's personal info on request, as promised on /data-deletion.
 //
@@ -17,7 +18,9 @@ import { getStripe } from "@/lib/stripe";
 //      logs the removal with the day they asked (for the 30-day promise).
 //   4. Bar-tab cards: blank the name on the Stripe customers behind any
 //      card they kept on a tab ("Tab: Sarah").
-//   5. Photos: delete their uploaded photo files.
+//   5. Photos: delete their uploaded photo files, including any named
+//      after an account merged into theirs (member_merges), and the one
+//      their record points at.
 // Steps 1 and 2 come first because once step 3 clears the member row, it
 // no longer records which Stripe customer or login was theirs. Steps 4 and
 // 5 aren't fatal: the member no longer points at those, so a failure is a
@@ -76,7 +79,7 @@ export async function eraseMember(memberId: string, byEmployeeId: string, reques
   const admin = createAdminClient();
   const { data: m, error } = await admin
     .from("members")
-    .select("id, auth_user_id, stripe_customer_id, erased_at")
+    .select("id, auth_user_id, stripe_customer_id, erased_at, avatar_url")
     .eq("id", memberId)
     .maybeSingle();
   if (error || !m) return { ok: false, error: "Couldn't find that member." };
@@ -141,16 +144,15 @@ export async function eraseMember(memberId: string, byEmployeeId: string, reques
     }
   }
 
-  // 5. Photos
-  let photos = 0;
-  const bucket = admin.storage.from("member-avatars");
-  const { data: files } = await bucket.list("", { search: memberId, limit: 100 });
-  const names = (files ?? []).map((f) => f.name).filter((name) => name.startsWith(memberId));
-  if (names.length) {
-    const { error: rmErr } = await bucket.remove(names);
-    if (rmErr) warnings.push("Their photo files couldn't be deleted from storage. Ask Claude to clean them up.");
-    else photos = names.length;
-  }
+  // 5. Photos. Files are named after the account that uploaded them, so a
+  // photo that came over in a merge is still named after the merged-in
+  // account (its id is in member_merges, which outlives this). Before the
+  // merge log exists, there are none of those.
+  const { data: merges } = await admin.from("member_merges").select("dropped_id").eq("keep_id", memberId);
+  const ids = [memberId, ...(merges ?? []).map((r) => String(r.dropped_id))];
+  const photoResult = await removeMemberPhotos(ids, { extra: [memberPhotoPath(m.avatar_url)] }).catch(() => ({ removed: 0, ok: false }));
+  if (!photoResult.ok) warnings.push("Their photo files couldn't be deleted from storage. Ask Claude to clean them up.");
+  const photos = photoResult.removed;
 
   return {
     ok: true,

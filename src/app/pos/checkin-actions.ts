@@ -1,6 +1,6 @@
 "use server";
 
-import { assertStaff } from "@/lib/auth";
+import { assertStaff, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
 import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
@@ -179,13 +179,15 @@ export async function confirmVisit(cardMemberId: string): Promise<VisitConfirm> 
 
 // After a check-in: an account the tablet made lately that's probably a
 // second account for an older member with the same name and no usable
-// phone (lib/data/member-merge.ts). The register only shows a line with a
-// link to review it in Back office; nothing is merged from here. Null
-// almost always, and whenever it can't tell.
-export async function getDuplicateHint(memberId: string): Promise<{ href: string } | null> {
-  await assertStaff();
+// phone (lib/data/member-merge.ts). The register only shows a line, with a
+// link to review it in Back office for an owner or admin (the merge page
+// is theirs; anyone else gets the line without the link). Nothing is
+// merged from here. Null almost always, and whenever it can't tell.
+export async function getDuplicateHint(memberId: string): Promise<{ href: string | null } | null> {
+  const staff = await assertStaff();
   const hit = await tabletDuplicateOf(memberId);
-  return hit ? { href: mergeHref(hit.olderId, memberId) } : null;
+  if (!hit) return null;
+  return { href: hasAdminAccess(staff.role) ? mergeHref(hit.olderId, memberId) : null };
 }
 
 export interface HereToday {
