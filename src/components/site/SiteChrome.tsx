@@ -98,6 +98,10 @@ export default function SiteChrome({ children }: { children: React.ReactNode }) 
                   <Link href="/data-deletion" className="hover:text-[var(--accent)]">
                     Deleting your data
                   </Link>
+                  {" · "}
+                  <Link href="/terms" className="hover:text-[var(--accent)]">
+                    Terms of service
+                  </Link>
                 </div>
               )}
             </div>
