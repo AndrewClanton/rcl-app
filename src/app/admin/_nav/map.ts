@@ -96,6 +96,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       min: "admin",
     },
     {
+      href: "/admin/email",
+      label: "Email",
+      about: "Member emails: the weekly lineup, campaigns, automations and results.",
+      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders",
+      min: "manager",
+    },
+    {
       href: "/admin/members/old-site",
       label: "Old site members",
       about: "Check accounts from the old website before they're copied in.",

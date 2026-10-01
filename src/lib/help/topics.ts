@@ -274,6 +274,13 @@ export const HELP_TOPICS = {
       "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
+  "points-history": {
+    title: "Changing a member's points",
+    area: "Members and memberships",
+    body:
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, use Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
   "gift-membership": {
     title: "Gifting a year of Insiders+",
     area: "Members and memberships",
