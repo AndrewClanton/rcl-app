@@ -2,6 +2,8 @@ import Link from "next/link";
 import type { PeriodReport } from "@/lib/data/period-report";
 import type { TipWeek } from "@/lib/data/day-drill";
 import { datesIn, rangeLabel, shortDate, weekday } from "@/lib/report-periods";
+import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
+import MembershipsCard from "./MembershipsCard";
 import { BarList, Card, Columns, Delta, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
 // Reports -> Week and Month: the same screen for either. Every figure has
@@ -19,7 +21,19 @@ function dayHref(date: string) {
   return `/admin/reports?date=${date}`;
 }
 
-export default function PeriodView({ report, noun, boxOfficeHref, tips }: { report: PeriodReport; noun: "week" | "month"; boxOfficeHref: string; tips?: TipWeek }) {
+export default function PeriodView({
+  report,
+  noun,
+  boxOfficeHref,
+  tips,
+  sync,
+}: {
+  report: PeriodReport;
+  noun: "week" | "month";
+  boxOfficeHref: string;
+  tips?: TipWeek;
+  sync: PaymentSyncStatus; // when member payments were last read from Stripe
+}) {
   const s = report.sales;
   const b = report.previous.sales;
   const m = report.members;
@@ -49,7 +63,7 @@ export default function PeriodView({ report, noun, boxOfficeHref, tips }: { repo
         <Stat hero className="col-span-2" label="Net sales" value={money(s.netSales)} now={s.netSales} before={b.netSales} beforeText={vs(b.netSales)} sub="after discounts and refunds, before tax and tips" />
         <Stat label="Orders" value={num(s.orderCount)} now={s.orderCount} before={b.orderCount} beforeText={vs(b.orderCount, num)} />
         <Stat label="Average order" value={s.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} beforeText={avgBefore !== null ? vs(avgBefore) : undefined} />
-        <Stat label="Collected" value={money(s.collected)} now={s.collected} before={b.collected} sub="with tax and tips" />
+        <Stat label="Collected" value={money(s.collected)} now={s.collected} before={b.collected} sub="with tax and tips, memberships included" />
         <Stat label="Tips" value={money(s.tips)} now={s.tips} before={b.tips} />
         <Stat label="Sales tax" value={money(s.tax)} now={s.tax} before={b.tax} />
         <Stat label="Tickets sold" value={num(s.ticketsSold)} now={s.ticketsSold} before={b.ticketsSold} sub={s.tickets.free ? `${num(s.tickets.free)} free` : undefined} />
@@ -101,26 +115,32 @@ export default function PeriodView({ report, noun, boxOfficeHref, tips }: { repo
           )}
         </Card>
 
-        <Card title="Money in" subtitle="How it was paid, with tax and tips.">
+        <Card title="Money in" subtitle="How it was paid, with tax and tips. Memberships are charged by Stripe, never at the register, so each dollar is in one line only.">
           <SplitBar
             parts={[
               { label: "Card", value: s.card },
               { label: "Cash", value: s.cash },
               { label: "Online", value: s.online },
+              { label: "Memberships", value: s.memberships.collected },
               { label: "Vouchers", value: s.vouchers },
             ]}
           />
           <div className="mt-4">
             <Rows
               rows={[
-                { label: "Collected", value: money(s.collected), strong: true },
-                { label: "Tips", value: money(s.tips) },
-                { label: "Sales tax", value: money(s.tax) },
-                ...(s.vouchers > 0 ? [{ label: "Vouchers used (no money in)", value: money(s.vouchers), muted: true }] : []),
+                { key: "reg", label: "Register (card and cash)", value: money(s.card + s.cash) },
+                { key: "web", label: "Online (tickets, booths, web orders)", value: money(s.online) },
+                { key: "mem", label: "Insiders+ memberships (Stripe billing)", value: money(s.memberships.collected) },
+                { key: "total", label: "Collected", value: money(s.collected), strong: true },
+                { key: "tips", label: "Of it, tips", value: money(s.tips), muted: true },
+                { key: "tax", label: "Of it, sales tax", value: money(s.tax), muted: true },
+                ...(s.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in)", value: money(s.vouchers), muted: true }] : []),
               ]}
             />
           </div>
         </Card>
+
+        <MembershipsCard m={s.memberships} before={b.memberships} prevName={prevName} ended={report.plusEnded} endedBefore={report.previous.plusEnded} sync={sync} />
 
         {tips && <TipsCard tips={tips} noun={noun} />}
 

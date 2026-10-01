@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
-import { requireStaff } from "@/lib/auth";
+import { hasAdminAccess, requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
@@ -31,7 +31,8 @@ export const viewport: Viewport = {
 };
 
 export default async function PosPage() {
-  const session = await requireStaff();
+  // Signing in again comes back here, not to the back office.
+  const session = await requireStaff("/pos");
 
   const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
@@ -42,8 +43,8 @@ export default async function PosPage() {
     getRegisterScreenings(),
   ]);
 
-  // Tickets/events aren't ready for POS ordering yet (event booking flow,
-  // per-showtime ticket linkage) -- hide that category here for now.
+  // Tickets are sold from the Movies tab (per showing, with seats counted),
+  // so the menu's tickets category stays off the register's item buttons.
   // Items a manager hid ("Hide from register" on the Menu page) stay off.
   const orderableCategories = withoutHiddenItems(categories).filter((c) => c.key !== "tickets");
 
@@ -77,6 +78,8 @@ export default async function PosPage() {
           defaultReaderId={defaultReaderId()}
           initialScreenings={showings.ok ? showings.screenings : []}
           registerTopic={registerTopic()}
+          // Dev note only while an admin is signed in (submitting checks again).
+          canNote={hasAdminAccess(session.role)}
         />
       </ItemSettingsProvider>
     </div>

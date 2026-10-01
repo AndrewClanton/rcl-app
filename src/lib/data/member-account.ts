@@ -414,6 +414,9 @@ export async function getPointsLedger(memberId: string, limit = 300): Promise<Le
     .select("id, delta, balance_after, reason, note, created_at, order_id, booking_id")
     .eq("member_id", memberId)
     .order("created_at", { ascending: false })
+    // A check-in and its badges share one moment; the bigger balance came
+    // after (they only add).
+    .order("balance_after", { ascending: false })
     .limit(limit);
   if (error) throw error;
   return (data ?? []).map((l) => ({
@@ -440,7 +443,7 @@ export interface YearStatement {
 }
 
 // Points history reasons that count as earned on a statement.
-const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge"];
+const EARNED_REASONS = ["purchase", "welcome_bonus", "visit", "badge", "backfill"];
 
 export async function getYearStatement(memberId: string, year: number): Promise<YearStatement> {
   const [purchases, ledger] = await Promise.all([getPurchases(memberId), getPointsLedger(memberId, 5000)]);

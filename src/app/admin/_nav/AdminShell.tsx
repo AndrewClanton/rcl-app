@@ -14,6 +14,7 @@ import { FIND_EVENT } from "./FindButton";
 import { RAIL_COOKIE } from "./prefs";
 import { recordVisit } from "./visits";
 import { ChevronIcon, CloseIcon, HomeIcon, MenuIcon, RegisterIcon, SearchIcon, SidebarIcon } from "./icons";
+import DevNoteDialog, { NoteIcon } from "@/components/dev-notes/DevNoteDialog";
 
 // The back office's frame: a sidebar on an iPad or computer, a Menu button
 // and drawer on a phone, and Find anything on top of both. The pages go in
@@ -89,20 +90,33 @@ export default function AdminShell({
   nav,
   badges,
   me,
+  canNote = false,
   initialRail = false,
+  version = null,
   children,
 }: {
   nav: BackOfficeNav;
   badges: NavBadges;
   me: { id: string; name: string; role: string };
+  // An admin: "Leave a dev note" is on the menu (the action checks again).
+  canNote?: boolean;
   initialRail?: boolean;
+  version?: string | null; // owners only: "v1.0 · build 7f3a2c1 · Oct 1, 12:40 PM"
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const search = useSearchParams();
   const [drawer, setDrawer] = useState(false);
   const [finding, setFinding] = useState(false);
+  const [noting, setNoting] = useState(false);
   const [rail, setRailState] = useState(initialRail);
+  // Opened from the menu; the phone's drawer closes so the note has the screen.
+  const onNote = canNote
+    ? () => {
+        setDrawer(false);
+        setNoting(true);
+      }
+    : undefined;
 
   const allLinks = [nav.home, ...nav.groups.flatMap((g) => g.links), ...nav.you];
   const active = activeHref(
@@ -158,12 +172,14 @@ export default function AdminShell({
       nav={nav}
       badges={badges}
       me={me}
+      version={version}
       active={active}
       activeArea={hereArea}
       onFind={() => {
         setDrawer(false);
         setFinding(true);
       }}
+      onNote={onNote}
       onNavigate={inDrawer ? () => setDrawer(false) : undefined}
       onHide={inDrawer ? undefined : () => setRail(true)}
       onPin={inDrawer && rail ? () => setRail(false) : undefined}
@@ -219,6 +235,7 @@ export default function AdminShell({
             drawerOpen={drawer}
             onMenu={() => setDrawer(true)}
             onFind={() => setFinding(true)}
+            onNote={onNote}
           />
         ) : (
           menu(false)
@@ -239,6 +256,7 @@ export default function AdminShell({
       </main>
 
       {finding && <FindAnything entries={nav.find} badges={badges} onClose={() => setFinding(false)} />}
+      {noting && <DevNoteDialog onClose={() => setNoting(false)} />}
     </div>
   );
 }
@@ -294,6 +312,7 @@ function Rail({
   drawerOpen,
   onMenu,
   onFind,
+  onNote,
 }: {
   nav: BackOfficeNav;
   badges: NavBadges;
@@ -303,6 +322,7 @@ function Rail({
   drawerOpen: boolean;
   onMenu: () => void;
   onFind: () => void;
+  onNote?: () => void;
 }) {
   const item =
     "relative flex min-h-14 w-full flex-col items-center justify-center gap-0.5 rounded-lg px-1 text-[11px] font-semibold leading-tight text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)]";
@@ -344,6 +364,12 @@ function Rail({
           </>
         )}
       </Link>
+      {onNote && (
+        <button type="button" onClick={onNote} title="Leave a dev note about this page" className={item}>
+          <NoteIcon size={20} />
+          Dev note
+        </button>
+      )}
       <div className="flex-1" />
       <Link
         href={ACCOUNT_HREF}
@@ -362,9 +388,11 @@ function SideNav({
   nav,
   badges,
   me,
+  version,
   active,
   activeArea,
   onFind,
+  onNote,
   onNavigate,
   onHide,
   onPin,
@@ -372,9 +400,11 @@ function SideNav({
   nav: BackOfficeNav;
   badges: NavBadges;
   me: { name: string; role: string };
+  version: string | null;
   active: string | null;
   activeArea: AreaKey | null;
   onFind: () => void;
+  onNote?: () => void; // admins: leave a dev note about this page
   onNavigate?: () => void;
   onHide?: () => void; // the pinned sidebar: fold it down to the slim strip
   onPin?: () => void; // the menu opened from the slim strip: keep it open
@@ -441,6 +471,14 @@ function SideNav({
           {/* On the red button a plain count reads best in white. */}
           <Badge badge={badges.tabs} className={badges.tabs?.tone === "count" ? "!bg-white !text-[var(--foreground)]" : ""} />
         </Link>
+        {/* Admins: a note about the page you're on, for Setup → Dev notes.
+            It used to float over the bottom corner of every page. */}
+        {onNote && (
+          <button type="button" onClick={onNote} className="bo-link w-full text-[var(--muted)] hover:text-[var(--foreground)]">
+            <NoteIcon size={16} />
+            Leave a dev note
+          </button>
+        )}
       </div>
 
       <nav ref={list} aria-label="Back office" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
@@ -500,6 +538,11 @@ function SideNav({
             <ChevronIcon open={!youOpen} />
           </button>
         </div>
+        {version && (
+          <div className="mt-1 truncate px-2 font-mono text-[10.5px] text-[var(--muted)]" title={`This build: ${version}`}>
+            {version}
+          </div>
+        )}
       </div>
     </div>
   );

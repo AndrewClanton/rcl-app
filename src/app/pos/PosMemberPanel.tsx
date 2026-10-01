@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
 import MemberAvatar from "@/components/MemberAvatar";
 import InfoTip from "@/components/help/InfoTip";
-import MemberFinder from "./MemberFinder";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
@@ -42,12 +41,18 @@ export default function PosMemberPanel({
   onChange,
   employeeId,
   onRewardLine,
+  onFind,
+  waiting,
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
   employeeId: string;
   // Puts a redeemed badge reward on the order as a $0 line.
   onRewardLine: (label: string) => void;
+  // "Find by photo": opens the Customers tab beside the menu, at its faces.
+  onFind: () => void;
+  // Check-ins from the customer screen waiting on the Customers tab.
+  waiting: number;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosMember[]>([]);
@@ -57,7 +62,6 @@ export default function PosMemberPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [finderOpen, setFinderOpen] = useState(false);
   const latest = useRef(0);
 
   useEffect(() => {
@@ -198,8 +202,15 @@ export default function PosMemberPanel({
       ) : (
         <>
           <div className="mb-2 flex items-center">
-            <button type="button" className="btn-secondary min-w-0 flex-1 !py-2 text-sm" onClick={() => setFinderOpen(true)}>
+            <button type="button" className="btn-secondary flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 !py-2 text-sm" onClick={onFind}>
               Find by photo
+              {/* Same count as the Customers tab, for anyone looking here
+                  (or on a phone, where the tab is further down). */}
+              {waiting > 0 && (
+                <span className="rounded-full px-2 py-0.5 text-xs font-bold text-white tabular-nums" style={{ background: "var(--accent)" }}>
+                  {waiting} check-in{waiting === 1 ? "" : "s"} waiting
+                </span>
+              )}
             </button>
             {/* Scanning a member card or online ticket works anywhere on the register. */}
             <InfoTip topic="door-scanner" />
@@ -256,16 +267,6 @@ export default function PosMemberPanel({
             Loyalty points: — (attach a member)
           </div>
         </>
-      )}
-
-      {finderOpen && (
-        <MemberFinder
-          onPick={(m) => {
-            setFinderOpen(false);
-            attach(m);
-          }}
-          onClose={() => setFinderOpen(false)}
-        />
       )}
 
       {member && confirmTier && (

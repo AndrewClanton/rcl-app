@@ -51,7 +51,13 @@ export async function getMembersPage(opts: {
 
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
-  const { data, error, count } = await q.order("name").range(from, to);
+  // Most recently active first (a check-in, points, a purchase or a booking;
+  // kept by the database, see migration 20261001050000), so whoever just
+  // came in is at the top. Everyone with no activity yet follows by name.
+  const { data, error, count } = await q
+    .order("last_activity_at", { ascending: false, nullsFirst: false })
+    .order("name")
+    .range(from, to);
   if (error) throw error;
   const members = ((data ?? []) as unknown as Member[]).map((m) => contactForRole(m, opts.viewerRole));
   return { members, total: count ?? 0, page, pageSize };

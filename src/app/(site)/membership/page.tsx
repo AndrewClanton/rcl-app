@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo/page-meta";
 import { getStripe } from "@/lib/stripe";
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
@@ -10,14 +10,20 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { safePath } from "@/lib/safe-path";
 import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
+import { issueFormToken } from "@/lib/public-form-guard";
 import { PageMasthead, SpecFoot, Starburst } from "@/components/print";
 
+// Per request: the checkout result and the signed-in member's own plan are
+// on this page.
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
+// The canonical is plain /membership, so ?plan=plus, ?next=... and
+// ?checkout=... all count as this one page.
+export const metadata = pageMeta({
   title: "Join Insiders",
-  description: "Free to join. Upgrade to Insiders+ for unlimited entry to every screening, no ticket cost, ever.",
-};
+  description: "Join Royale Cinema Lounge's Insiders free. Upgrade to Insiders+ for unlimited entry to every screening in Joplin, MO: no ticket cost, ever.",
+  path: "/membership",
+});
 
 function Perk({ children, off = false }: { children: React.ReactNode; off?: boolean }) {
   return (
@@ -223,7 +229,7 @@ export default async function MembershipPage({
                 </div>
               </div>
             ) : (
-              <MembershipForm initialPlan={plan === "annual" ? "annual" : plan === "plus" ? "plus" : "free"} returnTo={next} />
+              <MembershipForm initialPlan={plan === "annual" ? "annual" : plan === "plus" ? "plus" : "free"} returnTo={next} formToken={issueFormToken("membership")} />
             )}
           </>
         )}

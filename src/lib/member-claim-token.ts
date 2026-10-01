@@ -17,18 +17,20 @@ import { CLAIM_PATH } from "@/lib/claim-link";
 // made up or edited. The nonce is also recorded in member_claims, which is
 // what makes each link work only once.
 
-export type ClaimKind = "kiosk" | "receipt";
+// "email": the "Set my password" link in the invite email (lib/email).
+export type ClaimKind = "kiosk" | "receipt" | "email";
 
 // Kiosk links are on the tablet for a moment and scanned on the spot;
-// receipt links go home in a pocket.
-export const CLAIM_LIFETIME_S: Record<ClaimKind, number> = { kiosk: 30 * 60, receipt: 14 * 86_400 };
+// receipt links go home in a pocket; the invite email's last 30 days.
+export const CLAIM_LIFETIME_S: Record<ClaimKind, number> = { kiosk: 30 * 60, receipt: 14 * 86_400, email: 30 * 86_400 };
 
 // Wrong guesses at the last four of the phone before a link stops working
 // for good (on top of the per-minute limits in member-claim.ts).
 export const MAX_WRONG_DIGITS = 10;
 
 const VERSION = 1;
-const KINDS: ClaimKind[] = ["kiosk", "receipt"];
+// New kinds go on the end: a token stores its kind by position.
+const KINDS: ClaimKind[] = ["kiosk", "receipt", "email"];
 const BODY_BYTES = 31;
 const SIG_BYTES = 12;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,10 +55,19 @@ export interface ClaimToken {
   expired: boolean;
 }
 
-export function sealClaimToken(memberId: string, kind: ClaimKind, now = Date.now()): { token: string; nonce: string; exp: number } | null {
+// `fixed`: a nonce and expiry chosen by the caller instead of random and
+// now-based (the invite email's links, so a retried send renders the very
+// same email).
+export function sealClaimToken(
+  memberId: string,
+  kind: ClaimKind,
+  now = Date.now(),
+  fixed?: { nonce: Buffer; expS: number },
+): { token: string; nonce: string; exp: number } | null {
   if (!UUID.test(memberId) || !KINDS.includes(kind)) return null;
-  const expS = Math.floor(now / 1000) + CLAIM_LIFETIME_S[kind];
-  const nonce = randomBytes(9);
+  if (fixed && fixed.nonce.length !== 9) return null;
+  const expS = fixed ? fixed.expS : Math.floor(now / 1000) + CLAIM_LIFETIME_S[kind];
+  const nonce = fixed ? fixed.nonce : randomBytes(9);
   const body = Buffer.alloc(BODY_BYTES);
   body[0] = VERSION;
   body[1] = KINDS.indexOf(kind);
@@ -87,6 +98,13 @@ export function openClaimToken(token: string | null | undefined, now = Date.now(
     nonce: body.subarray(22, 31).toString("base64url"),
     expired: exp <= now,
   };
+}
+
+// The invite email's claim link for one send: the nonce comes from the
+// send's id, so rendering that email again (a retried batch) gives the same
+// link, and they share one member_claims row.
+export function emailClaimNonce(sendId: string): Buffer | null {
+  return sign("email-nonce", sendId, 9);
 }
 
 // ---------- "the phone digits matched" ----------

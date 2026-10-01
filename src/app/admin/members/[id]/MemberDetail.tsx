@@ -8,7 +8,13 @@ import type { CommunityProgram, Member, MemberPriceTier, MemberTier } from "@/li
 import type { EraseLogEntry, MemberPurchase } from "@/lib/data/members";
 import type { MemberStaffInfo } from "@/lib/data/employees";
 import type { GiftMembership } from "@/lib/gift-membership";
+import type { PointsHistoryRow } from "@/lib/data/points-history";
 import GiftCard from "./GiftCard";
+import { PointsBalance, PointsHistoryCard } from "./PointsCard";
+import type { PastVisits } from "@/lib/data/fortis-lookup";
+import ProfileModeration from "./ProfileModeration";
+import SignInHelpCard from "./SignInHelpCard";
+import type { SignInHelpCard as SignInHelpInfo } from "@/lib/sign-in-help";
 import InfoTip from "@/components/help/InfoTip";
 import type { HelpTopicKey } from "@/lib/help/topics";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
@@ -35,6 +41,9 @@ export default function MemberDetail({
   gifts,
   canEditContact,
   eraseLog,
+  pointsHistory,
+  pastVisits = null,
+  signInHelp = null,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -46,6 +55,11 @@ export default function MemberDetail({
   // and are shown, not edited.
   canEditContact: boolean;
   eraseLog: EraseLogEntry | null;
+  pointsHistory: { rows: PointsHistoryRow[]; total: number };
+  // Visits on the old card machine (lib/data/fortis-lookup.ts getPastVisits).
+  pastVisits?: PastVisits | null;
+  // The "Send sign-in help" card (lib/sign-in-help.ts signInHelpCard).
+  signInHelp?: SignInHelpInfo | null;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -100,10 +114,38 @@ export default function MemberDetail({
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
         <BillingCard member={member} />
         <GiftCard member={member} gifts={gifts} />
+        {signInHelp && <SignInHelpCard memberId={member.id} memberName={member.name} info={signInHelp} />}
+      </div>
+      {pastVisits && (pastVisits.days > 0 || pastVisits.waiting > 0) && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm xl:col-span-2">
+          <span className="font-semibold">Visits before our new system:</span>{" "}
+          {pastVisits.days > 0 ? (
+            <>
+              {pastVisits.days.toLocaleString("en-US")}
+              {pastVisits.since ? `, starting ${pastVisits.since}` : ""}
+            </>
+          ) : (
+            "none confirmed yet"
+          )}
+          {pastVisits.waiting > 0 && (
+            <span className="text-[var(--muted)]">
+              {" "}
+              · {pastVisits.waiting.toLocaleString("en-US")} more day{pastVisits.waiting === 1 ? "" : "s"} on a card matched automatically, waiting for review
+            </span>
+          )}
+        </div>
+      )}
+      <div className="xl:col-span-2">
+        <PointsHistoryCard memberId={member.id} initial={pointsHistory} />
       </div>
       <div className="xl:col-span-2">
         <PurchaseHistoryCard purchases={purchases} />
       </div>
+      {viewerIsAdmin && (
+        <div className="xl:col-span-2">
+          <MergeDuplicateCard member={member} />
+        </div>
+      )}
       <div className="xl:col-span-2">
         <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
       </div>
@@ -116,7 +158,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
   const [name, setName] = useState(member.name);
   const [email, setEmail] = useState(member.email ?? "");
   const [phone, setPhone] = useState(member.phone ?? "");
-  const [points, setPoints] = useState(String(member.points));
   const [birthday, setBirthday] = useState(birthdayToInput(member.birthday));
   const router = useRouter();
   const [saving, startSave] = useTransition();
@@ -125,7 +166,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     name !== member.name ||
     email !== (member.email ?? "") ||
     phone !== (member.phone ?? "") ||
-    (points.trim() !== "" && Number(points) !== Number(member.points)) ||
     birthday !== birthdayToInput(member.birthday);
 
   function save(e: React.FormEvent) {
@@ -135,7 +175,7 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     startSave(async () => {
       // A cashier's copy of the email and phone is shortened, so it's never
       // sent back: saving would overwrite the real ones with the dots.
-      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, points, birthday } : { name, points, birthday }).catch(() => null);
+      const r = await saveMemberDetails(member.id, canEditContact ? { name, email, phone, birthday } : { name, birthday }).catch(() => null);
       if (!r) return setSaved({ ok: false, text: "Couldn't save. Try again." });
       setSaved(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
       if (r.ok) router.refresh();
@@ -146,7 +186,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
     setName(member.name);
     setEmail(member.email ?? "");
     setPhone(member.phone ?? "");
-    setPoints(String(member.points));
     setBirthday(birthdayToInput(member.birthday));
     setSaved(null);
   }
@@ -193,15 +232,17 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             Monthly
           </span>
         )}
-        {member.tagline && <span className="basis-full text-sm italic">“{member.tagline}” <span className="not-italic text-xs text-[var(--muted)]">(their line, shown at check-in)</span></span>}
+        <ProfileModeration member={member} />
         <span className="ml-auto text-xs text-[var(--muted)]">
           Member since {new Date(member.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
         </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {/* Name, email, phone and points save together with the button
-            (or Enter). The ones below save as soon as they're changed. */}
+        {/* Name, email, phone and birthday save together with the button
+            (or Enter). Points move only by adding or taking away, with a
+            reason (below the button); the rest save as soon as they're
+            changed. */}
         <form onSubmit={save} className="contents">
           <Field label="Name">
             <input className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " value={name} onChange={(e) => setName(e.target.value)} />
@@ -230,14 +271,6 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
               </Field>
             </>
           )}
-          <Field label="Points">
-            <input
-              type="number"
-              className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
-              value={points}
-              onChange={(e) => setPoints(e.target.value)}
-            />
-          </Field>
           <Field label="Birthday" hint="Month and day only. Checking in during their birthday week earns the Birthday Visit badge.">
             <BirthdayPicker value={birthday} onChange={setBirthday} className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm " />
           </Field>
@@ -260,6 +293,9 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             )}
           </div>
         </form>
+        <div className="sm:col-span-2">
+          <PointsBalance memberId={member.id} balance={Number(member.points)} />
+        </div>
         <Field label="Tier" help="insiders-vs-plus">
           <select
             className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
@@ -618,6 +654,24 @@ function PurchaseHistoryCard({ purchases }: { purchases: MemberPurchase[] }) {
   );
 }
 
+// Two accounts for one person (often an old-site account plus one the door
+// tablet made): fold the other into this one. The merge page shows both
+// side by side and exactly what happens before anything changes. Owner and
+// admin only.
+function MergeDuplicateCard({ member }: { member: Member }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="text-lg font-semibold">Merge a duplicate into this account</h2>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        If {member.name} has a second account, its visits, points, orders and tickets can come over to this one, and the other account is deleted.
+      </p>
+      <Link href={`/admin/members/${member.id}/merge`} className="mt-3 inline-block rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]">
+        Find the duplicate…
+      </Link>
+    </div>
+  );
+}
+
 // For deletion requests (the promise on /data-deletion): cancels Stripe
 // billing, deletes their login, and clears their details everywhere they
 // were copied, keeping anonymous purchase records for taxes. Admin only,
@@ -695,7 +749,7 @@ function RemovePersonalInfo({
             </li>
             <li>
               Also clears their name and contact details from ticket, booth and private-event bookings, gift memberships, bar tabs and custom
-              items on their orders, their profile quote, and the old-site copy.
+              items on their orders, their profile line, shared profile page and check-in effect, and the old-site copy.
             </li>
           </ul>
           <label className="block text-sm">

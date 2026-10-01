@@ -1,21 +1,39 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { findCandidates, type Candidate } from "./sources";
-import { downloadImage, PICTURE_SIZE, squareJpeg } from "./images";
+import { findCandidates, forgetAnswer, MIN_SIDE, type Candidate } from "./sources";
+import { downloadImage, PICTURE_SIZE, PictureError, squareJpeg, TooSmall } from "./images";
 import { categoryQuery, cleanQuery, itemQuery } from "./query";
 import { isRowId, photoTable, storePhoto, storedPhotoPath } from "./store";
-import { pictureOf, type PhotoTarget, type PictureResult, type PictureState } from "./shared";
+import { pictureOf, type FoundSource, type PhotoTarget, type PictureResult, type PictureState } from "./shared";
 
 // Free-to-use pictures, found and stored: the server downloads the picture
-// from its own site, squares it to a 480px JPEG and keeps it in our
+// from its own site, squares it to a 640px JPEG and keeps it in our
 // menu-photos bucket like any photo (lib/menu-pictures/store.ts), with its
-// credit. Nothing on a register button ever loads from another site.
+// credit. Nothing on a register button ever loads from another site, and a
+// picture too small to look sharp there is turned down (the next one is
+// tried instead).
 
 const GONE = "That picture isn't in the results anymore. Try again.";
 const PICTURE_FIELDS = "image_url, image_source, image_credit, image_query, image_index, image_approved_at";
 
-async function jpegOf(c: Candidate): Promise<Buffer> {
-  return squareJpeg(await downloadImage(c.image), PICTURE_SIZE, c.source === "off" ? "contain" : "cover");
+// A result's picture (or its preview), downloaded. Pixabay's links run out
+// after a day: when one no longer downloads, Pixabay is asked again once
+// and the same picture (found by its page) comes from the new answer.
+export async function downloadFound(c: Candidate, query: string, which: "image" | "thumb"): Promise<Buffer> {
+  try {
+    return await downloadImage(c[which]);
+  } catch (e) {
+    const ranOut = c.source === "pixabay" && e instanceof PictureError && e.status !== null && e.status >= 400 && e.status < 500;
+    if (!ranOut) throw e;
+    forgetAnswer("pixabay", query);
+    const again = (await findCandidates(query)).candidates.find((x) => x.source === "pixabay" && !!x.credit.page && x.credit.page === c.credit.page);
+    if (!again || again[which] === c[which]) throw e;
+    return downloadImage(again[which]);
+  }
+}
+
+async function jpegOf(c: Candidate, query: string): Promise<Buffer> {
+  return squareJpeg(await downloadFound(c, query, "image"), PICTURE_SIZE, c.source === "off" ? "contain" : "cover", MIN_SIDE);
 }
 
 async function pictureNow(target: PhotoTarget, id: string): Promise<PictureState | null> {
@@ -61,9 +79,9 @@ export async function storeFoundPicture(target: PhotoTarget, id: string, rawQuer
   if (!c) return { ok: false, error: GONE };
   let jpeg: Buffer;
   try {
-    jpeg = await jpegOf(c);
-  } catch {
-    return { ok: false, error: "That picture wouldn't download. Pick another one." };
+    jpeg = await jpegOf(c, query);
+  } catch (e) {
+    return { ok: false, error: e instanceof TooSmall ? e.message : "That picture wouldn't download. Pick another one." };
   }
   const r = await storePhoto(target, id, jpeg, { source: c.source, credit: c.credit, query, index: at, approved });
   if (!r.ok) return r;
@@ -89,24 +107,34 @@ export async function approvePicture(target: PhotoTarget, id: string): Promise<P
   return { ok: true, picture: pictureOf(data[0] as Partial<PictureState>) };
 }
 
-// The first result that downloads, skipping ones another button already got
-// from the same search (so two buttons that search alike get different ones).
-async function firstThatWorks(target: PhotoTarget, id: string, query: string, taken: Set<number>): Promise<PictureResult> {
-  const { candidates } = await findCandidates(query);
+// The first result that downloads, skipping ones another button already has
+// (by the picture's page, so two buttons that search alike get different
+// ones). Found on its own, so with the "auto" plan (no Pixabay: sources.ts).
+// A library whose pictures the database doesn't take yet is passed over
+// for the next library's.
+async function firstThatWorks(target: PhotoTarget, id: string, query: string, taken: Set<string>): Promise<PictureResult> {
+  const { candidates } = await findCandidates(query, "auto");
+  const refused = new Set<FoundSource>();
   let tries = 0;
   for (let i = 0; i < candidates.length && tries < 4; i++) {
-    if (taken.has(i)) continue;
-    tries++;
     const c = candidates[i];
+    if (refused.has(c.source) || (c.credit.page && taken.has(c.credit.page))) continue;
+    tries++;
     let jpeg: Buffer;
     try {
-      jpeg = await jpegOf(c);
+      jpeg = await jpegOf(c, query);
     } catch {
       continue;
     }
-    taken.add(i);
     const r = await storePhoto(target, id, jpeg, { source: c.source, credit: c.credit, query, index: i, approved: false });
+    if (!r.ok && r.needsMigration) {
+      // The same update lets in both, so neither is tried again here.
+      refused.add("pixabay").add("pexels");
+      tries--;
+      continue;
+    }
     if (!r.ok) return r;
+    if (c.credit.page) taken.add(c.credit.page);
     return { ok: true, picture: pictureOf({ image_url: r.url, image_source: c.source, image_credit: c.credit, image_query: query, image_index: i }) };
   }
   return { ok: false, error: candidates.length ? "None of the pictures would download." : "No free pictures found." };
@@ -167,23 +195,20 @@ export async function fillMissingPictures(opts: { only?: { target: PhotoTarget; 
   }
   if (todo.length === 0) return { lines: [], left: 0 };
 
-  // Results already on a button, per search, so the next one gets another.
-  const taken = new Map<string, Set<number>>();
+  // Found pictures already on a button (by their page), so the next one
+  // gets another.
+  const taken = new Set<string>();
   for (const t of ["item", "category"] as const) {
-    const { data } = await supabase.from(photoTable(t)!).select("image_query, image_index").not("image_query", "is", null).not("image_index", "is", null);
-    for (const r of (data ?? []) as { image_query: string; image_index: number }[]) {
-      if (!taken.has(r.image_query)) taken.set(r.image_query, new Set());
-      taken.get(r.image_query)!.add(r.image_index);
-    }
+    const { data } = await supabase.from(photoTable(t)!).select("image_credit").not("image_credit", "is", null);
+    for (const r of (data ?? []) as { image_credit: { page?: unknown } | null }[]) if (typeof r.image_credit?.page === "string") taken.add(r.image_credit.page);
   }
 
   const limit = Math.max(1, Math.min(opts.limit ?? 200, 200));
   const lines: FillLine[] = [];
   for (const t of todo.slice(0, limit)) {
-    if (!taken.has(t.query)) taken.set(t.query, new Set());
     let r: PictureResult;
     try {
-      r = await firstThatWorks(t.target, t.id, t.query, taken.get(t.query)!);
+      r = await firstThatWorks(t.target, t.id, t.query, taken);
     } catch (e) {
       console.error("menu: picture not found", t.name, e);
       r = { ok: false, error: "The search didn't work. Try again later." };

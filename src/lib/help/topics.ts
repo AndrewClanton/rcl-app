@@ -196,7 +196,7 @@ export const HELP_TOPICS = {
     title: "Check-in for points",
     area: "Register: members and the door",
     body:
-      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone.",
+      "Regulars check in on the customer screen with their phone number. Their card waits on the register's Customers tab (beside the menu tabs, with a red count that pulses until you answer) with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. Everyone checked in today is listed under it, one tap to put them on the order. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone. Once you confirm, the screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color) with their profile line; it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
   },
   "points-and-badges": {
@@ -274,6 +274,13 @@ export const HELP_TOPICS = {
       "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
+  "points-history": {
+    title: "Changing a member's points",
+    area: "Members and memberships",
+    body:
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, use Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
   "gift-membership": {
     title: "Gifting a year of Insiders+",
     area: "Members and memberships",
@@ -346,6 +353,13 @@ export const HELP_TOPICS = {
   },
 
   // ---------- reports and money ----------
+  "membership-payments": {
+    title: "Memberships in Reports",
+    area: "Reports and money",
+    body:
+      "Insiders+ is charged by Stripe on its own (a new member's first charge, each monthly or yearly renewal, a switch to yearly), and gift memberships are paid on Stripe's page, so none of it goes through the register. Reports read those charges from Stripe every 10 minutes while they're open and each morning before the daily email, and count each one once, on the business day it was charged. They're in Collected and net sales as their own line, with their tax on the Sales tax tab. A refund comes off the day of the charge, like a register refund. Insiders+ paid in cash or set by hand isn't here: Stripe never sees it.",
+    links: [{ label: "Reports → Members", href: "/admin/reports/members" }],
+  },
   "box-office-csv": {
     title: "The box office report for distributors",
     area: "Reports and money",
