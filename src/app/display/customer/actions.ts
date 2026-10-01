@@ -97,7 +97,7 @@ export async function createKioskMember(fields: { phone: string; firstName: stri
     .insert({ name: `${firstName} ${lastName}`, phone: formatPhone(digits), email_opt_in: false, points: 0, tier: "Insiders" })
     .select("id")
     .single();
-  if (error || !data) return { ok: false, error: "We couldn't set that up just now. Ask your bartender to add you." };
+  if (error || !data) return { ok: false, error: "We couldn't set that up just now. Ask the box office to add you." };
 
   // The "finish on your phone" QR code: a 30-minute claim link for the
   // account just made (lib/member-claim.ts). Null if it can't be made (the

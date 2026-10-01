@@ -240,7 +240,7 @@ export default function CheckinKiosk({
 
   const onDeclined = useEffectEvent((id: unknown) => {
     if (typeof id !== "string" || !outbox.current.delete(id)) return;
-    toast({ title: "A check-in couldn't be confirmed", detail: "Please see your bartender.", tone: "warn", emoji: null, claimUrl: null });
+    toast({ title: "A check-in couldn't be confirmed", detail: "Please see the box office.", tone: "warn", emoji: null, claimUrl: null });
   });
 
   const onPoints = useEffectEvent((p: Partial<PointsEarned> | null) => {
@@ -508,7 +508,7 @@ export default function CheckinKiosk({
           </div>
           <h1 className={k.title}>Thanks!</h1>
           <p className={k.sub} style={{ fontSize: 20 }}>
-            Your bartender will confirm you in a moment.
+            The box office will confirm you in a moment.
           </p>
         </div>
       )}
@@ -518,7 +518,7 @@ export default function CheckinKiosk({
           <div className={k.eyebrow}>You&apos;re in</div>
           <h1 className={k.title}>Welcome, {step.firstName}!</h1>
           <p className={k.sub} style={{ fontSize: 18 }}>
-            Your bartender will confirm your first visit and your points will land.
+            The box office will confirm your first visit and your points will land.
           </p>
           {step.claimUrl && <ClaimQrSlot url={step.claimUrl} />}
           <button className={k.cta} style={{ alignSelf: "stretch" }} onClick={reset}>
