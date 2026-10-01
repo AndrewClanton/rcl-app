@@ -5,7 +5,8 @@ import { getProfilePhoto } from "@/lib/member-profile-server";
 // page never shows it: this route checks the page is shared, re-encodes
 // the photo (camera metadata stripped) and sends the bytes. Not found
 // once sharing is off. The page links it with ?v=<version>, so a new photo
-// is a new address; browsers keep one for a few minutes.
+// is a new address; a browser keeps one for a minute, and shared caches
+// none, so turning the page off takes effect almost at once.
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, ctx: RouteContext<"/m/[handle]/photo">) {
@@ -15,7 +16,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/m/[handle]/photo">)
   return new Response(new Uint8Array(photo), {
     headers: {
       "Content-Type": "image/jpeg",
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": "private, max-age=60",
       "X-Robots-Tag": "noindex",
       "X-Content-Type-Options": "nosniff",
     },

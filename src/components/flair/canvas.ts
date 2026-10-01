@@ -368,9 +368,18 @@ export function playScene(canvas: HTMLCanvasElement, make: (w: number, h: number
   canvas.height = Math.round(h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const scene = make(w, h);
+  // Done: clear it and give back its pixels now. A full-screen canvas at
+  // 2x is 12-16 MB on a tablet, and Safari caps canvas memory in total:
+  // left to the garbage collector, a night of check-ins can reach the cap,
+  // and then getContext() quietly returns null and nothing draws.
+  const release = () => {
+    ctx.clearRect(0, 0, w, h);
+    canvas.width = 0;
+    canvas.height = 0;
+  };
   if (o.reduced) {
     scene.still(ctx);
-    return () => ctx.clearRect(0, 0, w, h);
+    return release;
   }
   const fade = o.fadeMs ?? 600;
   let raf = 0;
@@ -393,6 +402,6 @@ export function playScene(canvas: HTMLCanvasElement, make: (w: number, h: number
   raf = requestAnimationFrame(frame);
   return () => {
     cancelAnimationFrame(raf);
-    ctx.clearRect(0, 0, w, h);
+    release();
   };
 }

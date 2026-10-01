@@ -117,11 +117,13 @@ export default async function PrivacyPage() {
           </li>
           <li>
             <strong>For your profile page, only if you turn it on.</strong> It&apos;s off unless you switch it on in your account. It shows the name you
-            choose for it, your photo, your profile line, your badges, how many weeks in a row and how many times you&apos;ve visited, when you joined,
-            and the movies you&apos;ve seen with us (this year&apos;s releases by name, older films only as a count). It never shows your email, phone,
-            full name (unless you type it as your page&apos;s name), points, purchases, or when you check in. Anyone with the link can see it, and we
-            keep it out of search engines. Turn it off or change its link anytime on the Profile tab of your account; the old link stops working right
-            away. Our staff can hide a profile line, or turn off a page, if it&apos;s offensive.
+            choose for it, your photo, your profile line, your badges and the date you earned each (just the month for the early and late check-in
+            badges, and just the year for your birthday one), how many weeks in a row and how many times you&apos;ve visited, when you joined, and the
+            movies you&apos;ve seen with us (this year&apos;s releases by name, older films only as a count). It catches up once a day, so it never
+            shows that you&apos;re here today. It never shows your email, phone, full name (unless you type it as your page&apos;s name), points,
+            purchases, the time of day you check in, or tickets for upcoming shows. Anyone with the link can see it, and we keep it out of search
+            engines. Turn it off or change its link anytime on the Profile tab of your account; the old link stops working right away, and we hold it
+            for 90 days so no one else can take it over. Our staff can hide a profile line, or turn off a page, if it&apos;s offensive.
           </li>
           <li>
             To send the emails you ask for (the weekly lineup and member news) and account emails such as receipts, sign-in links and billing

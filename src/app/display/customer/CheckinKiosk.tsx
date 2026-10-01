@@ -47,6 +47,20 @@ const BADGE_STAGGER_MS = 1100;
 const BADGE_MS = 6000;
 const BADGE_REWARD_MS = 10_000;
 
+// A member's entrance over the whole screen (lib/flair.ts): `key` remounts
+// it, `at` is when staff confirmed them.
+interface Entrance {
+  key: number;
+  at: number;
+  entrance: EntranceKey;
+  color: string;
+  sticker: StickerKey;
+}
+// Entrances waiting behind the one playing: at most this many, and none
+// older than this (they've walked off by then).
+const ENTRANCE_QUEUE = 3;
+const ENTRANCE_STALE_MS = 10_000;
+
 const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 
 // Half-finished screens clear themselves when someone walks away.
@@ -93,7 +107,12 @@ export default function CheckinKiosk({
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [celebration, setCelebration] = useState<(PointsEarned & { key: number; accent: string | null }) | null>(null);
   // The member's entrance (lib/flair.ts), playing over the whole screen.
-  const [entrance, setEntrance] = useState<{ key: number; entrance: EntranceKey; color: string; sticker: StickerKey } | null>(null);
+  // Two people confirmed close together (a couple at the door) each get
+  // theirs in turn instead of the second cutting the first off: the rest
+  // wait in `waiting` (playEntrance, nextEntrance).
+  const [entrance, setEntrance] = useState<Entrance | null>(null);
+  const entrancePlaying = useRef(false);
+  const waiting = useRef<Entrance[]>([]);
   // Our own requests the register confirmed lately: their tickets (a
   // separate, later message) are ours to show; anyone else's aren't.
   const confirmedHere = useRef(new Map<string, number>());
@@ -119,6 +138,28 @@ export default function CheckinKiosk({
     session.current += 1;
     resetForm();
     setStep({ name: "phone" });
+  }
+
+  // Their banner shows at once; only the entrance waits its turn. At most
+  // ENTRANCE_QUEUE wait (the latest ones: they're the people still at the
+  // screen), and one that's waited ENTRANCE_STALE_MS is skipped, so a
+  // burst of confirmations never turns into a long show.
+  function playEntrance(e: Omit<Entrance, "key" | "at">) {
+    const next: Entrance = { ...e, key: Date.now() + Math.random(), at: Date.now() };
+    if (!entrancePlaying.current) {
+      entrancePlaying.current = true;
+      setEntrance(next);
+      return;
+    }
+    waiting.current = [...waiting.current, next].slice(-ENTRANCE_QUEUE);
+  }
+
+  function nextEntrance() {
+    const now = Date.now();
+    waiting.current = waiting.current.filter((e) => now - e.at < ENTRANCE_STALE_MS);
+    const next = waiting.current.shift() ?? null;
+    entrancePlaying.current = !!next;
+    setEntrance(next);
   }
 
   function toast(t: Omit<Toast, "key">, ms = 8_000) {
@@ -166,7 +207,7 @@ export default function CheckinKiosk({
       line: lineFromChannel(p.line),
       color: flair.color?.hex ?? null,
     });
-    if (show !== "classic") setEntrance({ key: Date.now(), entrance: show, color: flairHex(flair), sticker: flair.sticker });
+    if (show !== "classic") playEntrance({ entrance: show, color: flairHex(flair), sticker: flair.sticker });
     badges.forEach((b, i) => {
       const c = badgeCheer(b, name);
       setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
@@ -326,7 +367,7 @@ export default function CheckinKiosk({
           {toasts.map((t) => (
             <div
               key={t.key}
-              className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""}`}
+              className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""} ${t.line ? k.toastHasLine : ""}`}
               style={t.color ? { background: t.color } : undefined}
             >
               {t.emoji && (
@@ -477,8 +518,8 @@ export default function CheckinKiosk({
           color={entrance.color}
           sticker={entrance.sticker}
           mode="screen"
-          seed={entrance.key % 100_000}
-          onDone={() => setEntrance(null)}
+          seed={Math.floor(entrance.key) % 100_000}
+          onDone={nextEntrance}
         />
       )}
     </section>

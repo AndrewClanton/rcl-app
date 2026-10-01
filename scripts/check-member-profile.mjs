@@ -1,13 +1,19 @@
 // Checks shared profiles, the profile line and check-in flair without a
 // database or a browser:
-//  1. Link names (handles): tidying, the rules, reserved words, suggestions,
-//     and that the app's rule and the database's CHECK agree.
-//  2. Display names and the profile line: defaults, limits, invisible and
-//     direction-changing characters, what the check-in screen accepts.
+//  1. Link names (handles): tidying, the rules, reserved words (as words,
+//     so "stafford-j" is fine), suggestions with a random end, and that the
+//     app's rule and the database's CHECK agree.
+//  2. Display names and the profile line: defaults (never an email's
+//     surname), names that sound like the Royale or its staff, limits,
+//     invisible and direction-changing characters (and none typed raw into
+//     the source), what the check-in screen accepts.
 //  3. Movies seen, for the MPLC license: only this (Central) year's
 //     releases by name, older and unknown-year films only counted, upcoming
 //     screenings left out, and New Year's Eve at 7 PM Central.
-//  4. Badges: no points, Birthday Visit with its year only.
+//  3b. The page is as of the start of today's business day: nothing from
+//     today (a check-in, a badge, a showing) until tomorrow.
+//  4. Badges: no points, Birthday Visit with its year only, Early Riser and
+//     Night Owl with the month only.
 //  5. What the shared page gets: exactly the whitelisted fields, never the
 //     email, phone, points, member id, photo address or birthday, and
 //     nothing at all when sharing is off, turned off by staff, or erased.
@@ -63,14 +69,29 @@ check("starts with a digit: 1abc", !!p.handleProblem("1abc"));
 check("double hyphen: maya--r", !!p.handleProblem("maya--r"));
 check("ends in a hyphen: maya-", !!p.handleProblem("maya-"));
 check("uppercase isn't stored: Maya", !!p.handleProblem("Maya"));
-for (const h of ["admin", "account", "staff", "api", "privacy", "undefined", "royale", "royale-staff", "rcl-official", "staffer", "official-maya", "owner"]) {
+for (const h of ["admin", "account", "staff", "api", "privacy", "undefined", "royale", "royale-staff", "royalefan", "rcl", "rcl-official", "official-maya", "staff-maya", "maya-staff", "joplin-manager", "owner"]) {
   check(`reserved: ${h}`, !!p.handleProblem(h));
 }
+// A staff word is reserved as a word, not as the start of a name.
+for (const h of ["stafford-j", "rclanton", "rclark", "ownby", "adminton", "supportive-sam", "managerie"]) {
+  eq(`not reserved: ${h}`, p.handleProblem(h), null);
+}
 eq("suggest from 'Maya Rodriguez'", p.suggestHandle("Maya Rodriguez"), "maya-r");
+eq("  with a suffix", p.suggestHandle("Maya Rodriguez", "7k"), "maya-r-7k");
+eq("  from 'Stafford Jones' (not reserved)", p.suggestHandle("Stafford Jones", "7k"), "stafford-j-7k");
+{
+  const long = p.suggestHandle("Bartholomew-Maximilian Featherstonehaugh", "x9");
+  check("  a long name with a suffix still fits", long.length <= p.HANDLE_MAX && long.endsWith("-x9") && p.isValidHandle(long), long);
+  const sfx = Array.from({ length: 200 }, () => p.handleSuffix());
+  check("handleSuffix: two characters, no look-alikes (0 o 1 l i)", sfx.every((x) => /^[a-hj-km-np-z2-9]{2}$/.test(x)), sfx.find((x) => !/^[a-hj-km-np-z2-9]{2}$/.test(x)));
+  check("  and they vary", new Set(sfx).size > 50);
+  eq("  seeded: rand 0 and 0.999", [p.handleSuffix(() => 0), p.handleSuffix(() => 0.999)], ["aa", "99"]);
+}
 eq("suggest from 'Al' (too short)", p.suggestHandle("Al"), "al-fan");
 eq("suggest from a name in another script", p.suggestHandle("李小龙"), "movie-fan");
-eq("suggest from 'Staff Member' (reserved): none", p.suggestHandle("Staff Member"), "");
-eq("suggest from '3PO'", p.suggestHandle("3PO"), "fan-3po");
+eq("suggest from 'Staff Member' (reserved): none", p.suggestHandle("Staff Member"), "movie-fan");
+eq("suggest from '3PO' (letters only)", p.suggestHandle("3PO"), "po-fan");
+eq("suggest from an email-style name: no surname", p.suggestHandle("maya.rodriguez", "7k"), "maya-7k");
 {
   // The database's CHECK (20261001120000_member_profiles.sql), in JS.
   const db = (h) => /^[a-z][a-z0-9-]{1,22}[a-z0-9]$/.test(h) && !h.includes("--");
@@ -84,7 +105,21 @@ eq("default display name: 'maya rodriguez'", p.defaultDisplayName("maya rodrigue
 eq("  one name", p.defaultDisplayName("Maya"), "Maya");
 eq("  a long last name", p.defaultDisplayName("José de la Cruz"), "José C.");
 eq("  nothing", p.defaultDisplayName("   "), "A Royale Insider");
+eq("  a hyphenated first name stays whole", p.defaultDisplayName("Jean-Luc Picard"), "Jean-Luc P.");
+// An account made from an email alone is named after the email's first part.
+eq("  an email-style name: the first run of letters, no surname", p.defaultDisplayName("maya.rodriguez"), "Maya");
+eq("  'mrod_1985'", p.defaultDisplayName("mrod_1985"), "Mrod");
+eq("  'maya+rcl'", p.defaultDisplayName("maya+rcl"), "Maya");
+eq("  '12345' (no letters)", p.defaultDisplayName("12345"), "A Royale Insider");
+eq("  a name that reads as staff", p.defaultDisplayName("Staff Member"), "A Royale Insider");
 eq("display name tidied", p.cleanDisplayName("  Maya   ✨ "), { ok: true, value: "Maya ✨" });
+for (const n of ["Royale Staff", "Royale Cinema Lounge", "royale cinema", "The Royale", "Royale", "ROYALE  TEAM", "Manager", "Maya (Manager)", "RCL Official", "Royalé Owner", "Bartender Bob"]) {
+  check(`display name refused, sounds like the Royale or staff: ${n}`, !p.cleanDisplayName(n).ok);
+}
+for (const n of ["Royale with Cheese", "Stafford", "Horror Queen", "Maya R.", "Popcorn Royalty"]) {
+  check(`display name fine: ${n}`, p.cleanDisplayName(n).ok);
+}
+eq("a stored name that sounds like staff isn't shown: the default is", p.displayNameFor({ name: "Maya Rodriguez", display_name: "Royale Staff" }), "Maya R.");
 eq("blank display name: use the default", p.cleanDisplayName("   "), { ok: true, value: null });
 check("41 characters is too long", !p.cleanDisplayName("x".repeat(41)).ok);
 check("no letters or digits: refused", !p.cleanDisplayName("🎬🎬").ok);
@@ -95,10 +130,21 @@ eq("line: blank is none", p.cleanProfileLine("   "), { ok: true, value: null });
 check("line: 120 characters is fine", p.cleanProfileLine("x".repeat(120)).ok);
 check("line: 121 is too long", !p.cleanProfileLine("x".repeat(121)).ok);
 eq("PROFILE_LINE_MAX matches the database's 120", p.PROFILE_LINE_MAX, 120);
-eq("line: zero-width and direction overrides removed", p.cleanProfileLine("ab​c‮def⁦g"), { ok: true, value: "abcdefg" });
+// Escapes, not the characters themselves, so this file shows what it tests.
+eq("line: zero-width and direction overrides removed", p.cleanProfileLine("ab\u200bc\u202edef\u2066g\u00ad\ufeff"), { ok: true, value: "abcdefg" });
 {
-  const zalgo = p.cleanProfileLine("Ź̂̃̄̅̆o");
-  eq("line: piles of combining marks cut to two", zalgo.ok && zalgo.value, "Ź̂o");
+  const zalgo = p.cleanProfileLine("Z\u0301\u0302\u0303\u0304\u0305\u0306o");
+  eq("line: piles of combining marks cut to two", zalgo.ok && zalgo.value, "Z\u0301\u0302o");
+}
+{
+  // No invisible or direction-changing character typed straight into the
+  // sanitizer's source (they'd be invisible in review, and an editor could
+  // strip them and quietly switch it off).
+  const { readFileSync } = await import("node:fs");
+  const raw = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
+  for (const f of ["../src/lib/member-profile.ts", "../src/app/(profile)/m/[handle]/opengraph-image.tsx", "./check-member-profile.mjs"]) {
+    check(`no raw invisible characters in ${f.replace(/^\.\.?\//, "")}`, !raw.test(readFileSync(new URL(f, import.meta.url), "utf8")));
+  }
 }
 eq("check-in screen: a number isn't a line", p.lineFromChannel(123), null);
 eq("a form posted by hand: a number isn't a line", p.cleanProfileLine(42), { ok: true, value: null });
@@ -131,34 +177,75 @@ eq("a line not hidden shows", p.visibleLine({ tagline: " Hi  there ", tagline_hi
   check("upcoming screenings aren't 'seen'", !json.includes("Coming Next Week"));
   check("no dates or ids reach the page", !/2026-|"s\d"|movieId|screeningId|startsAt/.test(json));
 
+  // Today's showings wait for tomorrow: `now` is 7 PM Central on Oct 14.
+  const today = [
+    row("t1", "F", "Showing Right Now", 2026, "2026-10-14T23:00:00Z"), // 6 PM Central today: started an hour ago
+    row("t2", "G", "This Morning", 2026, "2026-10-14T14:00:00Z"), // 9 AM Central today
+    row("t3", "H", "Last Night Late", 2026, "2026-10-14T04:30:00Z"), // 11:30 PM Central Oct 13: yesterday
+  ];
+  const mt = p.publicMovies(today, now);
+  eq("a showing that started today isn't on the page yet (not even this morning's)", mt.named.map((x) => x.title), ["Last Night Late"]);
+  eq("  nor counted", mt.total, 1);
+  eq("  the next morning (4 AM Central) it is", p.publicMovies(today, new Date("2026-10-15T09:00:00Z")).total, 3);
+  eq("  but not at 3 AM Central (still the same business day)", p.publicMovies(today, new Date("2026-10-15T08:00:00Z")).total, 1);
+
   // New Year's Eve at 7 PM Central is already Jan 1 on the servers' (UTC)
   // clock: the theater's year is still 2026.
   const nye = new Date("2027-01-01T01:00:00Z");
   eq("centralYear at 7 PM Central on Dec 31", mplc.centralYear(nye), 2026);
-  const seen = [row("s1", "A", "This Year Film", 2026, "2026-12-31T20:00:00Z")];
+  const seen = [row("s1", "A", "This Year Film", 2026, "2026-12-30T20:00:00Z")];
   eq("NYE 7 PM Central: a 2026 film is still named", p.publicMovies(seen, nye).named.length, 1);
   const midnight = new Date("2027-01-01T06:00:00Z");
   eq("midnight Central: it's the archive now", p.publicMovies(seen, midnight), { named: [], archive: 1, total: 1 });
   check("isRestrictedRelease: null year is restricted", mplc.isRestrictedRelease({ release_year: null }, now));
 }
 
+// ---------- 3b. the page is as of the start of today's business day ----------
+eq("profileAsOf at 2 AM Central Oct 2: still Oct 1's business day", p.profileAsOf(new Date("2026-10-02T07:00:00Z")), { today: "2026-10-01", through: "2026-09-30" });
+eq("profileAsOf at 5 AM Central Oct 2", p.profileAsOf(new Date("2026-10-02T10:00:00Z")), { today: "2026-10-02", through: "2026-10-01" });
+eq("profileAsOf across the fall-back night (Nov 1, 3 AM CST)", p.profileAsOf(new Date("2026-11-01T09:00:00Z")).today, "2026-10-31");
+check("beforeToday: yesterday evening yes", p.beforeToday("2026-10-14T01:00:00Z", new Date("2026-10-14T20:00:00Z")));
+check("beforeToday: this morning no", !p.beforeToday("2026-10-14T14:00:00Z", new Date("2026-10-14T20:00:00Z")));
+check("beforeToday: nonsense no", !p.beforeToday("not a date", new Date("2026-10-14T20:00:00Z")));
+{
+  // The server's counts (lib/member-profile-server.ts needs the database,
+  // so this reads its source): visits before today, the streak as of
+  // yesterday, badges and showings through beforeToday.
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../src/lib/member-profile-server.ts", import.meta.url), "utf8");
+  check("server: visits counted before today's business day", src.includes('.lt("business_date", today)'));
+  check("server: week streak as of yesterday", src.includes("p_date: through"));
+  check("server: badges and showings cut off with beforeToday", (src.match(/beforeToday\(/g) ?? []).length >= 2);
+  check("server: not the account's live visitSummary", !src.includes("visitSummary"));
+}
+
 // ---------- 4. badges ----------
 {
-  const b = p.publicBadges([
-    { key: "welcome", period: "", earnedAt: "2026-09-30T23:30:00Z" },
-    { key: "birthday", period: "2025", earnedAt: "2025-03-14T19:00:00Z" },
-    { key: "birthday", period: "2026", earnedAt: "2026-03-13T19:00:00Z" },
-    { key: "night_owl", period: "", earnedAt: "2026-10-03T05:10:00Z" },
-    { key: "not_a_badge", period: "", earnedAt: "2026-10-03T05:10:00Z" },
-  ]);
-  eq("badges in the cabinet's order, unknown ones dropped", b.map((x) => x.key), ["welcome", "night_owl", "birthday"]);
+  const now = new Date("2026-10-15T00:00:00Z"); // 7 PM Central, Oct 14
+  const b = p.publicBadges(
+    [
+      { key: "welcome", period: "", earnedAt: "2026-09-30T23:30:00Z" },
+      { key: "birthday", period: "2025", earnedAt: "2025-03-14T19:00:00Z" },
+      { key: "birthday", period: "2026", earnedAt: "2026-03-13T19:00:00Z" },
+      { key: "night_owl", period: "", earnedAt: "2026-10-03T05:10:00Z" },
+      { key: "early_riser", period: "", earnedAt: "2026-10-06T12:40:00Z" },
+      { key: "not_a_badge", period: "", earnedAt: "2026-10-03T05:10:00Z" },
+      { key: "visits_10", period: "", earnedAt: "2026-10-14T23:10:00Z" }, // 6:10 PM Central today
+      { key: "weeks_4", period: "", earnedAt: "2026-10-14T13:00:00Z" }, // 8 AM Central today
+    ],
+    now,
+  );
+  eq("badges in the cabinet's order, unknown ones dropped", b.map((x) => x.key), ["welcome", "early_riser", "night_owl", "birthday"]);
+  check("a badge earned today isn't on the page yet", !b.some((x) => x.key === "visits_10" || x.key === "weeks_4"));
   const bday = b.find((x) => x.key === "birthday");
   eq("Birthday Visit shows its year only", bday?.earned, "2026");
   eq("  and how many times", bday?.times, 2);
   check("  and never the day", !JSON.stringify(b).includes("Mar"));
   eq("dates are the Central day: 11:30 PM UTC Sep 30 is Sep 30 in Joplin", b[0].earned, "Sep 30, 2026");
-  eq("Night Owl at 12:10 AM Central shows the date only", b.find((x) => x.key === "night_owl")?.earned, "Oct 3, 2026");
+  eq("Night Owl shows the month only (its day would say they were here late)", b.find((x) => x.key === "night_owl")?.earned, "Oct 2026");
+  eq("Early Riser too", b.find((x) => x.key === "early_riser")?.earned, "Oct 2026");
   check("no points, no times of day", !/points|:\d\d|AM|PM/.test(JSON.stringify(b)));
+  eq("the next morning the badges earned today are there", p.publicBadges([{ key: "visits_10", period: "", earnedAt: "2026-10-14T23:10:00Z" }], new Date("2026-10-15T10:00:00Z")).length, 1);
 }
 
 // ---------- 5. what the shared page gets ----------
@@ -228,6 +315,20 @@ eq("a line not hidden shows", p.visibleLine({ tagline: " Hi  there ", tagline_hi
   eq("no photo: none", p.toPublicProfile({ ...row, avatar_url: null }, facts, now)?.photo, null);
   check("a new photo gets a new address", p.photoVersion("a.jpg") !== p.photoVersion("b.jpg"));
   check("the link preview's words: name and counts only", !/Rodriguez|4321|@/.test(p.profileBlurb(out)), p.profileBlurb(out));
+  {
+    // They're here tonight: checked in at 6 PM, earned a badge, and their
+    // 6 PM showing has started. None of it is on the page (or its preview)
+    // until tomorrow.
+    const tonight = {
+      ...facts,
+      badges: [...facts.badges, { key: "visits_10", period: "", earnedAt: "2026-10-14T23:01:00Z" }],
+      seen: [...facts.seen, { screeningId: "s9", movieId: "Z", title: "TONIGHT AT SIX", posterUrl: null, releaseYear: 2026, startsAt: "2026-10-14T23:00:00Z" }],
+    };
+    const o2 = p.toPublicProfile(row, tonight, now);
+    check("tonight's showing isn't on the page", !JSON.stringify(o2).includes("TONIGHT AT SIX") && o2?.movies.total === 1);
+    check("  nor tonight's badge", o2?.badges.length === 1 && !o2.badges.some((x) => x.key === "visits_10"));
+    eq("  nor in the link preview's counts", p.profileBlurb(o2), p.profileBlurb(out));
+  }
 }
 
 // ---------- 6. flair ----------

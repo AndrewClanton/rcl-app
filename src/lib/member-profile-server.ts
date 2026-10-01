@@ -1,9 +1,23 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { cache } from "react";
+import { headers } from "next/headers";
 import sharp from "sharp";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { visitSummary } from "@/lib/visits-server";
-import { isShared, isValidHandle, normalizeHandle, toPublicProfile, type ProfileMemberRow, type PublicProfile, type SeenRow } from "@/lib/member-profile";
+import { allowAttempt } from "@/lib/rate-limit";
+import { badgeFor } from "@/lib/visits";
+import {
+  beforeToday,
+  isShared,
+  isValidHandle,
+  normalizeHandle,
+  profileAsOf,
+  toPublicProfile,
+  type EarnedBadgeRow,
+  type ProfileMemberRow,
+  type PublicProfile,
+  type SeenRow,
+} from "@/lib/member-profile";
 
 // The shared profile page's reads (lib/member-profile.ts has the rules).
 // Everything goes through the service role and comes back whitelisted: the
@@ -11,12 +25,36 @@ import { isShared, isValidHandle, normalizeHandle, toPublicProfile, type Profile
 
 type SharedRow = ProfileMemberRow & { id: string };
 
+// Looking pages up, per connection: a page view is a lookup or two (the
+// page, its photo), so these are far beyond anyone reading profiles, and
+// far below what it takes to find shared pages by trying names one after
+// another. The IP is hashed, as in lib/public-form-guard.ts: the limit only
+// has to tell connections apart.
+const LOOKUPS_PER_MINUTE = 60;
+const LOOKUPS_PER_HOUR = 400;
+
+async function lookupAllowed(): Promise<boolean> {
+  let ip = "unknown";
+  try {
+    const h = await headers();
+    ip = h.get("x-real-ip")?.trim() || h.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  } catch {
+    // outside a request (a script): one shared bucket
+  }
+  const key = `profile-view:${createHash("sha256").update(`rcl-profile-view:${ip}`).digest("base64url").slice(0, 22)}`;
+  if (!(await allowAttempt(`${key}:m`, LOOKUPS_PER_MINUTE, 60))) return false;
+  return allowAttempt(`${key}:h`, LOOKUPS_PER_HOUR, 3600);
+}
+
 // The member whose page this handle is, if it's shared. `*` rather than a
 // column list: before the member_profiles migration there's no
 // profile_handle, the query fails, and every page is simply not found.
-async function sharedMember(raw: string): Promise<SharedRow | null> {
+// Over the lookup limit, every page is not found too. Once per request
+// (the page and its metadata share it).
+const sharedMember = cache(async (raw: string): Promise<SharedRow | null> => {
   const handle = normalizeHandle(safeDecode(raw));
   if (!isValidHandle(handle)) return null;
+  if (!(await lookupAllowed())) return null;
   const { data, error } = await createAdminClient()
     .from("members")
     .select("*")
@@ -28,7 +66,7 @@ async function sharedMember(raw: string): Promise<SharedRow | null> {
   if (error || !data) return null;
   const row = data as SharedRow;
   return isShared(row) ? row : null;
-}
+});
 
 function safeDecode(s: string): string {
   try {
@@ -38,8 +76,29 @@ function safeDecode(s: string): string {
   }
 }
 
-// Past screenings they had confirmed tickets for. Only `bookings`: private
-// events (the events table) and booths are never part of it.
+// Visits, the week streak and badges as of the end of yesterday's business
+// day (profileAsOf): today's check-in, and anything it earned, waits for
+// tomorrow, so the page never says they're here right now.
+async function pastFacts(memberId: string, now: Date): Promise<{ visits: number; weekStreak: number; badges: EarnedBadgeRow[] }> {
+  const { today, through } = profileAsOf(now);
+  const supabase = createAdminClient();
+  const [streak, count, earned] = await Promise.all([
+    supabase.rpc("member_week_streak", { p_member: memberId, p_date: through }),
+    supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId).lt("business_date", today),
+    supabase.from("member_badges").select("badge, period, earned_at").eq("member_id", memberId).order("earned_at"),
+  ]);
+  return {
+    visits: count.error ? 0 : (count.count ?? 0),
+    weekStreak: streak.error ? 0 : Math.max(0, Math.round(Number(streak.data) || 0)),
+    badges: (earned.data ?? []).flatMap((r) =>
+      badgeFor(r.badge) && beforeToday(r.earned_at as string, now) ? [{ key: r.badge as string, period: (r.period as string) ?? "", earnedAt: r.earned_at as string }] : [],
+    ),
+  };
+}
+
+// Screenings they had confirmed tickets for that started before today's
+// business day. Only `bookings`: private events (the events table) and
+// booths are never part of it.
 async function seenScreenings(memberId: string, now: Date): Promise<SeenRow[]> {
   const { data, error } = await createAdminClient()
     .from("bookings")
@@ -51,29 +110,21 @@ async function seenScreenings(memberId: string, now: Date): Promise<SeenRow[]> {
   type Row = { screening: { id: string; starts_at: string; movie: { id: string; title: string; poster_url: string | null; release_year: number | null } | null } | null };
   return ((data ?? []) as unknown as Row[]).flatMap((r) => {
     const s = r.screening;
-    if (!s?.movie || Date.parse(s.starts_at) > now.getTime()) return [];
+    if (!s?.movie || !beforeToday(s.starts_at, now)) return [];
     return [{ screeningId: s.id, movieId: s.movie.id, title: s.movie.title, posterUrl: s.movie.poster_url, releaseYear: s.movie.release_year, startsAt: s.starts_at }];
   });
 }
 
 // The page, or null (no such handle, sharing off, turned off by staff):
 // all of those look the same from outside. Cached per request, so the
-// page, its metadata and its link preview share one lookup.
+// page, its metadata and its link preview share one lookup and one
+// cut-off.
 export const getPublicProfile = cache(async (handle: string): Promise<PublicProfile | null> => {
   const m = await sharedMember(handle);
   if (!m) return null;
   const now = new Date();
-  const [summary, seen] = await Promise.all([visitSummary(m.id, now).catch(() => null), seenScreenings(m.id, now)]);
-  return toPublicProfile(
-    m,
-    {
-      visits: summary?.visits ?? 0,
-      weekStreak: summary?.weekStreak ?? 0,
-      badges: (summary?.badges ?? []).map((b) => ({ key: b.key, period: b.period, earnedAt: b.earnedAt })),
-      seen,
-    },
-    now,
-  );
+  const [facts, seen] = await Promise.all([pastFacts(m.id, now).catch(() => ({ visits: 0, weekStreak: 0, badges: [] })), seenScreenings(m.id, now)]);
+  return toPublicProfile(m, { ...facts, seen }, now);
 });
 
 const AVATAR_MARKER = "/storage/v1/object/public/member-avatars/";

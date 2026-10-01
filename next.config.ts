@@ -22,6 +22,9 @@ const nextConfig: NextConfig = {
   // drop them from the deployed function.
   outputFileTracingIncludes: {
     "/admin/schedule-graphic/image": ["src/app/admin/schedule-graphic/fonts/**/*", "src/app/admin/schedule-graphic/assets/**/*"],
+    // A shared profile's link preview (m/[handle]/opengraph-image) draws
+    // with the flyer's fonts, read at request time.
+    "/m/**": ["src/app/admin/schedule-graphic/fonts/ArchivoBlack-Regular.ttf", "src/app/admin/schedule-graphic/fonts/SpaceMono-Bold.ttf"],
   },
   // Keep search engines off the *.vercel.app addresses. Until switch-over the
   // real domain still serves the old site, and Stripe here is in test mode --

@@ -11,19 +11,27 @@ import s from "./flair.module.css";
 //   screen  - the customer screen when staff confirm their check-in: the
 //             whole screen, over everything, never taking a tap;
 //   preview - the little stage on their account's Profile tab;
+//   page    - the Profile tab again, over the whole window, when they pick
+//             something with the stage scrolled out of sight (a wide
+//             window); phone is the same on a tall, narrow screen;
 //   gentle  - the header of their shared profile page, a softer version.
 // Each plays for at most ENTRANCE_MS (a still, shorter version under
 // reduced motion), then calls onDone. Mount it with a new `key` to play it
 // again. Nothing is random at render: `seed` picks the scatter, so a
 // replay can differ and the server and browser agree.
 
-export type FlairMode = "screen" | "preview" | "gentle";
+export type FlairMode = "screen" | "preview" | "page" | "phone" | "gentle";
+
+// Modes that cover the whole window (fixed), rather than fill a box.
+const FIXED = new Set<FlairMode>(["screen", "page", "phone"]);
 
 const TUNING: Record<
   FlairMode,
   { uw: number; run: number; ground: string; sparks: number; spark: [number, number]; confetti: number; rockets: number; floats: number; float: [number, number]; balloons: number; balloon: [number, number]; soft: boolean }
 > = {
   screen: { uw: 24, run: 2.9, ground: "5cqh", sparks: 26, spark: [2.6, 5], confetti: 180, rockets: 5, floats: 26, float: [8, 12.5], balloons: 11, balloon: [12, 17], soft: false },
+  page: { uw: 20, run: 2.9, ground: "5cqh", sparks: 24, spark: [2.6, 5], confetti: 160, rockets: 4, floats: 22, float: [8, 12.5], balloons: 10, balloon: [12, 17], soft: false },
+  phone: { uw: 40, run: 2.6, ground: "9cqh", sparks: 18, spark: [4, 7.5], confetti: 120, rockets: 3, floats: 18, float: [13, 19], balloons: 7, balloon: [18, 25], soft: false },
   preview: { uw: 36, run: 2.6, ground: "7cqh", sparks: 16, spark: [5, 8.5], confetti: 90, rockets: 3, floats: 15, float: [14, 20], balloons: 7, balloon: [18, 25], soft: false },
   gentle: { uw: 28, run: 3.2, ground: "5cqh", sparks: 14, spark: [3.5, 6.5], confetti: 70, rockets: 2, floats: 12, float: [10, 15], balloons: 6, balloon: [13, 19], soft: true },
 };
@@ -56,7 +64,7 @@ export default function FlairEffect({
   const t = TUNING[mode];
   const style = { "--c": color, "--rgb": rgbTriplet(color) } as CSSProperties;
   return (
-    <div className={`${s.layer} ${mode === "screen" ? s.screen : ""}`} style={style} aria-hidden="true">
+    <div className={`${s.layer} ${FIXED.has(mode) ? s.screen : ""}`} style={style} aria-hidden="true">
       {entrance === "unicorn" && <UnicornRun color={color} mode={mode} seed={seed} />}
       {entrance === "confetti" && <CanvasFx kind="confetti" color={color} mode={mode} seed={seed} />}
       {entrance === "fireworks" && <CanvasFx kind="fireworks" color={color} mode={mode} seed={seed} />}

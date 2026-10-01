@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import FlairEffect from "@/components/flair/FlairEffect";
 import Sticker from "@/components/flair/Sticker";
@@ -21,10 +21,37 @@ import stage from "./stage.module.css";
 
 const EFFECT_ICON: Record<FlairEffectKey, string> = { classic: "🎟️", confetti: "🎉", unicorn: "🦄", fireworks: "🎆", reactions: "💖" };
 
+// Where a choice plays: on the little stage, or, when the stage is out of
+// sight (scrolled past, or under the site's header), over the whole window
+// the way it fills the screen at the door.
+type Where = "stage" | "page" | "phone";
+interface Show {
+  run: number;
+  entrance: EntranceKey;
+  where: Where;
+}
+
+// Whether most of the stage can be seen right now: its middle, high and
+// low, is on screen and not under anything (the sticky site header).
+// Effects never take taps, so one already playing doesn't count.
+function inView(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  const x = r.left + r.width / 2;
+  return [0.3, 0.7].every((f) => {
+    const y = r.top + r.height * f;
+    if (y < 0 || y > window.innerHeight || x < 0 || x > window.innerWidth) return false;
+    const hit = document.elementFromPoint(x, y);
+    return !!hit && el.contains(hit);
+  });
+}
+
 // "Your check-in": what the screen at the door does when staff confirm
 // them (lib/flair.ts). A favorite color, an entrance, a sticker for
 // Floating reactions, and the birthday-week party, with a little copy of
-// the screen that plays each choice as it's picked.
+// the screen that plays each choice as it's picked. On a phone the stage
+// comes first, above the choices; whenever it's out of sight, a choice
+// plays over the whole window instead, so it's never playing unseen.
 export default function CheckinFlairPanel({
   ready,
   flair: saved,
@@ -45,16 +72,18 @@ export default function CheckinFlairPanel({
   const [effect, setEffect] = useState<FlairEffectKey>(saved.effect);
   const [sticker, setSticker] = useState<StickerKey>(saved.sticker);
   const [party, setParty] = useState(savedParty);
-  const [show, setShow] = useState<{ run: number; entrance: EntranceKey } | null>(null);
+  const [show, setShow] = useState<Show | null>(null);
   const [runs, setRuns] = useState(0); // the banner drops in again with each play
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
 
   const hex = (flairColor(color) ?? DEFAULT_FLAIR_COLOR).hex;
   const dirty = color !== saved.color || effect !== saved.effect || sticker !== saved.sticker || party !== savedParty;
 
   function play(entrance: EntranceKey) {
-    setShow({ run: runs + 1, entrance });
+    const where: Where = inView(stageRef.current) ? "stage" : window.innerWidth < window.innerHeight ? "phone" : "page";
+    setShow({ run: runs + 1, entrance, where });
     setRuns(runs + 1);
   }
 
@@ -216,9 +245,12 @@ export default function CheckinFlairPanel({
         </div>
       </div>
 
-      <div className="min-w-0">
+      <div className="order-first min-w-0 lg:order-none">
         <div className="label-xs">Preview</div>
-        <Stage hex={hex} firstName={firstName} line={line} show={show} runs={runs} sticker={sticker} onDone={() => setShow(null)} />
+        <Stage stageRef={stageRef} hex={hex} firstName={firstName} line={line} show={show} runs={runs} sticker={sticker} onDone={() => setShow(null)} />
+        {show && show.where !== "stage" && (
+          <FlairEffect key={show.run} entrance={show.entrance} color={hex} sticker={sticker} mode={show.where} seed={show.run} onDone={() => setShow(null)} />
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" onClick={() => play(effect)}>
             ▶ Play
@@ -237,6 +269,7 @@ export default function CheckinFlairPanel({
 // A little copy of the check-in screen: the keypad (faint), the "checked
 // in" banner in their color, and the entrance playing over it.
 function Stage({
+  stageRef,
   hex,
   firstName,
   line,
@@ -245,16 +278,18 @@ function Stage({
   sticker,
   onDone,
 }: {
+  stageRef: RefObject<HTMLDivElement | null>;
   hex: string;
   firstName: string;
   line: string | null;
-  show: { run: number; entrance: EntranceKey } | null;
+  show: Show | null;
   runs: number;
   sticker: StickerKey;
   onDone: () => void;
 }) {
   return (
     <div
+      ref={stageRef}
       className="relative aspect-[16/10] w-full overflow-hidden rounded-[10px] border-[3px] border-[var(--foreground)] shadow-[4px_4px_0_var(--foreground)]"
       style={{ background: "radial-gradient(circle at 1px 1px, rgba(255,199,44,0.08) 1px, transparent 1.5px) 0 0 / 12px 12px, #14110c" } as CSSProperties}
     >
@@ -273,7 +308,7 @@ function Stage({
         <div className="text-[12px] font-bold">+5 points</div>
         {line && <div className="mt-0.5 truncate text-[12px] italic">“{line}”</div>}
       </div>
-      {show && <FlairEffect key={show.run} entrance={show.entrance} color={hex} sticker={sticker} mode="preview" seed={show.run} onDone={onDone} />}
+      {show?.where === "stage" && <FlairEffect key={show.run} entrance={show.entrance} color={hex} sticker={sticker} mode="preview" seed={show.run} onDone={onDone} />}
     </div>
   );
 }

@@ -27,11 +27,12 @@ const fontsPromise = Promise.all([readFile(join(FONT_DIR, "ArchivoBlack-Regular.
   ])
   .catch(() => undefined);
 
-// Letters the fonts have (Latin, with accents); anything else (emoji,
-// other scripts) would be fetched from elsewhere to draw, so it's left out.
+// Letters the fonts have (Latin, with accents: space to U+017F, plus curly
+// quotes and dashes); anything else (emoji, other scripts) would be
+// fetched from elsewhere to draw, so it's left out.
 function drawable(name: string): string {
   const t = name
-    .replace(/[^ -ſ‘-”–—]/g, "")
+    .replace(/[^\u0020-\u017f\u2018-\u201d\u2013\u2014]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   return t || "A Royale Insider";
@@ -40,7 +41,7 @@ function drawable(name: string): string {
 export default async function Image({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = await params;
   const p = await getPublicProfile(handle);
-  if (!p) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+  if (!p) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store", "X-Robots-Tag": "noindex" } });
   const [fonts, photo] = await Promise.all([fontsPromise, p.photo ? getProfilePhoto(handle, 320).catch(() => null) : Promise.resolve(null)]);
   const hex = (flairColor(p.flair.color) ?? DEFAULT_FLAIR_COLOR).hex;
   const name = drawable(p.displayName);
@@ -120,6 +121,8 @@ export default async function Image({ params }: { params: Promise<{ handle: stri
         </div>
       </div>
     ),
-    { ...size, fonts, headers: { "Cache-Control": "public, max-age=300" } },
+    // Kept out of search engines like the page, and out of shared caches:
+    // once they turn the page off, a fresh request for it is a 404.
+    { ...size, fonts, headers: { "Cache-Control": "private, max-age=60", "X-Robots-Tag": "noindex" } },
   );
 }

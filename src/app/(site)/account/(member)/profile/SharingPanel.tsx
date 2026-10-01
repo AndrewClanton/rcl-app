@@ -3,7 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { SITE_URL } from "@/lib/site";
-import { DISPLAY_NAME_MAX, HANDLE_MAX, defaultDisplayName, handleInput, handleProblem, normalizeHandle, profilePath, suggestHandle } from "@/lib/member-profile";
+import {
+  DISPLAY_NAME_MAX,
+  HANDLE_HOLD_DAYS,
+  HANDLE_MAX,
+  defaultDisplayName,
+  handleInput,
+  handleProblem,
+  handleSuffix,
+  normalizeHandle,
+  profilePath,
+  suggestHandle,
+  tidyText,
+} from "@/lib/member-profile";
 import { updateSharing } from "../../actions";
 
 const HOST = new URL(SITE_URL).host;
@@ -40,7 +52,7 @@ export default function SharingPanel({
 
   const clean = normalizeHandle(handle);
   const problem = share || clean ? handleProblem(clean) : null;
-  const dirty = share !== (savedShare && !blocked) || clean !== savedHandle || displayName.trim() !== savedName;
+  const dirty = share !== (savedShare && !blocked) || clean !== savedHandle || tidyText(displayName) !== savedName;
   const live = savedShare && !blocked && !!savedHandle;
   const url = `${SITE_URL}${profilePath(savedHandle)}`;
   const fallbackName = defaultDisplayName(name);
@@ -55,6 +67,7 @@ export default function SharingPanel({
     setBusy(false);
     if (!r.ok) return setMsg({ ok: false, text: r.error });
     setHandle(r.handle ?? "");
+    setDisplayName(r.displayName ?? "");
     setMsg({ ok: true, text: share ? "Saved. Your page is up." : "Saved. Your page is off." });
     router.refresh();
   }
@@ -97,7 +110,7 @@ export default function SharingPanel({
               const on = e.target.checked;
               setShare(on);
               setMsg(null);
-              if (on && !normalizeHandle(handle)) setHandle(suggestHandle(name));
+              if (on && !normalizeHandle(handle)) setHandle(suggestHandle(name, handleSuffix()));
             }}
           />
           <span
@@ -122,7 +135,7 @@ export default function SharingPanel({
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
-                placeholder="maya-r"
+                placeholder="maya-r-7k"
                 disabled={!ready || busy}
                 onChange={(e) => {
                   setHandle(handleInput(e.target.value));
@@ -134,7 +147,7 @@ export default function SharingPanel({
               {HOST}/m/{clean || "your-link"}
             </div>
             <div className={`mt-0.5 text-xs ${problem && clean ? "font-bold text-[var(--danger-text)]" : "text-[var(--muted)]"}`}>
-              {problem && clean ? problem : "Letters, numbers and hyphens. Change it any time; the old link stops working."}
+              {problem && clean ? problem : `Letters, numbers and hyphens. Change it any time: the old link stops working, and stays yours for ${HANDLE_HOLD_DAYS} days in case you want it back.`}
             </div>
           </label>
           <label className="block sm:col-span-2">
@@ -188,17 +201,19 @@ export default function SharingPanel({
           <ul className="space-y-1">
             <Item on>The name you pick here{hasPhoto ? ", and your photo" : " (and your photo, if you add one)"}</Item>
             <Item on>Your profile line{lineHidden ? " (hidden by our staff right now)" : ""}</Item>
-            <Item on>Your badges and the day you earned them</Item>
+            <Item on>Your badges and the date you earned each</Item>
             <Item on>Weeks in a row, visits, and when you joined</Item>
             <Item on>Movies you&apos;ve seen here. Older films are counted but not named.</Item>
           </ul>
+          <p className="mt-2 text-xs text-[var(--muted)]">It catches up each morning, so today&apos;s visit shows tomorrow.</p>
         </div>
         <div>
           <div className="label-xs">Never on it</div>
           <ul className="space-y-1">
             <Item>Your email, phone, or full name</Item>
             <Item>Your points, purchases or spending</Item>
-            <Item>When you check in, or tickets you&apos;ve bought for later</Item>
+            <Item>That you&apos;re here today, or what time you come in</Item>
+            <Item>Tickets you&apos;ve bought for later</Item>
           </ul>
         </div>
       </aside>

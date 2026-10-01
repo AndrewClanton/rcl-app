@@ -156,6 +156,10 @@ try {
         "shared profile page (its link and name) and check-in flair removed",
         pr.share_profile === false && !pr.profile_handle && !pr.display_name && !pr.flair_color && !pr.flair_effect && !pr.flair_sticker && pr.birthday_party === true && !pr.tagline_hidden_at,
       );
+      const held = (await c.query("select member_id from member_retired_handles where handle = 'erase-check-page'")).rows;
+      check("their old link name is held (nobody else can take it), but not tied to them", held.length === 1 && held[0].member_id === null);
+      const theirs = (await c.query("select count(*)::int as n from member_retired_handles where member_id = $1", [m])).rows[0].n;
+      check("  and no held link name points at them", theirs === 0);
     }
     if (hasVisits) {
       const v = (await c.query("select streak, points_awarded from member_visits where member_id = $1", [m])).rows;

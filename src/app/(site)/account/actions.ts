@@ -248,12 +248,15 @@ function missingColumn(error: { code?: string } | null): boolean {
 }
 const NOT_YET = "Profile pages and check-in effects aren't switched on yet. Try again soon.";
 
-export type SharingResult = { ok: true; handle: string | null } | { ok: false; error: string };
+export type SharingResult = { ok: true; handle: string | null; displayName: string | null } | { ok: false; error: string };
 
 // Their profile page: on or off, its link name and the name on it.
 // Turning it off keeps the link name for next time. A new link name works
 // at once and the old one stops (pages are found by the current name
-// only). Staff can turn a page off; then it stays off until they allow it.
+// only); the database holds the old one for them for HANDLE_HOLD_DAYS
+// (member_retired_handles), so nobody else can take it over meanwhile.
+// Staff can turn a page off; then it stays off until they allow it.
+// Returns what was saved, tidied, for the form to show.
 export async function updateSharing(fields: { share: boolean; handle: string; displayName: string }): Promise<SharingResult> {
   const member = await requireMember();
   if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
@@ -274,11 +277,12 @@ export async function updateSharing(fields: { share: boolean; handle: string; di
     .update({ share_profile: share, profile_handle: handle || null, display_name: name.value })
     .eq("id", member.id)
     .is("erased_at", null);
-  if (error?.code === "23505") return { ok: false, error: "Someone already has that link. Try another." };
+  // Taken, or held for whoever had it until recently: the same answer.
+  if (error?.code === "23505") return { ok: false, error: "Someone has (or recently had) that link. Try another." };
   if (missingColumn(error)) return { ok: false, error: NOT_YET };
   if (error) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");
-  return { ok: true, handle: handle || null };
+  return { ok: true, handle: handle || null, displayName: name.value };
 }
 
 // Their check-in flair: a color from the palette (null for the Royale's

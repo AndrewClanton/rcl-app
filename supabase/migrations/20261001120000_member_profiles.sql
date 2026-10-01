@@ -9,7 +9,9 @@
 --   (this year's releases by name, older films only as a count, for the
 --   MPLC license). Never purchases, points, email, phone or check-in times.
 --   Handles are stored lowercase (the app normalizes them); a changed or
---   cleared handle simply stops working.
+--   cleared handle stops working at once, and is held for 90 days
+--   (member_retired_handles, below) so nobody else can take over links
+--   the member already sent around.
 -- * members.tagline is now the "profile line": on the shared page and on
 --   the check-in screen when staff confirm them. Staff can hide an abusive
 --   one (tagline_hidden_at/by): hidden, it shows nowhere, even after they
@@ -101,3 +103,82 @@ $$;
 drop trigger if exists members_erase_profile on members;
 create trigger members_erase_profile before update of erased_at on members
   for each row execute function public.members_erase_profile();
+
+-- ---------- retired link names ----------
+-- A link name someone stops using (they changed or cleared it, or their
+-- account was erased) is held for 90 days (HANDLE_HOLD_DAYS in
+-- src/lib/member-profile.ts). Otherwise someone else could pick it up at
+-- once and show up, with a name and line of their choosing, at links the
+-- first member already texted or posted. During the hold only the member
+-- who had it can take it back; after an erase nobody can (member_id is
+-- cleared, so the held name isn't tied to them), and it's simply released
+-- when the 90 days are up. Holds are written and enforced here, by
+-- triggers, so every way a handle changes is covered; the app maps the
+-- refusal (unique_violation) to "someone has (or recently had) that link".
+create table if not exists member_retired_handles (
+  handle text primary key,
+  member_id uuid references members(id) on delete cascade,
+  retired_at timestamptz not null default now()
+);
+create index if not exists member_retired_handles_member_idx on member_retired_handles (member_id);
+-- Server-only, like the rest: RLS on, no client policies.
+alter table member_retired_handles enable row level security;
+comment on table member_retired_handles is
+  'Profile link names (members.profile_handle) given up in the last 90 days: only the member who had one (member_id) can take it back meanwhile. member_id is null after an erase.';
+
+-- Before a handle is taken: refused if it's held for someone else.
+create or replace function public.members_check_handle_hold()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (
+    select 1 from member_retired_handles r
+    where r.handle = new.profile_handle
+      and r.member_id is distinct from new.id
+      and r.retired_at > now() - interval '90 days'
+  ) then
+    raise exception 'profile link name % is held for its previous owner', new.profile_handle using errcode = 'unique_violation';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists members_check_handle_hold on members;
+create trigger members_check_handle_hold before update of profile_handle on members
+  for each row
+  when (new.profile_handle is not null and new.profile_handle is distinct from old.profile_handle)
+  execute function public.members_check_handle_hold();
+
+-- After a handle changes (by the member, or by members_erase_profile on an
+-- erase, which a column-list trigger wouldn't see): hold the old one, drop
+-- the hold on one just taken back, clear the member from their holds on an
+-- erase, and let expired holds go.
+create or replace function public.members_retire_handle()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if old.profile_handle is not null and old.profile_handle is distinct from new.profile_handle then
+    insert into member_retired_handles (handle, member_id, retired_at)
+    values (old.profile_handle, case when new.erased_at is null then new.id end, now())
+    on conflict (handle) do update set member_id = excluded.member_id, retired_at = excluded.retired_at;
+  end if;
+  if new.profile_handle is not null and new.profile_handle is distinct from old.profile_handle then
+    delete from member_retired_handles where handle = new.profile_handle;
+  end if;
+  if new.erased_at is not null and old.erased_at is null then
+    update member_retired_handles set member_id = null where member_id = new.id;
+  end if;
+  delete from member_retired_handles where retired_at <= now() - interval '90 days';
+  return null;
+end;
+$$;
+drop trigger if exists members_retire_handle on members;
+create trigger members_retire_handle after update on members
+  for each row
+  when (old.profile_handle is distinct from new.profile_handle or (new.erased_at is not null and old.erased_at is null))
+  execute function public.members_retire_handle();
