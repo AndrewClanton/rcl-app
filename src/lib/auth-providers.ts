@@ -9,6 +9,13 @@ export interface SignInProviders {
 // switched on, so a button appears on its own once it's configured in the
 // Supabase dashboard (and never shows as a dead end before then). Cached
 // for five minutes.
+//
+// Facebook also waits on Meta: until the Royale Cinema Lounge app (Meta app
+// 1524635143044323) passes App Review and is published, only the app's own
+// admins can sign in with it and everyone else gets an error. Flip this to
+// true once Meta for Developers shows the app as Published.
+const FACEBOOK_APP_PUBLISHED = false;
+
 export async function getSignInProviders(): Promise<SignInProviders> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/settings`, {
@@ -17,7 +24,7 @@ export async function getSignInProviders(): Promise<SignInProviders> {
     });
     if (!res.ok) return { google: false, facebook: false };
     const settings = (await res.json()) as { external?: Record<string, boolean> };
-    return { google: !!settings.external?.google, facebook: !!settings.external?.facebook };
+    return { google: !!settings.external?.google, facebook: FACEBOOK_APP_PUBLISHED && !!settings.external?.facebook };
   } catch {
     return { google: false, facebook: false };
   }
