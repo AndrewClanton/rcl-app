@@ -2,6 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { exactEmail } from "@/lib/email-match";
+import { currentMemberId } from "@/lib/member-forward";
 
 // Makes the member Insiders+ once their Stripe checkout for it completes:
 // the member named in the checkout (signed in), else the one with that
@@ -29,7 +30,9 @@ export async function activatePlusFromCheckout(session: Stripe.Checkout.Session)
     monthly_member: true,
     billing_interval: session.metadata?.billing_interval === "year" ? "year" : "month",
   };
-  const memberId = session.metadata?.member_id || null;
+  // The account the checkout was made for, or the one it was merged into
+  // since (Back office merge; a card link lasts 24 hours).
+  const memberId = await currentMemberId(session.metadata?.member_id || null);
   const { data: existing } = memberId
     ? await supabase.from("members").select("id").eq("id", memberId).maybeSingle()
     : await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();

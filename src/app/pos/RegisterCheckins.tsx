@@ -7,7 +7,7 @@ import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
 import { REWARD_LABEL, badgeList } from "@/lib/visits";
-import { confirmVisit, createCheckinMember, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
+import { confirmVisit, createCheckinMember, getDuplicateHint, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
@@ -94,6 +94,10 @@ export default function RegisterCheckins({
   // Tickets bought online for today by whoever just checked in: one tap
   // prints them, instead of scanning.
   const [tonight, setTonight] = useState<{ member: PosMember; tickets: DoorTicket[] } | null>(null);
+  // Someone the tablet just made an account for who's probably an older
+  // member it couldn't find by phone: a quiet line with a Back office link.
+  // Nothing is merged from the register.
+  const [dupHint, setDupHint] = useState<{ name: string; href: string } | null>(null);
   const [printing, setPrinting] = useState(false);
   const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
@@ -166,6 +170,15 @@ export default function RegisterCheckins({
         setTonight({ member: m, tickets: t.tickets });
         const shown: CheckinTickets = { id: p.id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
         send("checkin-tickets", shown);
+      })
+      .catch(() => {});
+    // Possibly a second account for an older member (made at the tablet,
+    // same name, the old one has no usable phone). Also its own message,
+    // after the confirmation.
+    setDupHint(null);
+    void getDuplicateHint(m.id)
+      .then((h) => {
+        if (h) setDupHint({ name: m.name, href: h.href });
       })
       .catch(() => {});
     const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
@@ -325,7 +338,7 @@ export default function RegisterCheckins({
 
   const showRecent = !!recent && !member && pending.length === 0;
   const showHere = here.length > 0 && pending.length === 0 && (hereHiddenAt === null || here.length > hereHiddenAt);
-  const showStack = pending.length > 0 || !!notice || showRecent || !!tonight;
+  const showStack = pending.length > 0 || !!notice || showRecent || !!tonight || !!dupHint;
   if (!showStack && !showHere) return null;
 
   return (
@@ -359,6 +372,21 @@ export default function RegisterCheckins({
           )}
 
           {tonight && <TonightTickets tonight={tonight} printing={printing} onPrint={() => void printTonight()} onDismiss={() => setTonight(null)} />}
+
+          {dupHint && (
+            <div className="flex w-full items-start gap-2 rounded-lg border bg-[var(--surface)] p-2 text-xs shadow-lg" style={{ borderColor: "var(--border)" }}>
+              <span className="min-w-0 flex-1" style={{ color: "var(--muted)" }}>
+                <strong style={{ color: "var(--foreground)" }}>{dupHint.name}</strong> · Possibly the same person as an older account:{" "}
+                {/* A new tab, so the register (and its open sale) stays put. */}
+                <a href={dupHint.href} target="_blank" rel="noopener noreferrer" className="font-semibold underline" style={{ color: "var(--foreground)" }}>
+                  review in Back office
+                </a>
+              </span>
+              <button className="shrink-0 px-1 text-base leading-none" style={{ color: "var(--muted)" }} aria-label="Dismiss" onClick={() => setDupHint(null)}>
+                ×
+              </button>
+            </div>
+          )}
 
           {showRecent && recent && (
             <div className="flex w-full items-center gap-2 rounded-lg border-2 bg-[var(--surface)] p-2 text-sm shadow-lg" style={{ borderColor: "var(--foreground)" }}>
