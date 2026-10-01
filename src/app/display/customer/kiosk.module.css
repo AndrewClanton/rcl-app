@@ -288,6 +288,22 @@
   font-size: 17px;
   margin-top: 2px;
 }
+/* their profile line, under a confirmed check-in: one line, with a
+   slightly tighter banner, so it still ends above the digits in the phone
+   number readout (the next person may be typing while it's up). */
+.toastHasLine {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.toastLine {
+  margin-top: 2px;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ticketsCard {
   border-radius: 14px;
   border: 3px solid var(--ink);

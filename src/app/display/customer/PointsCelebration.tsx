@@ -41,7 +41,20 @@ function pts(n: number) {
 
 // Plays on the customer screen when a sale with a member on it completes
 // (the register broadcasts "points-earned"), then gets out of the way.
-export default function PointsCelebration({ firstName, earned, balance, onDone }: { firstName: string; earned: number; balance: number; onDone: () => void }) {
+// accent: their favorite color (lib/flair.ts), for the confetti's red.
+export default function PointsCelebration({
+  firstName,
+  earned,
+  balance,
+  accent = null,
+  onDone,
+}: {
+  firstName: string;
+  earned: number;
+  balance: number;
+  accent?: string | null;
+  onDone: () => void;
+}) {
   const done = useEffectEvent(onDone);
   useEffect(() => {
     const timer = setTimeout(() => done(), SHOW_MS);
@@ -57,7 +70,7 @@ export default function PointsCelebration({ firstName, earned, balance, onDone }
     <div className={styles.overlay} role="status" aria-live="polite">
       <div className={styles.confetti} aria-hidden="true">
         {CONFETTI.map(([x, d, s, r, c], i) => (
-          <i key={i} style={{ "--x": `${x}%`, "--d": `${d}s`, "--s": `${s}s`, "--r": `${r}deg`, "--c": c } as CSSProperties} />
+          <i key={i} style={{ "--x": `${x}%`, "--d": `${d}s`, "--s": `${s}s`, "--r": `${r}deg`, "--c": accent && c === RED ? accent : c } as CSSProperties} />
         ))}
       </div>
 
