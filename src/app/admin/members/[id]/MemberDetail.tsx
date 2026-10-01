@@ -13,6 +13,8 @@ import GiftCard from "./GiftCard";
 import { PointsBalance, PointsHistoryCard } from "./PointsCard";
 import type { PastVisits } from "@/lib/data/fortis-lookup";
 import ProfileModeration from "./ProfileModeration";
+import SignInHelpCard from "./SignInHelpCard";
+import type { SignInHelpCard as SignInHelpInfo } from "@/lib/sign-in-help";
 import InfoTip from "@/components/help/InfoTip";
 import type { HelpTopicKey } from "@/lib/help/topics";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
@@ -41,6 +43,7 @@ export default function MemberDetail({
   eraseLog,
   pointsHistory,
   pastVisits = null,
+  signInHelp = null,
 }: {
   member: Member;
   gifts: GiftMembership[];
@@ -55,6 +58,8 @@ export default function MemberDetail({
   pointsHistory: { rows: PointsHistoryRow[]; total: number };
   // Visits on the old card machine (lib/data/fortis-lookup.ts getPastVisits).
   pastVisits?: PastVisits | null;
+  // The "Send sign-in help" card (lib/sign-in-help.ts signInHelpCard).
+  signInHelp?: SignInHelpInfo | null;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -109,6 +114,7 @@ export default function MemberDetail({
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
         <BillingCard member={member} />
         <GiftCard member={member} gifts={gifts} />
+        {signInHelp && <SignInHelpCard memberId={member.id} memberName={member.name} info={signInHelp} />}
       </div>
       {pastVisits && (pastVisits.days > 0 || pastVisits.waiting > 0) && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm xl:col-span-2">

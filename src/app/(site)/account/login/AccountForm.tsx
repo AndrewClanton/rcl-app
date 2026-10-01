@@ -3,9 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient, createImplicitFlowClient } from "@/lib/supabase/client";
+import { plainResetError } from "@/lib/auth-email-errors";
 import { linkMemberAccount } from "../actions";
+import { askSignInHelp } from "./actions";
 
 type Mode = "signin" | "signup";
+
+// One link for anyone who can't get in: a forgotten password, or a member
+// (from the old site, or the check-in tablet) who never made a login.
+const HELP_LABEL = "Forgot password or first time here?";
+
+type HelpOutcome = "reset" | "setup" | "ask_at_bar" | "generic";
 
 // Google's own "G" mark, as their sign-in button guidelines ask for.
 function GoogleMark() {
@@ -80,7 +88,7 @@ export default function AccountForm({
       setOauthBusy(null);
     }
   }
-  const [resetSent, setResetSent] = useState(false);
+  const [help, setHelp] = useState<{ outcome: HelpOutcome; gmail: boolean } | null>(null);
 
   const canSubmit = email.includes("@") && password.length >= 6 && (mode === "signin" || claiming || name.trim().length > 0);
 
@@ -143,24 +151,40 @@ export default function AccountForm({
     router.refresh();
   }
 
-  async function handleForgotPassword() {
+  // Asks the server what fits this email (lib/sign-in-help.ts): a setup
+  // link it emails itself, a word to see us at the bar, or a password
+  // reset, which is sent from here exactly as it always was (Supabase only
+  // sends it if a login has that address).
+  async function handleSignInHelp() {
     if (!email.includes("@")) {
-      setError("Enter your email above first, then click \"Forgot password\".");
+      setError(`Enter your email above first, then tap “${HELP_LABEL}”`);
       return;
     }
     setSubmitting(true);
     setError(null);
-    const supabase = createImplicitFlowClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/account/reset-password`,
-    });
-    setSubmitting(false);
-    if (error) {
-      setError(error.message);
+    setHelp(null);
+    const r = await askSignInHelp(email).catch(() => null);
+    if (!r || !r.ok) {
+      setSubmitting(false);
+      setError(r ? r.error : "Couldn't reach us just now. Try again in a minute.");
       return;
     }
-    setResetSent(true);
+    if (r.outcome === "reset" || r.outcome === "generic") {
+      const { error } = await createImplicitFlowClient().auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/account/reset-password`,
+      });
+      if (error) {
+        setSubmitting(false);
+        setError(plainResetError(error));
+        return;
+      }
+    }
+    setSubmitting(false);
+    // Continue with Google finds a Gmail address's account on its own.
+    setHelp({ outcome: r.outcome, gmail: providers.google && /@(gmail|googlemail)\.com$/i.test(email.trim()) });
   }
+
+  const gmailHint = help?.gmail ? " Or just use Continue with Google." : "";
 
   if (confirmSent) {
     return (
@@ -173,17 +197,22 @@ export default function AccountForm({
     );
   }
 
-  if (resetSent) {
-    return (
-      <div className="notice notice-success">
-        <h2 className="text-lg font-semibold">Check your email</h2>
-        <p className="mt-2 text-sm opacity-90">We sent a password reset link to {email}.</p>
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={handleSubmit} className="sheet crop p-5 sm:p-6">
+      {help && (
+        <div className="notice notice-success mb-5" role="status">
+          <h2 className="text-lg font-semibold">{help.outcome === "ask_at_bar" ? "You're almost in" : "Check your email"}</h2>
+          <p className="mt-2 text-sm opacity-90">
+            {help.outcome === "reset"
+              ? "We emailed you a link to reset your password."
+              : help.outcome === "setup"
+                ? `We emailed you a link to finish setting up your account. Your points are waiting.${gmailHint}`
+                : help.outcome === "ask_at_bar"
+                  ? `You don't have a website login yet, but your account and points are waiting. Ask us at the bar and we'll get you set up.${gmailHint}`
+                  : "If that email has an account, we've sent you a link."}
+          </p>
+        </div>
+      )}
       {(providers.google || providers.facebook) && (
         <>
           <div className="space-y-2.5">
@@ -270,8 +299,8 @@ export default function AccountForm({
       </button>
 
       {mode === "signin" && (
-        <button type="button" className="mt-3 text-xs text-[var(--muted)] hover:text-[var(--accent)]" onClick={handleForgotPassword}>
-          Forgot password?
+        <button type="button" className="mt-3 text-xs text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-60" disabled={submitting} onClick={handleSignInHelp}>
+          {HELP_LABEL}
         </button>
       )}
     </form>
