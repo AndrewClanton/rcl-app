@@ -452,7 +452,7 @@ function ItemRow({
       </div>
       {/* The picture on its register button. */}
       <div className="mt-2">
-        <MenuPhoto target="item" id={item.id} name={item.name} picture={pictureOf(item)} category={section} canEdit={canEdit} />
+        <MenuPhoto target="item" id={item.id} name={item.name} price={Number(item.price)} picture={pictureOf(item)} category={section} canEdit={canEdit} />
       </div>
       {deleteRefused && (
         <div className="notice notice-warn mt-2 flex flex-wrap items-center gap-2 !p-2.5 text-sm">
