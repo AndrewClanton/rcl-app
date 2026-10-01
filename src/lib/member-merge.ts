@@ -36,6 +36,7 @@ export interface MergeMember {
   plus_gift_until: string | null;
   legacy_user_id: number | null;
   imported_at: string | null;
+  indy_user_id: string | null; // migration 20261001090000
   email_opt_in: boolean;
   email_opt_in_changed_at: string | null;
   monthly_member: boolean;
@@ -57,7 +58,7 @@ export interface MergeMember {
 // migrations give members: each is either here or listed there with why
 // the preview doesn't need it.
 export const MERGE_MEMBER_COLUMNS =
-  "id, name, tier, points, created_at, last_activity_at, email, phone, auth_user_id, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier, birthday, avatar_url, tagline, comped, plus_gift_until, legacy_user_id, imported_at, email_opt_in, email_opt_in_changed_at, monthly_member, erased_at, tagline_hidden_at, share_profile, profile_handle, display_name, profile_hidden_at, flair_color, flair_effect, flair_sticker, birthday_party";
+  "id, name, tier, points, created_at, last_activity_at, email, phone, auth_user_id, stripe_customer_id, stripe_subscription_id, subscription_status, price_tier, birthday, avatar_url, tagline, comped, plus_gift_until, legacy_user_id, imported_at, indy_user_id, email_opt_in, email_opt_in_changed_at, monthly_member, erased_at, tagline_hidden_at, share_profile, profile_handle, display_name, profile_hidden_at, flair_color, flair_effect, flair_sticker, birthday_party";
 
 // A phone the door tablet can find them by: ten digits that make a US
 // number (a leading 1 is fine). The old site's placeholder "-" and the odd
@@ -118,6 +119,7 @@ export const CARRIED_LABEL = {
   free_membership: "the free (community) membership",
   gift: "the gifted Insiders+ time",
   old_site: "the old-site link",
+  indy: "the Indy import link",
   tier: "Insiders+",
   email_choice: "their email preference",
   member_since: "the earlier member-since date",
@@ -178,8 +180,8 @@ const time = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() 
 //   way to the other account's full name when that starts with it.
 // - The higher tier wins. Gifted Insiders+ time left on both adds up (as
 //   gifts stack on one account); otherwise the later end.
-// - The kept account's email preference stays, unless it never chose one
-//   and the other account did.
+// - Their email choice is the later one either account recorded (the
+//   order setMarketingOptIn keeps), else the kept account's.
 // - Member since is the earlier date, last activity the later; the points
 //   add up.
 export function mergedProfile(keep: MergeMember, drop: MergeMember, now: Date = new Date()): MergedProfile {
@@ -305,13 +307,14 @@ export function mergedProfile(keep: MergeMember, drop: MergeMember, now: Date = 
   }
 
   if (keep.legacy_user_id == null && drop.legacy_user_id != null) carried.push("old_site");
+  if (keep.indy_user_id == null && drop.indy_user_id != null) carried.push("indy");
 
   const tier = keep.tier === "Insiders+" || drop.tier === "Insiders+" ? "Insiders+" : keep.tier;
   if (keep.tier !== "Insiders+" && drop.tier === "Insiders+") carried.push("tier");
 
   let emailOptIn = keep.email_opt_in;
   let optInFrom: From = "keep";
-  if (!keep.email_opt_in_changed_at && drop.email_opt_in_changed_at) {
+  if (drop.email_opt_in_changed_at && (!keep.email_opt_in_changed_at || time(drop.email_opt_in_changed_at) > time(keep.email_opt_in_changed_at))) {
     emailOptIn = drop.email_opt_in;
     optInFrom = "drop";
     carried.push("email_choice");

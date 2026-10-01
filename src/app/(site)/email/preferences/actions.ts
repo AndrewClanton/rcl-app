@@ -5,6 +5,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { allowAttempt } from "@/lib/rate-limit";
 import { emailStateFor, justTheLineup, pauseEmail, resubscribe, resumeEmail, setMarketingOptIn, updatePrefs, type ConsentResult, type ConsentWriteSource, type EmailState } from "@/lib/email/consent";
 import { openEmailToken } from "@/lib/email/tokens";
+import { currentMemberId } from "@/lib/member-forward";
 import { PREF_CATEGORIES, type PrefCategory } from "@/lib/email/types";
 
 export type { EmailState };
@@ -20,7 +21,8 @@ export type PrefsAnswer = { ok: true; state: EmailState } | { ok: false; error: 
 async function who(token: string | null): Promise<{ memberId: string; source: ConsentWriteSource } | null> {
   if (token) {
     const t = openEmailToken(token);
-    return t ? { memberId: t.memberId, source: "prefs_page" } : null;
+    // A link from before the account was merged into another: the account it became.
+    return t ? { memberId: (await currentMemberId(t.memberId)) ?? t.memberId, source: "prefs_page" } : null;
   }
   const m = await getSignedInMember();
   return m ? { memberId: m.id, source: "account" } : null;

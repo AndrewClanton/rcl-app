@@ -173,6 +173,8 @@ declare
   v_flair_sticker text;
   v_party boolean;
   v_points numeric;
+  v_drift numeric;
+  v_last timestamptz;
   v_visits int;
 begin
   if p_keep is not null and p_keep = p_drop then
@@ -352,6 +354,9 @@ begin
     v_imported := coalesce(k.imported_at, d.imported_at);
     v_carried := array_append(v_carried, 'old_site');
   end if;
+  if k.indy_user_id is null and d.indy_user_id is not null then
+    v_carried := array_append(v_carried, 'indy');
+  end if;
 
   -- The higher tier wins.
   v_tier := case when k.tier = 'Insiders+' or d.tier = 'Insiders+' then 'Insiders+' else k.tier end;
@@ -359,11 +364,11 @@ begin
     v_carried := array_append(v_carried, 'tier');
   end if;
 
-  -- The kept account's email preference stays, unless it never chose one
-  -- and the other account did.
+  -- Their email choice is the later one either account recorded (the
+  -- order setMarketingOptIn keeps them in), else the kept account's.
   v_opt_in := k.email_opt_in;
   v_opt_in_at := k.email_opt_in_changed_at;
-  if k.email_opt_in_changed_at is null and d.email_opt_in_changed_at is not null then
+  if d.email_opt_in_changed_at is not null and (k.email_opt_in_changed_at is null or d.email_opt_in_changed_at > k.email_opt_in_changed_at) then
     v_opt_in := d.email_opt_in;
     v_opt_in_at := d.email_opt_in_changed_at;
     v_carried := array_append(v_carried, 'email_choice');
@@ -416,6 +421,10 @@ begin
   v_moved := v_moved || jsonb_build_object('rewards', n);
 
   -- Points history: every row moves, and the balance is the two added up.
+  -- Points the duplicate had that its history doesn't account for (from
+  -- before the history began) get one 'merge' row below, so the kept
+  -- account's history still adds up to its balance.
+  select d.points - coalesce(sum(delta), 0) into v_drift from points_ledger where member_id = p_drop;
   update points_ledger set member_id = p_keep where member_id = p_drop;
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('points_history', n);
@@ -474,6 +483,57 @@ begin
   get diagnostics n = row_count;
   v_moved := v_moved || jsonb_build_object('claim_links', n);
 
+  -- Email (20261001090000). The consent record and the emails sent are the
+  -- person's, so they move. One email per campaign (or automation step)
+  -- per member: where both accounts got the same one, the kept account's
+  -- stays and the duplicate's is unlinked, as deleting the account would
+  -- do (and cancelled if it was still waiting here, so it doesn't go twice).
+  update email_consent_log set member_id = p_keep where member_id = p_drop;
+  get diagnostics n = row_count;
+  v_moved := v_moved || jsonb_build_object('email_consent', n);
+  update email_sends ds
+     set member_id = null,
+         status = case when ds.status = 'queued' and ds.batch_key is null then 'cancelled' else ds.status end,
+         error = case when ds.status = 'queued' and ds.batch_key is null then 'Merged into another account' else ds.error end
+   where ds.member_id = p_drop
+     and exists (
+       select 1 from email_sends ks
+        where ks.member_id = p_keep
+          and ((ds.dedupe_key is null and ks.dedupe_key is null and ks.campaign_id = ds.campaign_id)
+               or (ds.dedupe_key is not null and ks.dedupe_key = ds.dedupe_key)));
+  get diagnostics n2 = row_count;
+  update email_sends set member_id = p_keep where member_id = p_drop;
+  get diagnostics n = row_count;
+  v_moved := v_moved || jsonb_build_object('emails', n, 'emails_same', n2);
+  -- Email preferences, one row per member: onto an account with none, the
+  -- duplicate's comes over; with both, a category turned off on either
+  -- stays off and a pause runs to the later end.
+  if exists (select 1 from member_email_prefs where member_id = p_keep) then
+    update member_email_prefs kp
+       set lineup = kp.lineup and dp.lineup,
+           alerts = kp.alerts and dp.alerts,
+           events = kp.events and dp.events,
+           offers = kp.offers and dp.offers,
+           rewards = kp.rewards and dp.rewards,
+           paused_until = greatest(kp.paused_until, dp.paused_until),
+           import_group = coalesce(kp.import_group, dp.import_group),
+           last_engaged_at = greatest(kp.last_engaged_at, dp.last_engaged_at),
+           updated_at = now()
+      from member_email_prefs dp
+     where kp.member_id = p_keep and dp.member_id = p_drop;
+    delete from member_email_prefs where member_id = p_drop;
+  else
+    update member_email_prefs set member_id = p_keep where member_id = p_drop;
+  end if;
+  -- An email address that had unsubscribed and doesn't stay on the kept
+  -- account goes on the never-mail list, as when an account is removed
+  -- (20261001090200), so nothing signs it back up.
+  if nullif(btrim(d.email), '') is not null and lower(btrim(d.email)) is distinct from lower(btrim(v_email)) and d.email_opt_in = false then
+    insert into email_suppressions (email_hash, reason, note)
+    values (encode(sha256(convert_to(lower(btrim(d.email)), 'UTF8')), 'hex'), 'unsubscribed', 'Had unsubscribed; merged into another account')
+    on conflict (email_hash) do update set last_at = now();
+  end if;
+
   -- An earlier merge into the duplicate now points at the kept account.
   update member_merges set keep_id = p_keep where keep_id = p_drop;
   get diagnostics n = row_count;
@@ -509,6 +569,23 @@ begin
       raise exception 'The duplicate still has % rows (%), which merging does not handle yet. Nothing was changed.', fk.tbl, fk.col;
     end if;
   end loop;
+
+  -- The duplicate's points its history didn't account for, as one row.
+  -- ('merge' is a reason from 20261001170000 on; before that, the opening
+  -- balance reason the history reconcile uses for the same thing.) A merge
+  -- isn't something the member did, so the last activity this row would
+  -- set is put back below.
+  select last_activity_at into v_last from members where id = p_keep;
+  if v_drift <> 0 then
+    begin
+      insert into points_ledger (member_id, delta, balance_after, reason, note, created_by)
+      values (p_keep, v_drift, v_points, 'merge', 'Merged from a duplicate account', p_staff);
+    exception when check_violation then
+      insert into points_ledger (member_id, delta, balance_after, reason, note, created_by)
+      values (p_keep, v_drift, v_points, 'opening_balance', 'Merged from a duplicate account', p_staff);
+    end;
+  end if;
+  v_moved := v_moved || jsonb_build_object('points_unrecorded', v_drift);
 
   -- ----- log it, delete the duplicate, update the kept account -----
   insert into member_merges (keep_id, dropped_id, dropped_name, dropped_tier, dropped_created_at, dropped_points, moved, carried, merged_by)
@@ -553,20 +630,22 @@ begin
     comped_at = v_comped_at,
     plus_gift_until = v_gift,
     legacy_user_id = v_legacy,
+    indy_user_id = coalesce(k.indy_user_id, d.indy_user_id),
     legacy_plus = k.legacy_plus or d.legacy_plus,
     imported_at = v_imported,
     email_opt_in = v_opt_in,
     email_opt_in_changed_at = v_opt_in_at,
     -- "Member since" is the earlier date; last activity the later one
-    -- (moving orders and tickets above may already have moved it on).
+    -- (moving orders and tickets above may already have moved it on; the
+    -- merge's own points row doesn't).
     created_at = least(k.created_at, d.created_at),
-    last_activity_at = greatest(last_activity_at, k.last_activity_at, d.last_activity_at),
+    last_activity_at = greatest(v_last, k.last_activity_at, d.last_activity_at),
     points = v_points
   where id = p_keep;
 
   -- The points history reads as one account: each row's "balance after"
   -- is the combined balance at that moment, ending at the new balance.
-  if (v_moved->>'points_history')::int > 0 then
+  if (v_moved->>'points_history')::int > 0 or v_drift <> 0 then
     update points_ledger l
        set balance_after = x.bal
       from (

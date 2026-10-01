@@ -78,6 +78,7 @@ const member = (over = {}) => ({
   plus_gift_until: null,
   legacy_user_id: null,
   imported_at: null,
+  indy_user_id: null,
   email_opt_in: true,
   email_opt_in_changed_at: null,
   monthly_member: false,
@@ -195,7 +196,12 @@ eq("a recorded email choice on the other account wins over none", (() => {
   const q = mergedProfile(member({ email_opt_in: true }), member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-25T00:00:00Z" }));
   return [q.emailOptIn, q.carried];
 })(), [false, ["email_choice"]]);
-eq("the kept account's recorded choice stays", mergedProfile(member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-01T00:00:00Z" }), member({ email_opt_in: true, email_opt_in_changed_at: "2026-09-25T00:00:00Z" })).emailOptIn, false);
+eq("both recorded one: the later choice wins either way", [
+  mergedProfile(member({ email_opt_in: true, email_opt_in_changed_at: "2026-09-01T00:00:00Z" }), member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-25T00:00:00Z" })).emailOptIn,
+  mergedProfile(member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-25T00:00:00Z" }), member({ email_opt_in: true, email_opt_in_changed_at: "2026-09-01T00:00:00Z" })).emailOptIn,
+  mergedProfile(member({ email_opt_in: false, email_opt_in_changed_at: "2026-09-01T00:00:00Z" }), member({ email_opt_in: true, email_opt_in_changed_at: "2026-09-25T00:00:00Z" })).emailOptIn,
+], [false, false, true]);
+eq("the Indy import link fills a gap", mergedProfile(member(), member({ indy_user_id: "indy-1" })).carried, ["indy"]);
 eq("fractions of points add up exactly", mergedProfile(member({ points: 12.5 }), member({ points: 0.1 })).points, 12.6);
 
 console.log("-- overlaps and the sentence");
@@ -239,10 +245,13 @@ const flat = body.replace(/\s+/g, " ").toLowerCase();
 const REFS = [
   "bookings.member_id",
   "booth_reservations.member_id",
+  "email_consent_log.member_id",
+  "email_sends.member_id",
   "gift_memberships.recipient_member_id",
   "legacy_accounts.imported_member_id",
   "member_badges.member_id",
   "member_claims.member_id",
+  "member_email_prefs.member_id",
   "member_erasures.member_id",
   "member_merge_emails.keep_id",
   "member_payments.member_id",
@@ -281,7 +290,13 @@ check("anything else still pointing at the duplicate stops the merge", /confreli
 check("overlapping visits: the kept account's stays", /delete from member_visits dv using member_visits kv\s+where dv\.member_id = p_drop and kv\.member_id = p_keep and kv\.business_date = dv\.business_date/.test(body));
 check("overlapping badges: the earlier stays", /db\.earned_at < kb\.earned_at/.test(body));
 check("points add up", /v_points := k\.points \+ d\.points/.test(body) && /points = v_points/.test(body));
-check("member since is the earlier, last activity the later", /created_at = least\(k\.created_at, d\.created_at\)/.test(body) && /last_activity_at = greatest\(last_activity_at, k\.last_activity_at, d\.last_activity_at\)/.test(body));
+check(
+  "member since is the earlier, last activity the later (and the merge's own points row doesn't count as activity)",
+  /created_at = least\(k\.created_at, d\.created_at\)/.test(body) &&
+    /last_activity_at = greatest\(v_last, k\.last_activity_at, d\.last_activity_at\)/.test(body) &&
+    body.indexOf("select last_activity_at into v_last from members where id = p_keep;") > 0 &&
+    body.indexOf("select last_activity_at into v_last from members where id = p_keep;") < body.indexOf("'merge', 'Merged from a duplicate account'"),
+);
 check("the merge is logged before the duplicate is deleted", body.indexOf("insert into member_merges") > 0 && body.indexOf("insert into member_merges") < body.indexOf("delete from members where id = p_drop"));
 check("the duplicate is deleted before the kept account takes its unique fields", body.indexOf("delete from members where id = p_drop") < body.indexOf("update members set"));
 check("both rows locked first", /perform 1 from members where id in \(p_keep, p_drop\) order by id for update/.test(body));
@@ -363,6 +378,23 @@ check("the duplicate's own link is held for the member when it doesn't come over
 check("the profile link comes over with its page, on/off and name", /v_handle := d\.profile_handle;/.test(body) && /v_share := d\.share_profile;/.test(body) && /profile_handle = v_handle/.test(update));
 check("a hidden profile line stays hidden", /tagline_hidden_at = v_line_hidden_at/.test(update) && /tagline_hidden_by = v_line_hidden_by/.test(update) && /if k\.tagline_hidden_at is null and d\.tagline_hidden_at is not null then/.test(body));
 check("a page staff turned off stays off", /profile_hidden_at = v_page_hidden_at/.test(update) && /if v_page_hidden_at is not null then\s+v_share := false;/.test(body));
+check(
+  "an email both accounts got: the duplicate's is unlinked (and called back if still waiting) before the rest move",
+  body.indexOf("update email_sends ds") > 0 &&
+    body.indexOf("update email_sends ds") < body.indexOf("update email_sends set member_id = p_keep where member_id = p_drop") &&
+    body.includes("status = case when ds.status = 'queued' and ds.batch_key is null then 'cancelled'"),
+);
+check(
+  "email preferences: a category off on either stays off, a pause runs to the later end",
+  ["lineup", "alerts", "events", "offers", "rewards"].every((c) => body.includes(`${c} = kp.${c} and dp.${c}`)) && body.includes("paused_until = greatest(kp.paused_until, dp.paused_until)"),
+);
+check("an unsubscribed email that doesn't stay goes on the never-mail list", flat.includes("d.email_opt_in = false then insert into email_suppressions (email_hash, reason, note)"));
+check("the email choice is the later one recorded", body.includes("if d.email_opt_in_changed_at is not null and (k.email_opt_in_changed_at is null or d.email_opt_in_changed_at > k.email_opt_in_changed_at) then"));
+check(
+  "points the duplicate's history didn't hold get a 'merge' row, so balance = history",
+  body.includes("select d.points - coalesce(sum(delta), 0) into v_drift from points_ledger where member_id = p_drop;") &&
+    body.includes("values (p_keep, v_drift, v_points, 'merge', 'Merged from a duplicate account', p_staff)"),
+);
 check("gift time left on both adds up", /v_gift := greatest\(k\.plus_gift_until, d\.plus_gift_until\) \+ \(least\(k\.plus_gift_until, d\.plus_gift_until\) - now\(\)\);/.test(body));
 check(
   "only placeholder-shaped phones are cleared, with counts",
@@ -390,6 +422,12 @@ const writers = allSrc.filter((f) => /from\("member_merges"\)\s*\.(insert|update
 check("only the database writes the merge log", writers.length === 0, writers.join(", "));
 const forward = src("lib/member-forward.ts");
 check("a merged id on an open sale follows to the kept account", /from\("member_merges"\)\.select\("keep_id"\)\.eq\("dropped_id", id\)/.test(forward) && /currentMemberId\(params\.memberId\)/.test(src("app/pos/actions.ts")));
+check(
+  "an email link from before a merge (unsubscribe, preferences) acts on the account it became",
+  /const memberId = \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId;\s+const r = await setMarketingOptIn\(memberId, false, "one_click"/.test(src("app/api/email/unsubscribe/route.ts")) &&
+    /memberId: \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId, source: "prefs_page"/.test(src("app/(site)/email/preferences/actions.ts")) &&
+    /\.eq\("id", \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId\)/.test(src("app/(site)/email/preferences/page.tsx")),
+);
 check("the register links only owners/admins to the review", /href: hasAdminAccess\(staff\.role\) \? mergeHref\(/.test(src("app/pos/checkin-actions.ts")));
 check("after a merge, the duplicate's other photo files go", /removeMemberPhotos\(\[dropId\], \{ extra: \[memberPhotoPath\(before\?\.avatar_url\)\], keep: memberPhotoPath\(kept\.avatar_url\) \}\)/.test(actions));
 const erase = src("lib/member-erase.ts");
