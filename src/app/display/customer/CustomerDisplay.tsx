@@ -8,6 +8,7 @@ import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
 import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
+import Rickroll from "./Rickroll";
 import k from "./kiosk.module.css";
 
 export interface PromoMovie {
@@ -50,6 +51,7 @@ export default function CustomerDisplay({
 }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[]; banner?: string | null } | null>(null);
+  const [rickroll, setRickroll] = useState<number | null>(null);
   // Online tickets for whoever just checked in, beside the order for a bit.
   const [tickets, setTickets] = useState<TicketsShown | null>(previewTickets ?? null);
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function CustomerDisplay({
         .channel(registerTopic)
         .on("broadcast", { event: "cart" }, (msg) => setCart(msg.payload as RegisterCartSnapshot))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
+        .on("broadcast", { event: "rickroll" }, () => setRickroll(Date.now()))
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
@@ -84,6 +87,7 @@ export default function CustomerDisplay({
 
   const hasOrder = !!cart && cart.items.length > 0;
   const clearBurst = useCallback(() => setBurst(null), []);
+  const clearRickroll = useCallback(() => setRickroll(null), []);
   const rewindStreamers = useCallback(() => setBurst({ id: Date.now(), pieces: makeStreamers(90), banner: null }), []);
 
   return (
@@ -94,6 +98,7 @@ export default function CustomerDisplay({
         {hasOrder ? <OrderReceipt cart={cart} /> : <Welcome movies={movies} />}
       </aside>
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
+      {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
     </div>
   );
 }

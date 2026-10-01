@@ -221,7 +221,7 @@ export const HELP_TOPICS = {
     title: "Just for fun (the ✨ button)",
     area: "Register: members and the door",
     body:
-      "The ✨ button is for fun. Throw streamers and sparkles across the customer screen to get people's attention, or pick a little picture or joke to print at the bottom of the next receipt, no explanation. The receipt surprise turns itself off once it prints, and needs a printer that prints receipts after every sale.",
+      "The ✨ button is for fun. Throw streamers and sparkles across the customer screen to get people's attention, Rickroll the customer screen (the chorus of Never Gonna Give You Up, dance and all, from Rick Astley's official video; it closes itself, or tap ✕), or pick a little picture or joke to print at the bottom of the next receipt, no explanation. If the Rickroll shows a play button instead of starting, tap the screen once. The receipt surprise turns itself off once it prints, and needs a printer that prints receipts after every sale.",
   },
   "senior-student-rates": {
     title: "Senior and student rates",
