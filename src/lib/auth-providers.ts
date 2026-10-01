@@ -16,7 +16,10 @@ export interface SignInProviders {
 // true once Meta for Developers shows the app as Published.
 const FACEBOOK_APP_PUBLISHED = false;
 
-export async function getSignInProviders(): Promise<SignInProviders> {
+// Meta's reviewer (and the owner, for the review's screen recording) opens
+// /account/login?fb=1 to see the Facebook button before then.
+
+export async function getSignInProviders(opts: { facebookPreview?: boolean } = {}): Promise<SignInProviders> {
   try {
     const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/settings`, {
       headers: { apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! },
@@ -24,7 +27,7 @@ export async function getSignInProviders(): Promise<SignInProviders> {
     });
     if (!res.ok) return { google: false, facebook: false };
     const settings = (await res.json()) as { external?: Record<string, boolean> };
-    return { google: !!settings.external?.google, facebook: FACEBOOK_APP_PUBLISHED && !!settings.external?.facebook };
+    return { google: !!settings.external?.google, facebook: (FACEBOOK_APP_PUBLISHED || !!opts.facebookPreview) && !!settings.external?.facebook };
   } catch {
     return { google: false, facebook: false };
   }

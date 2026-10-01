@@ -9,6 +9,17 @@ import { getStaffSession, hasAdminAccess } from "@/lib/auth";
 export const LEGAL_PAGES_PUBLISHED = true;
 export const LEGAL_EFFECTIVE_DATE: string | null = "October 1, 2026";
 
+// The terms of service (/terms), written 10/1/2026 for Meta's app settings.
+// Until Andrew approves the wording, only a signed-in admin can open it.
+export const TERMS_PUBLISHED = false;
+export const TERMS_EFFECTIVE_DATE: string | null = null;
+
+export async function canViewTerms(): Promise<boolean> {
+  if (TERMS_PUBLISHED) return true;
+  const staff = await getStaffSession();
+  return !!staff && hasAdminAccess(staff.role);
+}
+
 export async function canViewLegalPages(): Promise<boolean> {
   if (LEGAL_PAGES_PUBLISHED) return true;
   const staff = await getStaffSession();
