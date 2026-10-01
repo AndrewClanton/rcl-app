@@ -35,18 +35,25 @@ function phoneLast4(phone: string | null | undefined): string | null {
   return d.length >= 7 ? d.slice(-4) : null;
 }
 
+// Whether a claim link could work for this phone: the claim page asks for
+// its last four digits.
+export function hasCheckablePhone(phone: string | null | undefined): boolean {
+  return !!phoneLast4(phone);
+}
+
 // A fresh link for this member, or null if there's nothing to claim: they
 // already have a login, their info was removed, there's no phone on file to
 // check against, or the link couldn't be recorded (for instance before the
 // member_claims migration is applied -- the receipt then just prints
 // without it, and the tablet shows its plain welcome). Never throws.
 //
-// kiosk links last 30 minutes, receipt links two weeks (CLAIM_LIFETIME_S).
+// kiosk links last 30 minutes, receipt links two weeks, and email links
+// (sign-in help, lib/sign-in-help.ts) 30 days (CLAIM_LIFETIME_S).
 // `skipIfIssuedWithinMs`: no new link if one of this kind was made for
 // them that recently (the tablet makes one when it creates an account, and
 // the register's confirm a moment later shouldn't make a second).
 export async function issueClaimLink(memberId: string, kind: ClaimKind, opts: { skipIfIssuedWithinMs?: number } = {}): Promise<string | null> {
-  if (!UUID.test(memberId) || (kind !== "kiosk" && kind !== "receipt")) return null;
+  if (!UUID.test(memberId) || !(kind === "kiosk" || kind === "receipt" || kind === "email")) return null;
   try {
     const admin = createAdminClient();
     const { data: m, error } = await admin.from("members").select("id, auth_user_id, erased_at, phone").eq("id", memberId).maybeSingle();
