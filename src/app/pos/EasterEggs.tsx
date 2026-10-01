@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FLOURISHES, type FlourishKey } from "@/lib/print/flourishes";
 import InfoTip from "@/components/help/InfoTip";
+import { RICKROLL_SHOW_MS } from "@/app/display/customer/Rickroll";
 
 // Register → ✨: just for fun. Throw streamers and sparkles across the
 // customer screen to get people's attention, or pick a little picture or a
@@ -18,12 +19,13 @@ export default function EasterEggs({
   next: FlourishKey | null;
   onPick: (key: FlourishKey | null) => void;
   onCelebrate: () => void;
-  onRickroll: () => void;
+  onRickroll: (stop: boolean) => void;
   canPrint: boolean; // a printer that auto-prints receipts
 }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
-  const [rolled, setRolled] = useState(false);
+  // While the customer screen is playing it, the same button stops it.
+  const [rolling, setRolling] = useState(false);
 
   useEffect(() => {
     if (!sent) return;
@@ -32,10 +34,10 @@ export default function EasterEggs({
   }, [sent]);
 
   useEffect(() => {
-    if (!rolled) return;
-    const timer = setTimeout(() => setRolled(false), 2500);
+    if (!rolling) return;
+    const timer = setTimeout(() => setRolling(false), RICKROLL_SHOW_MS);
     return () => clearTimeout(timer);
-  }, [rolled]);
+  }, [rolling]);
 
   const picked = FLOURISHES.find((f) => f.key === next);
 
@@ -73,11 +75,12 @@ export default function EasterEggs({
           <button
             className="btn-secondary w-full !py-2.5"
             onClick={() => {
-              onRickroll();
-              setRolled(true);
+              onRickroll(rolling);
+              setRolling(!rolling);
             }}
+            aria-pressed={rolling}
           >
-            {rolled ? "🕺 Never gonna give you up…" : "🕺 Rickroll the customer screen"}
+            {rolling ? "⏹ Stop the Rickroll" : "🕺 Rickroll the customer screen"}
           </button>
           <div>
             <div className="eyebrow mb-1.5">Next receipt surprise</div>

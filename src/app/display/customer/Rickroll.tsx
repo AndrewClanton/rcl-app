@@ -13,11 +13,11 @@ import { useEffect } from "react";
 const VIDEO = "dQw4w9WgXcQ";
 const START = 43; // "Never gonna give you up…"
 const END = 60;
-const SHOW_MS = 26_000; // the clip, plus a moment if someone had to tap play
+export const RICKROLL_SHOW_MS = 26_000; // the clip, plus a moment if someone had to tap play
 
 export default function Rickroll({ onDone }: { onDone: () => void }) {
   useEffect(() => {
-    const timer = setTimeout(onDone, SHOW_MS);
+    const timer = setTimeout(onDone, RICKROLL_SHOW_MS);
     return () => clearTimeout(timer);
   }, [onDone]);
 
