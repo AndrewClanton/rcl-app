@@ -37,7 +37,7 @@ export interface BackfillSummary {
   matched: number;
   needsPick: number;
   unclaimed: number;
-  byKind: { email: number; phone: number; name: number; picked: number; pickName: number; pickSimilar: number; pickOther: number };
+  byKind: { email: number; phone: number; name: number; picked: number; lookup: number; pickName: number; pickSimilar: number; pickOther: number };
   tabs: Record<BackfillTab, number>;
   exactWaiting: number; // high-confidence matches nobody has approved yet
   dollars: { all: number; matched: number; approved: number; needsPick: number; unclaimed: number };
@@ -148,7 +148,7 @@ export async function getBackfillData(opts: { tab: BackfillTab; query?: string; 
 
   // ---- summary ----
   const tabs = Object.fromEntries(BACKFILL_TABS.map((t) => [t, 0])) as Record<BackfillTab, number>;
-  const byKind = { email: 0, phone: 0, name: 0, picked: 0, pickName: 0, pickSimilar: 0, pickOther: 0 };
+  const byKind = { email: 0, phone: 0, name: 0, picked: 0, lookup: 0, pickName: 0, pickSimilar: 0, pickOther: 0 };
   const dollars = { all: 0, matched: 0, approved: 0, needsPick: 0, unclaimed: 0 };
   let matched = 0;
   let needsPick = 0;
@@ -165,7 +165,7 @@ export async function getBackfillData(opts: { tab: BackfillTab; query?: string; 
     if (c.match_status === "matched" && c.matched_member_id && c.decision !== "skipped") {
       matched++;
       dollars.matched += net;
-      if (c.match_kind === "email" || c.match_kind === "phone" || c.match_kind === "name" || c.match_kind === "picked") byKind[c.match_kind]++;
+      if (c.match_kind === "email" || c.match_kind === "phone" || c.match_kind === "name" || c.match_kind === "picked" || c.match_kind === "lookup") byKind[c.match_kind]++;
     } else if (c.match_status === "needs_pick" && c.decision !== "skipped") {
       needsPick++;
       dollars.needsPick += net;

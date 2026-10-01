@@ -28,6 +28,7 @@ const KIND: Record<string, string> = {
   name: "Name on the card",
   picked: "Picked by staff",
   similar: "Similar name",
+  lookup: "Found with Rewind",
 };
 const BRAND: Record<string, string> = { visa: "Visa", mc: "Mastercard", disc: "Discover", amex: "Amex" };
 
@@ -57,7 +58,19 @@ function live(members: MemberTotal[], s: GrantSettings, withWaiting: boolean) {
   };
 }
 
-export default function BackfillReview({ data, tab, query, pageSize }: { data: BackfillData; tab: BackfillTab; query: string; pageSize: number }) {
+export default function BackfillReview({
+  data,
+  tab,
+  query,
+  pageSize,
+  rewind,
+}: {
+  data: BackfillData;
+  tab: BackfillTab;
+  query: string;
+  pageSize: number;
+  rewind?: React.ReactNode;
+}) {
   const router = useRouter();
   const { summary } = data;
   const [rate, setRate] = useState(String(DEFAULT_GRANT_SETTINGS.rate));
@@ -104,6 +117,7 @@ export default function BackfillReview({ data, tab, query, pageSize }: { data: B
   return (
     <div className="space-y-6">
       <Header />
+      {rewind}
       <Summary data={data} />
       <GrantPanel members={data.members} settings={settings} ok={ok} rate={rate} cap={cap} taxOut={taxOut} setRate={setRate} setCap={setCap} setTaxOut={setTaxOut} />
       <BulkActions exactWaiting={summary.exactWaiting} />
@@ -177,8 +191,8 @@ function Header() {
       purpose={
         <>
           Regulars paid by card for years before the new system, then started at 0 points. Each card from the old card machine (Fortis) is matched to a
-          member by the email or phone given with the payment, or the name on the card. Approve the matches, choose the rate, then Grant. Nothing is given
-          until you press Grant. Members see it in their points history as &ldquo;Points from your past visits&rdquo;.
+          member by the email or phone given with the payment, or the name on the card; a card with no name can be found with Rewind. Approve the
+          matches, choose the rate, then Grant. Nothing is given until you press Grant (or a manager gives one member&apos;s Rewind points). Members see it in their points history as &ldquo;Points from your past visits&rdquo;.
         </>
       }
     />
@@ -198,7 +212,13 @@ function Stat({ k, v, sub }: { k: string; v: string; sub?: string }) {
 function Summary({ data }: { data: BackfillData }) {
   const s = data.summary;
   const k = s.byKind;
-  const how = [k.email && `${num(k.email)} by email`, k.phone && `${num(k.phone)} by phone`, k.name && `${num(k.name)} by name`, k.picked && `${num(k.picked)} picked`]
+  const how = [
+    k.email && `${num(k.email)} by email`,
+    k.phone && `${num(k.phone)} by phone`,
+    k.name && `${num(k.name)} by name`,
+    k.picked && `${num(k.picked)} picked`,
+    k.lookup && `${num(k.lookup)} with Rewind`,
+  ]
     .filter(Boolean)
     .join(", ");
   const why = [k.pickName && `${num(k.pickName)} same name`, k.pickSimilar && `${num(k.pickSimilar)} similar name`, k.pickOther && `${num(k.pickOther)} email/phone`]

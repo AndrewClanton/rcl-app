@@ -6,13 +6,16 @@ import { shiftDay, weekStart } from "@/lib/visits";
 import type { MemberTier } from "@/lib/types";
 
 // "Most regular regulars", all time: the days each member came in, from
-// the cards matched to them in fortis_cards (the old card machine, before
-// mid-September 2026) and, with check-ins on, the days they checked in on
-// the new system (member_visits). Staff screens only.
+// the purchases on the cards matched to them (fortis_sales and
+// fortis_cards: the old card machine, before mid-September 2026) and, with
+// check-ins on, the days they checked in on the new system
+// (member_visits). Staff screens only.
 //
-// A card counts once it's matched to a member and nobody skipped the match
-// (approved, waiting for review, or granted). A week counts as open when
-// anybody's card was used or anybody checked in that week.
+// A card counts once it's matched to a member -- by name, picked, or found
+// with Rewind -- and nobody skipped the match (approved, waiting for
+// review, or granted). A week counts as open when anybody's card was used
+// or anybody checked in that week. (These old visits never earn badges:
+// badges pay points, and the card's points come from the backfill.)
 
 export type RegularsSource = "cards" | "all";
 
@@ -41,16 +44,30 @@ export async function getMostRegular(source: RegularsSource, sort: RegularSort, 
     days.set(memberId, set);
   };
 
+  // Each card's days: its purchases in fortis_sales (one row per sale),
+  // or the days stored on the card when its sales aren't loaded.
+  const saleDays = new Map<string, Set<string>>();
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from("fortis_cards").select("id, matched_member_id, decision, visit_dates").order("id").range(from, from + 999);
+    const { data, error } = await supabase.from("fortis_sales").select("id, card_key, business_date").eq("kind", "sale").order("id").range(from, from + 999);
+    if (error) throw error;
+    for (const s of data ?? []) {
+      const set = saleDays.get(s.card_key) ?? new Set<string>();
+      set.add(s.business_date);
+      saleDays.set(s.card_key, set);
+    }
+    if (!data || data.length < 1000) break;
+  }
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from("fortis_cards").select("id, card_key, matched_member_id, decision, visit_dates").order("id").range(from, from + 999);
     if (error) throw error;
     for (const c of data ?? []) {
-      const dates: string[] = c.visit_dates ?? [];
+      const dates: Iterable<string> = saleDays.get(c.card_key) ?? c.visit_dates ?? [];
       for (const d of dates) {
         openWeeks.add(weekStart(d));
         if (!cardsThrough || d > cardsThrough) cardsThrough = d;
+        // Matched by name, picked, or found with Rewind -- anything but skipped.
+        if (c.matched_member_id && c.decision !== "skipped") add(c.matched_member_id, d);
       }
-      if (c.matched_member_id && c.decision !== "skipped") for (const d of dates) add(c.matched_member_id, d);
     }
     if (!data || data.length < 1000) break;
   }

@@ -66,15 +66,16 @@ export default async function AdminMembersPage({
           <span className="text-[var(--muted)]">See the list →</span>
         </Link>
       )}
-      {session && hasAdminAccess(session.role) && (
+      {session && hasManagerAccess(session.role) && (
         <Link
           href="/admin/members/past-purchases"
           className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
         >
           <span>
-            <span className="font-semibold">Points from past card purchases</span> · match card history from before the new system to members, then grant
+            <span className="font-semibold">◀◀ Rewind: points from past card purchases</span> · find a regular&apos;s visits from before the new system and
+            surprise them with the points
           </span>
-          <span className="text-[var(--muted)]">Review →</span>
+          <span className="text-[var(--muted)]">{hasAdminAccess(session.role) ? "Review →" : "Rewind →"}</span>
         </Link>
       )}
       <MemberManager

@@ -485,8 +485,10 @@ export type MatchStatus = "matched" | "needs_pick" | "unclaimed";
 // name (more than one member fits), or similar (no exact name, but a
 // member with the same last name goes by a short form of it, like Jake for
 // Jacob: never matched on its own, a person confirms). "picked": chosen by
-// staff in Back office.
-export type MatchKind = "email" | "phone" | "name" | "similar" | "picked";
+// staff in Back office. "lookup": found with Rewind (lib/fortis-lookup.ts)
+// from the last 4 and a purchase or two off the member's bank app, and
+// assigned by staff.
+export type MatchKind = "email" | "phone" | "name" | "similar" | "picked" | "lookup";
 // high: email or phone, or the name on the card and the member's agree all
 // the way through (a middle initial on one side only is fine). medium: the
 // middle names disagree ("John A Smith" and "John B Smith"), or the card

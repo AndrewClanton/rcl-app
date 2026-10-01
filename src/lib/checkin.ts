@@ -20,6 +20,9 @@
 //   register -> screen  "checkin-declined"  { id }  Not them / Cancel
 //   register -> screen  "checkin-sync"      {}  a register (re)joined: resend
 //   register -> screen  "points-earned"     PointsEarned (a member's sale)
+//   server -> screen    "rewind"            RewindFound (Back office's Rewind
+//                       gave a member points for their visits before the new
+//                       system; sent by the server, lib/tablet-broadcast.ts)
 // A second register on the same channel also hears confirmed/declined, and
 // drops its copy of that card.
 
@@ -64,6 +67,17 @@ export interface CheckinFlair {
 export interface PointsEarned {
   orderNumber: number;
   firstName: string;
+  earned: number;
+  balance: number;
+  color?: string | null; // their flair color's key, for the confetti
+}
+
+// "Welcome back, Jane! We found 37 visits since March 2023. +412 points."
+// First name, counts and a month only: never contact details or card digits.
+export interface RewindFound {
+  firstName: string;
+  visits: number;
+  since: string; // "March 2023"
   earned: number;
   balance: number;
   color?: string | null; // their flair color's key, for the confetti

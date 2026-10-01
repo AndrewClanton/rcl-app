@@ -16,6 +16,12 @@
 //     per member with card shares that add up.
 //  6. Re-matching never overrides a person's decision or a grant.
 //  7. Weekly runs: closed weeks, this week, the longest and current run.
+//  8. Rewind (src/lib/fortis-lookup.ts): amounts read to the exact cent
+//     ("$8", "8.00" and "8" are all $8.00), the day windows (exact, posting
+//     dates up to 2 days back, after midnight), several purchases narrowing
+//     to one card (each a different sale), the last 4, refunds never
+//     counting as a purchase, who may assign a card, the history note, and
+//     the per-sale rows the loader writes.
 //
 // Usage: node scripts/check-fortis-backfill.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
@@ -32,6 +38,7 @@ register(
 );
 const L = await import("../src/lib/fortis-backfill.ts");
 const R = await import("../src/lib/regularity.ts");
+const LK = await import("../src/lib/fortis-lookup.ts");
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -240,6 +247,114 @@ const rows = [
 ];
 eq("sort by days, then longest run", [...rows].sort(R.compareRegulars("days")).map((r) => r.longestRun), [3, 2, 6]);
 eq("sort by longest run", [...rows].sort(R.compareRegulars("longest")).map((r) => r.longestRun), [6, 3, 2]);
+
+// ---------- 8. Rewind ----------
+eq('"$8" is $8.00', LK.parseAmountCents("$8"), 800);
+eq('"8.00" is $8.00', LK.parseAmountCents("8.00"), 800);
+eq('"8" is $8.00', LK.parseAmountCents("8"), 800);
+eq('"8.5" is $8.50', LK.parseAmountCents("8.5"), 850);
+eq('".50" and "$ 23.45"', [LK.parseAmountCents(".50"), LK.parseAmountCents("$ 23.45")], [50, 2345]);
+eq('"1,234.56" with a thousands comma', LK.parseAmountCents("1,234.56"), 123456);
+eq(
+  'refused: "8,00", "-8", "8.123", "0", "abc", "", "$", "1.2.3", "$10,001"',
+  ["8,00", "-8", "8.123", "0", "abc", "", "$", "1.2.3", "$10,001"].map(LK.parseAmountCents),
+  [null, null, null, null, null, null, null, null, null],
+);
+let centsOk = true;
+for (let c = 1; c <= 1_000_000; c += 97) if (LK.parseAmountCents((c / 100).toFixed(2)) !== c) centsOk = false;
+check("every dollars-and-cents amount reads to its exact cent (no float drift)", centsOk && LK.parseAmountCents("19.99") === 1999 && LK.parseAmountCents("0.29") === 29);
+
+eq("exact days: the day entered", LK.purchaseWindow("2026-03-10", false), { from: "2026-03-10", to: "2026-03-10" });
+eq("posting dates: that day or up to 2 days before", LK.purchaseWindow("2026-03-10", true), { from: "2026-03-08", to: "2026-03-10" });
+eq("posting window across a month end", LK.purchaseWindow("2026-03-01", true).from, "2026-02-27");
+eq("asks the database for the business day before too", LK.businessDateRange("2026-03-10", false), { from: "2026-03-09", to: "2026-03-10" });
+eq("Central calendar date", [LK.centralDate("2026-03-10T06:30:00Z"), LK.centralDate("2026-03-10T04:30:00Z")], ["2026-03-10", "2026-03-09"]);
+
+// Cards (first six + last four). A and B end in 0001, C in 2222, D in 0001.
+const [A, B, C, D] = ["4111110001", "5222220001", "4111112222", "6011110001"];
+const sale = (id, card, businessDate, cents, createdAt, kind = "sale") => ({ id, cardKey: card, businessDate, amountCents: cents, createdAt, kind });
+const sales = [
+  sale("s1", A, "2026-03-10", 1250, "2026-03-11T00:00:00Z"), // 7 PM
+  sale("s2", B, "2026-03-10", 1250, "2026-03-11T01:00:00Z"), // same night, same amount, another card
+  sale("s3", A, "2026-03-14", 2000, "2026-03-15T02:00:00Z"),
+  sale("s4", B, "2026-03-20", 2000, "2026-03-21T02:00:00Z"),
+  sale("s5", C, "2026-03-10", 1250, "2026-03-11T02:00:00Z"),
+  sale("s6", D, "2026-03-09", 1250, "2026-03-10T06:30:00Z"), // 1:30 AM on the 10th: business day the 9th
+  sale("r1", A, "2026-03-16", 900, "2026-03-17T01:00:00Z", "refund"),
+];
+const find = (purchases, o = {}) => LK.matchCards(o.sales ?? sales, { lastFour: o.lastFour ?? null, purchases, postingDates: !!o.posting });
+eq("day + amount alone: every card with that sale", find([{ date: "2026-03-10", cents: 1250 }]), [A, C, B, D].sort());
+eq("the last 4 narrows it", find([{ date: "2026-03-10", cents: 1250 }], { lastFour: "2222" }), [C]);
+eq("the last 4 can still leave two", find([{ date: "2026-03-10", cents: 1250 }], { lastFour: "0001" }), [A, B, D].sort());
+eq("two purchases: only the card with both", find([{ date: "2026-03-10", cents: 1250 }, { date: "2026-03-14", cents: 2000 }]), [A]);
+eq("two purchases, one not on any card: nothing", find([{ date: "2026-03-10", cents: 1250 }, { date: "2026-03-15", cents: 2000 }]), []);
+eq("to the cent: $12.05 isn't $12.50", find([{ date: "2026-03-10", cents: 1205 }]), []);
+eq("bank shows a later posting date: no match on exact days", find([{ date: "2026-03-16", cents: 2000 }]), []);
+eq("... found with posting dates on", find([{ date: "2026-03-16", cents: 2000 }], { posting: true }), [A]);
+eq("posting dates only reach back, never forward", find([{ date: "2026-03-13", cents: 2000 }], { posting: true }), []);
+eq("3 days later is too far", find([{ date: "2026-03-17", cents: 2000 }], { posting: true }), []);
+eq("after midnight: the bank's calendar date finds it", find([{ date: "2026-03-10", cents: 1250 }], { lastFour: "0001" }).includes(D), true);
+eq("after midnight: so does the business date", find([{ date: "2026-03-09", cents: 1250 }]), [D]);
+eq("a refund isn't a purchase", find([{ date: "2026-03-16", cents: 900 }]), []);
+eq("a card with a refund still matches its sales", find([{ date: "2026-03-14", cents: 2000 }], { lastFour: "0001" }), [A]);
+eq("the same purchase twice needs two sales", find([{ date: "2026-03-10", cents: 1250 }, { date: "2026-03-10", cents: 1250 }]), []);
+eq(
+  "... and finds the card that has two",
+  find([{ date: "2026-03-10", cents: 1250 }, { date: "2026-03-10", cents: 1250 }], { sales: [...sales, sale("s7", A, "2026-03-10", 1250, "2026-03-11T03:00:00Z")] }),
+  [A],
+);
+eq("a sale fetched twice counts once", find([{ date: "2026-03-14", cents: 2000 }], { sales: [...sales, sales[2]] }), [A]);
+eq("each purchase a different sale", [LK.distinctSales([["x"], ["x"]]), LK.distinctSales([["x", "y"], ["x"]]), LK.distinctSales([["x"], []])], [false, true, false]);
+eq("verdict", [LK.verdictFor(0), LK.verdictFor(1), LK.verdictFor(2)], ["none", "found", "several"]);
+
+const form = (o) => LK.readLookup({ lastFour: "", purchases: [{ date: "2026-03-10", amount: "8" }], postingDates: false, ...o });
+eq("form: blank rows are skipped, amounts read exactly", form({ purchases: [{ date: "", amount: "" }, { date: "2026-03-10", amount: "$8" }] }), {
+  ok: true,
+  input: { lastFour: null, purchases: [{ date: "2026-03-10", cents: 800 }], postingDates: false },
+});
+check("form: a row with only a date is refused", !form({ purchases: [{ date: "2026-03-10", amount: "" }] }).ok);
+check("form: the last 4 must be 4 digits", !form({ lastFour: "123" }).ok && !form({ lastFour: "12a4" }).ok && form({ lastFour: " 1234 " }).ok);
+check("form: no purchase at all is refused", !form({ purchases: [] }).ok);
+check("form: up to 3 purchases", !form({ purchases: Array(4).fill({ date: "2026-03-10", amount: "8" }) }).ok && form({ purchases: Array(3).fill({ date: "2026-03-10", amount: "8" }) }).ok);
+check("form: a date that doesn't exist is refused", !form({ purchases: [{ date: "2026-02-30", amount: "8" }] }).ok);
+
+const st = (o) => LK.lookupStatus({ granted_at: null, erased_at: null, decision: "pending", match_status: "unclaimed", matched_member_id: null, ...o });
+eq("status", [st({}), st({ match_status: "needs_pick" }), st({ match_status: "matched", matched_member_id: "M" }), st({ decision: "skipped" }), st({ granted_at: "x" }), st({ erased_at: "x" })], [
+  "unclaimed",
+  "needs_pick",
+  "matched",
+  "skipped",
+  "granted",
+  "removed",
+]);
+eq("manager: an unclaimed or name-matched card is open", [LK.assignRule("unclaimed", false, false), LK.assignRule("matched", false, false)], ["open", "open"]);
+eq("manager: approved for someone: only them; skipped: no", [LK.assignRule("matched", true, false), LK.assignRule("skipped", false, false)], ["same_member", "no"]);
+eq("admin: open, but never a granted or removed card", [LK.assignRule("skipped", false, true), LK.assignRule("granted", true, true), LK.assignRule("removed", false, true)], ["open", "no", "no"]);
+check("same_member lets only that member through", LK.mayAssignTo("same_member", "M", "M") && !LK.mayAssignTo("same_member", "M", "N") && LK.mayAssignTo("open", "M", "N"));
+eq("history note, one card", LK.lookupGrantNote(["1234"]), "Points from card purchases before the new system (card ending 1234)");
+eq("history note, two cards", LK.lookupGrantNote(["5678", "1234"]), "Points from card purchases before the new system (cards ending 1234 and 5678)");
+eq("since", [LK.monthYear("2023-03-05"), LK.monthYear(null)], ["March 2023", ""]);
+eq("settings label", [LK.settingsLabel(S()), LK.settingsLabel(S({ rate: 2, cap: 500, taxOut: false }))], ["1 point per $1 before tax", "2 points per $1, up to 500 per member"]);
+eq(
+  "a second card for the same member is paid in full (no cap)",
+  L.planGrant([{ id: "c9", memberId: "A", dollars: 108.73 }], S(), new Map([["A", 300]]))[0].points,
+  100,
+);
+
+const frow = (o) => ({ id: "t1", statusId: "101", typeId: "20", firstSix: "411111", lastFour: "0001", holderName: "", amount: "12.50", subtotal: "", createdTs: "03/10/2026 07:00:00 PM CDT", email: "", phone: "", brand: "visa", ...o });
+const fs1 = LK.fortisSaleRows([
+  frow({}),
+  frow({ id: "t2", statusId: "111", typeId: "30", amount: "4.00" }),
+  frow({ id: "t3", statusId: "201", amount: "0.00" }),
+  frow({ id: "t1" }),
+  frow({ id: "t4", firstSix: "" }),
+  frow({ id: "t5", createdTs: "garbage" }),
+]);
+eq("loader rows: sales and refunds, as charged, to the cent", fs1.sales.map((s) => [s.fortisId, s.kind, s.amountCents, s.businessDate, s.cardKey]), [
+  ["t1", "sale", 1250, "2026-03-10", "4111110001"],
+  ["t2", "refund", 400, "2026-03-10", "4111110001"],
+]);
+eq("loader rows: a voided sale comes out; repeats, no card or no date are left out", [fs1.gone, fs1.skipped], [["t3"], 3]);
 
 console.log(failures ? `\n${failures} FAILED` : "\nAll passed.");
 process.exit(failures ? 1 : 0);

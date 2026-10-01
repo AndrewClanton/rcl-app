@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { LedgerEntry } from "@/lib/data/member-account";
 import type { VisitSummary } from "@/lib/visits-server";
+import type { PastVisits } from "@/lib/data/fortis-lookup";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { VISIT_POINTS } from "@/lib/visits";
 import { adjustmentNote, rewardOff } from "@/lib/points-history";
@@ -43,7 +44,19 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
   }
 }
 
-export default function PointsView({ balance, ledger, visits, birthday }: { balance: number; ledger: LedgerEntry[]; visits: VisitSummary; birthday: string | null }) {
+export default function PointsView({
+  balance,
+  ledger,
+  visits,
+  birthday,
+  past = null,
+}: {
+  balance: number;
+  ledger: LedgerEntry[];
+  visits: VisitSummary;
+  birthday: string | null;
+  past?: PastVisits | null;
+}) {
   const earned = ledger.filter((l) => l.delta > 0 && l.reason !== "opening_balance" && l.reason !== "merge").reduce((s, l) => s + l.delta, 0);
   // (Math.abs: no redemptions would otherwise show as "-0".)
   const used = Math.abs(ledger.filter((l) => l.reason === "redeem").reduce((s, l) => s + l.delta, 0));
@@ -61,6 +74,15 @@ export default function PointsView({ balance, ledger, visits, birthday }: { bala
       />
 
       <StreakPanel visits={visits} />
+
+      {past && past.days > 0 && (
+        <Panel title="Before our new system">
+          <p className="p-5 text-[15px]">
+            Visits before our new system: <strong>{past.days.toLocaleString("en-US")}</strong>
+            {past.since ? <>, starting {past.since}</> : null}. Thanks for being a regular.
+          </p>
+        </Panel>
+      )}
 
       <BadgeCabinet visits={visits} birthday={birthday} />
 
