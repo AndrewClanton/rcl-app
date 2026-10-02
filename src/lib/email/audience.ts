@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
-import { addDays, capCheck, genreKey, hardFilter, matchesAudience, trustRank, type CampaignShape, type RuleContext } from "./rules";
+import { addDays, capCheck, compareEngagement, engagementKey, genreKey, hardFilter, matchesAudience, trustRank, type CampaignShape, type OrderExtras, type RuleContext } from "./rules";
 import { legacyNeedsSetup } from "@/lib/legacy-plus";
 import { holdoutBucket, shuffleKey } from "./hash";
 import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
@@ -17,7 +17,8 @@ import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
 //      "former unlimited, nothing paying now", minus anyone the old system
 //      still charges);
 //   3. the caps (rules.ts), at the time it would arrive;
-//   4. warm-up order and wave size (order 'trust', limit);
+//   4. warm-up order and wave size (order 'trust', or 'engaged' for the
+//      ready-made emails' daily waves; limit);
 //   5. the holdout: a fixed ~pct% get a row but no email, to measure lift.
 
 const PAGE = 1000;
@@ -164,12 +165,40 @@ export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> 
   return ctx;
 }
 
+// For the engagement order: each member's latest activity
+// (members.last_activity_at: check-ins, purchases, bookings, points) and
+// when they last said yes to email (member_email_prefs.consent_at), read
+// beside member_email_facts so that function needn't change. If either
+// read fails, the order uses what the facts have (visits, orders, clicks).
+export async function orderExtras(): Promise<Map<string, OrderExtras>> {
+  const admin = createAdminClient();
+  const out = new Map<string, OrderExtras>();
+  try {
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await admin.from("members").select("id, last_activity_at").not("last_activity_at", "is", null).order("id").range(from, from + PAGE - 1);
+      if (error) break;
+      for (const r of data ?? []) out.set(r.id as string, { activityAt: r.last_activity_at as string });
+      if ((data ?? []).length < PAGE) break;
+    }
+    for (let from = 0; ; from += PAGE) {
+      const { data, error } = await admin.from("member_email_prefs").select("member_id, consent_at").not("consent_at", "is", null).order("member_id").range(from, from + PAGE - 1);
+      if (error) break;
+      for (const r of data ?? []) out.set(r.member_id as string, { ...out.get(r.member_id as string), consentAt: r.consent_at as string });
+      if ((data ?? []).length < PAGE) break;
+    }
+  } catch {
+    // The facts alone.
+  }
+  return out;
+}
+
 export interface Resolved {
   send: { facts: MemberFacts; heldOut: boolean; dedupeKey: string | null }[];
   willSend: number;
   heldOut: number;
   excluded: Partial<Record<Exclusion, number>>;
   considered: number;
+  rank?: Map<string, number[]>; // order 'engaged': member id -> engagementKey
 }
 
 // Who already has this campaign (or, for an automation, this dedupe key).
@@ -199,6 +228,8 @@ export async function resolveAudience(
     dedupeKey?: (f: MemberFacts) => string | null;
     limit?: number | null;
     now?: Date;
+    extras?: Map<string, OrderExtras>; // orderExtras(), read once for several
+    withRank?: boolean; // order 'engaged': return each one's engagement key
   },
 ): Promise<Resolved> {
   const now = opts.now ?? new Date();
@@ -244,12 +275,23 @@ export async function resolveAudience(
     ok.push({ facts: f, dedupeKey: key });
   }
 
+  const limit = opts.limit ?? c.audience.limit ?? null;
+  const tie = (a: MemberFacts, b: MemberFacts) => shuffleKey(a.memberId, c.id).localeCompare(shuffleKey(b.memberId, c.id));
   // Warm-up: the most trusted first, then a fixed random order.
   if (c.audience.order === "trust" || c.audience.order === "random") {
     const rank = (f: MemberFacts) => (c.audience.order === "trust" ? trustRank(f) : 0);
-    ok.sort((a, b) => rank(a.facts) - rank(b.facts) || shuffleKey(a.facts.memberId, c.id).localeCompare(shuffleKey(b.facts.memberId, c.id)));
+    ok.sort((a, b) => rank(a.facts) - rank(b.facts) || tie(a.facts, b.facts));
   }
-  const limit = opts.limit ?? c.audience.limit ?? null;
+  // The ready-made emails' daily waves: the most engaged first (rules.ts
+  // engagementKey). Sorted only when the wave takes some and leaves the rest.
+  const cut = !!limit && limit > 0 && ok.length > limit;
+  let rank: Map<string, number[]> | undefined;
+  if (c.audience.order === "engaged" && (cut || opts.withRank)) {
+    const extras = opts.extras ?? (await orderExtras());
+    const keys = new Map(ok.map((x) => [x.facts.memberId, engagementKey(x.facts, extras.get(x.facts.memberId) ?? {}, now)]));
+    if (cut) ok.sort((a, b) => compareEngagement(keys.get(a.facts.memberId) ?? [], keys.get(b.facts.memberId) ?? []) || tie(a.facts, b.facts));
+    rank = keys;
+  }
   let chosen = ok;
   if (limit && limit > 0 && ok.length > limit) {
     chosen = ok.slice(0, limit);
@@ -258,7 +300,7 @@ export async function resolveAudience(
 
   const send = chosen.map((x) => ({ ...x, heldOut: c.holdoutPct > 0 && holdoutBucket(x.facts.memberId, c.id) < c.holdoutPct }));
   const heldOut = send.filter((s) => s.heldOut).length;
-  return { send, willSend: send.length - heldOut, heldOut, excluded, considered: facts.length };
+  return { send, willSend: send.length - heldOut, heldOut, excluded, considered: facts.length, rank };
 }
 
 // Writes the chosen people as email_sends rows ('queued' or 'held_out').

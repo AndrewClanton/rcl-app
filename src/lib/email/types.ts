@@ -124,7 +124,7 @@ export interface Audience {
   include: Rule[];
   exclude?: Rule[];
   limit?: number;
-  order?: "trust" | "random";
+  order?: "trust" | "random" | "engaged"; // "engaged": the ready-made emails' waves (rules.ts engagementKey)
 }
 
 // Why someone isn't getting an email, counted per campaign.

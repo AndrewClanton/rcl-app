@@ -98,6 +98,49 @@ export function nextWaveDay(now = new Date()): Date {
   return waveCanGoToday(now) ? nextSendSlot(now) : nextSendSlot(new Date(Date.parse(`${utcDay(new Date(now.getTime() + DAY))}T13:00:00Z`)));
 }
 
+// When an email that's going out sends its next wave: the next morning
+// run (the email cron, 13:00 UTC) on a Monday to Saturday, today's if it
+// hasn't run yet and today's share isn't used up. That wave goes at its
+// send slot (10:30 AM Central).
+export function nextMorningWave(now = new Date(), roomLeftToday = true): Date {
+  let run = new Date(`${utcDay(now)}T13:00:00Z`);
+  if (run.getTime() <= now.getTime() || !roomLeftToday) run = new Date(run.getTime() + DAY);
+  for (let i = 0; i < 3 && !waveCanGoToday(run); i++) run = new Date(run.getTime() + DAY);
+  return nextSendSlot(run);
+}
+
+// Whether the ready-made emails' later waves go out by themselves on the
+// morning run ("auto"), or only when staff press "Send the next wave" on
+// Ready to send ("manual", the default: Andrew, 10/2, so each wave can be
+// judged before the next). Either way, never more than a day's share.
+export type WaveMode = "manual" | "auto";
+const MODE_KEY = "design_waves";
+
+export async function getWaveMode(): Promise<WaveMode> {
+  try {
+    const { data } = await createAdminClient().from("email_settings").select("value").eq("key", MODE_KEY).maybeSingle();
+    return (data?.value as { auto?: unknown } | undefined)?.auto === true ? "auto" : "manual";
+  } catch {
+    return "manual";
+  }
+}
+
+export async function saveWaveMode(mode: WaveMode, employeeId: string | null): Promise<void> {
+  const { error } = await createAdminClient()
+    .from("email_settings")
+    .upsert({ key: MODE_KEY, value: { auto: mode === "auto" }, updated_at: new Date().toISOString(), ...(employeeId ? { updated_by: employeeId } : {}) }, { onConflict: "key" });
+  if (error) throw new Error("Couldn't save it.");
+}
+
+// Wave size is the plan's list share a day: setting it keeps what's held
+// back for receipts and makes Resend's daily figure the two added up.
+export async function saveWaveSize(size: number, employeeId: string | null): Promise<SendPlan> {
+  const n = Math.floor(Number(size));
+  if (!Number.isFinite(n) || n < 1 || n > 100_000) throw new Error("A wave is 1 to 100,000 people.");
+  const plan = await getSendPlan();
+  return saveSendPlan({ ...plan, daily: plan.reserve + n }, employeeId);
+}
+
 // About how many sending days (Monday to Saturday) `n` people take, with
 // `today` left today. Ignores the month's limit (the screen says so when
 // that's the one that bites).

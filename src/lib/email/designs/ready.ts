@@ -3,7 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { plusPaidFor } from "@/lib/plus-status";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "../campaign";
-import { loadFacts, resolveAudience } from "../audience";
+import { loadFacts, orderExtras, resolveAudience } from "../audience";
+import { ENGAGEMENT_GROUPS, engagementGroup } from "../rules";
 import { renderCampaign, type Recipient } from "../render";
 import { EXCLUSION_LABEL, type Exclusion } from "../types";
 import { sealArtName } from "./art-token";
@@ -36,6 +37,9 @@ export async function designCampaign(key: DesignKey): Promise<CampaignRow | null
 export interface AudienceCount {
   willSend: number;
   excluded: { why: string; n: number }[];
+  // The next wave if it went now: how many, and how engaged they are (in
+  // the order they're picked; rules.ts ENGAGEMENT_GROUPS).
+  next: { n: number; mix: { label: string; n: number }[] };
 }
 
 function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n: number }[] {
@@ -45,17 +49,24 @@ function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n
     .map(([k, n]) => ({ why: k === "already_sent" ? "Already got it" : EXCLUSION_LABEL[k], n }));
 }
 
-// Who each would go to right now (and who's left out, by reason). One
-// read of the member list for all three.
-export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date()): Promise<Record<DesignKey, AudienceCount>> {
-  const facts = await loadFacts();
+// Who each would go to right now (and who's left out, by reason), and who
+// the next wave of `waveSize` would be. One read of the member list (and
+// of the engagement extras) for all three.
+export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date(), waveSize = 100): Promise<Record<DesignKey, AudienceCount>> {
+  const [facts, extras] = await Promise.all([loadFacts(), orderExtras()]);
   const out = {} as Record<DesignKey, AudienceCount>;
   for (const key of DESIGN_KEYS) {
     const d = DESIGNS[key];
     const c = rows[key];
     const shape = { id: c?.id ?? UUID_ZERO, kind: d.kind, category: d.category, automation: null, alert: null };
-    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at: now, now, facts });
-    out[key] = { willSend: r.willSend, excluded: topExclusions(r.excluded) };
+    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at: now, now, facts, extras, limit: Math.max(1, waveSize), withRank: true });
+    const groups = ENGAGEMENT_GROUPS.map(() => 0);
+    for (const s of r.send) groups[engagementGroup(r.rank?.get(s.facts.memberId) ?? [4, 3])]++;
+    out[key] = {
+      willSend: r.willSend + (r.excluded.wave_limit ?? 0),
+      excluded: topExclusions(r.excluded),
+      next: { n: r.willSend, mix: ENGAGEMENT_GROUPS.map((label, i) => ({ label, n: groups[i] })).filter((g) => g.n > 0) },
+    };
   }
   return out;
 }
@@ -71,13 +82,20 @@ export interface DesignResults {
   waiting: number; // queued, not handed to Resend yet
   outcome: number; // signed in, or set up Insiders+, since
   outcomeOf: number; // out of how many it could apply to
+  waves: WaveResult[]; // the same, one wave at a time, first wave first
 }
+
+// One daily wave: everyone chosen on one day (Central), by when their
+// row was queued.
+export type WaveResult = Omit<DesignResults, "waves"> & { n: number; day: string };
+
+const chicagoDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 
 export async function designResults(c: CampaignRow, key: DesignKey): Promise<DesignResults> {
   const admin = createAdminClient();
-  type Row = { member_id: string | null; status: string; delivered_at: string | null; first_opened_at: string | null; first_clicked_at: string | null; unsubscribed_at: string | null; bounce_type: string | null; had_login?: boolean | null };
+  type Row = { member_id: string | null; status: string; created_at: string; delivered_at: string | null; first_opened_at: string | null; first_clicked_at: string | null; unsubscribed_at: string | null; bounce_type: string | null; had_login?: boolean | null };
   const rows: Row[] = [];
-  let cols = "member_id, status, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, bounce_type, had_login";
+  let cols = "member_id, status, created_at, delivered_at, first_opened_at, first_clicked_at, unsubscribed_at, bounce_type, had_login";
   for (let from = 0; ; from += 1000) {
     let { data, error } = await admin.from("email_sends").select(cols).eq("campaign_id", c.id).order("id").range(from, from + 999);
     if (error && cols.includes("had_login")) {
@@ -89,35 +107,47 @@ export async function designResults(c: CampaignRow, key: DesignKey): Promise<Des
     rows.push(...((data ?? []) as unknown as Row[]));
     if ((data ?? []).length < 1000) break;
   }
-  const handed = rows.filter((r) => HANDED.includes(r.status));
-  const out: DesignResults = {
-    sent: handed.length,
-    delivered: rows.filter((r) => r.delivered_at).length,
-    opened: rows.filter((r) => r.first_opened_at).length,
-    clicked: rows.filter((r) => r.first_clicked_at).length,
-    unsubscribed: rows.filter((r) => r.unsubscribed_at).length,
-    bounced: rows.filter((r) => r.status === "bounced" || r.bounce_type === "Permanent").length,
-    waiting: rows.filter((r) => r.status === "queued").length,
-    outcome: 0,
-    outcomeOf: 0,
-  };
   const d = DESIGNS[key];
   // Who it could apply to: everyone who got the invite or "Press play"
   // (they had no login, or nothing paying, when it went); for "Come in",
   // the ones who had no login when it went.
-  const candidates = handed.filter((r) => r.member_id && (d.outcome.key === "plus" || key === "royale-is-here" || r.had_login === false)).map((r) => r.member_id as string);
-  out.outcomeOf = candidates.length;
+  const applies = (r: Row) => !!r.member_id && HANDED.includes(r.status) && (d.outcome.key === "plus" || key === "royale-is-here" || r.had_login === false);
+  const candidates = rows.filter(applies).map((r) => r.member_id as string);
+  const won = new Set<string>();
   for (let i = 0; i < candidates.length; i += 150) {
     const ids = candidates.slice(i, i + 150);
     if (d.outcome.key === "signed_in") {
       const { data } = await admin.from("members").select("id, auth_user_id").in("id", ids);
-      out.outcome += (data ?? []).filter((m) => m.auth_user_id).length;
+      for (const m of data ?? []) if (m.auth_user_id) won.add(m.id as string);
     } else {
       const { data } = await admin.from("members").select("*").in("id", ids);
-      out.outcome += ((data ?? []) as Parameters<typeof plusPaidFor>[0][]).filter((m) => plusPaidFor(m)).length;
+      for (const m of (data ?? []) as (Parameters<typeof plusPaidFor>[0] & { id: string })[]) if (plusPaidFor(m)) won.add(m.id);
     }
   }
-  return out;
+  const tally = (list: Row[]): Omit<DesignResults, "waves"> => {
+    const could = list.filter(applies);
+    return {
+      sent: list.filter((r) => HANDED.includes(r.status)).length,
+      delivered: list.filter((r) => r.delivered_at).length,
+      opened: list.filter((r) => r.first_opened_at).length,
+      clicked: list.filter((r) => r.first_clicked_at).length,
+      unsubscribed: list.filter((r) => r.unsubscribed_at).length,
+      bounced: list.filter((r) => r.status === "bounced" || r.bounce_type === "Permanent").length,
+      waiting: list.filter((r) => r.status === "queued").length,
+      outcome: could.filter((r) => won.has(r.member_id as string)).length,
+      outcomeOf: could.length,
+    };
+  };
+  const byDay = new Map<string, Row[]>();
+  for (const r of rows) {
+    if (r.status === "held_out") continue;
+    const day = chicagoDay(r.created_at);
+    const list = byDay.get(day);
+    if (list) list.push(r);
+    else byDay.set(day, [r]);
+  }
+  const waves = [...byDay.keys()].sort().map((day, i) => ({ n: i + 1, day, ...tally(byDay.get(day) ?? []) }));
+  return { ...tally(rows), waves };
 }
 
 // ---------- preview ----------

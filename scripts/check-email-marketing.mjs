@@ -896,8 +896,12 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
     return mkCampaign({ kind: d.kind, category: d.category, name: d.name, subject: d.subject, preheader: d.preheader, content: { blocks: [{ t: "design", key }], design: key, pace: {} }, audience: d.audience, status: "sending" });
   };
   const queuedOf = (c) => db.email_sends.filter((s) => s.campaign_id === c.id && s.status === "queued");
-  const goOut = (c, at) => queuedOf(c).forEach((s) => Object.assign(s, { status: "submitted", submitted_at: at.toISOString(), deliver_at: at.toISOString() }));
+  // Handed over at `at` (and, as in life, queued that day, which is what
+  // the wave-by-wave results go by).
+  const goOut = (c, at) => queuedOf(c).forEach((s) => Object.assign(s, { status: "submitted", submitted_at: at.toISOString(), deliver_at: at.toISOString(), created_at: at.toISOString() }));
 
+  eq("waves: manual is the default (no setting saved)", await sendPlan.getWaveMode(), "manual");
+  db.email_settings.push({ key: "design_waves", value: { auto: true } }); // the automatic waves first; manual ones below
   eq("plan: the free plan less 20 a day for receipts is 80 a day", sendPlan.perDay(sendPlan.FREE_PLAN), 80);
   eq("plan: 300 people at 80 a day, 50 left today, is 5 sending days", sendPlan.sendingDays(300, 80, 50), 5);
   check("plan: a wave can't go on a Sunday afternoon (Central), can on a weekday evening (it's the next UTC day's 10:30)", !sendPlan.waveCanGoToday(cdt("2026-10-11", "12:00")) && sendPlan.waveCanGoToday(cdt("2026-10-06", "20:30")));
@@ -906,10 +910,38 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   // The tenth has an email and no phone: invited too (links stopped needing a phone, 10/1).
   const inv = [...Array.from({ length: 9 }, (_, i) => mkMember(600 + i, { legacy_user_id: null })), mkMember(621, { legacy_user_id: null, phone: null })];
   mkMember(620, { auth_user_id: randomUUID() }); // signed up already: not invited
+  // How engaged each is (the wave order): two active this month (a recent
+  // check-in time, a visit), one active months ago, two who ticked "yes"
+  // on the join form (the more recent first), one long-standing member.
+  inv[6].last_activity_at = "2026-10-04T18:00:00Z";
+  db.member_visits.push({ member_id: inv[3].id, business_date: "2026-09-20" });
+  inv[8].last_activity_at = "2026-03-01T18:00:00Z";
+  const yes = (m, at) => db.member_email_prefs.push({ member_id: m.id, lineup: true, alerts: true, events: true, offers: true, rewards: true, consent_source: "join_form", consent_at: at, engagement: "active" });
+  yes(inv[1], "2026-09-30T15:00:00Z");
+  yes(inv[4], "2026-09-02T15:00:00Z");
+  inv[0].created_at = "2024-05-01T12:00:00Z";
+  const ids = (list) => list.map((m) => m.id).sort();
   const c1 = mkDesign("royale-is-here");
+  check("waves: all three ready-made emails go most engaged first", designs.DESIGN_KEYS.every((k) => designs.DESIGNS[k].audience.order === "engaged"));
   const tue = cdt("2026-10-06", "11:00");
+  {
+    const key = (f, x = {}) => rules.engagementKey({ consentSource: "unknown", legacyPlus: false, importGroup: null, createdAt: "2026-09-25T12:00:00Z", lastEngagedAt: null, lastClickAt: null, lastVisitOn: null, orders: [], tickets: [], ...f }, x, tue);
+    const order = [
+      key({}, { activityAt: "2026-10-05T12:00:00Z" }), // came in yesterday
+      key({ lastClickAt: "2026-08-01T12:00:00Z" }), // tapped an email 2 months ago
+      key({ consentSource: "join_form" }, { consentAt: "2026-10-01T12:00:00Z" }), // nothing yet, said yes last week
+      key({ consentSource: "join_form" }, { consentAt: "2026-06-01T12:00:00Z" }), // ...said yes in June
+      key({ consentSource: "old_site_import", legacyPlus: true }), // old-site, paid
+      key({ consentSource: "old_site_import", importGroup: "likely_real", createdAt: "2023-01-01T12:00:00Z" }), // old-site, longest-standing
+      key({ consentSource: "old_site_import", importGroup: "likely_real" }),
+      key({}), // nothing, and no yes on record: last
+    ];
+    check("order: activity, then the yes (most recent first), then member since, then nothing on record last", order.every((k, i) => i === 0 || rules.compareEngagement(order[i - 1], k) < 0), JSON.stringify(order));
+    eq("order: in plain words for the screen", order.map((k) => rules.engagementGroup(k)), [0, 1, 4, 4, 5, 5, 5, 6]);
+  }
   let w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, tue);
   eq("waves: the first wave is today's share (4 of the 10 who qualify)", [queuedOf(c1).length, w.more, db.email_campaigns.find((x) => x.id === c1.id).content.pace.remaining], [4, true, 6]);
+  eq("waves: the queue orders by engagement: the first wave is the 4 most engaged", ids(queuedOf(c1).map((s) => ({ id: s.member_id }))), ids([inv[6], inv[3], inv[8], inv[1]]));
   check("waves: the no-login rule holds (nobody signed up)", queuedOf(c1).every((s) => inv.some((m) => m.id === s.member_id)));
   check("waves: the invite no longer asks for a phone on file", !JSON.stringify(designs.DESIGNS["royale-is-here"].audience).includes("has_phone"));
   check("waves: each queued row remembers they had no login", queuedOf(c1).every((s) => s.had_login === false));
@@ -920,6 +952,7 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   eq("waves: once today's share has gone, nothing more today", [queuedOf(c1).length, w.more, w.note], [0, true, sender.DAILY_LIMIT]);
   w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-07", "08:05"));
   eq("waves: the next morning's run queues the next 4", queuedOf(c1).length, 4);
+  check("waves: ...led by the other 'yes' and the longest-standing member", [inv[4], inv[0]].every((m) => queuedOf(c1).some((s) => s.member_id === m.id)));
   goOut(c1, cdt("2026-10-07", "10:30"));
   w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-11", "12:00"));
   check("waves: never on a Sunday (it waits for Monday)", queuedOf(c1).length === 0 && w.more && /Monday/.test(w.note ?? ""), w.note);
@@ -929,6 +962,37 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-13", "08:05"));
   eq("waves: nobody gets it twice (all 10 had it, once each)", [queuedOf(c1).length, w.more, new Set(db.email_sends.filter((s) => s.campaign_id === c1.id).map((s) => s.member_id)).size], [0, false, 10]);
   check("waves: the member with only an email got it", db.email_sends.some((s) => s.campaign_id === c1.id && s.member_id === inv[9].id));
+  {
+    const res = await ready.designResults(await sender.getCampaign(c1.id), "royale-is-here");
+    eq("waves: results wave by wave (by the day each was queued)", res.waves.map((x) => [x.n, x.day, x.sent, x.outcomeOf]), [
+      [1, "2026-10-06", 4, 4],
+      [2, "2026-10-07", 4, 4],
+      [3, "2026-10-12", 2, 2],
+    ]);
+  }
+
+  // ---- manual waves (the default): only a press from staff starts one ----
+  db.email_settings.find((s) => s.key === "design_waves").value = { auto: false };
+  const c2 = mkDesign("royale-is-here");
+  const paceOf = (c) => db.email_campaigns.find((x) => x.id === c.id).content.pace;
+  const press = (c, at) => Object.assign(paceOf(c), { go: at.toISOString(), goKey: randomUUID() }); // as sendNextWave does
+  w = await sender.prepareWave(await sender.getCampaign(c2.id), empty, cdt("2026-10-14", "08:05"));
+  eq("manual waves: the morning run starts no wave by itself", [queuedOf(c2).length, w.more, w.note], [0, true, sender.WAVE_WAITING]);
+  press(c2, cdt("2026-10-14", "11:00"));
+  w = await sender.prepareWave(await sender.getCampaign(c2.id), empty, cdt("2026-10-14", "11:00"));
+  eq("manual waves: a press sends one wave (today's share), the most engaged, then waits", [ids(queuedOf(c2).map((s) => ({ id: s.member_id }))), w.more, w.note, paceOf(c2).go], [ids([inv[6], inv[3], inv[8], inv[1]]), true, sender.WAVE_WAITING, null]);
+  goOut(c2, cdt("2026-10-14", "11:00"));
+  w = await sender.prepareWave(await sender.getCampaign(c2.id), empty, cdt("2026-10-15", "08:05"));
+  eq("manual waves: the next morning, still nothing without a press", [queuedOf(c2).length, w.more], [0, true]);
+  press(c2, cdt("2026-10-15", "18:00"));
+  w = await sender.prepareWave(await sender.getCampaign(c2.id), empty, cdt("2026-10-16", "08:05"));
+  eq("manual waves: a press is good for that day only (yesterday's sends nothing)", [queuedOf(c2).length, paceOf(c2).go], [0, null]);
+  press(c2, cdt("2026-10-16", "10:00"));
+  w = await sender.prepareWave(await sender.getCampaign(c2.id), empty, cdt("2026-10-16", "10:00"));
+  check("manual waves: the second press sends the next 4", queuedOf(c2).length === 4 && [inv[4], inv[0]].every((m) => queuedOf(c2).some((s) => s.member_id === m.id)));
+  db.email_sends.splice(0, db.email_sends.length, ...db.email_sends.filter((s) => s.campaign_id !== c2.id));
+  db.email_campaigns.find((x) => x.id === c2.id).status = "cancelled";
+  db.email_settings.find((s) => s.key === "design_waves").value = { auto: true }; // the live run below sends a wave itself
   eq("waves: a paced email has no 'too late' (it goes over days)", timing.sendByFor({ kind: "invite", content: { pace: {} }, scheduled_for: tue.toISOString() }), null);
 
   // ---- a real run: the invite's own links, re-checked at hand-over ----

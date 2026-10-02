@@ -15,7 +15,7 @@ import { sealArtName } from "./designs/art-token";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
 import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE, legacyNeedsSetup } from "@/lib/legacy-plus";
-import { getSendPlan, roomToday, waveCanGoToday, nextWaveDay } from "./send-plan";
+import { getSendPlan, getWaveMode, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
 import { cancelEmail, deliver, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
@@ -596,10 +596,21 @@ export async function prepareCampaign(c: CampaignRow, data: RenderData, now = ne
 // next wave is chosen from whoever qualifies right then (anyone who's had
 // it is skipped, so nobody gets it twice) and queued for today, as many
 // as today's share allows. The run after the last wave marks it sent.
+//
+// Unless an admin switches waves to "auto" (send-plan.ts getWaveMode), a
+// new wave is chosen only after staff press "Send the next wave" (or the
+// first Send) on Ready to send: that sets pace.go, good for that Resend
+// (UTC) day only, and the wave it starts clears it. The morning run still
+// hands over anything left queued from a wave staff started, and never
+// starts one itself.
 export interface Pace {
   remaining?: number; // people left after the last wave
   note?: string | null;
+  go?: string | null; // when staff pressed for the next wave (manual waves)
+  goKey?: string | null; // that press's page key, so a double click sends one wave
 }
+
+export const WAVE_WAITING = "Waiting for staff: the next wave goes only when someone presses Send the next wave on Ready to send.";
 
 export function isPaced(c: { content?: CampaignInput["content"] | null }): boolean {
   return !!(c.content as { pace?: Pace } | null | undefined)?.pace;
@@ -632,11 +643,24 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
     return { c: { ...c, ...patch }, more: (pace.remaining ?? 0) > 0, note: null };
   }
 
+  // Manual waves: nothing new without a press from staff today.
+  const manual = (await getWaveMode()) === "manual";
+  if (manual && !(pace.go && utcDay(new Date(pace.go)) === utcDay(now))) {
+    // After the last wave, it's done (anyone new waits for a fresh Send).
+    const more = pace.remaining !== 0;
+    const note = more ? WAVE_WAITING : null;
+    if (pace.go || (pace.note ?? null) !== note) {
+      patch.content = { ...c.content, pace: { ...pace, go: null, note } } as CampaignRow["content"];
+    }
+    await save();
+    return { c: { ...c, ...patch }, more, note };
+  }
+
   const room = await roomToday(now);
   const later = (why: string) => ({ more: true, note: why });
   let verdict: { more: boolean; note: string | null } | null = null;
-  if (!waveCanGoToday(now)) verdict = later(`The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
-  else if (room <= 0) verdict = later(DAILY_LIMIT);
+  if (!waveCanGoToday(now)) verdict = later(manual ? `${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)` : `The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
+  else if (room <= 0) verdict = later(manual ? `Today's share of Resend's daily limit is used up. ${WAVE_WAITING}` : DAILY_LIMIT);
   if (verdict) {
     patch.content = { ...c.content, pace: { ...pace, note: verdict.note } } as CampaignRow["content"];
     await save();
@@ -647,7 +671,7 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit: room });
   const left = resolved.excluded.wave_limit ?? 0;
   if (!resolved.send.length) {
-    patch.content = { ...c.content, pace: { ...pace, remaining: 0, note: null } } as CampaignRow["content"];
+    patch.content = { ...c.content, pace: { ...pace, remaining: 0, note: null, go: null } } as CampaignRow["content"];
     if (c.recipients === null) {
       patch.recipients = 0;
       patch.held_out = 0;
@@ -658,12 +682,13 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   }
   const n = await queueSends(c.id, resolved, at);
   const waves = [...(((c.content as { waves?: { at: string; n: number }[] }).waves ?? []) as { at: string; n: number }[]), { at: now.toISOString(), n }];
-  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note: null } } as CampaignRow["content"];
+  const note = manual && left > 0 ? WAVE_WAITING : null;
+  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note, go: null } } as CampaignRow["content"];
   patch.recipients = (c.recipients ?? 0) + resolved.willSend;
   patch.held_out = (c.held_out ?? 0) + resolved.heldOut;
   patch.excluded = resolved.excluded;
   await save();
-  return { c: { ...c, ...patch }, more: left > 0, note: null };
+  return { c: { ...c, ...patch }, more: left > 0, note };
 }
 
 // ---------- one batch ----------

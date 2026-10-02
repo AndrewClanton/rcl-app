@@ -96,7 +96,7 @@ function cleanAudience(a: Audience): Audience {
   const include = Array.isArray(a?.include) ? a.include.slice(0, 12) : [{ r: "all" as const }];
   const exclude = Array.isArray(a?.exclude) ? a.exclude.slice(0, 12) : [];
   const limit = a?.limit && Number(a.limit) > 0 ? Math.min(5000, Math.floor(Number(a.limit))) : undefined;
-  const order = a?.order === "trust" || a?.order === "random" ? a.order : undefined;
+  const order = a?.order === "trust" || a?.order === "random" || a?.order === "engaged" ? a.order : undefined;
   return { include: include.length ? include : [{ r: "all" }], ...(exclude.length ? { exclude } : {}), ...(limit ? { limit } : {}), ...(order ? { order } : {}) };
 }
 
