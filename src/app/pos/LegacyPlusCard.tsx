@@ -7,7 +7,9 @@ import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE } from "@/lib/legacy-plus"
 import { ANNUAL_DISCOUNT, RATE_LABEL, RATE_ORDER, planPrice, type BillingInterval } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import type { PosMember } from "./member-actions";
-import { cancelUnlimitedCard, checkUnlimitedCard, startUnlimitedCard, unlimitedDone, unlimitedPhoneLink } from "./legacy-plus-actions";
+import { cancelUnlimitedCard, checkUnlimitedCard, startUnlimitedCard, unlimitedDone, unlimitedPhoneLink, type PlusReceipt } from "./legacy-plus-actions";
+import { membershipReceiptXml } from "@/lib/print/receipt";
+import { sendPrint, targetName, usePrintTarget } from "./printing";
 
 // "No payment on file for unlimited membership": a former unlimited member
 // (lib/legacy-plus.ts) on the order or just checked in. Two ways to set up
@@ -73,13 +75,18 @@ export default function LegacyPlusCard({
         )}
       </div>
       <div className="space-y-2 p-2.5" style={{ background: "var(--surface)" }}>
-        <div className="grid grid-cols-2 gap-2">
+        {/* "On their phone" needs an email (Stripe's page is tied to the
+            account by it): a phone account (lib/member-name.ts) only gets
+            the reader. */}
+        <div className={`grid gap-2 ${member.email ? "grid-cols-2" : "grid-cols-1"}`}>
           <button className="btn-primary min-h-11 !px-2 !py-2 text-sm" onClick={() => setOpen("reader")}>
             Card on reader
           </button>
-          <button className="btn-secondary min-h-11 !px-2 !py-2 text-sm" onClick={() => setOpen("phone")}>
-            On their phone
-          </button>
+          {member.email && (
+            <button className="btn-secondary min-h-11 !px-2 !py-2 text-sm" onClick={() => setOpen("phone")}>
+              On their phone
+            </button>
+          )}
         </div>
         <p className="text-xs" style={{ color: "var(--muted)" }}>
           {kind === "upgrade"
@@ -161,7 +168,7 @@ export function UnlimitedBanner({
           </div>
           <InfoTip topic="unlimited-no-payment" className="!mx-0 !text-white" />
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-2">
+        <div className={`mt-2 grid gap-2 ${member.email ? "grid-cols-2" : "grid-cols-1"}`}>
           <button
             className="min-h-12 rounded-lg border-2 px-2 text-base font-bold"
             style={{ background: "#fff", borderColor: "var(--foreground)", color: "var(--foreground)" }}
@@ -169,9 +176,11 @@ export function UnlimitedBanner({
           >
             Card on reader
           </button>
-          <button className="min-h-12 rounded-lg border-2 border-white px-2 text-base font-bold text-white" onClick={() => setOpen("phone")}>
-            On their phone
-          </button>
+          {member.email && (
+            <button className="min-h-12 rounded-lg border-2 border-white px-2 text-base font-bold text-white" onClick={() => setOpen("phone")}>
+              On their phone
+            </button>
+          )}
         </div>
         <p className="mt-1.5 text-xs opacity-90">Not paying today? Ring them up like any guest.</p>
       </section>
@@ -199,7 +208,7 @@ type Phase =
   | { name: "waiting" } // the reader is waiting for their card
   | { name: "qr" } // the QR code is on the customer screen
   | { name: "emailed"; message: string }
-  | { name: "done"; message: string; member: PosMember | null }
+  | { name: "done"; message: string; member: PosMember | null; receipt?: PlusReceipt | null }
   // finishId: charged in Stripe but not saved here; Try again finishes that
   // one (never a second charge) instead of starting over.
   | { name: "failed"; message: string; finishId?: string };
@@ -258,11 +267,11 @@ function SetupModal({
     [],
   );
 
-  function finish(message: string, m: PosMember | null) {
+  function finish(message: string, m: PosMember | null, receipt: PlusReceipt | null = null) {
     stopTimer();
     setupRef.current = null;
     qrUp.current = false;
-    setPhase({ name: "done", message, member: m });
+    setPhase({ name: "done", message, member: m, receipt });
     toTablet("plus-welcome", { firstName: first });
   }
 
@@ -286,7 +295,7 @@ function SetupModal({
       timerRef.current = null;
       const s = await checkUnlimitedCard(setupIntentId, readerId).catch(() => null);
       if (setupRef.current !== setupIntentId) return;
-      if (s?.status === "done") return finish(s.message, s.member);
+      if (s?.status === "done") return finish(s.message, s.member, s.receipt ?? null);
       if (s?.status === "failed") {
         setupRef.current = null;
         return setPhase({ name: "failed", message: s.message });
@@ -305,7 +314,7 @@ function SetupModal({
     setBusy(true);
     const s = await checkUnlimitedCard(setupIntentId, readerId).catch(() => null);
     setBusy(false);
-    if (s?.status === "done") return finish(s.message, s.member);
+    if (s?.status === "done") return finish(s.message, s.member, s.receipt ?? null);
     if (s?.status === "failed") return setPhase({ name: "failed", message: s.message });
     setPhase({ name: "failed", message: s?.status === "unsaved" ? s.message : OFFLINE, finishId: setupIntentId });
   }
@@ -427,9 +436,11 @@ function SetupModal({
               <button className="hover:underline" style={{ color: "var(--muted)" }} onClick={onClose}>
                 Close
               </button>
-              <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => onSwitch(mode === "reader" ? "phone" : "reader")}>
-                {mode === "reader" ? "On their phone instead" : "Card on reader instead"}
-              </button>
+              {(mode === "phone" || member.email) && (
+                <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={() => onSwitch(mode === "reader" ? "phone" : "reader")}>
+                  {mode === "reader" ? "On their phone instead" : "Card on reader instead"}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -475,6 +486,7 @@ function SetupModal({
               ✓ Insiders+
             </p>
             <p className="mt-1 text-sm">{phase.message}</p>
+            {phase.receipt && <ReceiptShown receipt={phase.receipt} member={phase.member?.name ?? member.name} />}
             <button
               className="btn-primary mt-4"
               // Without a fresh copy (a read that failed), as far as is known.
@@ -507,6 +519,58 @@ function SetupModal({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const usd = (n: number) => `$${n.toFixed(2)}`;
+const day = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+
+// What was charged, on screen, with Print: Stripe emails its receipt only
+// to a customer with an email, so for a phone account (lib/member-name.ts)
+// this is their receipt.
+function ReceiptShown({ receipt: r, member }: { receipt: PlusReceipt; member: string }) {
+  const target = usePrintTarget();
+  const [printNote, setPrintNote] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+
+  async function print() {
+    if (!target) return;
+    setPrinting(true);
+    setPrintNote(null);
+    const res = await sendPrint(target, "receipt", membershipReceiptXml({ ...r, member }), "Insiders+ receipt").catch(() => null);
+    setPrinting(false);
+    setPrintNote(res?.ok ? `Receipt sent to ${targetName(target)}.` : `Couldn't print${res && !res.ok ? `: ${res.error}` : ""}. Show them this screen instead.`);
+  }
+
+  return (
+    <div className="mt-3 rounded-md border p-2.5 text-left text-xs" style={{ borderColor: "var(--border)" }} aria-label="Receipt">
+      <div className="mb-1 font-bold">{r.emailed ? "Receipt (Stripe emails them one too)" : "Receipt: no email on file, so print this one"}</div>
+      <div className="flex justify-between gap-2">
+        <span>{r.plan}</span>
+        <span className="tabular-nums">{usd(r.subtotal)}</span>
+      </div>
+      <div className="flex justify-between gap-2" style={{ color: "var(--muted)" }}>
+        <span>Tax</span>
+        <span className="tabular-nums">{usd(r.tax)}</span>
+      </div>
+      <div className="flex justify-between gap-2 font-bold">
+        <span>Charged {day(r.at)}</span>
+        <span className="tabular-nums">{usd(r.total)}</span>
+      </div>
+      <div className="mt-1" style={{ color: "var(--muted)" }}>
+        {[r.card, r.invoice ? `Invoice ${r.invoice}` : null, r.next ? `Renews ${day(r.next)}` : null].filter(Boolean).join(" · ")}
+      </div>
+      {target ? (
+        <button className="btn-secondary mt-2 min-h-10 w-full !py-1.5 text-sm" disabled={printing} onClick={print}>
+          {printing ? "Printing…" : "🖨 Print receipt"}
+        </button>
+      ) : (
+        <div className="mt-2" style={{ color: "var(--muted)" }}>
+          No printer set up on this register: show them this screen.
+        </div>
+      )}
+      {printNote && <div className="mt-1">{printNote}</div>}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { sealApproval } from "@/lib/approval-token";
 import { businessDay } from "@/lib/ops/time";
 import { sameEmail } from "@/lib/email-match";
 import { currentMemberId } from "@/lib/member-forward";
+import { memberLabel } from "@/lib/member-name";
 import { pointsEarned } from "@/lib/register-totals";
 import {
   CARD_UNDO_MS,
@@ -138,13 +139,13 @@ async function daysWithCard(db: Db, memberId: string, card: SaleCard): Promise<n
 // only when it matters (staffAccount below): false here.
 async function attachedMember(db: Db, memberId: string, card: SaleCard, selfPaid: boolean): Promise<(AttachedMember & { name: string; authUserId: string | null; email: string | null }) | null> {
   const [{ data: m }, { count }, days] = await Promise.all([
-    db.from("members").select("name, email, erased_at, link_cards, auth_user_id").eq("id", memberId).maybeSingle(),
+    db.from("members").select("name, phone, email, erased_at, link_cards, auth_user_id").eq("id", memberId).maybeSingle(),
     db.from("member_cards").select("id", { count: "exact", head: true }).eq("member_id", memberId).eq("livemode", card.livemode).is("removed_at", null),
     selfPaid ? Promise.resolve(0) : daysWithCard(db, memberId, card),
   ]);
   if (!m) return null;
   return {
-    name: m.name,
+    name: memberLabel(m.name, m.phone),
     authUserId: m.auth_user_id ?? null,
     email: m.email ?? null,
     erased: !!m.erased_at,
@@ -304,11 +305,14 @@ async function pointsHeld(db: Db, orderId: string, memberId: string): Promise<nu
   return (data ?? []).filter((r) => ["purchase", "redeem", "refund", "adjustment"].includes(r.reason)).reduce((s, r) => s + Number(r.delta), 0);
 }
 
-// The card's members, as the register shows them: "Sarah R.".
+// The card's members, as the register shows them: "Sarah R.", or "Guest ··
+// 0199" for a phone account with no name (lib/member-name.ts).
 export async function candidatesFor(db: Db, memberIds: string[]): Promise<NoticeCandidate[]> {
   if (!memberIds.length) return [];
-  const { data } = await db.from("members").select("id, name").in("id", memberIds).is("erased_at", null);
-  return (data ?? []).map((m) => ({ id: m.id as string, name: shortName(m.name) })).sort((a, b) => a.name.localeCompare(b.name));
+  const { data } = await db.from("members").select("id, name, phone").in("id", memberIds).is("erased_at", null);
+  return (data ?? [])
+    .map((m) => ({ id: m.id as string, name: shortName(memberLabel(m.name as string | null, m.phone as string | null)) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // After a card sale is saved: note which card paid, then link it to the

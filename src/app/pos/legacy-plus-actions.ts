@@ -14,7 +14,8 @@ import { linkPlusCardById } from "@/lib/member-cards";
 import { recordInvoicePayment } from "@/lib/membership-payments/sync";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
-import { planPrice, type BillingInterval } from "@/lib/membership-rates";
+import { RATE_LABEL, planPrice, type BillingInterval } from "@/lib/membership-rates";
+import { memberLabel } from "@/lib/member-name";
 import { maskEmail } from "@/lib/contact-mask";
 import { allowAttempt } from "@/lib/rate-limit";
 import { sendEmail } from "@/lib/email/send";
@@ -52,7 +53,10 @@ const NO_READER = "No card reader is chosen for this register. Pick one under De
 const READER_OFFLINE = "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.";
 const SOURCE = "pos-unlimited";
 
-type MemberRow = Pick<Member, "id" | "name" | "email" | "tier" | "comped" | "price_tier" | "stripe_customer_id" | "stripe_subscription_id" | "subscription_status" | "plus_gift_until">;
+type MemberRow = Pick<Member, "id" | "name" | "email" | "phone" | "tier" | "comped" | "price_tier" | "stripe_customer_id" | "stripe_subscription_id" | "subscription_status" | "plus_gift_until">;
+
+// "Sarah", or "Guest ·· 0199" for a phone account with no name (lib/member-name.ts).
+const firstOf = (m: MemberRow) => firstNameOf(memberLabel(m.name, m.phone));
 
 function stripeMessage(e: unknown, fallback: string) {
   return e && typeof e === "object" && "type" in e && typeof (e as { message?: unknown }).message === "string" ? (e as unknown as { message: string }).message : fallback;
@@ -80,7 +84,14 @@ async function customerFor(stripe: Stripe, m: MemberRow): Promise<string> {
     const c = await stripe.customers.retrieve(m.stripe_customer_id).catch(() => null);
     if (c && !("deleted" in c && c.deleted)) return c.id;
   }
-  const made = await stripe.customers.create({ name: m.name, ...(m.email ? { email: m.email } : {}), metadata: { member_id: m.id, source: SOURCE } });
+  // A phone account (lib/member-name.ts) has no email and maybe no name:
+  // its Stripe customer has neither, so Stripe emails nothing (the receipt
+  // is shown and printed at the register instead, PlusReceipt).
+  const made = await stripe.customers.create({
+    ...(m.name?.trim() ? { name: m.name.trim() } : {}),
+    ...(m.email ? { email: m.email } : {}),
+    metadata: { member_id: m.id, source: SOURCE },
+  });
   const { error } = await createAdminClient().from("members").update({ stripe_customer_id: made.id }).eq("id", m.id);
   if (error) throw new Error("Couldn't save their billing account. Try again.");
   return made.id;
@@ -98,7 +109,7 @@ export async function startUnlimitedCard(memberId: string, readerId: string | nu
   if (bad) return { ok: false, error: bad };
   const m = await loadMember(memberId);
   if (!m) return { ok: false, error: "Couldn't find that member." };
-  if (plusPaidFor(m)) return { ok: false, error: `${firstNameOf(m.name)} already has Insiders+ paid for.` };
+  if (plusPaidFor(m)) return { ok: false, error: `${firstOf(m)} already has Insiders+ paid for.` };
   const stripe = getStripe();
   try {
     if (!(await insidersPlusPriceIdFor(plan.tier, plan.interval))) return { ok: false, error: "That Insiders+ price isn't set up in Stripe yet." };
@@ -127,9 +138,24 @@ export async function startUnlimitedCard(memberId: string, readerId: string | nu
   }
 }
 
+// What was charged, for the register to show and print (Stripe emails a
+// receipt only to a customer with an email; a phone account has none).
+// Amounts in dollars; card: "Visa ·· 4242".
+export interface PlusReceipt {
+  plan: string; // "Insiders+ Standard, monthly"
+  subtotal: number;
+  tax: number;
+  total: number;
+  card: string | null;
+  at: string; // ISO
+  invoice: string | null; // Stripe's invoice number
+  next: string | null; // ISO, when it's charged again
+  emailed: boolean; // Stripe has an email to send its own receipt to
+}
+
 export type UnlimitedCardStatus =
   | { status: "waiting" }
-  | { status: "done"; member: PosMember | null; message: string }
+  | { status: "done"; member: PosMember | null; message: string; receipt?: PlusReceipt | null }
   // Nothing charged, nothing set up: staff can try again or use the phone.
   | { status: "failed"; message: string }
   // Charged in Stripe, but the member row didn't save: Try again finishes
@@ -192,15 +218,23 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
   // Already paid for: by this card a moment ago (an earlier check got
   // here first), or some other way since (then this card isn't needed).
   if (plusPaidFor(m)) {
-    const ours = m.stripe_subscription_id
+    const mine = m.stripe_subscription_id
       ? await stripe.subscriptions
-          .retrieve(m.stripe_subscription_id)
-          .then((s) => s.metadata?.setup_intent === si.id)
-          .catch(() => false)
-      : false;
-    if (ours) return { status: "done", member: await getPosMember(m.id), message: `${firstNameOf(m.name)} is Insiders+ now.` };
+          .retrieve(m.stripe_subscription_id, { expand: ["latest_invoice"] })
+          .then((s) => (s.metadata?.setup_intent === si.id ? s : null))
+          .catch(() => null)
+      : null;
+    if (mine) {
+      const inv = mine.latest_invoice && typeof mine.latest_invoice === "object" ? mine.latest_invoice : null;
+      return {
+        status: "done",
+        member: await getPosMember(m.id),
+        message: `${firstOf(m)} is Insiders+ now.`,
+        receipt: inv ? plusReceipt(inv, mine, tier, interval, await cardOf(stripe, paymentMethodId), !!m.email) : null,
+      };
+    }
     await stripe.paymentMethods.detach(paymentMethodId).catch(() => {});
-    return { status: "failed", message: `${firstNameOf(m.name)} already has Insiders+ paid for, so this card wasn't charged.` };
+    return { status: "failed", message: `${firstOf(m)} already has Insiders+ paid for, so this card wasn't charged.` };
   }
 
   let sub: Stripe.Subscription;
@@ -270,7 +304,39 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
   return {
     status: "done",
     member: await getPosMember(m.id),
-    message: `${firstNameOf(m.name)} is Insiders+ now: ${planPrice(tier, interval)} plus tax${charged ? `, ${charged} charged today` : ""}.`,
+    message: `${firstOf(m)} is Insiders+ now: ${planPrice(tier, interval)} plus tax${charged ? `, ${charged} charged today` : ""}.`,
+    receipt: invoice ? plusReceipt(invoice, sub, tier, interval, await cardOf(stripe, paymentMethodId), !!m.email) : null,
+  };
+}
+
+// The kept card's brand and last four, for the receipt. Null if Stripe
+// doesn't answer (the receipt then leaves the card line off).
+async function cardOf(stripe: Stripe, paymentMethodId: string): Promise<{ brand: string | null; last4: string | null } | null> {
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId).catch(() => null);
+  return pm?.card ? { brand: pm.card.brand ?? null, last4: pm.card.last4 ?? null } : null;
+}
+
+function plusReceipt(
+  invoice: Stripe.Invoice,
+  sub: Stripe.Subscription,
+  tier: MemberPriceTier,
+  interval: BillingInterval,
+  card: { brand: string | null; last4: string | null } | null,
+  emailed: boolean,
+): PlusReceipt {
+  const tax = (invoice.total_taxes ?? []).reduce((s, t) => s + t.amount, 0);
+  const periodEnd = (sub.items.data[0] as unknown as { current_period_end?: number } | undefined)?.current_period_end;
+  const brand = card?.brand ? card.brand.charAt(0).toUpperCase() + card.brand.slice(1) : "Card";
+  return {
+    plan: `Insiders+ ${tier === "adult" ? "Standard" : RATE_LABEL[tier]}, ${interval === "year" ? "yearly" : "monthly"}`,
+    subtotal: (invoice.total_excluding_tax ?? invoice.total - tax) / 100,
+    tax: tax / 100,
+    total: invoice.amount_paid / 100,
+    card: card?.last4 ? `${brand} ·· ${card.last4}` : null,
+    at: new Date((invoice.status_transitions?.paid_at ?? invoice.created) * 1000).toISOString(),
+    invoice: invoice.number ?? null,
+    next: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+    emailed,
   };
 }
 
@@ -307,7 +373,7 @@ export async function unlimitedPhoneLink(
   if (bad) return { ok: false, error: bad };
   const m = await loadMember(memberId);
   if (!m) return { ok: false, error: "Couldn't find that member." };
-  const name = firstNameOf(m.name);
+  const name = firstOf(m);
   if (plusPaidFor(m)) return { ok: false, error: `${name} already has Insiders+ paid for.` };
   // Stripe's page sends its receipts there, and it's how their account is found.
   if (!m.email) return { ok: false, error: "No email on their account, so Stripe's page can't be tied to it. Take their card on the reader instead." };

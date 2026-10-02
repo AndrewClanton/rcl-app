@@ -32,6 +32,7 @@
 // drops its copy of that card.
 
 import type { EarnedBadge } from "@/lib/visits";
+import { isGuestName } from "@/lib/member-name";
 
 export type CheckinKind = "known" | "new";
 
@@ -130,7 +131,9 @@ export function formatPhone(digits: string): string {
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
 }
 
+// A phone account's "Guest ·· 0199" (lib/member-name.ts) comes back whole.
 export function firstNameOf(name: string): string {
+  if (isGuestName(name)) return name.trim();
   return name.trim().split(/\s+/)[0] || "there";
 }
 

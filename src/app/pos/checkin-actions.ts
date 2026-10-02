@@ -3,7 +3,8 @@
 import { assertStaff, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firstNameOf, formatPhone, isFullPhone, last10 } from "@/lib/checkin";
-import { memberIdsWithPhone, memberIdWithEmail, openCheckin, savePhoneFromCheckin } from "@/lib/checkin-server";
+import { memberIdsWithPhone, memberIdWithEmail, openCheckin, saveNameFromCheckin, savePhoneFromCheckin } from "@/lib/checkin-server";
+import { isPhoneAccount } from "@/lib/member-name";
 import { sameEmail } from "@/lib/email-match";
 import { allowAttempt } from "@/lib/rate-limit";
 import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
@@ -28,7 +29,9 @@ export type CheckinCard =
   // addPhone: "(417) 555-1234", the number they said yes to adding at the
   // tablet (found by email, no phone on file): shown on the card so staff
   // know, and saved when staff check them in (confirmVisit).
-  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean; byEmail?: boolean; addPhone?: string | null }
+  // addName: "Sarah M.", from the tablet's "Add your name?" (a phone account
+  // with none yet): shown on the card, saved when staff check them in.
+  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean; byEmail?: boolean; addPhone?: string | null; addName?: string | null }
   | {
       kind: "new";
       firstName: string;
@@ -56,9 +59,10 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
     const m = await getPosMember((await currentMemberId(c.memberId)) ?? c.memberId);
     if (!m) return { ok: false, error: "That account isn't there anymore. Look them up by name instead." };
     const addPhone = c.addPhone && !isFullPhone(last10(m.phone)) ? formatPhone(c.addPhone) : null;
+    const addName = c.addName && m.named === false ? c.addName : null;
     return {
       ok: true,
-      card: { kind: "known", phoneLast4: c.phone ? c.phone.slice(-4) : "", matches: [m], fresh: c.fresh === true, byEmail: !c.phone, addPhone },
+      card: { kind: "known", phoneLast4: c.phone ? c.phone.slice(-4) : "", matches: [m], fresh: c.fresh === true, byEmail: !c.phone, addPhone, addName },
     };
   }
 
@@ -170,7 +174,11 @@ export async function createCheckinMember(ref: string, existingId: string | null
 
 // phoneNote: what happened to the phone they asked to add at the tablet
 // ("Added (417) 555-1234 to their account."), or null if there wasn't one.
-export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null; phoneNote: string | null } | { ok: false; error: string };
+// nameNote: the same for the name from "Add your name?", and member: them
+// with it, when it went on.
+export type VisitConfirm =
+  | { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null; phoneNote: string | null; nameNote?: string | null; member?: PosMember | null }
+  | { ok: false; error: string };
 
 // A member confirmed at the door gets one "finish on your phone" link per
 // this long (the tablet already made one if it just created the account).
@@ -186,9 +194,12 @@ const CLAIM_LINK_EVERY_MS = 10 * 60_000;
 // in front of the line, the link alone opens the account, and that account
 // holds a billing portal. Theirs comes on their receipt, which is handed to
 // them.
+// Not for a phone account either (lib/member-name.ts: no email, no login):
+// they chose just their number, so the tablet never pushes a login at them.
+// Their receipt still carries the link, for anyone who wants one.
 async function tabletClaimLink(memberId: string): Promise<string | null> {
-  const { data: m } = await createAdminClient().from("members").select("tier, stripe_customer_id, stripe_subscription_id").eq("id", memberId).maybeSingle();
-  if (!m || m.tier === "Insiders+" || m.stripe_customer_id || m.stripe_subscription_id) return null;
+  const { data: m } = await createAdminClient().from("members").select("tier, email, auth_user_id, stripe_customer_id, stripe_subscription_id").eq("id", memberId).maybeSingle();
+  if (!m || m.tier === "Insiders+" || m.stripe_customer_id || m.stripe_subscription_id || isPhoneAccount(m)) return null;
   return issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS });
 }
 
@@ -201,8 +212,14 @@ export async function confirmVisit(cardMemberId: string, ref: string | null = nu
   const memberId = (await currentMemberId(cardMemberId)) ?? cardMemberId;
   const visit = await recordVisit(memberId, staff.employeeId);
   if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
-  const [rewards, claimUrl, phoneNote] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId), typeof ref === "string" ? savePhoneFromCheckin(ref, memberId) : null]);
-  return { ok: true, visit, rewards, claimUrl, phoneNote };
+  const [rewards, claimUrl, phoneNote, named] = await Promise.all([
+    openRewards(memberId),
+    tabletClaimLink(memberId),
+    typeof ref === "string" ? savePhoneFromCheckin(ref, memberId) : null,
+    typeof ref === "string" ? saveNameFromCheckin(ref, memberId) : null,
+  ]);
+  const member = named?.saved ? await getPosMember(memberId).catch(() => null) : null;
+  return { ok: true, visit, rewards, claimUrl, phoneNote, nameNote: named?.note ?? null, member };
 }
 
 // After a check-in: an account the tablet made lately (by phone, or by

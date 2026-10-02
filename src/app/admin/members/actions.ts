@@ -90,13 +90,15 @@ export async function saveMemberDetails(
   const email = fields.email?.trim();
   const phone = fields.phone?.trim();
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
-  if (!name) return { ok: false, error: "Name can't be blank." };
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "That email doesn't look right. Check for a typo." };
   if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of their birthday (or neither)." };
 
   const supabase = createAdminClient();
   const { data: before } = await supabase.from("members").select("name, email, phone, birthday, stripe_customer_id").eq("id", id).is("erased_at", null).maybeSingle();
   if (!before) return { ok: false, error: "Member not found." };
+  // A phone account (lib/member-name.ts) may have no name, and can keep
+  // having none; a name that's there can't be blanked.
+  if (!name && (before.name ?? "").trim()) return { ok: false, error: "Name can't be blank." };
 
   const changes: { name?: string; email?: string | null; phone?: string | null; birthday?: string | null } = {};
   if (name !== before.name) changes.name = name;

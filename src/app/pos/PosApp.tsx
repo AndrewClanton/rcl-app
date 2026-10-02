@@ -25,7 +25,7 @@ import PosMemberPanel from "./PosMemberPanel";
 import { UnlimitedBanner } from "./LegacyPlusCard";
 import { PlusRibbon, SignalFrame } from "./MemberSignal";
 import { memberSignal, memberStanding, publishMemberSignal } from "./member-signal";
-import { shortName } from "@/lib/card-match";
+import { firstName as firstNameFor, shortName } from "@/lib/card-match";
 import { CheckinArrivals, useRegisterCheckins } from "./RegisterCheckins";
 import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
@@ -569,7 +569,8 @@ export default function PosApp({
     // card), and their Insiders+ perks today. Never an email or phone.
     member: member
       ? {
-          firstName: member.name.trim().split(/\s+/)[0] || member.name,
+          // A phone account's "Guest ·· 0199" whole (lib/member-name.ts).
+          firstName: firstNameFor(member.name),
           points: Math.round(member.points),
           plus: standing === "plus",
           unlimited: standing === "unlimited",
@@ -1246,7 +1247,7 @@ export default function PosApp({
               toTablet={checkins.toTablet}
               onDone={(m) => {
                 attachMember(m);
-                const done = `${m.name.trim().split(/\s+/)[0] || m.name} is Insiders+ now.`;
+                const done = `${firstNameFor(m.name)} is Insiders+ now.`;
                 setToast(done);
                 setTimeout(() => setToast((t) => (t === done ? null : t)), 8000);
               }}

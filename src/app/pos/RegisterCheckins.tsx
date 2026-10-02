@@ -77,6 +77,11 @@ export interface Arrival {
 const ARRIVAL_MS = 8_000;
 const ARRIVALS_MAX = 2;
 
+// The tablet's "Just use my phone number" just made it (lib/member-name.ts).
+function freshPhoneAccount(card: Extract<CheckinCard, { kind: "known" }>) {
+  return card.fresh === true && card.matches.length === 1 && card.matches[0].named === false && card.matches[0].phoneOnly === true;
+}
+
 function arrivalFor(id: string, card: CheckinCard): Arrival {
   if (card.kind === "new") return { id, name: card.firstName, photo: null, plus: false, color: null, note: "New regular · just signed up" };
   if (card.matches.length === 1) {
@@ -87,7 +92,7 @@ function arrivalFor(id: string, card: CheckinCard): Arrival {
       photo: m.avatar_url,
       plus: memberSignal(m) === "plus",
       color: flairColor(m.flair?.color)?.hex ?? null,
-      note: card.fresh ? "New regular · just signed up" : "Just checked in",
+      note: freshPhoneAccount(card) ? "New phone account · just joined" : card.fresh ? "New regular · just signed up" : card.addName ? `Just checked in · adding name ${card.addName}` : "Just checked in",
     };
   }
   const names = card.matches.map((m) => shortName(m.name));
@@ -235,11 +240,12 @@ export function useRegisterCheckins({
 
   // Staff said "that's them": today's visit (its points, maybe badges and
   // a reward), and with addToOrder, onto the order too.
-  async function confirm(p: Pending, m: PosMember, isNew: boolean, note: string | null, addToOrder: boolean) {
+  async function confirm(p: Pending, cardMember: PosMember, isNew: boolean, note: string | null, addToOrder: boolean) {
     patch(p.id, { working: true, error: null });
-    // The request goes along, so a phone they asked to add at the tablet
-    // is saved now (confirmVisit).
-    const r = await confirmVisit(m.id, p.ref).catch(() => null);
+    // The request goes along, so a phone or name they asked to add at the
+    // tablet is saved now (confirmVisit); with a name, they come back with it.
+    const r = await confirmVisit(cardMember.id, p.ref).catch(() => null);
+    const m = (r?.ok && r.member) || cardMember;
     const visit = r?.ok ? r.visit : null;
     const already = member?.id === m.id;
     if (addToOrder) onAttach(m);
@@ -282,7 +288,13 @@ export function useRegisterCheckins({
     // No payment on file for their unlimited membership: the card to set it
     // up goes to the top of the Customers tab.
     setUnlimited(m.legacyUnlimited ? m : null);
-    const bits = [isNew ? `New regular ${m.name} is set up and checked in.` : `${m.name} checked in.`];
+    const bits = [
+      isNew && m.phoneOnly && m.named === false
+        ? `New phone account ${m.name} is set up and checked in. Add their name from the member box anytime.`
+        : isNew
+          ? `New regular ${m.name} is set up and checked in.`
+          : `${m.name} checked in.`,
+    ];
     if (visit?.alreadyToday) bits.push("Already checked in today, so no new points.");
     else if (visit) bits.push(`+${visit.visitPoints} pts${visit.weekStreak > 1 ? `, ${visit.weekStreak}-week streak` : ""}.`);
     else bits.push("Their visit points didn't save; check them in again later.");
@@ -290,6 +302,7 @@ export function useRegisterCheckins({
     for (const r of visit?.rewards ?? []) bits.push(`They earned: ${REWARD_LABEL[r]}! Redeem it from their member panel.`);
     if (addToOrder) bits.push(already ? "Already on this order." : hasOrder ? "On this order." : "They'll be on the next order.");
     if (r?.ok && r.phoneNote) bits.push(r.phoneNote);
+    if (r?.ok && r.nameNote) bits.push(r.nameNote);
     if (note) bits.push(note);
     setNotice(bits.join(" "));
     void refreshHere();
@@ -600,7 +613,11 @@ export function WaitingToConfirm({ checkins, current, hasOrder }: { checkins: Ch
             <div key={p.id} className="overflow-hidden rounded-lg border-2 bg-[var(--surface)] text-sm" style={{ borderColor: "var(--foreground)" }}>
               <div className="flex items-center gap-2 px-3 py-1.5" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
                 <span className="font-display flex-1 text-xs uppercase tracking-wide">
-                  {p.kind === "new" || (p.card?.kind === "known" && p.card.fresh) ? "New regular · just signed up" : "Check-in for points"}
+                  {p.card?.kind === "known" && p.card.fresh && freshPhoneAccount(p.card)
+                    ? "New phone account · just joined"
+                    : p.kind === "new" || (p.card?.kind === "known" && p.card.fresh)
+                      ? "New regular · just signed up"
+                      : "Check-in for points"}
                 </span>
                 <span className="text-xs tabular-nums">{ago(Math.max(0, now - p.at))}</span>
               </div>
@@ -772,10 +789,29 @@ function Face({ m, phoneLast4, byEmail }: { m: PosMember; phoneLast4?: string; b
         <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
           {phoneLast4 ? `Phone ending ${phoneLast4} · ` : byEmail ? "By email · " : ""}
           {m.tier} · {pts(m.points)}
+          {m.phoneOnly && (
+            <>
+              {" "}
+              <PhoneOnlyTag />
+            </>
+          )}
         </div>
         {m.tagline && <div className="mt-1 text-sm italic leading-snug">“{m.tagline}”</div>}
       </div>
     </div>
+  );
+}
+
+// A phone account (lib/member-name.ts): just a number, no email or login.
+export function PhoneOnlyTag() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-1.5 py-px align-middle text-[10px] font-bold uppercase tracking-wide"
+      style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+      title="Phone account: just their phone number, no email or website login"
+    >
+      📞 phone only
+    </span>
   );
 }
 
@@ -849,6 +885,15 @@ function KnownCard({
         {card.addPhone && (
           <p className="rounded-md border px-2.5 py-1.5 text-sm font-semibold" style={{ borderColor: "var(--border)" }}>
             📱 Will add phone {card.addPhone}
+            <span className="font-normal" style={{ color: "var(--muted)" }}>
+              {" "}
+              on check-in
+            </span>
+          </p>
+        )}
+        {card.addName && (
+          <p className="rounded-md border px-2.5 py-1.5 text-sm font-semibold" style={{ borderColor: "var(--border)" }}>
+            ✏️ Will add name {card.addName}
             <span className="font-normal" style={{ color: "var(--muted)" }}>
               {" "}
               on check-in

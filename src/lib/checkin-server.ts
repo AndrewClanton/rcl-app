@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { exactEmail } from "@/lib/email-match";
 import { formatPhone, isFullPhone, last10, type CheckinKind } from "@/lib/checkin";
 import { currentMemberId } from "@/lib/member-forward";
+import { hasName } from "@/lib/member-name";
 
 // The opaque reference a check-in request carries over the broadcast
 // channel. It's the check-in's details sealed with AES-GCM under a key only
@@ -24,7 +25,9 @@ export type CheckinDetails =
   // "Phone ending" on the register's card). addPhone: ten digits they
   // typed and said yes to adding (their account has none), saved only
   // when staff confirm the check-in (pos/checkin-actions.ts confirmVisit).
-  | { kind: "known"; memberId: string; phone?: string; addPhone?: string; fresh?: boolean }
+  // addName: "Sarah M.", typed at the tablet's "Add your name?" by a phone
+  // account with none (lib/member-name.ts), saved the same way.
+  | { kind: "known"; memberId: string; phone?: string; addPhone?: string; addName?: string; fresh?: boolean }
   | { kind: "new"; phone: string; firstName: string; email: string | null; emailOptIn: boolean };
 
 type Sealed = CheckinDetails & { id: string; exp: number };
@@ -107,6 +110,31 @@ export async function savePhoneFromCheckin(ref: string, memberId: string): Promi
     const { data: saved, error: saveErr } = await (was === null ? update.is("phone", null) : update.eq("phone", was)).select("id");
     if (saveErr || !saved?.length) return FAILED;
     return `Added ${phone} to their account.`;
+  } catch {
+    return FAILED;
+  }
+}
+
+// The name from the tablet's "Add your name?" (a phone account with none,
+// lib/member-name.ts), once staff have confirmed the check-in: only onto
+// the account the request was sealed for (or the one it was merged into),
+// and only while it still has no name. saved: the name, when it went on.
+// Never throws.
+export async function saveNameFromCheckin(ref: string, memberId: string): Promise<{ note: string; saved: string | null } | null> {
+  const c = openCheckin(ref);
+  if (!c || c.kind !== "known" || !("memberId" in c) || !c.addName) return null;
+  const name = c.addName.trim().slice(0, 60);
+  const FAILED = { note: `Couldn't add the name ${name} just now. Add it from their member box.`, saved: null };
+  try {
+    if (!name || ((await currentMemberId(c.memberId)) ?? c.memberId) !== memberId) return null;
+    const admin = createAdminClient();
+    const { data: m, error } = await admin.from("members").select("name").eq("id", memberId).is("erased_at", null).maybeSingle();
+    if (error || !m) return FAILED;
+    const was = (m.name as string | null) ?? "";
+    if (hasName(was)) return null;
+    const { data: saved, error: saveErr } = await admin.from("members").update({ name }).eq("id", memberId).eq("name", was).select("id");
+    if (saveErr || !saved?.length) return FAILED;
+    return { note: `Added their name: ${name}${name.endsWith(".") ? "" : "."}`, saved: name };
   } catch {
     return FAILED;
   }
