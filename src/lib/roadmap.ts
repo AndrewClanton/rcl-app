@@ -1,9 +1,7 @@
-import { FALLBACK_DISPLAY_NAME, defaultDisplayName, tidyText } from "@/lib/member-profile";
-
-// What's new (/whats-new) and Back office → Roadmap: one list that is both
-// the changelog and the roadmap. Plain data and helpers, no server code, so
-// the public page, its buttons and the Back office screen all share them.
-// The table is roadmap_items (supabase/migrations/20261001210000_roadmap.sql).
+// Back office → Roadmap: one staff-only list that is both the changelog and
+// the roadmap. Plain data and helpers, no server code, so the page, its
+// forms and its server actions all share them. The table is roadmap_items
+// (supabase/migrations/20261001210000_roadmap.sql).
 
 export const ROADMAP_STATUSES = ["idea", "queued", "building", "reviewing", "live", "not_doing"] as const;
 export type RoadmapStatus = (typeof ROADMAP_STATUSES)[number];
@@ -12,7 +10,7 @@ export function isRoadmapStatus(s: unknown): s is RoadmapStatus {
   return typeof s === "string" && (ROADMAP_STATUSES as readonly string[]).includes(s);
 }
 
-// What each status is called, publicly and in Back office.
+// What each status is called in Back office.
 export const STATUS_LABEL: Record<RoadmapStatus, string> = {
   idea: "Idea",
   queued: "In line",
@@ -22,71 +20,9 @@ export const STATUS_LABEL: Record<RoadmapStatus, string> = {
   not_doing: "Not planned",
 };
 
-// One plain line per status, for an item's own page.
-export const STATUS_BLURB: Record<RoadmapStatus, string> = {
-  idea: "We're considering it. Tap \"I want this too\" to bump it up.",
-  queued: "It's a yes, and it's in line to be built.",
-  building: "The crew is building it right now.",
-  reviewing: "It's built. We're testing it before it goes live.",
-  live: "It's done and live. Go try it!",
-  not_doing: "Not something we're planning right now.",
-};
-
-// Where people can still say they want it.
-export function canVote(status: RoadmapStatus): boolean {
-  return status === "idea" || status === "queued" || status === "building" || status === "reviewing";
-}
-
-export interface HistoryEntry {
-  status: RoadmapStatus;
-  at: string;
-}
-
-export function parseHistory(raw: unknown): HistoryEntry[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .filter((h): h is { status: string; at: string } => !!h && typeof h === "object" && typeof h.status === "string" && typeof h.at === "string")
-    .filter((h) => isRoadmapStatus(h.status) && !Number.isNaN(Date.parse(h.at)))
-    .map((h) => ({ status: h.status as RoadmapStatus, at: h.at }));
-}
-
-// The steps on an item's page: suggested, in line, building, live, each
-// with the date it got there (the last time, if it went back and forth),
-// up to where the item is now. "Final checks" counts as part of building.
-export interface TimelineStep {
-  key: "suggested" | "queued" | "building" | "live";
-  label: string;
-  at: string | null;
-  done: boolean;
-  current: boolean;
-}
-
-export function timelineFor(item: { status: RoadmapStatus; created_at: string; shipped_at: string | null; history: HistoryEntry[] }): TimelineStep[] {
-  const last = (statuses: RoadmapStatus[]) => {
-    const hits = item.history.filter((h) => statuses.includes(h.status));
-    return hits.length ? hits[hits.length - 1].at : null;
-  };
-  const stage = { idea: 0, not_doing: 0, queued: 1, building: 2, reviewing: 2, live: 3 }[item.status];
-  const steps: Omit<TimelineStep, "done" | "current">[] = [
-    { key: "suggested", label: "Suggested", at: item.history[0]?.at ?? item.created_at },
-    { key: "queued", label: "In line", at: last(["queued"]) },
-    { key: "building", label: item.status === "reviewing" ? "Built, final checks" : "Building", at: last(["building", "reviewing"]) },
-    { key: "live", label: "Live", at: item.status === "live" ? (item.shipped_at ?? last(["live"])) : null },
-  ];
-  return steps.map((s, i) => ({ ...s, at: i <= stage ? s.at : null, done: i < stage || (i === stage && item.status === "live"), current: i === stage && item.status !== "live" }));
-}
-
-// "Suggested by Jake B.": a member's first name and last initial (the same
-// rule as a shared profile's default name), from their name or from a name
-// staff typed. Null when there's nothing usable.
-export function creditName(name: string | null | undefined): string | null {
-  if (!tidyText(name ?? "")) return null;
-  const short = defaultDisplayName(name);
-  return short === FALLBACK_DISPLAY_NAME ? "a Royale Insider" : short;
-}
-
 // A web-address name for an item, from its title: "Latte flavors & free
-// alt milks" -> "latte-flavors-free-alt-milks".
+// alt milks" -> "latte-flavors-free-alt-milks". Every item has one (the
+// command-line script finds items by it).
 export function roadmapSlug(title: string): string {
   const base = title
     .normalize("NFD")
@@ -136,7 +72,7 @@ export function centralDay(iso: string): string {
 
 // "Just shipped", a day at a time: items already newest first, grouped by
 // the day they shipped in Joplin, with the releases each day's changes went
-// out in. What's new and Back office both group with this.
+// out in.
 export interface ShippedDayGroup<T> {
   day: string;
   date: string;
@@ -161,7 +97,6 @@ export function shippedByDay<T>(items: T[], at: (item: T) => string, release: (i
   return days;
 }
 
-export const SUGGESTION_MAX = 1000;
-export const NOTE_MAX = 1000;
 export const TITLE_MAX = 120;
 export const SUMMARY_MAX = 1000;
+export const NOTES_MAX = 4000;

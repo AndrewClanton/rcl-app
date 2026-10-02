@@ -1,22 +1,20 @@
-// Keeps What's new (/whats-new) current from the command line: the same
-// list as Back office → Roadmap (roadmap_items). Uses the service role from
-// .env.local, so run it from the main checkout.
+// Keeps Back office → Roadmap (roadmap_items) current from the command
+// line. Staff only, like the page. Uses the service role from .env.local,
+// so run it from the main checkout.
 //
 //   node scripts/roadmap.mjs list [--all]
 //       The board: building, final checks, in line (with places), ideas,
-//       and the last 10 shipped (--all: everything, private and not doing).
+//       and the last 10 shipped (--all: every shipped item, and not doing).
 //   node scripts/roadmap.mjs set <slug> <status>
 //       idea | queued | building | reviewing | live | not_doing. Going live
 //       stamps today's date and this checkout's package.json version.
-//   node scripts/roadmap.mjs add "<title>" "<public summary>" [--status queued] [--public]
-//       [--requested-by-name "Jake B." --credit] [--notes "staff only"] [--slug my-slug]
-//       New items are private unless --public. --credit shows "Suggested by
-//       Jake B." publicly (first name and last initial only).
+//   node scripts/roadmap.mjs add "<title>" "<summary>" [--status queued]
+//       [--requested-by-name "Jake B."] [--notes "internal notes"] [--slug my-slug]
 //   node scripts/roadmap.mjs rank <slug> <n>
 //       Moves it to place n within its status (the queue order for queued).
 //
-// Prints compactly: titles, slugs, statuses, counts. The only names it
-// prints are public credits ("Jake B."), never member details.
+// Prints compactly: titles, slugs, statuses, counts. Never names who asked
+// or any member details.
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
@@ -49,7 +47,7 @@ function packageVersion() {
   }
 }
 
-// The same rules as src/lib/roadmap.ts (roadmapSlug, creditName).
+// The same rule as src/lib/roadmap.ts (roadmapSlug).
 function slugFor(title) {
   const base = title
     .normalize("NFD")
@@ -63,15 +61,6 @@ function slugFor(title) {
   return base || "item";
 }
 
-function credit(name) {
-  const words = String(name ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  if (!words.length) return null;
-  const first = words[0].charAt(0).toUpperCase() + words[0].slice(1);
-  if (words.length === 1) return first;
-  const initial = [...words[words.length - 1]].find((c) => /[\p{L}\p{N}]/u.test(c));
-  return initial ? `${first} ${initial.toUpperCase()}.` : first;
-}
-
 function parseArgs(argv) {
   const pos = [];
   const flags = {};
@@ -80,7 +69,7 @@ function parseArgs(argv) {
     if (a.startsWith("--")) {
       const name = a.slice(2);
       const next = argv[i + 1];
-      if (["public", "credit", "all"].includes(name)) flags[name] = true;
+      if (name === "all") flags[name] = true;
       else if (next === undefined || next.startsWith("--")) die(`--${name} needs a value.`);
       else {
         flags[name] = next;
@@ -92,7 +81,7 @@ function parseArgs(argv) {
 }
 
 async function getItem(slug) {
-  const { data, error } = await db.from("roadmap_items").select("id, slug, title, status, rank, is_public, shipped_in_version").eq("slug", slug).maybeSingle();
+  const { data, error } = await db.from("roadmap_items").select("id, slug, title, status, rank, shipped_in_version").eq("slug", slug).maybeSingle();
   if (error) die(`Couldn't read the list: ${error.message}`);
   if (!data) die(`No item with the slug "${slug}". Try: node scripts/roadmap.mjs list --all`);
   return data;
@@ -105,35 +94,18 @@ function day(iso) {
 async function list(all) {
   const { data: items, error } = await db
     .from("roadmap_items")
-    .select("id, slug, title, status, rank, is_public, credit_ok, requested_by_member_id, requested_by_name, shipped_at, shipped_in_version, created_at")
+    .select("id, slug, title, status, rank, requested_by_member_id, requested_by_name, shipped_at, shipped_in_version, created_at")
     .order("rank");
   if (error) die(`Couldn't read the list: ${error.message}`);
-  const ids = items.map((i) => i.id);
-  const votes = new Map();
-  if (ids.length) {
-    const { data } = await db.rpc("roadmap_vote_counts", { p_items: ids });
-    for (const r of data ?? []) votes.set(r.item_id, Number(r.votes));
-  }
-  const { count: inbox } = await db.from("roadmap_suggestions").select("id", { count: "exact", head: true }).eq("status", "new");
-  // Credited members' first name and last initial (only for credit_ok items).
-  const memberIds = [...new Set(items.filter((i) => i.credit_ok && i.requested_by_member_id).map((i) => i.requested_by_member_id))];
-  const names = new Map();
-  if (memberIds.length) {
-    const { data } = await db.from("members").select("id, name").in("id", memberIds);
-    for (const m of data ?? []) names.set(m.id, credit(m.name));
-  }
   const byRank = (a, b) => a.rank - b.rank || a.created_at.localeCompare(b.created_at);
   let place = 0;
   const line = (i) => {
-    const pos = i.status === "queued" && i.is_public ? `#${++place}`.padEnd(4) : "    ";
-    const who = i.credit_ok ? (i.requested_by_member_id ? names.get(i.requested_by_member_id) : credit(i.requested_by_name)) : null;
+    const pos = i.status === "queued" ? `#${++place}`.padEnd(4) : "    ";
     const bits = [
       pos,
-      (i.is_public ? "pub " : "priv").padEnd(5),
-      `♥${votes.get(i.id) ?? 0}`.padEnd(5),
       i.slug.padEnd(34),
       i.title,
-      who ? `(by ${who})` : i.requested_by_member_id || i.requested_by_name ? "(requested)" : "",
+      i.requested_by_member_id || i.requested_by_name ? "(requested)" : "",
       i.status === "live" ? `· ${day(i.shipped_at)}${i.shipped_in_version ? ` v${i.shipped_in_version.split(".").slice(0, 2).join(".")}` : ""}` : "",
     ];
     return `  ${bits.filter(Boolean).join(" ")}`;
@@ -143,15 +115,12 @@ async function list(all) {
     console.log(`\n${LABEL[status]} (${rows.length})`);
     for (const r of rows) console.log(line(r));
   };
-  const visible = all ? items : items.filter((i) => i.is_public || i.status !== "live");
-  for (const s of ["building", "reviewing", "queued", "idea"]) show(s, visible.filter((i) => i.status === s).sort(byRank));
-  const live = visible.filter((i) => i.status === "live").sort((a, b) => (b.shipped_at ?? "").localeCompare(a.shipped_at ?? "") || byRank(a, b));
+  for (const s of ["building", "reviewing", "queued", "idea"]) show(s, items.filter((i) => i.status === s).sort(byRank));
+  const live = items.filter((i) => i.status === "live").sort((a, b) => (b.shipped_at ?? "").localeCompare(a.shipped_at ?? "") || byRank(a, b));
   show("live", all ? live : live.slice(0, 10));
-  if (all) show("not_doing", visible.filter((i) => i.status === "not_doing").sort(byRank));
+  if (all) show("not_doing", items.filter((i) => i.status === "not_doing").sort(byRank));
   const total = (s) => items.filter((i) => i.status === s).length;
-  console.log(
-    `\n${items.length} items: ${STATUSES.map((s) => `${total(s)} ${LABEL[s].toLowerCase()}`).join(", ")}. ${items.filter((i) => i.is_public).length} public. Inbox: ${inbox ?? 0} new. Version ${packageVersion() ?? "?"}.`,
-  );
+  console.log(`\n${items.length} items: ${STATUSES.map((s) => `${total(s)} ${LABEL[s].toLowerCase()}`).join(", ")}. Version ${packageVersion() ?? "?"}.`);
 }
 
 async function setStatus(slug, status) {
@@ -165,15 +134,13 @@ async function setStatus(slug, status) {
   }
   const { error } = await db.from("roadmap_items").update(patch).eq("id", item.id);
   if (error) die(`Didn't save: ${error.message}`);
-  console.log(`${slug}: ${item.status} -> ${status}${patch.shipped_in_version ? ` (shipped in ${patch.shipped_in_version})` : ""}${item.is_public ? "" : " [private]"}`);
+  console.log(`${slug}: ${item.status} -> ${status}${patch.shipped_in_version ? ` (shipped in ${patch.shipped_in_version})` : ""}`);
 }
 
 async function add(title, summary, flags) {
-  if (!title?.trim()) die('Usage: add "<title>" "<public summary>" [--status queued] [--public] [--requested-by-name "Jake B." --credit]');
+  if (!title?.trim()) die('Usage: add "<title>" "<summary>" [--status queued] [--requested-by-name "Jake B."] [--notes "..."]');
   const status = flags.status ?? "idea";
   if (!STATUSES.includes(status)) die(`Status must be one of: ${STATUSES.join(", ")}`);
-  if (flags.public && !summary?.trim()) die("A public item needs a public summary.");
-  if (flags.credit && !flags["requested-by-name"]) die("--credit needs --requested-by-name.");
   let slug = flags.slug ?? slugFor(title);
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) die("The slug can only have a-z, 0-9 and dashes.");
   const { data: taken } = await db.from("roadmap_items").select("slug").like("slug", `${slug}%`);
@@ -190,14 +157,12 @@ async function add(title, summary, flags) {
     public_summary: (summary ?? "").trim().slice(0, 1000),
     internal_notes: flags.notes ? String(flags.notes).slice(0, 4000) : null,
     status,
-    is_public: !!flags.public,
     requested_by_name: flags["requested-by-name"] ? String(flags["requested-by-name"]).trim().slice(0, 60) : null,
-    credit_ok: !!flags.credit,
     shipped_in_version: status === "live" ? packageVersion() : null,
   };
   const { error } = await db.from("roadmap_items").insert(row);
   if (error) die(`Didn't save: ${error.message}`);
-  console.log(`Added ${slug} (${status}, ${row.is_public ? "public" : "private"}${row.credit_ok ? `, credited to ${credit(row.requested_by_name)}` : ""}). Share: /whats-new/${slug}`);
+  console.log(`Added ${slug} (${status}).`);
 }
 
 async function rank(slug, nRaw) {
@@ -224,7 +189,7 @@ try {
   else if (cmd === "add") await add(args[0], args[1], flags);
   else if (cmd === "rank") await rank(args[0], args[1]);
   else {
-    console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).slice(0, 18).map((l) => l.slice(3)).join("\n"));
+    console.log(readFileSync(new URL(import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("//")).slice(0, 17).map((l) => l.slice(3)).join("\n"));
     if (cmd && cmd !== "help") process.exitCode = 1;
   }
 } catch (e) {

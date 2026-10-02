@@ -6,38 +6,30 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { maskEmail, maskPhone } from "@/lib/contact-mask";
 import { tidyText } from "@/lib/member-profile";
 import { appVersion } from "@/lib/app-version";
-import { privateNamesIn } from "@/lib/data/roadmap";
-import { SUGGESTION_MAX, SUMMARY_MAX, TITLE_MAX, isRoadmapStatus, roadmapSlug, type RoadmapStatus } from "@/lib/roadmap";
+import { NOTES_MAX, SUMMARY_MAX, TITLE_MAX, isRoadmapStatus, roadmapSlug, type RoadmapStatus } from "@/lib/roadmap";
 
-// Back office → Roadmap. Owners and admins run the list (add, edit,
-// reorder, change status, publish, accept or decline suggestions);
-// managers can look, find a member, and log a request for the inbox.
-// Every action checks the role itself: a Server Action is a public
-// endpoint whatever page it sits under. Failures come back as
-// { ok: false, error } (production hides thrown messages). `confirm` lists
-// names that mustn't go public (archive films, private events), for a
-// "Save anyway" when the match is a false alarm.
+// Back office → Roadmap, staff only. Owners and admins run the list (add,
+// edit, reorder, change status); managers can look, find a member, and log
+// a request someone made, which goes on the list as an idea. Every action
+// checks the role itself: a Server Action is a public endpoint whatever
+// page it sits under. Failures come back as { ok: false, error }
+// (production hides thrown messages).
 
-export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string; confirm?: string[] };
+export type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 
 export interface RoadmapItemInput {
   title: string;
   summary: string;
   notes: string;
   status: RoadmapStatus;
-  isPublic: boolean;
   requesterMemberId: string | null;
   requesterName: string | null;
-  creditOk: boolean;
-  confirmNames?: boolean; // "Save anyway"
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function revalidate(slug?: string) {
+function revalidate() {
   revalidatePath("/admin/roadmap");
-  revalidatePath("/whats-new");
-  if (slug) revalidatePath(`/whats-new/${slug}`);
 }
 
 // Several lines allowed (a summary can be two short paragraphs).
@@ -53,56 +45,50 @@ function cleanText(input: unknown, max: number): string | null {
   return [...text].length > max ? null : text;
 }
 
+// Who asked: a member (checked to exist), a typed name, or nobody.
+async function cleanRequester(memberId: unknown, name: unknown): Promise<{ ok: true; memberId: string | null; name: string | null } | { ok: false; error: string }> {
+  if (memberId) {
+    if (typeof memberId !== "string" || !UUID.test(memberId)) return { ok: false, error: "That member wasn't found." };
+    const { data } = await createAdminClient().from("members").select("id, erased_at").eq("id", memberId).maybeSingle();
+    if (!data || data.erased_at) return { ok: false, error: "That member wasn't found." };
+    return { ok: true, memberId: data.id as string, name: null };
+  }
+  const typed = tidyText(name) || null;
+  if (typed && [...typed].length > 60) return { ok: false, error: "Keep the name to 60 characters." };
+  return { ok: true, memberId: null, name: typed };
+}
+
+function cleanTitle(input: unknown, empty = "Give it a title."): { ok: true; title: string } | { ok: false; error: string } {
+  const title = tidyText(input);
+  if (!title) return { ok: false, error: empty };
+  if ([...title].length > TITLE_MAX) return { ok: false, error: `Keep the title to ${TITLE_MAX} characters.` };
+  return { ok: true, title };
+}
+
 type Clean =
-  | { ok: true; row: { title: string; public_summary: string; internal_notes: string | null; status: RoadmapStatus; is_public: boolean; requested_by_member_id: string | null; requested_by_name: string | null; credit_ok: boolean } }
+  | { ok: true; row: { title: string; public_summary: string; internal_notes: string | null; status: RoadmapStatus; requested_by_member_id: string | null; requested_by_name: string | null } }
   | { ok: false; error: string };
 
 async function cleanInput(input: RoadmapItemInput): Promise<Clean> {
-  const title = tidyText(input?.title);
-  if (!title) return { ok: false, error: "Give it a title." };
-  if ([...title].length > TITLE_MAX) return { ok: false, error: `Keep the title to ${TITLE_MAX} characters.` };
+  const title = cleanTitle(input?.title);
+  if (!title.ok) return title;
   const summary = cleanText(input?.summary, SUMMARY_MAX);
-  if (summary === null) return { ok: false, error: `Keep the public summary to ${SUMMARY_MAX} characters.` };
-  const notes = cleanText(input?.notes, 4000);
+  if (summary === null) return { ok: false, error: `Keep the summary to ${SUMMARY_MAX} characters.` };
+  const notes = cleanText(input?.notes, NOTES_MAX);
   if (notes === null) return { ok: false, error: "Keep the internal notes to 4,000 characters." };
   if (!isRoadmapStatus(input?.status)) return { ok: false, error: "Pick a status." };
-  const isPublic = input?.isPublic === true;
-  if (isPublic && !summary) return { ok: false, error: "A public item needs a public summary: a line or two a customer would understand." };
-
-  let memberId: string | null = null;
-  let name: string | null = null;
-  if (input?.requesterMemberId) {
-    if (!UUID.test(input.requesterMemberId)) return { ok: false, error: "That member wasn't found." };
-    const { data } = await createAdminClient().from("members").select("id, erased_at").eq("id", input.requesterMemberId).maybeSingle();
-    if (!data || data.erased_at) return { ok: false, error: "That member wasn't found." };
-    memberId = data.id as string;
-  } else if (input?.requesterName) {
-    name = tidyText(input.requesterName) || null;
-    if (name && [...name].length > 60) return { ok: false, error: "Keep the name to 60 characters." };
-  }
+  const requester = await cleanRequester(input?.requesterMemberId, input?.requesterName);
+  if (!requester.ok) return requester;
   return {
     ok: true,
     row: {
-      title,
+      title: title.title,
       public_summary: summary,
       internal_notes: notes || null,
       status: input.status,
-      is_public: isPublic,
-      requested_by_member_id: memberId,
-      requested_by_name: name,
-      credit_ok: (memberId || name) && input?.creditOk === true ? true : false,
+      requested_by_member_id: requester.memberId,
+      requested_by_name: requester.name,
     },
-  };
-}
-
-async function namesCheck(row: { is_public: boolean; title: string; public_summary: string }, confirmed: boolean | undefined) {
-  if (!row.is_public || confirmed) return null;
-  const names = await privateNamesIn(`${row.title}\n${row.public_summary}`).catch(() => []);
-  if (!names.length) return null;
-  return {
-    ok: false as const,
-    error: `This would show ${names.join(", ")} on the public page. Archive films and private events must never be named publicly. Reword it, or save anyway if it's a false alarm.`,
-    confirm: names,
   };
 }
 
@@ -114,42 +100,17 @@ async function uniqueSlug(title: string): Promise<string> {
   for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
 }
 
-// Add an item: from scratch, or from a suggestion in the inbox (which is
-// then marked accepted and linked to it).
-export async function createRoadmapItem(input: RoadmapItemInput, fromSuggestionId?: string | null): Promise<Result<{ slug: string }>> {
-  const staff = await assertAdmin();
+export async function createRoadmapItem(input: RoadmapItemInput): Promise<Result> {
+  await assertAdmin();
   const clean = await cleanInput(input);
   if (!clean.ok) return clean;
-  const blocked = await namesCheck(clean.row, input?.confirmNames);
-  if (blocked) return blocked;
-  const db = createAdminClient();
-
-  let suggestion: { id: string } | null = null;
-  if (fromSuggestionId) {
-    if (!UUID.test(fromSuggestionId)) return { ok: false, error: "That suggestion wasn't found." };
-    const { data } = await db.from("roadmap_suggestions").select("id, status").eq("id", fromSuggestionId).maybeSingle();
-    if (!data) return { ok: false, error: "That suggestion wasn't found." };
-    if (data.status !== "new") return { ok: false, error: "Someone already answered that suggestion. Refresh the page." };
-    suggestion = { id: data.id as string };
-  }
-
   const slug = await uniqueSlug(clean.row.title);
-  const { data: item, error } = await db
+  const { error } = await createAdminClient()
     .from("roadmap_items")
-    .insert({ ...clean.row, slug, shipped_in_version: clean.row.status === "live" ? appVersion().version : null })
-    .select("id, slug")
-    .single();
-  if (error || !item) return { ok: false, error: "That didn't save. Try again." };
-
-  if (suggestion) {
-    await db
-      .from("roadmap_suggestions")
-      .update({ status: "accepted", item_id: item.id, decided_by: staff.employeeId, decided_at: new Date().toISOString() })
-      .eq("id", suggestion.id)
-      .eq("status", "new");
-  }
-  revalidate(item.slug as string);
-  return { ok: true, slug: item.slug as string };
+    .insert({ ...clean.row, slug, shipped_in_version: clean.row.status === "live" ? appVersion().version : null });
+  if (error) return { ok: false, error: "That didn't save. Try again." };
+  revalidate();
+  return { ok: true };
 }
 
 export async function updateRoadmapItem(id: string, input: RoadmapItemInput): Promise<Result> {
@@ -157,10 +118,8 @@ export async function updateRoadmapItem(id: string, input: RoadmapItemInput): Pr
   if (!UUID.test(id)) return { ok: false, error: "That item wasn't found." };
   const clean = await cleanInput(input);
   if (!clean.ok) return clean;
-  const blocked = await namesCheck(clean.row, input?.confirmNames);
-  if (blocked) return blocked;
   const db = createAdminClient();
-  const { data: old } = await db.from("roadmap_items").select("status, slug").eq("id", id).maybeSingle();
+  const { data: old } = await db.from("roadmap_items").select("status").eq("id", id).maybeSingle();
   if (!old) return { ok: false, error: "That item wasn't found." };
   const goingLive = clean.row.status === "live" && old.status !== "live";
   const { error } = await db
@@ -168,17 +127,17 @@ export async function updateRoadmapItem(id: string, input: RoadmapItemInput): Pr
     .update({ ...clean.row, ...(goingLive && { shipped_in_version: appVersion().version }) })
     .eq("id", id);
   if (error) return { ok: false, error: "That didn't save. Try again." };
-  revalidate(old.slug as string);
+  revalidate();
   return { ok: true };
 }
 
-// The status menu on a row. Going live stamps the date (the database does)
-// and the release it shipped in.
+// The status buttons on an item. Going live stamps the date (the database
+// does) and the release it shipped in.
 export async function setRoadmapStatus(id: string, status: RoadmapStatus): Promise<Result> {
   await assertAdmin();
   if (!UUID.test(id) || !isRoadmapStatus(status)) return { ok: false, error: "That item wasn't found." };
   const db = createAdminClient();
-  const { data: old } = await db.from("roadmap_items").select("status, slug").eq("id", id).maybeSingle();
+  const { data: old } = await db.from("roadmap_items").select("status").eq("id", id).maybeSingle();
   if (!old) return { ok: false, error: "That item wasn't found." };
   if (old.status === status) return { ok: true };
   const { error } = await db
@@ -186,24 +145,7 @@ export async function setRoadmapStatus(id: string, status: RoadmapStatus): Promi
     .update({ status, ...(status === "live" && { shipped_in_version: appVersion().version }) })
     .eq("id", id);
   if (error) return { ok: false, error: "That didn't save. Try again." };
-  revalidate(old.slug as string);
-  return { ok: true };
-}
-
-export async function setRoadmapPublic(id: string, isPublic: boolean, confirmNames?: boolean): Promise<Result> {
-  await assertAdmin();
-  if (!UUID.test(id)) return { ok: false, error: "That item wasn't found." };
-  const db = createAdminClient();
-  const { data: item } = await db.from("roadmap_items").select("slug, title, public_summary").eq("id", id).maybeSingle();
-  if (!item) return { ok: false, error: "That item wasn't found." };
-  if (isPublic) {
-    if (!String(item.public_summary ?? "").trim()) return { ok: false, error: "Write a public summary first (Edit), so customers know what it is." };
-    const blocked = await namesCheck({ is_public: true, title: item.title as string, public_summary: item.public_summary as string }, confirmNames);
-    if (blocked) return blocked;
-  }
-  const { error } = await db.from("roadmap_items").update({ is_public: isPublic === true }).eq("id", id);
-  if (error) return { ok: false, error: "That didn't save. Try again." };
-  revalidate(item.slug as string);
+  revalidate();
   return { ok: true };
 }
 
@@ -225,49 +167,20 @@ export async function reorderRoadmap(changes: { id: string; rank: number }[]): P
   return { ok: true };
 }
 
-export async function declineRoadmapSuggestion(id: string): Promise<Result> {
-  const staff = await assertAdmin();
-  if (!UUID.test(id)) return { ok: false, error: "That suggestion wasn't found." };
+// Managers and up: someone asked for something at the bar. It goes on the
+// list as an idea, with who asked, for an owner or admin to move along.
+export async function logRoadmapRequest(input: { title: string; details: string; requesterMemberId: string | null; requesterName: string | null }): Promise<Result> {
+  await assertManager();
+  const title = cleanTitle(input?.title, "Write what they asked for.");
+  if (!title.ok) return title;
+  const details = cleanText(input?.details, NOTES_MAX);
+  if (details === null) return { ok: false, error: "Keep the details to 4,000 characters." };
+  const requester = await cleanRequester(input?.requesterMemberId, input?.requesterName);
+  if (!requester.ok) return requester;
+  const slug = await uniqueSlug(title.title);
   const { error } = await createAdminClient()
-    .from("roadmap_suggestions")
-    .update({ status: "declined", decided_by: staff.employeeId, decided_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("status", "new");
-  if (error) return { ok: false, error: "That didn't save. Try again." };
-  revalidate();
-  return { ok: true };
-}
-
-// Put a declined suggestion back in the inbox.
-export async function reopenRoadmapSuggestion(id: string): Promise<Result> {
-  await assertAdmin();
-  if (!UUID.test(id)) return { ok: false, error: "That suggestion wasn't found." };
-  const { error } = await createAdminClient().from("roadmap_suggestions").update({ status: "new", decided_by: null, decided_at: null }).eq("id", id).eq("status", "declined");
-  if (error) return { ok: false, error: "That didn't save. Try again." };
-  revalidate();
-  return { ok: true };
-}
-
-// Managers and up: someone asked for something at the bar. It goes to the
-// inbox, where an owner or admin says yes (it becomes an item) or no.
-export async function logRoadmapRequest(input: { body: string; requesterMemberId: string | null; requesterName: string | null; creditOk: boolean }): Promise<Result> {
-  const staff = await assertManager();
-  const body = cleanText(input?.body, SUGGESTION_MAX);
-  if (!body) return { ok: false, error: `Write what they asked for (up to ${SUGGESTION_MAX} characters).` };
-  let memberId: string | null = null;
-  let name: string | null = null;
-  if (input?.requesterMemberId) {
-    if (!UUID.test(input.requesterMemberId)) return { ok: false, error: "That member wasn't found." };
-    const { data } = await createAdminClient().from("members").select("id, erased_at").eq("id", input.requesterMemberId).maybeSingle();
-    if (!data || data.erased_at) return { ok: false, error: "That member wasn't found." };
-    memberId = data.id as string;
-  } else {
-    name = tidyText(input?.requesterName) || null;
-    if (name && [...name].length > 60) return { ok: false, error: "Keep the name to 60 characters." };
-  }
-  const { error } = await createAdminClient()
-    .from("roadmap_suggestions")
-    .insert({ member_id: memberId, name, body, credit_ok: (memberId || name) && input?.creditOk === true ? true : false, logged_by: staff.employeeId });
+    .from("roadmap_items")
+    .insert({ slug, title: title.title, internal_notes: details || null, status: "idea", requested_by_member_id: requester.memberId, requested_by_name: requester.name });
   if (error) return { ok: false, error: "That didn't save. Try again." };
   revalidate();
   return { ok: true };
