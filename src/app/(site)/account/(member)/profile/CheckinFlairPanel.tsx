@@ -46,7 +46,7 @@ function inView(el: HTMLElement | null): boolean {
   });
 }
 
-// "Your check-in": what the screen at the door does when staff confirm
+// "Your check-in": what the screen at the door does when they check in
 // them (lib/flair.ts). A favorite color, an entrance, a sticker for
 // Floating reactions, and the birthday-week party, with a little copy of
 // the screen that plays each choice as it's picked. On a phone the stage
@@ -101,8 +101,7 @@ export default function CheckinFlairPanel({
     <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,25rem)]">
       <div className="min-w-0 space-y-5">
         <p className="text-[15px] text-[var(--muted)]">
-          When our staff confirm your check-in, the screen at the door welcomes you with your color and your entrance. It only takes a few seconds and never holds
-          up the line.
+          When you check in, the screen at the door welcomes you with your color and your entrance. It only takes a few seconds and never holds up the line.
         </p>
         {!ready && <p className="notice notice-warn text-sm">Check-in effects are almost ready. Try them out here; saving opens up soon.</p>}
 

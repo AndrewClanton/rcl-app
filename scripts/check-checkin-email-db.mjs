@@ -1,6 +1,7 @@
 // "Phone or email" check-in (Andrew, 10/1) against the live database: the
 // door tablet's email lookup and sign-up (src/app/display/customer/
-// actions.ts), the register's card and the phone it adds on confirm
+// actions.ts), which check people in at once (Andrew, 10/2), the
+// register's card and the phone added with the check-in
 // (src/app/pos/checkin-actions.ts, lib/checkin-server.ts), and the
 // register's duplicate hint for an account made with only an email
 // (lib/data/member-merge.ts). Uses throwaway members (made-up names on
@@ -102,7 +103,9 @@ async function member(fields) {
   return data.id;
 }
 const row = async (id) => (await db.from("members").select("name, email, phone, email_opt_in, points").eq("id", id).maybeSingle()).data;
-const keysOk = (r) => Object.keys(r).every((key) => ["ok", "status", "name", "request", "withPhone", "phone", "unlimited"].includes(key));
+const keysOk = (r) =>
+  Object.keys(r).every((key) => ["ok", "status", "name", "request", "withPhone", "phone", "unlimited", "checkedIn"].includes(key)) &&
+  Object.keys(r.checkedIn ?? {}).every((key) => ["firstName", "points", "isNew", "visit", "flair", "line"].includes(key));
 
 try {
   const phoneB = await freeNumber();
@@ -119,12 +122,21 @@ try {
   check("shows a first name and last initial only", r1.ok && r1.name === `Checkcheck E.`);
   check("nothing else about them comes back", r1.ok && keysOk(r1) && !JSON.stringify(r1).includes(mail("a")));
   check("no phone offer without a number typed first", r1.ok && !r1.withPhone && !r1.phone);
+  // Typing it is the check-in (Andrew, 10/2).
+  check(
+    "checked in at once: the visit's points, and the request marked done",
+    r1.ok && r1.checkedIn?.visit?.earned > 0 && r1.checkedIn.visit.alreadyToday === false && server.openCheckin(r1.request.ref)?.done === true,
+    r1.ok ? `+${r1.checkedIn?.visit?.earned}` : "",
+  );
   const r2 = await tablet.startEmailCheckin({ email: mail("a"), phone: phoneP });
   check("a number they tried first is offered for an account with no phone", r2.ok && r2.status === "found" && !!r2.withPhone && r2.phone === formatPhone(phoneP));
   const sealedWith = r2.withPhone ? server.openCheckin(r2.withPhone.ref) : null;
   const sealedPlain = r2.ok ? server.openCheckin(r2.request.ref) : null;
   check("the offer's request carries the number, sealed", sealedWith?.kind === "known" && sealedWith.memberId === a && sealedWith.addPhone === phoneP);
   check("Skip's request doesn't", sealedPlain?.memberId === a && !sealedPlain.addPhone);
+  check("with the offer up, nothing's checked in yet", r2.ok && !r2.checkedIn && !sealedPlain?.done);
+  const skip = await tablet.checkInNow(r2.request.ref);
+  check("Skip checks them in (once a day: already today)", skip.ok && skip.checkedIn?.visit?.alreadyToday === true && server.openCheckin(skip.request.ref)?.paid === false);
   const r3 = await tablet.startEmailCheckin({ email: mail("a"), phone: phoneB });
   check("no offer for a number that's on another account", r3.ok && r3.status === "found" && !r3.withPhone);
   const r4 = await tablet.startEmailCheckin({ email: mail("nobody") });
@@ -170,10 +182,19 @@ try {
   if (sealedNew?.memberId) made.push(sealedNew.memberId);
   const fresh = sealedNew?.memberId ? await row(sealedNew.memberId) : null;
   check(
-    "saved with their email (lowercase), no phone, no marketing, 0 points",
-    !!fresh && fresh.email === mail("new") && fresh.phone === null && fresh.email_opt_in === false && Number(fresh.points) === 0 && fresh.name === `Checkcheck Newbie${tag}`,
+    "saved with their email (lowercase), no phone, no marketing, and their first visit's points",
+    !!fresh &&
+      fresh.email === mail("new") &&
+      fresh.phone === null &&
+      fresh.email_opt_in === false &&
+      n3.ok &&
+      n3.status === "created" &&
+      n3.checkedIn.isNew === true &&
+      n3.checkedIn.visit?.earned > 0 &&
+      Number(fresh.points) === n3.checkedIn.visit.earned &&
+      fresh.name === `Checkcheck Newbie${tag}`,
   );
-  check("its request is that account, fresh, by email", sealedNew?.kind === "known" && sealedNew.fresh === true && !sealedNew.phone);
+  check("its request is that account, fresh, by email, done", sealedNew?.kind === "known" && sealedNew.fresh === true && !sealedNew.phone && sealedNew.done === true);
   check("the on-screen QR code is a claim link (no phone needed)", n3.ok && n3.status === "created" && isClaimUrl(n3.claimUrl));
   check("no email here (RESEND_API_KEY cleared), and the screen isn't told one went", n3.ok && n3.status === "created" && n3.emailed === false && afterCalls.length === 0);
   const newCard = await register.resolveCheckin(n3.request.ref);

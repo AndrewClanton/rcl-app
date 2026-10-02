@@ -2,8 +2,8 @@ import Image from "next/image";
 import type { TabletTicket } from "@/lib/door-tickets";
 import k from "./kiosk.module.css";
 
-// Someone's online tickets for today, shown after staff confirm their
-// check-in (the register sends "checkin-tickets", see RegisterCheckins.tsx).
+// Someone's online tickets for today, shown after they check in (the
+// register sends "checkin-tickets", see RegisterCheckins.tsx).
 export interface TicketsShown {
   key: number;
   firstName: string;

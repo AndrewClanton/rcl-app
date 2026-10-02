@@ -14,10 +14,12 @@ import {
   type PlusWelcome,
   type PointsEarned,
   type RewindFound,
+  type TabletCheckin,
 } from "@/lib/checkin";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { finishShown, type FinishShown } from "./FinishCard";
-import { createKioskMember, createPhoneAccount, nameCheckin, startCheckin, startEmailCheckin, type CheckinFound } from "./actions";
+import { checkInNow, createKioskMember, createPhoneAccount, nameCheckin, startCheckin, startEmailCheckin, warmCheckin, type CheckinFound } from "./actions";
+import CheckinReward, { rewardFor, type RewardShown } from "./CheckinReward";
 import LetterKeys, { type LetterKey } from "./LetterKeys";
 import PointsCelebration from "./PointsCelebration";
 import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
@@ -127,6 +129,11 @@ const IDLE_MS = 45_000;
 // up after this long (the sealed reference expires then anyway).
 const OUTBOX_MS = 15 * 60_000;
 
+// The first key wakes the server at most this often (warmCheckin); a reward
+// still waiting on an answer after this long is taken down.
+const WARM_EVERY_MS = 45_000;
+const REWARD_WAIT_MS = 15_000;
+
 // The number keypad. "email" switches to the full keyboard (LetterKeys).
 const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "email", "0", "back"];
 
@@ -137,29 +144,34 @@ const MAX_ENTRY = 100;
 
 // The check-in half of the customer tablet: always "Phone or email", built
 // for a line at the door, where nobody waits on the bartender.
-// - A known number goes to the register as an opaque request and the panel
-//   is straight back to the keypad. Staff confirm by photo when they can;
-//   that pays the visit points, and a banner says so here.
-// - A number we don't know doesn't make an account: "Try your email?" (most
-//   members without a phone on file have an email), with "I'm new here".
-// - A known email gets "Welcome back, Sarah M.!" (first name and last
-//   initial only, Andrew 10/1). If their account has no phone and they
-//   typed one first, they're offered to add it for next time; it's saved
-//   when staff confirm them at the register, which shows it on the card.
-// - Someone new gives their name and email (phone optional) and the
-//   account is made right away (email marketing off), then a QR code to
-//   finish on their own phone, and the same link by email. Staff still
-//   confirm the visit on the register.
+// - Typing it is the check-in (Andrew, 10/2). The moment they tap "Check
+//   in", the reward starts (CheckinReward.tsx: dim, an icon, then the
+//   points it actually paid, or "Welcome back!" if they'd already checked
+//   in today) while the server records the visit (display/customer/
+//   actions.ts). The register hears about it as an opaque request, shows
+//   staff who it is, puts them on the order (their card comes up beside
+//   it) and offers Undo. A shared family number waits for staff to pick
+//   the face, and a banner says so here once they do.
+// - A number we don't know: "Just use my phone number" (a phone account,
+//   checked in with it), "Try my email" (most members without a phone on
+//   file have an email), or the sign-up form.
+// - A known email checks in the same way. If their account has no phone
+//   and they typed one first, they're asked first whether to add it for
+//   next time ("Welcome back, Sarah M.!": first name and last initial only,
+//   Andrew 10/1); it's saved with the check-in.
+// - Someone new gives their name and email (phone optional): the account
+//   is made right away (email marketing off) and checked in, then a QR
+//   code to finish on their own phone, and the same link by email.
 // - A known number or email that's a former unlimited member's with no
 //   card on file here (lib/legacy-plus.ts) gets "Unlimited membership: no
 //   card on file" and where to tap their card (Andrew, 10/1). The register
 //   can then put a QR code up for them to add it on their phone.
-// Until staff have confirmed, this screen shows nothing about anyone but
-// that "Sarah M." for an email. Then just a first name and points, their
-// profile line, and their entrance in their color (lib/flair.ts; or a
-// party in their birthday week), and, for a member with no website login
-// yet, a QR code in the banner to set one up. When a sale with a member on
-// it completes, the register says so and the points burst plays here.
+// What comes back about them is a first name and points, their profile
+// line, and their entrance in their color (lib/flair.ts; or a party in
+// their birthday week), played once the reward's done, with a banner for
+// each new badge. Never a login link from a typed number. When a sale with
+// a member on it completes, the register says so and the points burst
+// plays here.
 // initialStep is for previews only.
 // onTickets: someone's online tickets for today, after staff confirm their
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
@@ -171,8 +183,11 @@ const MAX_ENTRY = 100;
 // onPlusWelcome: someone's Insiders+ was just set up at the register. True
 // when CustomerDisplay celebrated it beside the order (they're the member
 // on it); otherwise the banner here says so.
+// home: bumped when they tap "Done" or "That's not me" under their card
+// (CustomerDisplay): a "Thanks!" still up goes, back to the keypad.
 export default function CheckinKiosk({
   registerTopic,
+  home = 0,
   initialStep,
   onTickets,
   onRewind,
@@ -180,6 +195,7 @@ export default function CheckinKiosk({
   onPlusWelcome: onPlusWelcomeShown,
 }: {
   registerTopic: string;
+  home?: number;
   initialStep?: CheckinStep;
   onTickets?: (shown: TicketsShown) => void;
   onRewind?: () => void;
@@ -218,6 +234,12 @@ export default function CheckinKiosk({
   // Bumped on reset, so a lookup still in flight when the customer walks
   // away doesn't pop a screen back up.
   const session = useRef(0);
+  // The check-in reward over the whole screen (CheckinReward.tsx), and what
+  // follows it once it's gone.
+  const [reward, setReward] = useState<RewardShown | null>(null);
+  const afterReward = useRef<(() => void) | null>(null);
+  // When the server was last woken (warmCheckin).
+  const warmed = useRef(0);
 
   function send(event: string, payload: object) {
     channelRef.current?.send({ type: "broadcast", event, payload });
@@ -287,17 +309,34 @@ export default function CheckinKiosk({
     toast({ title, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
   });
 
+  // The register has it. One that's done here already (its visit recorded
+  // and paid) needs nothing more from it.
   const onSeen = useEffectEvent((id: unknown) => {
     const item = typeof id === "string" ? outbox.current.get(id) : undefined;
-    if (item) item.seen = true;
+    if (!item) return;
+    item.seen = true;
+    if (item.request.done) outbox.current.delete(item.request.id);
   });
 
+  function ours(id: string) {
+    confirmedHere.current.set(id, Date.now());
+    for (const [x, at] of confirmedHere.current) if (Date.now() - at > 5 * 60_000) confirmedHere.current.delete(x);
+  }
+
+  // Staff picked them at the register (a shared family number).
   const onConfirmed = useEffectEvent((p: Partial<CheckinConfirmed> | null) => {
     if (!p || typeof p.id !== "string" || typeof p.firstName !== "string") return;
     // Only our own requests (another screen's check-ins aren't ours to announce).
     if (!outbox.current.delete(p.id)) return;
-    confirmedHere.current.set(p.id, Date.now());
-    for (const [id, at] of confirmedHere.current) if (Date.now() - at > 5 * 60_000) confirmedHere.current.delete(id);
+    ours(p.id);
+    cheer(p, true);
+  });
+
+  // A check-in's banner (withToast: after staff picked them; a check-in done
+  // here has had its reward instead), their entrance, and a banner for each
+  // new badge.
+  function cheer(p: Partial<CheckinConfirmed>, withToast: boolean) {
+    if (typeof p.firstName !== "string") return;
     const name = p.firstName.slice(0, 40);
     const points = Math.max(0, Math.round(Number(p.points) || 0));
     const v = p.visit;
@@ -320,21 +359,23 @@ export default function CheckinKiosk({
     // 0199": greeted without it, the last four in the detail so they know
     // it's theirs.
     const guest = isGuestName(name);
-    toast({
-      title: guest ? (p.isNew ? "Welcome to the Royale!" : "✓ You're checked in") : p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
-      detail: guest ? `Phone ${name.replace(/^Guest /, "")} · ${detail}` : detail,
-      tone: "ok",
-      emoji: null,
-      claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
-      line: lineFromChannel(p.line),
-      color: flair.color?.hex ?? null,
-    });
+    if (withToast) {
+      toast({
+        title: guest ? (p.isNew ? "Welcome to the Royale!" : "✓ You're checked in") : p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
+        detail: guest ? `Phone ${name.replace(/^Guest /, "")} · ${detail}` : detail,
+        tone: "ok",
+        emoji: null,
+        claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
+        line: lineFromChannel(p.line),
+        color: flair.color?.hex ?? null,
+      });
+    }
     if (show !== "classic") playEntrance({ entrance: show, color: flairHex(flair), sticker: flair.sticker });
     badges.forEach((b, i) => {
       const c = badgeCheer(b, guest ? "friend" : name);
       setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
     });
-  });
+  }
 
   const onTicketsMessage = useEffectEvent((p: Partial<CheckinTickets> | null) => {
     if (!p || typeof p.id !== "string" || typeof p.firstName !== "string" || !Array.isArray(p.tickets)) return;
@@ -354,8 +395,9 @@ export default function CheckinKiosk({
     onTickets?.({ key: Date.now(), firstName: p.firstName.slice(0, 40), tickets });
   });
 
-  const onDeclined = useEffectEvent((id: unknown) => {
-    if (typeof id !== "string" || !outbox.current.delete(id)) return;
+  // quiet: they said "That's not me" under the card themselves.
+  const onDeclined = useEffectEvent((id: unknown, quiet: unknown) => {
+    if (typeof id !== "string" || !outbox.current.delete(id) || quiet === true) return;
     toast({ title: "A check-in couldn't be confirmed", detail: "Please see the box office.", tone: "warn", emoji: null, claimUrl: null });
   });
 
@@ -408,6 +450,17 @@ export default function CheckinKiosk({
   // without it.
   const timeUp = useEffectEvent(() => (step.name === "found" ? choosePhone(false) : step.name === "askName" ? skipName() : reset()));
 
+  // "Done" or "That's not me" under their card: back to the keypad from a
+  // check-in's "Thanks!" (never from a form someone's filling in).
+  const [homeSeen, setHomeSeen] = useState(home);
+  if (home !== homeSeen) {
+    setHomeSeen(home);
+    if (step.name === "sent" || step.name === "phoneMade") {
+      resetForm();
+      setStep({ name: "phone" });
+    }
+  }
+
   useEffect(() => {
     const supabase = createClient();
     let channel: Channel | null = null;
@@ -420,7 +473,7 @@ export default function CheckinKiosk({
       channelRef.current = ch;
       ch.on("broadcast", { event: "checkin-seen" }, (msg) => onSeen(msg.payload?.id))
         .on("broadcast", { event: "checkin-confirmed" }, (msg) => onConfirmed(msg.payload))
-        .on("broadcast", { event: "checkin-declined" }, (msg) => onDeclined(msg.payload?.id))
+        .on("broadcast", { event: "checkin-declined" }, (msg) => onDeclined(msg.payload?.id, msg.payload?.quiet))
         .on("broadcast", { event: "checkin-tickets" }, (msg) => onTicketsMessage(msg.payload))
         .on("broadcast", { event: "checkin-sync" }, () => resendAll(false))
         .on("broadcast", { event: "points-earned" }, (msg) => onPoints(msg.payload))
@@ -454,6 +507,15 @@ export default function CheckinKiosk({
     return () => clearTimeout(timer);
   }, [step, firstName, lastName, newEmail, newPhone]);
 
+  // A reward that never heard back (the connection dropped mid-way) doesn't
+  // stay up: the lookup's own error shows when it comes.
+  const rewardStuck = useEffectEvent(() => takeDown());
+  useEffect(() => {
+    if (!reward || reward.result || reward.leaving) return;
+    const timer = setTimeout(() => rewardStuck(), REWARD_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [reward]);
+
   // Something typed (or the full keyboard left up) and walked away from
   // clears itself, back to the keypad.
   useEffect(() => {
@@ -467,6 +529,50 @@ export default function CheckinKiosk({
     send("checkin-request", request);
   }
 
+  // ---------- the reward (CheckinReward.tsx) ----------
+  // It starts the moment they tap, before the server answers (startReward);
+  // landed() gives it the points, or takeDown() takes it away without any
+  // (a number we don't know, an error, a question to answer first).
+  function startReward() {
+    afterReward.current = null;
+    setReward({ key: Date.now(), result: null });
+  }
+
+  function takeDown() {
+    setReward((r) => (r ? { ...r, leaving: true } : r));
+    setTimeout(() => setReward((r) => (r?.leaving ? null : r)), 260);
+  }
+
+  // Checked in: the register hears now (so their card is up beside the
+  // order by the time the reward fades), the reward shows what it paid,
+  // and once it's gone, `next` (a screen with more to say) and their
+  // entrance and new badges. The keypad underneath is ready for the next
+  // person.
+  function landed(request: CheckinRequest, checkedIn: TabletCheckin | undefined, next: CheckinStep | null = null) {
+    queue(request);
+    if (checkedIn) ours(request.id);
+    resetForm();
+    setStep({ name: "phone" });
+    afterReward.current = () => {
+      if (next) setStep(next);
+      if (checkedIn) cheer(checkedIn, false);
+    };
+    setReward((r) => ({ key: r?.key ?? Date.now(), result: rewardFor(checkedIn) }));
+  }
+
+  function rewardDone() {
+    setReward(null);
+    const then = afterReward.current;
+    afterReward.current = null;
+    then?.();
+  }
+
+  // A failed or abandoned lookup never leaves the reward waiting.
+  function failed(message: string) {
+    takeDown();
+    setError(message);
+  }
+
   const emailish = isEmailish(entry);
   const entryReady = emailish ? !!cleanEmail(entry) : isFullPhone(entry);
   const onKeypad = step.name === "phone" && !step.letters;
@@ -477,9 +583,14 @@ export default function CheckinKiosk({
   }
 
   // One entry for both keyboards: the keypad's digits stop at a phone
-  // number's ten unless it's already an email.
+  // number's ten unless it's already an email. The first key wakes the
+  // server (warmCheckin), so the check-in itself is quick.
   function type(text: string) {
     setError(null);
+    if (!entry && Date.now() - warmed.current > WARM_EVERY_MS) {
+      warmed.current = Date.now();
+      void warmCheckin().catch(() => {});
+    }
     setEntry((e) => {
       if (text === "@" && e.includes("@")) return e;
       const next = (e + text).toLowerCase();
@@ -516,103 +627,126 @@ export default function CheckinKiosk({
     setStep(missed ? { name: "new", missed: true } : { name: "new" });
   }
 
-  // Found by email: straight to the register, or first "Add this phone?".
+  // A former unlimited member with no card on file hears where their card
+  // goes once the reward's done.
+  const noCardNote = (unlimited: boolean | undefined): CheckinStep | null => (unlimited ? { name: "sent", unlimited: true } : null);
+
+  // Found by email: checked in, or first "Add this phone?".
   function found(r: CheckinFound) {
     if (r.withPhone && r.phone) {
+      takeDown();
       setStep({ name: "found", who: r.name, phone: r.phone, request: r.request, withPhone: r.withPhone, unlimited: r.unlimited });
       return;
     }
-    queue(r.request);
-    resetForm();
-    setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent", who: r.name });
+    landed(r.request, r.checkedIn, noCardNote(r.unlimited));
   }
 
-  function choosePhone(add: boolean) {
-    if (step.name !== "found") return;
-    queue(add ? step.withPhone : step.request);
-    resetForm();
-    setStep(step.unlimited ? { name: "sent", unlimited: true } : { name: "sent", who: step.who });
+  // "Add this phone?" answered (or walked away from): checked in now.
+  async function choosePhone(add: boolean) {
+    if (busy || step.name !== "found") return;
+    const was = step;
+    const ticket = session.current;
+    setBusy(true);
+    setError(null);
+    startReward();
+    const r = await checkInNow((add ? was.withPhone : was.request).ref).catch(() => null);
+    setBusy(false);
+    if (ticket !== session.current) return takeDown();
+    if (!r || !r.ok) return failed(r?.error ?? OFFLINE);
+    landed(r.request, r.checkedIn, noCardNote(was.unlimited));
   }
 
+  // "Check in →": the reward starts at once, while the server looks them up
+  // and checks them in.
   async function lookUp() {
     if (busy || !entryReady) return;
     const ticket = session.current;
     setBusy(true);
     setError(null);
+    startReward();
     if (emailish) {
       const r = await startEmailCheckin({ email: entry, phone: tried }).catch(() => null);
       setBusy(false);
-      if (ticket !== session.current) return;
-      if (!r) return setError(OFFLINE);
-      if (!r.ok) return setError(r.error);
+      if (ticket !== session.current) return takeDown();
+      if (!r) return failed(OFFLINE);
+      if (!r.ok) return failed(r.error);
       // Not one we know: make them an account (a typo can be fixed there,
       // and an email that's on an account is still found).
-      if (r.status === "new") return startNew(true);
+      if (r.status === "new") {
+        takeDown();
+        return startNew(true);
+      }
       return found(r);
     }
     const digits = entry;
     const r = await startCheckin(digits).catch(() => null);
     setBusy(false);
-    if (ticket !== session.current) return;
-    if (!r) return setError(OFFLINE);
-    if (!r.ok) return setError(r.error);
+    if (ticket !== session.current) return takeDown();
+    if (!r) return failed(OFFLINE);
+    if (!r.ok) return failed(r.error);
     if (r.status === "new") {
       // No account yet: "Just use my phone number" (a phone account), their
       // email (most members without a phone on file have one), or the
       // sign-up form.
+      takeDown();
       setTried(digits);
       setEntry("");
       return setStep({ name: "notFound", phone: formatPhone(digits) });
     }
     if (r.askName) {
+      takeDown();
       setEntry("");
       return setStep({ name: "askName", request: r.request, digits });
     }
-    queue(r.request);
-    resetForm();
-    setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent" });
+    landed(r.request, r.checkedIn, noCardNote(r.unlimited));
   }
 
-  // "Just use my phone number": the number they typed is their account.
+  // "Just use my phone number": the number they typed is their account, and
+  // they're checked in with it.
   async function usePhone() {
     if (busy || !tried) return;
     const ticket = session.current;
     const phone = formatPhone(tried);
     setBusy(true);
     setError(null);
+    startReward();
     const r = await createPhoneAccount(tried).catch(() => null);
     setBusy(false);
-    if (ticket !== session.current) return;
-    if (!r) return setError(OFFLINE);
-    if (!r.ok) return setError(r.error);
-    queue(r.request);
-    resetForm();
-    // Someone made an account with this number a moment ago: checked in.
-    setStep(r.made ? { name: "phoneMade", phone } : { name: "sent" });
+    if (ticket !== session.current) return takeDown();
+    if (!r) return failed(OFFLINE);
+    if (!r.ok) return failed(r.error);
+    // Someone made an account with this number a moment ago: just checked in.
+    landed(r.request, r.checkedIn, r.made ? { name: "phoneMade", phone } : null);
   }
 
-  // "Add your name?": saved when staff confirm the check-in.
+  // "Add your name?": saved with the check-in.
   async function saveName() {
     if (busy || step.name !== "askName") return;
     if (!firstName.trim()) return setError("Type your first name.");
     const ticket = session.current;
     setBusy(true);
     setError(null);
+    startReward();
     const r = await nameCheckin({ phone: step.digits, firstName, lastInitial: lastName }).catch(() => null);
     setBusy(false);
-    if (ticket !== session.current) return;
-    if (!r) return setError(OFFLINE);
-    if (!r.ok) return setError(r.error);
-    queue(r.request);
-    resetForm();
-    setStep({ name: "sent", who: r.firstName });
+    if (ticket !== session.current) return takeDown();
+    if (!r) return failed(OFFLINE);
+    if (!r.ok) return failed(r.error);
+    landed(r.request, r.checkedIn);
   }
 
-  function skipName() {
-    if (step.name !== "askName") return;
-    queue(step.request);
-    resetForm();
-    setStep({ name: "sent" });
+  // Skipped (or walked away from): checked in without it.
+  async function skipName() {
+    if (busy || step.name !== "askName") return;
+    const ticket = session.current;
+    setBusy(true);
+    setError(null);
+    startReward();
+    const r = await checkInNow(step.request.ref).catch(() => null);
+    setBusy(false);
+    if (ticket !== session.current) return takeDown();
+    if (!r || !r.ok) return failed(r?.error ?? OFFLINE);
+    landed(r.request, r.checkedIn);
   }
 
   async function signUp() {
@@ -625,17 +759,16 @@ export default function CheckinKiosk({
     const ticket = session.current;
     setBusy(true);
     setError(null);
+    startReward();
     const r = await createKioskMember({ firstName, lastName, email: newEmail, phone: phone || null }).catch(() => null);
     setBusy(false);
-    if (ticket !== session.current) return;
-    if (!r) return setError(OFFLINE);
-    if (!r.ok) return setError(r.error);
+    if (ticket !== session.current) return takeDown();
+    if (!r) return failed(OFFLINE);
+    if (!r.ok) return failed(r.error);
     // Their email (or number) is on an account after all: that one.
     if (r.status === "found") return found(r);
-    queue(r.request);
-    resetForm();
-    if (r.status === "known") return setStep({ name: "sent" });
-    setStep({ name: "created", firstName: r.firstName, claimUrl: r.claimUrl, emailed: r.emailed });
+    if (r.status === "known") return landed(r.request, r.checkedIn);
+    landed(r.request, r.checkedIn, { name: "created", firstName: r.firstName, claimUrl: r.claimUrl, emailed: r.emailed });
   }
 
   const badAreaCode = !emailish && entry.length === 10 && !isFullPhone(entry);
@@ -797,7 +930,7 @@ export default function CheckinKiosk({
           <p className={k.big}>Your phone number is your account.</p>
           <div className={k.phoneBig}>{step.phone}</div>
           <p className={k.big}>Just type it each time you come in, and your points add up.</p>
-          <p className={k.sub}>The box office will confirm you in a moment.</p>
+          <p className={k.sub}>You&apos;re checked in for today.</p>
           <button className={k.cta} style={{ alignSelf: "stretch" }} onClick={reset}>
             Done
           </button>
@@ -961,10 +1094,11 @@ export default function CheckinKiosk({
           <div className={k.offer}>
             <p className={k.offerTitle}>Add this phone for one-tap check-in next time?</p>
             <div className={k.offerPhone}>{step.phone}</div>
-            <button className={k.cta} onClick={() => choosePhone(true)}>
+            {error && <p className={k.error}>{error}</p>}
+            <button className={k.cta} disabled={busy} onClick={() => void choosePhone(true)}>
               Add it ✓
             </button>
-            <button className={k.ghost} onClick={() => choosePhone(false)}>
+            <button className={k.ghost} disabled={busy} onClick={() => void choosePhone(false)}>
               Skip
             </button>
           </div>
@@ -991,7 +1125,7 @@ export default function CheckinKiosk({
           </div>
           <h1 className={k.title}>{step.who ? `Welcome back, ${keepTogether(step.who)}!` : "Thanks!"}</h1>
           <p className={k.sub} style={{ fontSize: 20 }}>
-            The box office will confirm you in a moment.
+            The box office will check you in.
           </p>
         </div>
       )}
@@ -1001,7 +1135,7 @@ export default function CheckinKiosk({
           <div className={k.eyebrow}>You&apos;re in</div>
           <h1 className={k.title}>Welcome, {step.firstName}!</h1>
           <p className={k.sub} style={{ fontSize: 18 }}>
-            The box office will confirm your first visit and your points will land.
+            Your first visit is checked in, and its points are on your account.
           </p>
           {step.claimUrl && isClaimUrl(step.claimUrl) ? (
             <ClaimQrSlot url={step.claimUrl} emailed={!!step.emailed} />
@@ -1013,6 +1147,8 @@ export default function CheckinKiosk({
           </button>
         </div>
       )}
+
+      {reward && <CheckinReward key={reward.key} shown={reward} onDone={rewardDone} />}
 
       {celebration && (
         <PointsCelebration

@@ -133,8 +133,8 @@ export default async function PrivacyPage() {
             register also suggests members who visit often, with their photos, so staff can find them quickly.
           </li>
           <li>
-            To greet you when you check in. After staff confirm it&apos;s you, the screen facing you shows your first name and points, your profile line
-            if you wrote one, and the check-in effect you picked.
+            To greet you when you check in. When you check in with your phone number or email, the screen facing you shows your first name and points, your
+            card (your photo, profile line if you wrote one, and badges) and the check-in effect you picked.
           </li>
           <li>
             <strong>For your profile page, only if you turn it on.</strong> It&apos;s off unless you switch it on in your account. It shows the name you

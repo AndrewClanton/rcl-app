@@ -3,12 +3,13 @@
 import { assertStaff, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firstNameOf, formatPhone, isFullPhone, last10 } from "@/lib/checkin";
-import { memberIdsWithPhone, memberIdWithEmail, openCheckin, saveNameFromCheckin, savePhoneFromCheckin } from "@/lib/checkin-server";
+import { CHECKIN_LIFETIME_MS, memberIdsWithPhone, memberIdWithEmail, openCheckin, saveNameFromCheckin, savePhoneFromCheckin } from "@/lib/checkin-server";
 import { isPhoneAccount } from "@/lib/member-name";
 import { sameEmail } from "@/lib/email-match";
 import { allowAttempt } from "@/lib/rate-limit";
 import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
-import { openRewards, recordVisit, redeemReward, todaysVisitors, unredeemReward, type OpenReward } from "@/lib/visits-server";
+import { openRewards, recordVisit, redeemReward, todaysVisitors, undoVisitToday, unredeemReward, visitToday, type OpenReward, type VisitToday } from "@/lib/visits-server";
+import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import type { VisitResult } from "@/lib/visits";
 import { issueClaimLink } from "@/lib/member-claim";
 import { tabletDuplicateOf } from "@/lib/data/member-merge";
@@ -18,10 +19,10 @@ import { setMarketingOptIn } from "@/lib/email/consent";
 import { memberJoined } from "@/lib/email/automations";
 
 // The register's half of check-in for points (the customer screen's half is
-// in display/customer/actions.ts). Staff-only: this is where a sealed
-// request from the screen turns into a photo, a full name and the last four
-// of the phone (or "by email"), for staff to say "yes, that's them" before
-// anything is attached or created.
+// in display/customer/actions.ts, which checks people in itself). Staff-only:
+// this is where a sealed request from the screen turns into a photo, a full
+// name and what staff need to know, with Undo for a mistake (undoCheckin);
+// a shared family number still waits for staff to pick the face.
 
 export type CheckinCard =
   // fresh: the tablet just made this account for a new customer.
@@ -31,7 +32,27 @@ export type CheckinCard =
   // know, and saved when staff check them in (confirmVisit).
   // addName: "Sarah M.", from the tablet's "Add your name?" (a phone account
   // with none yet): shown on the card, saved when staff check them in.
-  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean; byEmail?: boolean; addPhone?: string | null; addName?: string | null }
+  // done: checked in at the screen already (its visit recorded and paid
+  // there): the register just shows who it is, with Undo. paid: that
+  // check-in paid today's visit (not a second one today). today: what the
+  // visit paid, for the pop-up. coffee: an Insiders+ member's free coffee
+  // today.
+  | {
+      kind: "known";
+      phoneLast4: string;
+      matches: PosMember[];
+      fresh?: boolean;
+      byEmail?: boolean;
+      addPhone?: string | null;
+      addName?: string | null;
+      done?: boolean;
+      paid?: boolean;
+      today?: VisitToday | null;
+      coffee?: "ready" | "used" | null;
+      // Seconds since they checked in at the screen: a register that opens
+      // later still shows it, but doesn't put them on a new order.
+      age?: number;
+    }
   | {
       kind: "new";
       firstName: string;
@@ -54,15 +75,35 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
   if (!c) return { ok: false, error: EXPIRED, expired: true };
 
   if (c.kind === "known" && "memberId" in c) {
-    // One account: found by email at the tablet, or just made there.
-    // Merged into another account since: that one.
+    // One account: checked in at the tablet (done), or found by email
+    // there, or just made there. Merged into another account since: that one.
     const m = await getPosMember((await currentMemberId(c.memberId)) ?? c.memberId);
     if (!m) return { ok: false, error: "That account isn't there anymore. Look them up by name instead." };
+    const phoneLast4 = c.phone ? c.phone.slice(-4) : "";
+    const age = Math.max(0, Math.round((Date.now() - (c.exp - CHECKIN_LIFETIME_MS)) / 1000));
+    if (c.done) {
+      const [today, coffee] = await Promise.all([visitToday(m.id), m.tier === "Insiders+" ? dailyCoffeeToday(m.id).catch(() => null) : null]);
+      return {
+        ok: true,
+        card: {
+          kind: "known",
+          phoneLast4,
+          matches: [m],
+          fresh: c.fresh === true,
+          byEmail: !c.phone,
+          done: true,
+          paid: c.paid === true,
+          today,
+          coffee: coffee ? (coffee.usedAt ? "used" : "ready") : null,
+          age,
+        },
+      };
+    }
     const addPhone = c.addPhone && !isFullPhone(last10(m.phone)) ? formatPhone(c.addPhone) : null;
     const addName = c.addName && m.named === false ? c.addName : null;
     return {
       ok: true,
-      card: { kind: "known", phoneLast4: c.phone ? c.phone.slice(-4) : "", matches: [m], fresh: c.fresh === true, byEmail: !c.phone, addPhone, addName },
+      card: { kind: "known", phoneLast4, matches: [m], fresh: c.fresh === true, byEmail: !c.phone, addPhone, addName, age },
     };
   }
 
@@ -72,7 +113,8 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
     // Usually one; a shared family number can have a few.
     const matches = (await Promise.all(found.ids.slice(0, 4).map((id) => getPosMember(id)))).filter((m): m is PosMember => !!m);
     if (!matches.length) return { ok: false, error: "No account has that number anymore. Look them up by name instead." };
-    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches, fresh: c.fresh === true } };
+    const age = Math.max(0, Math.round((Date.now() - (c.exp - CHECKIN_LIFETIME_MS)) / 1000));
+    return { ok: true, card: { kind: "known", phoneLast4: c.phone.slice(-4), matches, fresh: c.fresh === true, age } };
   }
 
   const matchId = c.email ? await memberIdWithEmail(c.email) : null;
@@ -220,6 +262,26 @@ export async function confirmVisit(cardMemberId: string, ref: string | null = nu
   ]);
   const member = named?.saved ? await getPosMember(memberId).catch(() => null) : null;
   return { ok: true, visit, rewards, claimUrl, phoneNote, nameNote: named?.note ?? null, member };
+}
+
+// "Undo / Not them" on a check-in from the customer screen (it's already
+// recorded and paid there): staff spotted a mistake. The visit it paid is
+// taken back, points, badges and all (lib/visits-server.ts undoVisitToday).
+// A check-in that paid nothing (they'd checked in earlier today) leaves
+// that earlier visit alone. `ref`: the check-in's sealed request; once it's
+// run out (15 minutes), today's visit is taken back on staff's word.
+export async function undoCheckin(memberId: string, ref: string | null): Promise<{ ok: true; taken: number; note: string } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return { ok: false, error: "Couldn't find that member." };
+  if (!(await allowAttempt(`checkin-undo:${staff.employeeId}`, 20, 300))) return { ok: false, error: BUSY };
+  const c = typeof ref === "string" ? openCheckin(ref) : null;
+  const id = (await currentMemberId(memberId)) ?? memberId;
+  if (c && c.kind === "known" && "memberId" in c && c.done && !c.paid) {
+    return { ok: true, taken: 0, note: "They'd checked in earlier today, so that visit stays. They're off the order." };
+  }
+  const r = await undoVisitToday(id, staff.employeeId);
+  if (!r) return { ok: false, error: "There's no check-in today to undo, or it couldn't be read. Try again." };
+  return { ok: true, taken: r.taken, note: r.taken > 0 ? `Check-in undone: ${r.taken} point${r.taken === 1 ? "" : "s"} taken back.` : "Check-in undone." };
 }
 
 // After a check-in: an account the tablet made lately (by phone, or by

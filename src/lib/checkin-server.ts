@@ -23,11 +23,16 @@ export type CheckinDetails =
   // One account: found by the email typed at the tablet, or just made
   // there. phone: the ten digits it was found or made with, if any (for
   // "Phone ending" on the register's card). addPhone: ten digits they
-  // typed and said yes to adding (their account has none), saved only
-  // when staff confirm the check-in (pos/checkin-actions.ts confirmVisit).
+  // typed and said yes to adding (their account has none), saved with the
+  // check-in (at the screen, or pos/checkin-actions.ts confirmVisit).
   // addName: "Sarah M.", typed at the tablet's "Add your name?" by a phone
   // account with none (lib/member-name.ts), saved the same way.
-  | { kind: "known"; memberId: string; phone?: string; addPhone?: string; addName?: string; fresh?: boolean }
+  // done: the screen recorded the visit itself (display/customer/
+  // actions.ts), and saved addPhone / addName then; the register only shows
+  // who it is and offers Undo. paid: this check-in paid today's visit (not
+  // a second one today), so Undo takes the visit back; otherwise Undo just
+  // takes them off the order.
+  | { kind: "known"; memberId: string; phone?: string; addPhone?: string; addName?: string; fresh?: boolean; done?: boolean; paid?: boolean }
   | { kind: "new"; phone: string; firstName: string; email: string | null; emailOptIn: boolean };
 
 type Sealed = CheckinDetails & { id: string; exp: number };
@@ -36,18 +41,20 @@ function key(): Buffer {
   return createHmac("sha256", process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").update("checkin-ref-v1").digest();
 }
 
-export function sealCheckin(details: CheckinDetails): { id: string; ref: string; kind: CheckinKind } {
+export function sealCheckin(details: CheckinDetails): { id: string; ref: string; kind: CheckinKind; done?: boolean } {
   const id = randomBytes(9).toString("base64url");
   const body: Sealed = { ...details, id, exp: Date.now() + CHECKIN_LIFETIME_MS };
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key(), iv);
   const text = Buffer.concat([cipher.update(JSON.stringify(body), "utf8"), cipher.final()]);
-  return { id, ref: Buffer.concat([iv, cipher.getAuthTag(), text]).toString("base64url"), kind: details.kind };
+  const ref = Buffer.concat([iv, cipher.getAuthTag(), text]).toString("base64url");
+  return "done" in details && details.done ? { id, ref, kind: details.kind, done: true } : { id, ref, kind: details.kind };
 }
 
 // The sealed details, or null if the reference was tampered with, isn't
-// one of ours, or has run out.
-export function openCheckin(ref: string): (CheckinDetails & { id: string }) | null {
+// one of ours, or has run out. exp: when it runs out (so it was made
+// CHECKIN_LIFETIME_MS before that).
+export function openCheckin(ref: string): (CheckinDetails & { id: string; exp: number }) | null {
   try {
     const raw = Buffer.from(ref, "base64url");
     if (raw.length < 29 || raw.length > 2048) return null;
@@ -84,7 +91,7 @@ export async function memberIdWithEmail(email: string): Promise<string | null> {
 }
 
 // The number from the tablet's "Add this phone for one-tap check-in next
-// time", once staff have confirmed the check-in (pos/checkin-actions.ts
+// time", once they've checked in (display/customer/actions.ts, or pos/checkin-actions.ts
 // confirmVisit): only onto the account the request was sealed for (or the
 // one it was merged into), only while it still has no usable phone, and
 // only a number no other account has. Says what happened, for the
@@ -116,7 +123,7 @@ export async function savePhoneFromCheckin(ref: string, memberId: string): Promi
 }
 
 // The name from the tablet's "Add your name?" (a phone account with none,
-// lib/member-name.ts), once staff have confirmed the check-in: only onto
+// lib/member-name.ts), once they've checked in: only onto
 // the account the request was sealed for (or the one it was merged into),
 // and only while it still has no name. saved: the name, when it went on.
 // Never throws.

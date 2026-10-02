@@ -2,12 +2,14 @@
 // guests who'll never want an email login) against the live database:
 //  - the tablet's "Just use my phone number" (src/app/display/customer/
 //    actions.ts createPhoneAccount): only the number, no name or email,
-//    marketing off, no setup link; a number that's on an account already
-//    checks that one in;
-//  - the register's card for it ("Guest ·· 0199", phone only) and its
-//    confirm: the visit's points, and no QR code pushed at them;
-//  - "Add your name?" once, on the second visit, saved only when staff
-//    confirm (lib/checkin-server.ts saveNameFromCheckin);
+//    marketing off, no setup link, and checked in at once (Andrew, 10/2:
+//    typing it is the check-in); a number that's on an account already
+//    checks that one in, once a day;
+//  - the register's card for it ("Guest ·· 0199", phone only), already
+//    done, with no QR code pushed at them, and its Undo / Not them (the
+//    visit and its points taken back);
+//  - "Add your name?" once, on the second visit, saved with the check-in
+//    (lib/checkin-server.ts saveNameFromCheckin);
 //  - the register's "New phone account", "Add name" and "Add email"
 //    (src/app/pos/member-actions.ts);
 //  - the name helpers keep "Guest ·· 0199" whole (lib/member-name.ts).
@@ -126,27 +128,44 @@ try {
   const sealed = c1.ok ? server.openCheckin(c1.request.ref) : null;
   const id1 = sealed && "memberId" in sealed ? sealed.memberId : null;
   if (id1) made.push(id1);
-  check("made, with a check-in request for that account (fresh)", c1.ok && c1.made === true && !!id1 && sealed?.fresh === true && sealed.phone === p1);
-  check("only the request comes back (nothing about the account)", c1.ok && Object.keys(c1).every((key) => ["ok", "request", "made"].includes(key)));
+  check("made, with a check-in request for that account (fresh, done)", c1.ok && c1.made === true && !!id1 && sealed?.fresh === true && sealed.phone === p1 && sealed.done === true && sealed.paid === true);
+  // Typing it is the check-in (Andrew, 10/2): its visit is paid there and then.
+  check(
+    "checked in at once: the first visit's points, as the reward shows them",
+    c1.ok && c1.checkedIn?.visit?.earned > 0 && c1.checkedIn.visit.alreadyToday === false && c1.checkedIn.isNew === true && c1.checkedIn.firstName === `Guest ·· ${p1.slice(-4)}`,
+    c1.ok ? `+${c1.checkedIn?.visit?.earned}` : "",
+  );
+  check(
+    "only the request and the reward's facts come back (no contact details, no login link)",
+    c1.ok && Object.keys(c1).every((key) => ["ok", "request", "made", "checkedIn"].includes(key)) && Object.keys(c1.checkedIn ?? {}).every((key) => ["firstName", "points", "isNew", "visit", "flair", "line"].includes(key)),
+  );
   const r1 = id1 ? await row(id1) : null;
   check("saved with only the number: no name, no email, marketing off, Insiders", r1?.name === "" && r1.email === null && r1.email_opt_in === false && r1.tier === "Insiders" && r1.phone === formatPhone(p1));
   check("no setup email or link queued", afterCalls.length === 0 && ((await db.from("member_claims").select("id").eq("member_id", id1 ?? randomUUID())).data ?? []).length === 0);
   const c1again = await tablet.createPhoneAccount(p1);
-  check("the same number again checks that account in (no second one)", c1again.ok && c1again.made === false && (await server.memberIdsWithPhone(p1)).ids?.length === 1);
+  check(
+    "the same number again checks that account in (no second one, no second points)",
+    c1again.ok && c1again.made === false && c1again.checkedIn?.visit?.alreadyToday === true && (await server.memberIdsWithPhone(p1)).ids?.length === 1,
+  );
   check("junk numbers are refused", !(await tablet.createPhoneAccount("555-12")).ok && !(await tablet.createPhoneAccount("1115550199")).ok);
 
-  console.log("-- the register: the card and the confirm");
+  console.log("-- the register: the card, nothing to confirm, and Undo");
   const card1 = c1.ok ? await register.resolveCheckin(c1.request.ref) : null;
   const m1 = card1?.ok && card1.card.kind === "known" ? card1.card.matches[0] : null;
   check("the card says 'Guest ·· last four', phone only, just joined", !!m1 && m1.name === `Guest ·· ${p1.slice(-4)}` && m1.named === false && m1.phoneOnly === true && card1.card.fresh === true && card1.card.phoneLast4 === p1.slice(-4));
-  const v1 = id1 && c1.ok ? await register.confirmVisit(id1, c1.request.ref) : null;
-  check("confirming pays the visit's points", v1?.ok === true && v1.visit.earned > 0 && v1.visit.alreadyToday === false, v1?.ok ? `+${v1.visit.earned}` : "");
-  check("...and no 'see your points online' QR code for a phone account", v1?.ok === true && v1.claimUrl === null);
-  check("no name was added (none asked for)", v1?.ok === true && !v1.nameNote && (await row(id1))?.name === "");
+  check("...already done, with what the visit paid and that it's their first", card1?.ok && card1.card.kind === "known" && card1.card.done === true && card1.card.paid === true && card1.card.today?.points > 0 && card1.card.today.visits === 1);
+  const pointsBefore = Number((await db.from("members").select("points").eq("id", id1 ?? randomUUID()).maybeSingle()).data?.points ?? 0);
+  const u1 = id1 && c1.ok ? await register.undoCheckin(id1, c1.request.ref) : null;
+  const pointsAfter = Number((await db.from("members").select("points").eq("id", id1 ?? randomUUID()).maybeSingle()).data?.points ?? -1);
+  const visitsLeft = ((await db.from("member_visits").select("id").eq("member_id", id1 ?? randomUUID())).data ?? []).length;
+  check("Undo / Not them takes the visit and its points back", u1?.ok === true && u1.taken === pointsBefore && pointsAfter === 0 && visitsLeft === 0, u1?.ok ? `-${u1.taken}` : (u1?.error ?? "no answer"));
+  check("...and its badges", ((await db.from("member_badges").select("id").eq("member_id", id1 ?? randomUUID())).data ?? []).length === 0);
+  const again = await tablet.startCheckin(p1);
+  check("a right check-in after an Undo pays as usual", again.ok && again.status === "known" && again.checkedIn?.visit?.earned > 0 && again.checkedIn.visit.alreadyToday === false);
 
   console.log("-- Add your name? on the second visit");
   const s2 = await tablet.startCheckin(p1);
-  check("not asked again the same day", s2.ok && s2.status === "known" && !s2.askName);
+  check("not asked again the same day", s2.ok && s2.status === "known" && !s2.askName && s2.checkedIn?.visit?.alreadyToday === true);
   // Their first visit moves to last week; today's goes, so today is the second.
   await db.from("member_visits").delete().eq("member_id", id1);
   await recordVisit(id1, null, new Date(Date.now() - 7 * 86_400_000));
@@ -156,20 +175,18 @@ try {
   check("a name that isn't letters is refused", !bad.ok);
   const badInitial = await tablet.nameCheckin({ phone: p1, firstName: "Ann", lastInitial: "Bx" });
   check("a last initial is one letter", !badInitial.ok);
+  check("not asked to some other account first", (await server.saveNameFromCheckin(server.sealCheckin({ kind: "known", memberId: id1, addName: "Zed Q." }).ref, randomUUID())) === null);
   const n1 = await tablet.nameCheckin({ phone: p1, firstName: "  ann ", lastInitial: "b." });
   const sealedName = n1.ok ? server.openCheckin(n1.request.ref) : null;
-  check("their answer is sealed into the request ('Ann B.')", n1.ok && n1.firstName === "Ann" && sealedName?.memberId === id1 && sealedName.addName === "Ann B.");
-  check("nothing is saved before staff confirm", (await row(id1))?.name === "");
-  const card2 = n1.ok ? await register.resolveCheckin(n1.request.ref) : null;
-  check("the card says 'will add name Ann B.'", card2?.ok && card2.card.kind === "known" && card2.card.addName === "Ann B.");
-  check("not added to some other account", n1.ok && (await server.saveNameFromCheckin(n1.request.ref, randomUUID())) === null && (await row(id1))?.name === "");
-  const v2 = n1.ok ? await register.confirmVisit(id1, n1.request.ref) : null;
+  check("their answer is sealed into the request ('Ann B.'), done", n1.ok && n1.firstName === "Ann" && sealedName?.memberId === id1 && sealedName.addName === "Ann B." && sealedName.done === true);
   check(
-    "confirming saves it and hands back the member with it",
-    v2?.ok === true && v2.nameNote === "Added their name: Ann B." && v2.member?.name === "Ann B." && v2.member?.named === true && (await row(id1))?.name === "Ann B.",
-    v2?.ok ? `note: ${v2.nameNote ?? "none"}; member back: ${!!v2.member}` : (v2?.error ?? "no answer"),
+    "saved with the check-in, which pays the second visit",
+    n1.ok && (await row(id1))?.name === "Ann B." && n1.checkedIn?.firstName === "Ann" && n1.checkedIn.visit?.earned > 0 && n1.checkedIn.visit.alreadyToday === false,
+    n1.ok ? `+${n1.checkedIn?.visit?.earned}` : (n1.error ?? "no answer"),
   );
-  check("confirming twice changes nothing", n1.ok && (await server.saveNameFromCheckin(n1.request.ref, id1)) === null);
+  const card2 = n1.ok ? await register.resolveCheckin(n1.request.ref) : null;
+  check("the register's card has them by name, done", card2?.ok && card2.card.kind === "known" && card2.card.done === true && card2.card.matches[0]?.name === "Ann B." && card2.card.matches[0]?.named === true);
+  check("saving it again changes nothing", n1.ok && (await server.saveNameFromCheckin(n1.request.ref, id1)) === null && (await row(id1))?.name === "Ann B.");
   await db.from("member_visits").delete().eq("member_id", id1);
   await recordVisit(id1, null, new Date(Date.now() - 7 * 86_400_000));
   const s4 = await tablet.startCheckin(p1);

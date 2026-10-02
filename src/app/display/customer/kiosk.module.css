@@ -1744,3 +1744,173 @@
   font-variant-numeric: tabular-nums;
   color: var(--gold);
 }
+
+/* ---------- "We're setting up your account" (StaffSetupView.tsx) ---------- */
+/* Staff fill in a guest's account on the register and the whole screen
+   follows along: calm, big and still, for a guest who'd rather just tell
+   them. Over everything but a celebration. */
+.setup {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background:
+    radial-gradient(circle at 50% 0, rgba(255, 199, 44, 0.1), transparent 60%),
+    var(--ink);
+  overflow-y: auto;
+  animation: setupIn 260ms ease-out both;
+}
+@keyframes setupIn {
+  from {
+    opacity: 0;
+  }
+}
+.setupCard {
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.6vh, 24px);
+  padding: clamp(20px, 4vh, 40px) clamp(20px, 4vw, 44px);
+  border: 3px solid var(--line);
+  border-radius: 22px;
+  background: var(--ink-2);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+}
+.setupDone {
+  align-items: center;
+  text-align: center;
+  border-color: var(--gold);
+}
+.setupTitle {
+  font-family: var(--display);
+  font-size: clamp(30px, 5.4vh, 50px);
+  line-height: 1.05;
+  margin: 4px 0 0;
+  text-wrap: balance;
+}
+.setupRows {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.setupRow {
+  display: grid;
+  gap: 4px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 2px solid var(--line);
+}
+.setupNote {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-family: var(--body);
+}
+.setupValue {
+  margin: 0;
+  min-height: 1.15em;
+  font-family: var(--display);
+  font-size: clamp(30px, 5.6vh, 46px);
+  line-height: 1.15;
+  color: var(--cream);
+  overflow-wrap: anywhere;
+}
+.setupMono {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+.setupEmpty {
+  color: var(--line);
+}
+.setupOk {
+  min-height: clamp(72px, 11vh, 96px);
+  font-size: clamp(26px, 4.4vh, 36px);
+}
+.setupFoot {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+  color: var(--cream-dim);
+}
+@media (max-aspect-ratio: 1/1) {
+  .setupRow {
+    padding: 10px 14px;
+  }
+}
+
+/* "Done" / "That's not me" under their card (MemberCards.tsx MemberActions). */
+.memberActions {
+  flex: none;
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 10px;
+}
+.memberActions > :only-child {
+  grid-column: 1 / -1;
+}
+.memberDone {
+  min-height: 60px;
+}
+.memberNotMe {
+  min-height: 60px;
+  font-size: 18px;
+}
+/* On the cream account panel at the foot of the order. */
+.accountNotMe {
+  flex: none;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+@media (min-aspect-ratio: 1/1) and (max-height: 720px) {
+  .memberDone,
+  .memberNotMe {
+    min-height: 52px;
+  }
+  .sideCard {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .memberCard .cardSoon {
+    display: none;
+  }
+}
+/* Upright, the card shares the top with the buttons under it: a smaller
+   photo, and the "coming soon" teaser makes room. */
+@media (max-aspect-ratio: 1/1) {
+  .memberDone,
+  .memberNotMe {
+    min-height: 50px;
+  }
+  .sideCard {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .memberCard {
+    gap: 8px;
+  }
+  .memberCard .cardPhoto {
+    width: 80px;
+  }
+  .memberCard .cardSoon {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup {
+    animation: none;
+  }
+}
