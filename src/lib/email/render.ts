@@ -14,6 +14,7 @@ import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
 import { BODY, C, DISPLAY, MONO, button, eyebrow, footerHtml, footerText, paragraphsHtml, row, sectionBar, shell } from "./shell";
 import { applyFirstName, dayLabel, esc, money, rangeLabel, runtimeLabel, timeLabel } from "./format";
 import type { AlertType, CampaignKind, Category, ConsentSource } from "./types";
+import { isDesignKey, renderDesignEmail, type DesignKey } from "./designs";
 
 // ---------- the composer's vocabulary ----------
 export type Block =
@@ -31,7 +32,8 @@ export type Block =
   | { t: "lineup" } // the week: now showing, the archive, also at the Royale
   | { t: "claim" } // the invite's "Set my password" (a personal link)
   | { t: "memberCard" } // "Open my member card"
-  | { t: "ticketSpend" }; // the upsell's "you spent $X on tickets"
+  | { t: "ticketSpend" } // the upsell's "you spent $X on tickets"
+  | { t: "design"; key: DesignKey }; // one of the ready-made invite emails (lib/email/designs), the whole email
 
 export type BlockType = Block["t"];
 
@@ -51,6 +53,11 @@ export interface CampaignContent {
   alert?: AlertType;
   eventDate?: string | null; // for "came in after": the event's day
   autopilot?: boolean; // the Monday lineup draft, not yet touched by a person
+  // Sent in daily waves that fit Resend's daily limit (campaign-send.ts
+  // prepareWave): the ready-made emails.
+  design?: string; // which ready-made email (lib/email/designs), for finding its campaign
+  pace?: { remaining?: number; note?: string | null };
+  waves?: { at: string; n: number }[];
 }
 
 export interface ShowtimeData {
@@ -97,6 +104,12 @@ export interface Recipient {
   claimUrl: string | null;
   ticketSpend30?: number;
   paidTickets30?: number;
+  // The ready-made invite emails (lib/email/designs) also use these.
+  finishUrl?: string | null; // their own "Restart my unlimited" link
+  artToken?: string | null; // their sealed first name, for the pictures with their name in
+  fromOldSite?: boolean;
+  sendId?: string | null;
+  sample?: boolean; // a test or a preview
 }
 
 export interface RenderLinks {
@@ -323,7 +336,39 @@ export function defaultLineupPreheader(content: CampaignContent, data: RenderDat
   return `37 seats a show, so tap a time early.${archive.length ? " The members-only classics are inside." : ""}`;
 }
 
+// A ready-made invite email is drawn whole by its design.
+export function designOf(content: CampaignContent | null | undefined): DesignKey | null {
+  const b = (content?.blocks ?? []).find((x) => x.t === "design");
+  return b && b.t === "design" && isDesignKey(b.key) ? b.key : null;
+}
+
 export function renderCampaign(c: CampaignInput, data: RenderData, r: Recipient, L: RenderLinks): Rendered {
+  const design = designOf(c.content);
+  if (design) {
+    const d = renderDesignEmail(
+      design,
+      c.subject,
+      c.preheader ?? "",
+      {
+        firstName: r.firstName,
+        hasLogin: r.hasLogin,
+        claimUrl: r.claimUrl,
+        finishUrl: r.finishUrl ?? null,
+        artToken: r.artToken ?? null,
+        fromOldSite: !!r.fromOldSite,
+        sendId: r.sendId ?? null,
+        sample: r.sample,
+      },
+      L,
+    );
+    return {
+      subject: d.subject,
+      preheader: d.preheader,
+      html: d.html,
+      text: d.text,
+      meta: { primaryButtons: d.primaryButtons, plainFilms: [], bodyTexts: d.bodyTexts, containsArchive: false, houseEventIds: [] },
+    };
+  }
   const name = r.firstName;
   const merge = (s: string) => applyFirstName(s, name);
   const html: string[] = [];
@@ -554,6 +599,8 @@ export function newBlock(t: BlockType): Block {
     case "memberCard":
     case "ticketSpend":
       return { t };
+    case "design":
+      return { t, key: "royale-is-here" };
   }
 }
 

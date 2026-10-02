@@ -113,6 +113,8 @@ export type Rule =
   | { r: "received_campaign"; id: string }
   | { r: "engaged"; days: number }
   | { r: "has_login"; v: boolean }
+  | { r: "has_phone"; v: boolean }
+  | { r: "legacy_needs_setup" }
   | { r: "old_site"; v: boolean }
   | { r: "sunset_due" };
 

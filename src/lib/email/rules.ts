@@ -33,6 +33,9 @@ export interface RuleContext {
   // Members matching each genre rule, found by the server beforehand
   // (member_genre_days), keyed by genreKey().
   genreMembers?: Map<string, Set<string>>;
+  // Former unlimited members with nothing paying for their Insiders+ now
+  // (lib/legacy-plus.ts legacyNeedsSetup), found by the server beforehand.
+  legacyNeedsSetup?: Set<string>;
 }
 
 export const genreKey = (r: { v: string; within: number; min: number }) => `${r.v.toLowerCase()}|${r.within}|${r.min}`;
@@ -122,6 +125,10 @@ export function matchesRule(f: MemberFacts, rule: Rule, ctx: RuleContext): boole
     }
     case "has_login":
       return f.hasLogin === rule.v;
+    case "has_phone":
+      return f.hasPhone === rule.v;
+    case "legacy_needs_setup":
+      return ctx.legacyNeedsSetup?.has(f.memberId) ?? false;
     case "old_site":
       return f.fromOldSite === rule.v;
     case "sunset_due":
@@ -287,6 +294,8 @@ export const RULE_CHOICES: { key: RuleKey; label: string }[] = [
   { key: "received_campaign", label: "Got a particular email" },
   { key: "engaged", label: "Engaged (clicked or came in)" },
   { key: "has_login", label: "Has a website login" },
+  { key: "has_phone", label: "Has a phone number on file" },
+  { key: "legacy_needs_setup", label: "Former unlimited, nothing paying now" },
   { key: "old_site", label: "Had an old-website account" },
   { key: "sunset_due", label: "Due a \"Still want these?\"" },
 ];
@@ -329,6 +338,10 @@ export function defaultRule(key: RuleKey): Rule {
       return { r: "engaged", days: 60 };
     case "has_login":
       return { r: "has_login", v: false };
+    case "has_phone":
+      return { r: "has_phone", v: true };
+    case "legacy_needs_setup":
+      return { r: "legacy_needs_setup" };
     case "old_site":
       return { r: "old_site", v: false };
     case "sunset_due":
@@ -374,6 +387,10 @@ export function describeRule(r: Rule, campaignName?: (id: string) => string | nu
       return `clicked or came in within ${r.days} days`;
     case "has_login":
       return r.v ? "has a website login" : "no website login yet";
+    case "has_phone":
+      return r.v ? "a phone number on file" : "no phone number on file";
+    case "legacy_needs_setup":
+      return "former unlimited members with nothing paying for their Insiders+ now";
     case "old_site":
       return r.v ? "had an old-website account" : "never had an old-website account";
     case "sunset_due":

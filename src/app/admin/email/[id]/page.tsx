@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { designOf } from "@/lib/email/render";
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import { getCampaign, guardrailPause, sendingGate, seedList, senderStatus } from "@/lib/email/campaign-send";
@@ -46,7 +48,16 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           {pause.by === "Stopped" ? "Sending is stopped" : "Sending is paused by a guardrail"}: {pause.reason.replace(/[.!?]?\s*$/, ".")} Resume sending on the Email page first.
         </p>
       )}
-      {editable && (
+      {designOf(c.content) && (
+        <p className="notice text-sm">
+          One of the ready-made emails. Preview it, test it and send it (or pause it) from{" "}
+          <Link href={`/admin/email/ready#${designOf(c.content)}`} className="font-semibold underline">
+            Email &rarr; Ready to send
+          </Link>
+          . Its words and pictures come from the design, so they can&apos;t be edited here.
+        </p>
+      )}
+      {editable && !designOf(c.content) && (
         <Composer
           // A fresh key each time the page loads: a double click on Send reuses it.
           sendKey={crypto.randomUUID()}

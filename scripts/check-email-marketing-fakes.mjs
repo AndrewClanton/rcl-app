@@ -256,6 +256,7 @@ const RPC = {
         dedupe_key: key,
         deliver_at: r.deliver_at,
         tier_at_send: r.tier_at_send,
+        had_login: r.had_login ?? null,
         resend_email_id: null,
         batch_no: null,
         submitted_at: null,

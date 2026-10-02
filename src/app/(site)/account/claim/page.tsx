@@ -1,3 +1,5 @@
+import { after } from "next/server";
+import { recordPersonalClick } from "@/lib/email/clicks";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -38,7 +40,7 @@ function one(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v) ?? "";
 }
 
-export default async function ClaimPage({ searchParams }: { searchParams: Promise<{ t?: string | string[]; error?: string | string[] }> }) {
+export default async function ClaimPage({ searchParams }: { searchParams: Promise<{ t?: string | string[]; error?: string | string[]; e?: string | string[] }> }) {
   const params = await searchParams;
   const token = one(params.t);
   const signInError = SIGN_IN_ERRORS[one(params.error)] ?? null;
@@ -52,6 +54,12 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
     if (claim.state === "has_login" && user?.id === claim.authUserId) redirect("/account");
     return <Stopped claim={claim} signedIn={!!user} />;
   }
+
+  // From a "Set my password" button in one of the ready-made emails (tagged
+  // e=<send id>): counted as a click on that email. The tag is only on the
+  // link in the email, so coming back from Google doesn't count it again.
+  const fromEmail = one(params.e);
+  if (fromEmail) after(() => recordPersonalClick(fromEmail, claim.memberId, "claim"));
 
   // Step one: sign in, or make a login.
   if (!user) {
