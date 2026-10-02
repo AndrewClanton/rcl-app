@@ -59,7 +59,7 @@ export default function CustomersTab({
 
   return (
     <div className="space-y-5">
-      <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} />
+      <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} employeeId={employeeId} />
       <CheckinResults checkins={checkins} />
       {showUnlimited && u && (
         <section className="max-w-2xl" aria-label="No payment on file for unlimited membership">

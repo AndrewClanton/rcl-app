@@ -3,7 +3,8 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import { maskEmail, maskPhone } from "@/lib/contact-mask";
-import { getMemberGlance, type MemberGlanceInfo } from "./checkin-actions";
+import { FLAG_NOTE_MAX, FLAG_REASONS, FLAG_REASON_KEYS, flagTime, type FlagReason } from "@/lib/member-flags";
+import { flagMember, getMemberGlance, type GlanceFlag, type MemberGlanceInfo } from "./checkin-actions";
 import { NOT_ACTIVE_RED } from "./LegacyPlusCard";
 import type { PosMember } from "./member-actions";
 import { memberSignal, memberStanding } from "./member-signal";
@@ -12,6 +13,9 @@ import { memberSignal, memberStanding } from "./member-signal";
 // order's Member box) for about half a second: their account at a glance
 // (Andrew, 10/2). For looking only: anything to change is done in Back
 // office ("Open in Back office"), so there's nothing here to edit or undo.
+// The one thing staff can do is "Flag suspicious activity" (a quiet red
+// link at the bottom): a reason and a short note, recorded for an admin or
+// owner to look at on the member's Back office page. It blocks nothing.
 // Closes with ✕, Esc, or a tap outside.
 
 const HOLD_MS = 500;
@@ -94,11 +98,31 @@ function day(date: string) {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", ...(thisYear ? {} : { year: "numeric" }), timeZone: "UTC" });
 }
 
-export default function MemberGlance({ member: m, onClose }: { member: PosMember; onClose: () => void }) {
+// employeeId: the cashier on the register, who the flag says flagged it.
+// onFlagged: it's flagged now (Checked in today shows its 🚩).
+export default function MemberGlance({
+  member: m,
+  employeeId,
+  onClose,
+  onFlagged,
+}: {
+  member: PosMember;
+  employeeId: string;
+  onClose: () => void;
+  onFlagged?: (memberId: string) => void;
+}) {
   // undefined while it's looked up, null if it couldn't be.
   const [info, setInfo] = useState<MemberGlanceInfo | null | undefined>(undefined);
+  // Flagged in this panel just now.
+  const [flagged, setFlagged] = useState<GlanceFlag | null>(null);
+  const [flagging, setFlagging] = useState(false);
+  const [reason, setReason] = useState<FlagReason | null>(null);
+  const [flagNote, setFlagNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [flagError, setFlagError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const close = useEffectEvent(onClose);
+  // Esc backs out of the flag step first.
+  const escape = useEffectEvent(() => (flagging ? setFlagging(false) : onClose()));
 
   useEffect(() => {
     let live = true;
@@ -117,12 +141,26 @@ export default function MemberGlance({ member: m, onClose }: { member: PosMember
   useEffect(() => {
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key === "Escape") escape();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  async function saveFlag() {
+    if (saving || !reason) return;
+    setSaving(true);
+    setFlagError(null);
+    const r = await flagMember(m.id, { reason, note: flagNote }, employeeId || null).catch(() => null);
+    setSaving(false);
+    if (!r) return setFlagError("Couldn't reach the server. Try again.");
+    if (!r.ok) return setFlagError(r.error);
+    setFlagged(r.flag);
+    setFlagging(false);
+    onFlagged?.(m.id);
+  }
+
+  const flag = flagged ?? info?.flag ?? null;
   const note = standingNote(m);
   const phone = maskPhone(m.phone);
   const email = maskEmail(m.email);
@@ -195,6 +233,62 @@ export default function MemberGlance({ member: m, onClose }: { member: PosMember
         >
           Open in Back office ↗
         </a>
+        {flag ? (
+          <p className="mt-3 text-center text-sm font-semibold" style={{ color: "var(--danger-text)" }} role="status">
+            🚩 Flagged{flag.by ? ` by ${flag.by}` : ""} · {flagTime(flag.at)}
+          </p>
+        ) : flagging ? (
+          <form
+            className="mt-3 space-y-2 border-t pt-3"
+            style={{ borderColor: "var(--border)" }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveFlag();
+            }}
+          >
+            <div className="text-sm font-bold" style={{ color: "var(--danger-text)" }}>
+              Flag suspicious activity
+            </div>
+            <div className="grid gap-1" role="radiogroup" aria-label="Reason">
+              {FLAG_REASON_KEYS.map((k) => (
+                <label key={k} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-2.5 text-sm" style={{ borderColor: reason === k ? "var(--foreground)" : "var(--border)" }}>
+                  <input type="radio" name="flag-reason" className="h-5 w-5" checked={reason === k} onChange={() => setReason(k)} />
+                  {FLAG_REASONS[k]}
+                </label>
+              ))}
+            </div>
+            <input
+              className="input min-h-11 !py-1.5 text-sm"
+              placeholder="Short note (optional)"
+              aria-label="Short note (optional)"
+              maxLength={FLAG_NOTE_MAX}
+              value={flagNote}
+              onChange={(e) => setFlagNote(e.target.value)}
+            />
+            {flagError && (
+              <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+                {flagError}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button type="submit" className="btn-primary min-h-11 flex-1 !py-1.5 text-sm" disabled={saving || !reason}>
+                {saving ? "Flagging…" : "Flag account"}
+              </button>
+              <button type="button" className="btn-secondary min-h-11 !px-4 !py-1.5 text-sm" disabled={saving} onClick={() => setFlagging(false)}>
+                Cancel
+              </button>
+            </div>
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              An admin or owner looks at it in Back office. It doesn&apos;t block anything here.
+            </p>
+          </form>
+        ) : (
+          info !== undefined && (
+            <button type="button" className="mx-auto mt-3 block min-h-11 px-2 text-sm underline-offset-2 hover:underline" style={{ color: "var(--danger-text)" }} onClick={() => setFlagging(true)}>
+              Flag suspicious activity
+            </button>
+          )
+        )}
       </div>
     </div>
   );

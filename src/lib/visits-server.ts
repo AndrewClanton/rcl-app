@@ -116,19 +116,24 @@ export async function visitToday(memberId: string): Promise<VisitToday | null> {
   };
 }
 
-// "Undo / Not them" on the register: today's visit taken back, for a
-// check-in at the customer screen that wasn't them (a mistyped number,
-// say). What it paid (its points and any badges' points) comes off their
-// balance as one "Check-in undone" line in their points history (never
-// below zero); the badges it earned, and any reward they gave that isn't
-// used yet, go; and the visit itself goes, so a right check-in later today
-// pays as usual. The visit row is the claim: two registers undoing at once
-// take it back once. Null when there's no visit today to undo, or it
-// couldn't be read.
-export async function undoVisitToday(memberId: string, by: string | null): Promise<{ taken: number; balance: number | null } | null> {
+// A visit taken back: today's, for "That's not me" on the customer screen
+// (a check-in that wasn't them: a mistyped number, say), or a given one
+// (visitId), for a flagged check-in an admin takes back in Back office
+// (lib/member-flags-server.ts). What it paid (its points and any badges'
+// points) comes off their balance as one line in their points history
+// (`note`, never below zero); the badges it earned, and any reward they
+// gave that isn't used yet, go; and the visit itself goes, so a right
+// check-in later that day pays as usual. The visit row is the claim: two
+// people taking it back at once take it back once. Null when there's no
+// such visit, or it couldn't be read.
+export async function undoVisit(
+  memberId: string,
+  by: string | null,
+  { visitId, note = "Check-in undone" }: { visitId?: string; note?: string } = {},
+): Promise<{ taken: number; balance: number | null } | null> {
   const supabase = createAdminClient();
-  const date = visitBusinessDate(new Date());
-  const { data: visit, error } = await supabase.from("member_visits").select("id, points_awarded, business_date").eq("member_id", memberId).eq("business_date", date).maybeSingle();
+  const pick = supabase.from("member_visits").select("id, points_awarded, business_date").eq("member_id", memberId);
+  const { data: visit, error } = await (visitId ? pick.eq("id", visitId) : pick.eq("business_date", visitBusinessDate(new Date()))).maybeSingle();
   if (error || !visit) return null;
   // Read before the visit goes: their link to it is cleared when it does.
   const { data: badges, error: badgeErr } = await supabase.from("member_badges").select("id, badge").eq("visit_id", visit.id);
@@ -156,11 +161,11 @@ export async function undoVisitToday(memberId: string, by: string | null): Promi
     p_reason: "visit",
     p_order: null,
     p_booking: null,
-    p_note: "Check-in undone",
+    p_note: note,
     p_by: by,
   });
   if (pointsErr) {
-    console.error("undoVisitToday: points not taken back", pointsErr.code, pointsErr.message);
+    console.error("undoVisit: points not taken back", pointsErr.code, pointsErr.message);
     return { taken: 0, balance: have };
   }
   return { taken, balance: Number(balance) };

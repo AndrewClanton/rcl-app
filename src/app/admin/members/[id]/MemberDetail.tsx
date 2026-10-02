@@ -62,7 +62,10 @@ export default function MemberDetail({
   signInHelp = null,
   cards,
   canUndoCardMatch,
+  flags = null,
 }: {
+  // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
+  flags?: React.ReactNode;
   member: Member;
   gifts: GiftMembership[];
   purchases: MemberPurchase[];
@@ -130,6 +133,7 @@ export default function MemberDetail({
           ← All members
         </Link>
       </div>
+      {flags && <div className="xl:col-span-2">{flags}</div>}
 
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} />
       <div className="space-y-6">

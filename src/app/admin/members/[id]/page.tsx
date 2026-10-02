@@ -8,8 +8,11 @@ import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import { getMemberEmailPanel } from "@/lib/email/member-panel";
 import { getPastVisits } from "@/lib/data/fortis-lookup";
 import { signInHelpCard } from "@/lib/sign-in-help";
+import { memberFlags } from "@/lib/member-flags-server";
+import { visitBusinessDate } from "@/lib/visits";
 import MemberDetail from "./MemberDetail";
 import EmailPanel from "./EmailPanel";
+import FlagBox from "./FlagBox";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +26,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(id, role);
   if (!member) notFound();
 
-  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp, cards] = await Promise.all([
+  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp, cards, flags] = await Promise.all([
     getMemberPurchaseHistory(id),
     getCommunityPrograms(),
     getGiftsForMember(id),
@@ -36,6 +39,8 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     // never looks up the login.
     member.erased_at ? Promise.resolve(null) : signInHelpCard(member, session?.role ?? null),
     member.erased_at ? Promise.resolve([]) : getMemberCards(id),
+    // "Flag suspicious activity" from the register (lib/member-flags.ts).
+    member.erased_at ? Promise.resolve([]) : memberFlags(id),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
   // Cashiers get the on/off switch only; the email history, engagement and
@@ -58,6 +63,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       signInHelp={signInHelp}
       cards={cards}
       canUndoCardMatch={!!session && hasManagerAccess(session.role)}
+      flags={flags.length ? <FlagBox flags={flags} canAct={!!session && hasAdminAccess(session.role)} today={visitBusinessDate(new Date())} /> : null}
     />
     {emailPanel && (
       <div className="mt-6">
