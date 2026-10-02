@@ -45,9 +45,10 @@ function pts(n: number) {
 
 // A check-in that just came in from the customer screen, popped up over the
 // top of the order (CheckinArrivals): their face and name, big, so staff
-// put the two together, what staff need to give great service (where they
-// stand and the one most useful thing to know or do, serviceNote) and
-// "Undo / Not them" for a mistake.
+// put the two together, and what staff need to give great service (where
+// they stand and the one most useful thing to know or do, serviceNote).
+// Nothing to reverse: the register has no reversal buttons (Andrew, 10/2);
+// something wrong is flagged from the press-and-hold panel (MemberGlance).
 export interface Arrival {
   id: string; // the check-in's
   name: string; // "Sarah M."
@@ -57,16 +58,16 @@ export interface Arrival {
   note: string;
   tone?: "red" | "gold" | null; // the note's: red for no payment on file
   sub?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
-  working?: boolean; // being undone
 }
 
 // Up this long, at most this many at once (the newest), and gone as soon
-// as it's undone.
+// as the guest says "That's not me" on the screen.
 const ARRIVAL_MS = 12_000;
 const ARRIVALS_MAX = 2;
 
 // A check-in done at the screen (its visit recorded and paid there), kept
-// for Undo while its sealed reference lasts. auto: it put them on the order.
+// while its sealed reference lasts, for the Member box and the guest's own
+// "That's not me" on the screen. auto: it put them on the order.
 export interface RecentCheckin {
   id: string;
   ref: string;
@@ -134,11 +135,8 @@ export interface Checkins {
   // (lib/legacy-plus.ts): the card to set it up, top of the Customers tab.
   unlimited: PosMember | null;
   printing: boolean;
-  // "Undo / Not them" on a check-in (its pop-up, or the Member box): the
-  // visit and its points taken back.
-  undo: (id: string) => void;
   // The member on the order's check-in from the screen, for the order's
-  // Member box, with Undo.
+  // Member box.
   visitFor: (memberId: string | null) => VisitWaiting | null;
   // The guest tapped "That's not me" under their card on the customer
   // screen (PosApp has taken them off the order): the check-in that put
@@ -169,10 +167,10 @@ export interface Checkins {
 // accounts asks "Which one is you?" on the screen itself. Here it goes
 // straight onto the order, the latest one in taking over from whoever was
 // on it (autoAttach, PosApp: never mid-payment), and the pop-up shows who
-// it is and the one thing to know (serviceNote). "Undo / Not them" (the
-// pop-up or the order's Member box) takes the visit and its points back
-// and takes them off the order (autoUndo: whoever they took over from
-// comes back).
+// it is and the one thing to know (serviceNote). The register reverses
+// nothing (Andrew, 10/2): only the guest's "That's not me" on the screen
+// takes the visit and its points back (notMe). Staff who think something's
+// wrong flag the account from the press-and-hold panel (MemberGlance).
 //
 // Everyone checked in today is listed under "Checked in today", faces
 // first, so staff learn names and can put someone on an order with one
@@ -183,7 +181,6 @@ export function useRegisterCheckins({
   member,
   onAttach,
   autoAttach,
-  autoUndo,
   lastSale,
 }: {
   registerTopic: string;
@@ -191,8 +188,6 @@ export function useRegisterCheckins({
   onAttach: (m: PosMember) => void;
   // Puts them on the order: true if it did.
   autoAttach?: (m: PosMember) => boolean;
-  // Takes someone autoAttach put on the order off it again.
-  autoUndo?: (memberId: string) => void;
   lastSale: ReceiptData | null;
 }): Checkins {
   const [notice, setNotice] = useState<string | null>(null);
@@ -215,7 +210,7 @@ export function useRegisterCheckins({
   // again, and every request being looked up (screens resend until seen).
   const answered = useRef(new Map<string, { event: string; payload: object }>());
   const shown = useRef(new Set<string>());
-  // Check-ins done at the screen, newest first, for Undo.
+  // Check-ins done at the screen, newest first.
   const [recent, setRecent] = useState<RecentCheckin[]>([]);
   // The latest autoAttach (a lookup finishes after the render it began in).
   const autoRef = useRef(autoAttach);
@@ -313,11 +308,9 @@ export function useRegisterCheckins({
     void refreshHere();
   }
 
-  // "Undo / Not them": the check-in's visit and its points taken back
-  // (undoCheckin), and off the order if it put them there (whoever they
-  // took over from comes back). detach false: they're off it already (they
-  // said "That's not me" on the screen).
-  async function undo(id: string, detach = true) {
+  // "That's not me" on the screen: the check-in's visit and its points taken
+  // back (undoCheckin). PosApp has taken them off the order already.
+  async function undo(id: string) {
     const rec = recent.find((r) => r.id === id);
     if (!rec || rec.working) return;
     setRecent((rs) => rs.map((r) => (r.id === id ? { ...r, working: true } : r)));
@@ -328,7 +321,6 @@ export function useRegisterCheckins({
     }
     setRecent((rs) => rs.filter((x) => x.id !== id));
     dismissArrival(id);
-    if (detach) autoUndo?.(rec.member.id);
     setNotice(`${rec.member.name}: ${r.note}`);
     void refreshHere();
   }
@@ -360,13 +352,13 @@ export function useRegisterCheckins({
     if (!memberId) return null;
     const rec = recent.find((r) => r.member.id === memberId);
     if (!rec) return null;
-    return { auto: rec.auto, working: rec.working, line: visitLine(rec.member, rec.card), undo: () => void undo(rec.id) };
+    return { auto: rec.auto, line: visitLine(rec.member, rec.card) };
   }
 
   // "That's not me" on the customer screen: the check-in that put them on
   // the order is undone (its visit and points).
   function notMe(memberId: string) {
-    for (const r of recent) if (r.member.id === memberId && r.auto) void undo(r.id, false);
+    for (const r of recent) if (r.member.id === memberId && r.auto) void undo(r.id);
   }
 
   async function openOlder() {
@@ -427,7 +419,7 @@ export function useRegisterCheckins({
     };
   }, [registerTopic]);
 
-  // Done check-ins' Undo goes with their sealed reference.
+  // Done check-ins go with their sealed reference.
   useEffect(() => {
     if (!recent.length) return;
     const timer = setInterval(() => {
@@ -482,11 +474,8 @@ export function useRegisterCheckins({
   }, [lastSale]);
 
   return {
-    // Only while the check-in stands (undone, it's gone).
-    arrivals: arrivals.flatMap((a) => {
-      const r = recent.find((x) => x.id === a.id);
-      return r ? [{ ...a, working: r.working }] : [];
-    }),
+    // Only while the check-in stands ("That's not me" on the screen, it's gone).
+    arrivals: arrivals.filter((a) => recent.some((x) => x.id === a.id)),
     dismissArrival,
     here,
     notice,
@@ -494,7 +483,6 @@ export function useRegisterCheckins({
     dupHint,
     unlimited,
     printing,
-    undo: (id) => void undo(id),
     visitFor,
     notMe,
     printTonight: () => void printTonight(),
@@ -511,19 +499,8 @@ export function useRegisterCheckins({
 // cashier and tab rows) for 12 seconds: never over the menu buttons or the
 // order's total, and nothing to answer. The face and name are big so staff
 // learn names, with where they stand and the one thing to know (red for no
-// payment on file), and "Undo / Not them" for a mistake. A tap opens the
-// Customers tab. Two at most, newest last.
-export function CheckinArrivals({
-  arrivals,
-  onOpen,
-  onUndo,
-  onDismiss,
-}: {
-  arrivals: Arrival[];
-  onOpen: (id: string) => void;
-  onUndo: (id: string) => void;
-  onDismiss: (id: string) => void;
-}) {
+// payment on file). A tap opens the Customers tab. Two at most, newest last.
+export function CheckinArrivals({ arrivals, onOpen, onDismiss }: { arrivals: Arrival[]; onOpen: (id: string) => void; onDismiss: (id: string) => void }) {
   if (!arrivals.length) return null;
   return (
     <div className="pointer-events-none absolute inset-x-2 top-2 z-30 grid gap-2" role="status" aria-live="polite">
@@ -550,9 +527,6 @@ export function CheckinArrivals({
               </span>
               {a.sub && <span className="block truncate text-xs tabular-nums">{a.sub}</span>}
             </span>
-          </button>
-          <button className="btn-secondary min-h-12 w-[5.5rem] shrink-0 !px-2 !py-1 text-sm font-bold leading-tight" disabled={a.working} onClick={() => onUndo(a.id)}>
-            {a.working ? "Undoing…" : "Undo / Not them"}
           </button>
           <DismissButton label="Dismiss" onClick={() => onDismiss(a.id)} />
         </div>
@@ -626,12 +600,25 @@ function DismissButton({ label, onClick }: { label: string; onClick: () => void 
 // Everyone checked in this business day, newest first, with big faces and
 // names, so staff can greet regulars by name and put someone on an order
 // when they buy later. The whole card is the button; held for half a
-// second, it shows their account at a glance instead (MemberGlance).
+// second, it shows their account at a glance instead (MemberGlance), where
+// staff can flag it. A flagged account shows a small 🚩 (it blocks nothing).
 const HERE_FIRST = 6;
 
-export function CheckedInToday({ here, current, onAttach }: { here: HereToday[]; current: PosMember | null; onAttach: (m: PosMember) => void }) {
+export function CheckedInToday({
+  here,
+  current,
+  onAttach,
+  employeeId,
+}: {
+  here: HereToday[];
+  current: PosMember | null;
+  onAttach: (m: PosMember) => void;
+  employeeId: string;
+}) {
   const [all, setAll] = useState(false);
   const [glance, setGlance] = useState<PosMember | null>(null);
+  // Flagged here since the list was read (it's read again every couple of minutes).
+  const [flaggedNow, setFlaggedNow] = useState<ReadonlySet<string>>(new Set());
   const hold = useLongPress();
   const shown = all ? here : here.slice(0, HERE_FIRST);
   return (
@@ -665,7 +652,14 @@ export function CheckedInToday({ here, current, onAttach }: { here: HereToday[];
                   >
                     <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={48} plus={memberSignal(h.member) === "plus"} />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-bold leading-tight">{h.member.name}</span>
+                      <span className="flex items-center gap-1">
+                        <span className="min-w-0 truncate font-bold leading-tight">{h.member.name}</span>
+                        {(h.flagged || flaggedNow.has(h.member.id)) && (
+                          <span className="shrink-0 text-xs" title="Flagged for an admin to look at" aria-label="Flagged">
+                            🚩
+                          </span>
+                        )}
+                      </span>
                       <span className="block text-xs" style={{ color: "var(--muted)" }}>
                         {new Date(h.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
                         {h.streak && h.streak > 1 ? ` · ${h.streak}-week streak` : ""}
@@ -693,7 +687,15 @@ export function CheckedInToday({ here, current, onAttach }: { here: HereToday[];
           )}
         </>
       )}
-      {glance && <MemberGlance key={glance.id} member={glance} onClose={() => setGlance(null)} />}
+      {glance && (
+        <MemberGlance
+          key={glance.id}
+          member={glance}
+          employeeId={employeeId}
+          onClose={() => setGlance(null)}
+          onFlagged={(id) => setFlaggedNow((s) => new Set(s).add(id))}
+        />
+      )}
     </section>
   );
 }

@@ -351,11 +351,13 @@ export default function PosApp({
   // screen itself).
   // A check-in that finds one account puts them on the order by itself, the
   // latest one in taking over from whoever was on it (Andrew, 10/2), with
-  // "Now on this order: Sarah M. (was Bob K.)" and Undo (swap). Never
-  // mid-payment (the check-in pop-up lets staff choose then), and not on a
-  // register nobody's looking at (a phone left open on /pos).
+  // "Now on this order: Sarah M. (was Bob K.)" (swap): just to know, no
+  // Undo (the register has no reversal buttons; Add to order on the other
+  // person switches back). Never mid-payment, and not on a register
+  // nobody's looking at (a phone left open on /pos).
   // The note shows for 20 seconds (swapNote: its key); who to put back
-  // stays while the newcomer is on the order.
+  // stays while the newcomer is on the order, for the guest's own "Done" or
+  // "That's not me" on the customer screen.
   const [swap, setSwap] = useState<{ key: number; now: PosMember; was: PosMember } | null>(null);
   const [swapNote, setSwapNote] = useState<number | null>(null);
   useEffect(() => {
@@ -375,8 +377,8 @@ export default function PosApp({
     setSwapNote(was ? key : null);
     return true;
   }
-  // Off again ("Not them", "Undo", or "Done" / "That's not me" on the
-  // customer screen): whoever they took over from comes back.
+  // Off again ("Done" or "That's not me" on the customer screen): whoever
+  // they took over from comes back.
   function autoUndo(memberId: string): PosMember | null {
     if (memberNow.current?.id !== memberId) return null;
     const back = swap?.now.id === memberId ? swap.was : null;
@@ -390,7 +392,6 @@ export default function PosApp({
     member,
     onAttach: attachMember,
     autoAttach,
-    autoUndo: (id) => void autoUndo(id),
     lastSale: lastReceipt,
   });
   // Something on the Customers tab still to act on that isn't a check-in:
@@ -1253,7 +1254,6 @@ export default function PosApp({
         <CheckinArrivals
           arrivals={checkins.arrivals}
           onDismiss={checkins.dismissArrival}
-          onUndo={checkins.undo}
           onOpen={(id) => {
             checkins.dismissArrival(id);
             pickTab(CUSTOMERS_TAB);
@@ -1417,9 +1417,6 @@ export default function PosApp({
               <span className="min-w-0 flex-1 leading-snug">
                 <strong>Now on this order: {shortName(swapShown.now.name)}</strong> (was {shortName(swapShown.was.name)})
               </span>
-              <button className="btn-secondary min-h-11 shrink-0 !px-4 !py-1 text-sm font-bold" onClick={() => autoUndo(swapShown.now.id)}>
-                Undo
-              </button>
               <button
                 className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-lg leading-none"
                 style={{ color: "var(--muted)" }}

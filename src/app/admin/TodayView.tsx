@@ -79,6 +79,10 @@ function attention(s: Signals, board: TodayBoard): Attention[] {
       out.push({ tone: "warn", text: `${money(e.balanceDue)} still owed for ${e.name} (${e.date === board.date ? "tonight" : dayName(e.date)})`, href: "/admin/events", go: "Private events" });
     }
   }
+  // Admins: accounts flagged at the register ("Flag suspicious activity"), to look at and clear.
+  for (const f of s.flagged ?? []) {
+    out.push({ tone: "warn", text: `🚩 Flagged account: ${f.name} · ${f.reason}`, href: `/admin/members/${f.memberId}`, go: "Review" });
+  }
   if (s.held) out.push({ tone: "info", text: `${plural(s.held, "held order")} parked on the register`, href: "/pos", go: "Register" });
   if (s.devNotes) out.push({ tone: "info", text: `${plural(s.devNotes, "new dev note")} to look over`, href: "/admin/dev-notes", go: "Dev notes" });
   if (s.oldSite) out.push({ tone: "info", text: `${plural(s.oldSite, "old-site account")} waiting for a decision`, href: "/admin/members/old-site", go: "Old site members" });

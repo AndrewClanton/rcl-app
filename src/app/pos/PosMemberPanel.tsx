@@ -30,12 +30,11 @@ const SIGNED_OUT = "The register couldn't reach the server. Check the connection
 
 // The member on the order checked in on the customer screen
 // (RegisterCheckins): it went through there (its visit and points), so
-// this just says so, with "Undo / Not them" for a mistake.
+// this just says so. Nothing to reverse here (Andrew, 10/2): hold their
+// name to flag the account instead (MemberGlance).
 export interface VisitWaiting {
   auto: boolean; // the check-in put them on the order by itself
-  working: boolean;
   line?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
-  undo: () => void;
 }
 
 function shortDate(iso: string) {
@@ -176,14 +175,6 @@ export default function PosMemberPanel({
                 <span className="block text-sm font-bold">📲 Checked in on the screen{visit.auto ? " · on this order" : ""}</span>
                 {visit.line && <span className="block truncate text-xs tabular-nums">{visit.line}</span>}
               </span>
-              <button
-                className="min-h-11 shrink-0 rounded-md border-2 px-3 text-sm font-bold"
-                style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
-                disabled={visit.working}
-                onClick={visit.undo}
-              >
-                {visit.working ? "Undoing…" : "Undo / Not them"}
-              </button>
             </div>
           )}
           <div className={`flex items-center gap-3 ${HOLD_CLASS}`} {...hold(() => setGlance(true))}>
@@ -362,7 +353,7 @@ export default function PosMemberPanel({
         </>
       )}
 
-      {member && glance && <MemberGlance key={member.id} member={member} onClose={() => setGlance(false)} />}
+      {member && glance && <MemberGlance key={member.id} member={member} employeeId={employeeId} onClose={() => setGlance(false)} />}
 
       {member && confirmTier && (
         <ConfirmModal

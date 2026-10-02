@@ -6,7 +6,9 @@ import { formatPhone, isFullPhone, last10 } from "@/lib/checkin";
 import { CHECKIN_LIFETIME_MS, memberIdsWithPhone, openCheckin } from "@/lib/checkin-server";
 import { allowAttempt } from "@/lib/rate-limit";
 import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
-import { openRewards, redeemReward, todaysVisitors, undoVisitToday, unredeemReward, visitToday, type OpenReward, type VisitToday } from "@/lib/visits-server";
+import { openRewards, redeemReward, todaysVisitors, undoVisit, unredeemReward, visitToday, type OpenReward, type VisitToday } from "@/lib/visits-server";
+import { addFlag, flaggedAmong, memberFlags } from "@/lib/member-flags-server";
+import { FLAG_NOTE_MAX, isFlagReason, type FlagReason } from "@/lib/member-flags";
 import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { visitBusinessDate } from "@/lib/visits";
 import { tabletDuplicateOf } from "@/lib/data/member-merge";
@@ -111,12 +113,13 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
 
 // ---------- visits, badges and rewards (lib/visits.ts) ----------
 
-// "Undo / Not them" on a check-in from the customer screen (it's already
-// recorded and paid there): staff spotted a mistake. The visit it paid is
-// taken back, points, badges and all (lib/visits-server.ts undoVisitToday).
-// A check-in that paid nothing (they'd checked in earlier today) leaves
-// that earlier visit alone. `ref`: the check-in's sealed request; once it's
-// run out (15 minutes), today's visit is taken back on staff's word.
+// "That's not me" under their card on the customer screen, relayed by the
+// register (the guest's own button: the register has no reversal buttons,
+// Andrew 10/2). The check-in's visit is taken back, points, badges and all
+// (lib/visits-server.ts undoVisit). A check-in that paid nothing (they'd
+// checked in earlier today) leaves that earlier visit alone. `ref`: the
+// check-in's sealed request; once it's run out (15 minutes), today's visit
+// is taken back as it is.
 export async function undoCheckin(memberId: string, ref: string | null): Promise<{ ok: true; taken: number; note: string } | { ok: false; error: string }> {
   const staff = await assertStaff();
   if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return { ok: false, error: "Couldn't find that member." };
@@ -126,7 +129,7 @@ export async function undoCheckin(memberId: string, ref: string | null): Promise
   if (c && c.kind === "known" && "memberId" in c && c.done && !c.paid) {
     return { ok: true, taken: 0, note: "They'd checked in earlier today, so that visit stays. They're off the order." };
   }
-  const r = await undoVisitToday(id, staff.employeeId);
+  const r = await undoVisit(id, staff.employeeId);
   if (!r) return { ok: false, error: "There's no check-in today to undo, or it couldn't be read. Try again." };
   return { ok: true, taken: r.taken, note: r.taken > 0 ? `Check-in undone: ${r.taken} point${r.taken === 1 ? "" : "s"} taken back.` : "Check-in undone." };
 }
@@ -154,6 +157,7 @@ export interface HereToday {
   member: PosMember;
   at: string;
   streak: number | null; // weeks in a row, as of today's visit
+  flagged: boolean; // a flag on the account that isn't cleared (lib/member-flags.ts)
 }
 
 // Everyone who's checked in today, newest first: faces and names for the
@@ -161,22 +165,30 @@ export interface HereToday {
 export async function getHereToday(): Promise<HereToday[]> {
   await assertStaff();
   const visits = await todaysVisitors();
-  const members = await getPosMembers(visits.map((v) => v.memberId));
+  const ids = visits.map((v) => v.memberId);
+  const [members, flagged] = await Promise.all([getPosMembers(ids), flaggedAmong(ids)]);
   const byId = new Map(members.map((m) => [m.id, m]));
   return visits.flatMap((v) => {
     const member = byId.get(v.memberId);
-    return member ? [{ member, at: v.at, streak: v.streak }] : [];
+    return member ? [{ member, at: v.at, streak: v.streak, flagged: flagged.has(v.memberId) }] : [];
   });
 }
 
 // A long press on a customer card (MemberGlance.tsx): when they joined, how
-// many visits, the last one before today, and today's check-in time. For
-// looking only. Null if it couldn't be read.
+// many visits, the last one before today, today's check-in time, and the
+// latest flag on the account that isn't cleared. Null if it couldn't be
+// read.
+export interface GlanceFlag {
+  by: string | null;
+  at: string;
+}
+
 export interface MemberGlanceInfo {
   since: string | null;
   visits: number;
   lastVisit: string | null; // a business date, "2026-09-28"
   todayAt: string | null;
+  flag: GlanceFlag | null;
 }
 
 export async function getMemberGlance(memberId: string): Promise<MemberGlanceInfo | null> {
@@ -184,11 +196,12 @@ export async function getMemberGlance(memberId: string): Promise<MemberGlanceInf
   if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return null;
   const supabase = createAdminClient();
   const today = visitBusinessDate(new Date());
-  const [m, count, before, now] = await Promise.all([
+  const [m, count, before, now, flags] = await Promise.all([
     supabase.from("members").select("created_at").eq("id", memberId).maybeSingle(),
     supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId),
     supabase.from("member_visits").select("business_date").eq("member_id", memberId).lt("business_date", today).order("business_date", { ascending: false }).limit(1),
     supabase.from("member_visits").select("checked_in_at").eq("member_id", memberId).eq("business_date", today).maybeSingle(),
+    memberFlags(memberId, true),
   ]);
   if (m.error || count.error || before.error || now.error) return null;
   return {
@@ -196,7 +209,36 @@ export async function getMemberGlance(memberId: string): Promise<MemberGlanceInf
     visits: count.count ?? 0,
     lastVisit: (before.data?.[0]?.business_date as string | undefined) ?? null,
     todayAt: (now.data?.checked_in_at as string | undefined) ?? null,
+    flag: flags[0] ? { by: flags[0].flaggedBy, at: flags[0].flaggedAt } : null,
   };
+}
+
+// "Flag suspicious activity" in that panel (Andrew, 10/2): instead of
+// reversing anything at the register, staff flag the account for an admin
+// or owner to look at in Back office. It records who (`employeeId`: the
+// cashier on the register, else the signed-in staff account), when, the
+// reason, a short note, and today's check-in if there is one. It blocks
+// nothing here.
+export async function flagMember(
+  memberId: string,
+  fields: { reason: FlagReason; note?: string | null },
+  employeeId: string | null,
+): Promise<{ ok: true; flag: GlanceFlag } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return { ok: false, error: "Couldn't find that member." };
+  if (!isFlagReason(fields?.reason)) return { ok: false, error: "Pick a reason." };
+  const note = String(fields.note ?? "").trim().replace(/\s+/g, " ").slice(0, FLAG_NOTE_MAX) || null;
+  if (!(await allowAttempt(`member-flag:${staff.employeeId}`, 10, 300))) return { ok: false, error: BUSY };
+  const id = (await currentMemberId(memberId)) ?? memberId;
+  // The cashier picked on the register, if that's a real employee.
+  let by = staff.employeeId;
+  if (typeof employeeId === "string" && /^[0-9a-f-]{36}$/i.test(employeeId) && employeeId !== by) {
+    const { data } = await createAdminClient().from("employees").select("id").eq("id", employeeId).maybeSingle();
+    if (data) by = employeeId;
+  }
+  const flag = await addFlag(id, fields.reason, note, by);
+  if (!flag) return { ok: false, error: "Couldn't save the flag. Try again." };
+  return { ok: true, flag: { by: flag.flaggedBy, at: flag.flaggedAt } };
 }
 
 export async function getMemberRewards(memberId: string): Promise<OpenReward[]> {
