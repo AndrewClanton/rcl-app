@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { allowAttempt } from "@/lib/rate-limit";
 import type { FrozenLink } from "./campaign";
+import { PERSONAL_CLAIM, PERSONAL_FINISH } from "./designs/links";
 
 // First-party click tracking. Every link in a campaign email is
 // /e/<send id>/<link number>; this records the click and sends the person
@@ -66,6 +67,16 @@ export async function handleClick(sendId: string, index: string, method: string,
   // Past a sane number of clicks per email, just send them on.
   if (!(await allowAttempt(`email-click:${sendId}`, 60, 3600))) return target;
 
+  await recordClick(send, i, method, now);
+  return target;
+}
+
+// One click on link i of a send: recorded, checked for a mail scanner,
+// and counted (a real click is engagement). Best effort.
+type SendRow = { id: string; member_id: string | null; submitted_at: string | null; deliver_at: string | null };
+async function recordClick(send: SendRow, i: number, method: string, now: Date): Promise<void> {
+  const admin = createAdminClient();
+  const sendId = send.id;
   try {
     const at = now.toISOString();
     const lo = new Date(now.getTime() - 1000).toISOString();
@@ -105,7 +116,29 @@ export async function handleClick(sendId: string, index: string, method: string,
   } catch {
     // Recording is best effort: the person still gets where they're going.
   }
-  return target;
+}
+
+// The personal buttons in the ready-made emails ("Set my password",
+// "Restart my unlimited", lib/email/designs) go straight to the person's own
+// link, tagged e=<send id>, so the link itself is theirs from the moment it
+// was sent. The page it opens (the claim page, /membership/finish) records
+// the click here, on the email's "their own link" line in Top links. Only
+// when the send belongs to the same member as the link. Never throws.
+export async function recordPersonalClick(sendId: string | null | undefined, memberId: string, which: "claim" | "finish", now = new Date()): Promise<void> {
+  try {
+    if (!sendId || !UUID.test(sendId) || !UUID.test(memberId)) return;
+    const admin = createAdminClient();
+    const { data: send } = await admin.from("email_sends").select("id, member_id, campaign_id, submitted_at, deliver_at").eq("id", sendId).maybeSingle();
+    if (!send || send.member_id !== memberId) return;
+    const { data: campaign } = await admin.from("email_campaigns").select("links").eq("id", send.campaign_id).maybeSingle();
+    const want = which === "claim" ? PERSONAL_CLAIM : PERSONAL_FINISH;
+    const link = ((campaign?.links ?? []) as FrozenLink[]).find((l) => l.url === want);
+    if (!link) return;
+    if (!(await allowAttempt(`email-click:${sendId}`, 60, 3600))) return;
+    await recordClick(send, link.i, "GET", now);
+  } catch {
+    // Recording is best effort.
+  }
 }
 
 // Rebuilds a send's click counts from its non-suspect click events.

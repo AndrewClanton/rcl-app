@@ -877,6 +877,141 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   check("click: every link in the same second right after delivery is a scanner, and uncounted", s2.clicks === 0 && db.email_events.filter((e) => e.send_id === send2).every((e) => e.suspect));
 }
 
+// ===================== 13. the ready-made emails (Ready to send) =====================
+{
+  // Test-only signing key (claim and Insiders+ links), this process only.
+  process.env.SUPABASE_SERVICE_ROLE_KEY = randomBytes(32).toString("base64url");
+  const designs = await load("lib/email/designs/index.ts");
+  const ready = await load("lib/email/designs/ready.ts");
+  const sendPlan = await load("lib/email/send-plan.ts");
+  const finishTok = await load("lib/plus-finish-token.ts");
+  const artTok = await load("lib/email/designs/art-token.ts");
+  const links = await load("lib/email/designs/links.ts");
+  const readyActions = await load("app/admin/email/ready/actions.ts");
+  const saved = db.members.splice(0); // a list of only this section's members
+  const empty = { range: { start: "", days: 7 }, films: [], happenings: [], menuItems: [] };
+  db.email_settings.push({ key: "resend_plan", value: { daily: 6, monthly: 3000, reserve: 2 } }); // 4 a day for lists
+  const mkDesign = (key) => {
+    const d = designs.DESIGNS[key];
+    return mkCampaign({ kind: d.kind, category: d.category, name: d.name, subject: d.subject, preheader: d.preheader, content: { blocks: [{ t: "design", key }], design: key, pace: {} }, audience: d.audience, status: "sending" });
+  };
+  const queuedOf = (c) => db.email_sends.filter((s) => s.campaign_id === c.id && s.status === "queued");
+  const goOut = (c, at) => queuedOf(c).forEach((s) => Object.assign(s, { status: "submitted", submitted_at: at.toISOString(), deliver_at: at.toISOString() }));
+
+  eq("plan: the free plan less 20 a day for receipts is 80 a day", sendPlan.perDay(sendPlan.FREE_PLAN), 80);
+  eq("plan: 300 people at 80 a day, 50 left today, is 5 sending days", sendPlan.sendingDays(300, 80, 50), 5);
+  check("plan: a wave can't go on a Sunday afternoon (Central), can on a weekday evening (it's the next UTC day's 10:30)", !sendPlan.waveCanGoToday(cdt("2026-10-11", "12:00")) && sendPlan.waveCanGoToday(cdt("2026-10-06", "20:30")));
+
+  // ---- daily waves: the invite, 10 people, 4 a day ----
+  const inv = Array.from({ length: 10 }, (_, i) => mkMember(600 + i, { legacy_user_id: null }));
+  mkMember(620, { auth_user_id: randomUUID() }); // signed up already: not invited
+  mkMember(621, { phone: null }); // no phone to check: not invited
+  const c1 = mkDesign("royale-is-here");
+  const tue = cdt("2026-10-06", "11:00");
+  let w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, tue);
+  eq("waves: the first wave is today's share (4 of the 10 who qualify)", [queuedOf(c1).length, w.more, db.email_campaigns.find((x) => x.id === c1.id).content.pace.remaining], [4, true, 6]);
+  check("waves: the no-login and no-phone rules hold (nobody signed up, nobody without a phone)", queuedOf(c1).every((s) => inv.some((m) => m.id === s.member_id)));
+  check("waves: each queued row remembers they had no login", queuedOf(c1).every((s) => s.had_login === false));
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, tue);
+  eq("waves: while some are still queued, no new wave", queuedOf(c1).length, 4);
+  goOut(c1, tue);
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, new Date(tue.getTime() + HOUR));
+  eq("waves: once today's share has gone, nothing more today", [queuedOf(c1).length, w.more, w.note], [0, true, sender.DAILY_LIMIT]);
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-07", "08:05"));
+  eq("waves: the next morning's run queues the next 4", queuedOf(c1).length, 4);
+  goOut(c1, cdt("2026-10-07", "10:30"));
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-11", "12:00"));
+  check("waves: never on a Sunday (it waits for Monday)", queuedOf(c1).length === 0 && w.more && /Monday/.test(w.note ?? ""), w.note);
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-12", "08:05"));
+  eq("waves: the last wave is the 2 left, and then there's no more", [queuedOf(c1).length, w.more], [2, false]);
+  goOut(c1, cdt("2026-10-12", "10:30"));
+  w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-13", "08:05"));
+  eq("waves: nobody gets it twice (all 10 had it, once each)", [queuedOf(c1).length, w.more, new Set(db.email_sends.filter((s) => s.campaign_id === c1.id).map((s) => s.member_id)).size], [0, false, 10]);
+  eq("waves: a paced email has no 'too late' (it goes over days)", timing.sendByFor({ kind: "invite", content: { pace: {} }, scheduled_for: tue.toISOString() }), null);
+
+  // ---- a real run: the invite's own links, re-checked at hand-over ----
+  db.email_sends.splice(0, db.email_sends.length, ...db.email_sends.filter((s) => s.campaign_id !== c1.id));
+  db.email_campaigns.find((x) => x.id === c1.id).recipients = null;
+  const now = new Date();
+  const canGo = sendPlan.waveCanGoToday(now);
+  // Today's real list email so far (the sections above) plus room for 4 more.
+  const roomFor4 = async () => { const used = await sendPlan.listUsage(now); db.email_settings.find((s) => s.key === "resend_plan").value = { daily: used.today + 2 + 4, monthly: 100000, reserve: 2 }; };
+  await roomFor4();
+  const before = resend.sent.length;
+  const c1row = db.email_campaigns.find((x) => x.id === c1.id);
+  Object.assign(c1row, { status: "sending", content: { ...c1row.content, pace: {}, waves: [] } }); // as a run has it
+  if (canGo) {
+    // One of them signs up between being chosen and the hand-over.
+    const w2 = await sender.prepareWave(await sender.getCampaign(c1.id), empty, now);
+    const q = queuedOf(c1);
+    const late = db.members.find((m) => m.id === q[0].member_id);
+    late.auth_user_id = randomUUID();
+    await sender.deliverQueued(await sender.getCampaign(c1.id), empty, Date.now() + 30_000);
+    const mine = resend.sent.slice(before);
+    eq("invite: today's 4 chosen, the one who signed up meanwhile is skipped at hand-over", [w2.more, mine.length, db.email_sends.find((s) => s.id === q[0].id).status], [true, 3, "cancelled"]);
+    const one = mine[0];
+    const sendTag = one.tags.find((t) => t.name === "send").value;
+    check("invite: the button is their own claim link (kind email, 30 days), tagged with the send", /\/account\/claim\?t=[A-Za-z0-9_-]{58}&amp;utm_source=email&amp;utm_campaign=claim-invite&amp;utm_content=royale-is-here&amp;utm_term=top&amp;e=/.test(one.html) && one.html.includes(`e=${sendTag}`));
+    const claimRows = db.member_claims.filter((r) => r.kind === "email");
+    check("invite: a claim row per person, good for 30 days", claimRows.length >= 3 && claimRows.every((r) => Math.abs(Date.parse(r.expires_at) - Date.now() - 30 * DAY) < 2 * DAY));
+    check("invite: the door and profile pictures carry their sealed first name", /\/api\/email\/art\/door-d\.[0-9a-f]{10}\.png\?n=[A-Za-z0-9_-]+/.test(one.html) && /\/api\/email\/art\/profile-m\./.test(one.html));
+    const tok = one.html.match(/\/api\/email\/art\/door-d\.[0-9a-f]{10}\.png\?n=([A-Za-z0-9_-]+)/)?.[1];
+    const who = db.members.find((m) => m.id === db.email_sends.find((s) => s.id === sendTag).member_id);
+    eq("invite: the sealed name opens to their first name, and nothing more", artTok.openArtName(tok), format.firstNameOf(who.name));
+    check("invite: unsubscribe headers and the footer's address", one.headers["List-Unsubscribe-Post"] === "List-Unsubscribe=One-Click" && one.html.includes("715 E Broadway"));
+    check("invite: the personal button has its own line in the tracked links", (db.email_campaigns.find((x) => x.id === c1.id).links ?? []).some((l) => l.url === links.PERSONAL_CLAIM));
+    await clicks.recordPersonalClick(sendTag, who.id, "claim", new Date(Date.now() + 10 * 60_000));
+    check("invite: a tap on their own button (landing on the claim page) counts as a click", db.email_sends.find((s) => s.id === sendTag).clicks === 1);
+    await clicks.recordPersonalClick(sendTag, randomUUID(), "claim");
+    eq("invite: ...but not from someone else's account", db.email_sends.find((s) => s.id === sendTag).clicks, 1);
+    who.auth_user_id = randomUUID();
+    const res = await ready.designResults(await sender.getCampaign(c1.id), "royale-is-here");
+    eq("invite: results count who signed in since", [res.sent, res.outcome, res.outcomeOf], [3, 1, 3]);
+  } else {
+    console.log("(skipped the live invite run: a wave can't go at this hour; the dated waves above cover it)");
+  }
+
+  // ---- Press play: their own Insiders+ link, and not to anyone set up since ----
+  const legacy = Array.from({ length: 3 }, (_, i) => mkMember(700 + i, { legacy_plus: true, tier: "Insiders+", stripe_subscription_id: null, subscription_status: null, comped: false, plus_gift_until: null }));
+  mkMember(710, { legacy_plus: true, comped: true }); // complimentary: nothing to restart
+  mkMember(711, { legacy_plus: true, stripe_subscription_id: "sub_1", subscription_status: "active" }); // paying already
+  const c3 = mkDesign("press-play");
+  if (canGo) {
+    await roomFor4();
+    const b3 = resend.sent.length;
+    await sender.prepareWave(await sender.getCampaign(c3.id), empty, now);
+    eq("press play: only the former unlimited members with nothing paying are chosen", queuedOf(c3).map((s) => s.member_id).sort(), legacy.map((m) => m.id).sort());
+    legacy[1].stripe_subscription_id = "sub_2";
+    legacy[1].subscription_status = "active";
+    await sender.deliverQueued(await sender.getCampaign(c3.id), empty, Date.now() + 30_000);
+    const mine = resend.sent.slice(b3);
+    eq("press play: someone who set up Insiders+ meanwhile is skipped at hand-over", mine.length, 2);
+    const t = mine[0].html.match(/\/membership\/finish\?t=([A-Za-z0-9_-]{48})&amp;utm_source=email&amp;utm_campaign=unlimited-restart/)?.[1];
+    const open = finishTok.openFinishToken(t);
+    check("press play: the button is their own Insiders+ link: kind campaign, $15 a month, 30 days", !!open && open.kind === "campaign" && open.tier === "adult" && open.interval === "month" && Math.abs(open.exp - Date.now() - 30 * DAY) < 2 * DAY, JSON.stringify(open));
+    check("press play: the register's emailed link still lasts 7 days", finishTok.FINISH_LIFETIME_S.email === 7 * 86_400 && finishTok.FINISH_LIFETIME_S.campaign === 30 * 86_400);
+    check("press play: the tape picture carries their name", /\/api\/email\/art\/tape-d\.[0-9a-f]{10}\.jpg\?n=/.test(mine[0].html));
+  }
+
+  // ---- the staff screen's guards ----
+  process.env.EMAIL_SENDING_ENABLED = "false";
+  const t1 = await readyActions.sendDesignTest("come-in");
+  const s1 = await readyActions.sendDesign("come-in", randomUUID());
+  check("ready: with sending switched off, no test and no send ('ask Andrew')", !t1.ok && !s1.ok && /switched off/.test(t1.error) && /Ask Andrew/.test(s1.error), JSON.stringify([t1, s1]));
+  process.env.EMAIL_SENDING_ENABLED = "true";
+  const s2 = await readyActions.sendDesign("come-in", randomUUID());
+  check("ready: nothing goes until the pictures are on our server", !s2.ok && /pictures/.test(s2.error), JSON.stringify(s2));
+  const bt = resend.sent.length;
+  const t2 = await readyActions.sendDesignTest("press-play");
+  check("ready: a test goes only to the signed-in staff member, marked [Test]", t2.ok && resend.sent.length === bt + 1 && resend.sent[bt].to[0] === "admin@example.com" && resend.sent[bt].subject.startsWith("[Test] "), JSON.stringify(t2));
+  check("ready: a test's buttons open the ordinary pages, not anyone's own link", !/\/account\/claim\?t=|\/membership\/finish\?t=/.test(resend.sent[bt].html));
+  const counts = await ready.countAudiences({});
+  check("ready: live counts for all three", ["royale-is-here", "come-in", "press-play"].every((k) => typeof counts[k].willSend === "number"));
+
+  db.email_settings.splice(db.email_settings.findIndex((s) => s.key === "resend_plan"), 1);
+  db.members.push(...saved);
+}
+
 // ===================== 9 & 10. static checks =====================
 {
   const walk = (dir) => readdirSync(dir).flatMap((f) => (statSync(path.join(dir, f)).isDirectory() ? walk(path.join(dir, f)) : [path.join(dir, f)]));

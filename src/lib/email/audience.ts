@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
 import { addDays, capCheck, genreKey, hardFilter, matchesAudience, trustRank, type CampaignShape, type RuleContext } from "./rules";
+import { legacyNeedsSetup } from "@/lib/legacy-plus";
 import { holdoutBucket, shuffleKey } from "./hash";
 import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
 
@@ -117,9 +118,26 @@ function genreRules(a: Audience): Extract<Rule, { r: "genre" }>[] {
   return [...(a.include ?? []), ...(a.exclude ?? [])].filter((r): r is Extract<Rule, { r: "genre" }> => r.r === "genre");
 }
 
+// Former unlimited members with nothing paying for their Insiders+ now
+// (lib/legacy-plus.ts): a few hundred rows. "*" so it works before and
+// after the legacy onboarding migration adds its columns.
+export async function legacyNeedingSetup(): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await createAdminClient().from("members").select("*").eq("legacy_plus", true).is("erased_at", null).order("id").range(from, from + PAGE - 1);
+    if (error) throw new Error("Couldn't read the former unlimited members.");
+    for (const m of (data ?? []) as Parameters<typeof legacyNeedsSetup>[0][]) if (legacyNeedsSetup(m)) out.add((m as unknown as { id: string }).id);
+    if ((data ?? []).length < PAGE) break;
+  }
+  return out;
+}
+
+const usesRule = (a: Audience, r: Rule["r"]) => [...(a.include ?? []), ...(a.exclude ?? [])].some((x) => x.r === r);
+
 export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> {
   const today = businessDay(now).date;
   const ctx: RuleContext = { now, today };
+  if (usesRule(a, "legacy_needs_setup")) ctx.legacyNeedsSetup = await legacyNeedingSetup();
   const genres = genreRules(a);
   if (genres.length) {
     ctx.genreMembers = new Map();
@@ -234,6 +252,9 @@ export async function queueSends(campaignId: string, resolved: Resolved, deliver
       dedupe_key: s.dedupeKey ?? "",
       deliver_at: deliverAt.toISOString(),
       tier_at_send: s.facts.tier,
+      // For "signed in since" in the results (migration 20261002020000;
+      // the database ignores it before that).
+      had_login: s.facts.hasLogin,
     }));
     const { data, error } = await admin.rpc("email_queue_sends", { p_campaign: campaignId, p_rows: rows });
     if (error) throw new Error(`Couldn't queue the email (${error.message}).`);

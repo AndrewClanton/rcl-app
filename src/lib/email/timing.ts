@@ -93,7 +93,7 @@ export interface SendBy {
 type SendByInput = {
   kind: string;
   automation?: string | null;
-  content?: { alert?: string | null; eventDate?: string | null; lineup?: { start?: string | null; days?: number | null } | null } | null;
+  content?: { alert?: string | null; eventDate?: string | null; lineup?: { start?: string | null; days?: number | null } | null; pace?: unknown } | null;
   scheduled_for?: string | null;
   approved_at?: string | null;
   created_at?: string | null;
@@ -106,6 +106,8 @@ const dayLabel = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateStr
 
 export function sendByFor(c: SendByInput): SendBy | null {
   if (c.automation || c.kind === "automation") return null;
+  // Daily waves (the ready-made emails): each wave goes the day it's chosen.
+  if (c.content?.pace) return null;
   const planned = Date.parse(c.scheduled_for ?? c.approved_at ?? c.created_at ?? "");
   if (!Number.isFinite(planned)) return null;
   const day = central(new Date(planned)).date;

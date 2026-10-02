@@ -1,8 +1,9 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
 import { openFinishToken } from "@/lib/plus-finish-token";
 import { allowFromConnection } from "@/lib/public-form-guard";
+import { recordPersonalClick } from "@/lib/email/clicks";
 
 // "Finish your Insiders+ on your phone": the QR code staff put on the
 // customer screen, or the link they emailed (pos/legacy-plus-actions.ts),
@@ -15,11 +16,16 @@ import { allowFromConnection } from "@/lib/public-form-guard";
 // - A link that's run out, or isn't ours: the ordinary "Get Insiders+".
 // Link to it with a plain <a>, never next/link: a prefetch would open a
 // Stripe session nobody asked for.
+// The "Press play" email's "Restart my unlimited" is one of these too
+// (kind 'campaign', 30 days), tagged e=<send id>: the click is counted on
+// that email, and finishing counts as done by themselves online.
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const go = (path: string) => NextResponse.redirect(new URL(path, url), 303);
   const token = openFinishToken(url.searchParams.get("t"));
   if (!token || token.expired) return go("/membership/join");
+  const fromEmail = url.searchParams.get("e");
+  if (fromEmail) after(() => recordPersonalClick(fromEmail, token.memberId, "finish"));
   // Each visit opens a Stripe session: capped per connection, like the join form.
   if (!(await allowFromConnection("membership"))) return go("/membership?checkout=unavailable#join");
 
@@ -41,9 +47,11 @@ export async function GET(req: NextRequest) {
     priceTier: token.tier,
     interval: token.interval,
     returnTo: null,
-    // Staff made the link for this member: the card is theirs.
+    // Made for this member (by staff, or in their own email): the card is theirs.
     linkCard: true,
-    legacyFinish: true,
+    // From staff at the register ("phone"); from the email, they did it
+    // themselves ("online").
+    legacyFinish: token.kind !== "campaign",
   }).catch(() => null);
   if (!checkoutUrl) return go("/membership?checkout=unavailable#join");
   return NextResponse.redirect(checkoutUrl, 303);
