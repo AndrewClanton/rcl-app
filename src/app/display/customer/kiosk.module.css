@@ -1914,3 +1914,16 @@
     animation: none;
   }
 }
+
+/* "Which one is you?" (a shared family number): a big button per account. */
+.pickList {
+  display: grid;
+  gap: 12px;
+}
+.pick {
+  font-size: clamp(28px, 4vh, 36px);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 8px 16px;
+  overflow-wrap: anywhere;
+}

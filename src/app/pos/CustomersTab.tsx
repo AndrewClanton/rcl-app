@@ -3,18 +3,19 @@
 import { useEffect, useRef } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import MemberFinder from "./MemberFinder";
-import { CheckedInToday, CheckinResults, JustCheckedIn, WaitingToConfirm, type Checkins } from "./RegisterCheckins";
+import { CheckedInToday, CheckinResults, type Checkins } from "./RegisterCheckins";
 import LegacyPlusCard from "./LegacyPlusCard";
 import type { PosMember } from "./member-actions";
 
 // The register's Customers tab, beside the menu categories: everything about
 // who's buying, in one place and never on top of the menu buttons.
-//   1. What just happened (a check-in, tickets to print, a former
+//   1. Checked in today: one tap puts someone on the order, and holding a
+//      card shows their account (Andrew, 10/2: first thing on the tab).
+//   2. What just happened (a check-in, tickets to print, a former
 //      unlimited member with no payment on file).
-//   2. Just checked in on the screen: the last 15 minutes, with Undo.
-//   3. Waiting to confirm: a shared family number, to pick who it is.
-//   4. Checked in today: one tap puts someone on the order.
-//   5. Find a customer: search, and the regulars' faces.
+//   3. Find a customer: search, and the regulars' faces.
+// Nothing here waits on staff: check-ins go through on the customer screen,
+// a shared family number included ("Which one is you?" there).
 // `findAt` changes when someone taps "Find by photo" in the order's Member
 // box: the tab then scrolls down to Find a customer.
 export default function CustomersTab({
@@ -58,6 +59,7 @@ export default function CustomersTab({
 
   return (
     <div className="space-y-5">
+      <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} />
       <CheckinResults checkins={checkins} />
       {showUnlimited && u && (
         <section className="max-w-2xl" aria-label="No payment on file for unlimited membership">
@@ -86,9 +88,6 @@ export default function CustomersTab({
           />
         </section>
       )}
-      <JustCheckedIn checkins={checkins} />
-      <WaitingToConfirm checkins={checkins} current={current} hasOrder={hasOrder} />
-      <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} />
       <div ref={findRef} className="scroll-mt-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
         <MemberFinder current={current} onPick={onAttach} allowNew />
       </div>

@@ -18,7 +18,7 @@ import s from "./reward.module.css";
 
 export type RewardResult =
   | { kind: "points"; earned: number; alreadyToday: boolean; firstName: string | null; isNew: boolean; accent: string | null; streak: number }
-  // Sent to the register for staff to pick (a shared family number).
+  // Sent on to the register with nothing checked in here.
   | { kind: "thanks" };
 
 export interface RewardShown {

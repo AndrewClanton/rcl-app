@@ -16,6 +16,7 @@ import type { OpenReward } from "@/lib/visits-server";
 import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
 import LegacyPlusCard, { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
 import { memberSignal, memberStanding } from "./member-signal";
+import MemberGlance, { HOLD_CLASS, useLongPress } from "./MemberGlance";
 
 // An Insiders+ member's free daily coffee today, as the register knows it
 // (PosApp): undefined while it's looked up, null if it couldn't be.
@@ -28,16 +29,12 @@ export interface PanelCoffee {
 const SIGNED_OUT = "The register couldn't reach the server. Check the connection, or sign in again if it has been a while.";
 
 // The member on the order checked in on the customer screen
-// (RegisterCheckins). done: it went through there (its visit and points),
-// so this just says so, with "Undo / Not them" for a mistake. Otherwise
-// it's still waiting on staff (a shared family number): one tap confirms
-// it's them, or says it isn't.
+// (RegisterCheckins): it went through there (its visit and points), so
+// this just says so, with "Undo / Not them" for a mistake.
 export interface VisitWaiting {
-  done: boolean;
   auto: boolean; // the check-in put them on the order by itself
   working: boolean;
   line?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
-  confirm?: () => void;
   undo: () => void;
 }
 
@@ -72,7 +69,6 @@ export default function PosMemberPanel({
   employeeId,
   onRewardLine,
   onFind,
-  waiting,
   readerId,
   toTablet,
   visit = null,
@@ -86,8 +82,6 @@ export default function PosMemberPanel({
   onRewardLine: (label: string) => void;
   // "Find by photo": opens the Customers tab beside the menu, at its faces.
   onFind: () => void;
-  // Check-ins from the customer screen waiting on the Customers tab.
-  waiting: number;
   // For setting up Insiders+ here (LegacyPlusCard: no card on file, or an
   // upgrade): this register's card reader, and the customer screen.
   readerId: string | null;
@@ -102,6 +96,9 @@ export default function PosMemberPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Held for half a second, their name shows their account (MemberGlance).
+  const [glance, setGlance] = useState(false);
+  const hold = useLongPress();
   const latest = useRef(0);
 
   useEffect(() => {
@@ -173,7 +170,7 @@ export default function PosMemberPanel({
           className={`rounded-lg p-2.5 text-sm ${standing === "insiders" ? "border" : "border-2"}`}
           style={{ borderColor: standing === "plus" ? "var(--gold)" : standing === "insiders" ? "var(--border)" : "var(--accent)" }}
         >
-          {visit?.done ? (
+          {visit && (
             <div className="-mx-2.5 -mt-2.5 mb-2.5 flex items-center gap-2 rounded-t-[7px] px-2.5 py-1.5" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }} role="status">
               <span className="min-w-0 flex-1 leading-tight">
                 <span className="block text-sm font-bold">📲 Checked in on the screen{visit.auto ? " · on this order" : ""}</span>
@@ -188,33 +185,8 @@ export default function PosMemberPanel({
                 {visit.working ? "Undoing…" : "Undo / Not them"}
               </button>
             </div>
-          ) : (
-            visit && (
-              <div className="-mx-2.5 -mt-2.5 mb-2.5 rounded-t-[7px] px-2.5 py-2" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }} role="status">
-                <div className="text-sm font-bold leading-tight">📲 Checked in on the customer screen</div>
-                <div className="text-xs">{visit.auto ? "Put on this order for you. " : ""}Is it them? Confirm for their visit points.</div>
-                <div className="mt-1.5 flex gap-2">
-                  <button
-                    className="min-h-11 flex-[3] rounded-md border-2 px-3 text-base font-black"
-                    style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
-                    disabled={visit.working}
-                    onClick={visit.confirm}
-                  >
-                    {visit.working ? "Checking in…" : "✓ Confirm visit"}
-                  </button>
-                  <button
-                    className="min-h-11 flex-[2] rounded-md border-2 px-3 text-sm font-bold"
-                    style={{ borderColor: "var(--foreground)" }}
-                    disabled={visit.working}
-                    onClick={visit.undo}
-                  >
-                    Not them
-                  </button>
-                </div>
-              </div>
-            )
           )}
-          <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-3 ${HOLD_CLASS}`} {...hold(() => setGlance(true))}>
             <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={standing === "plus"} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
@@ -332,13 +304,6 @@ export default function PosMemberPanel({
           <div className="mb-2 flex items-center">
             <button type="button" className="btn-secondary flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 !py-2 text-sm" onClick={onFind}>
               Find by photo
-              {/* Same count as the Customers tab, for anyone looking here
-                  (or on a phone, where the tab is further down). */}
-              {waiting > 0 && (
-                <span className="rounded-full px-2 py-0.5 text-xs font-bold text-white tabular-nums" style={{ background: "var(--accent)" }}>
-                  {waiting} check-in{waiting === 1 ? "" : "s"} waiting
-                </span>
-              )}
             </button>
             {/* Scanning a member card or online ticket works anywhere on the register. */}
             <InfoTip topic="door-scanner" />
@@ -396,6 +361,8 @@ export default function PosMemberPanel({
           </div>
         </>
       )}
+
+      {member && glance && <MemberGlance key={member.id} member={member} onClose={() => setGlance(false)} />}
 
       {member && confirmTier && (
         <ConfirmModal

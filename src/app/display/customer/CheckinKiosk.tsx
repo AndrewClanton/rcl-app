@@ -18,7 +18,18 @@ import {
 } from "@/lib/checkin";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { finishShown, type FinishShown } from "./FinishCard";
-import { checkInNow, createKioskMember, createPhoneAccount, nameCheckin, startCheckin, startEmailCheckin, warmCheckin, type CheckinFound } from "./actions";
+import {
+  checkInNow,
+  createKioskMember,
+  createPhoneAccount,
+  nameCheckin,
+  startCheckin,
+  startEmailCheckin,
+  warmCheckin,
+  type CheckinChoice,
+  type CheckinFound,
+  type CheckinPick,
+} from "./actions";
 import CheckinReward, { rewardFor, type RewardShown } from "./CheckinReward";
 import LetterKeys, { type LetterKey } from "./LetterKeys";
 import PointsCelebration from "./PointsCelebration";
@@ -42,8 +53,13 @@ export type CheckinStep =
   // ("Try your email?").
   | { name: "phone"; letters?: boolean; notFound?: string }
   // A number we don't know (formatted): "Just use my phone number" first,
-  // then "Try my email" or the sign-up form.
-  | { name: "notFound"; phone: string }
+  // then "Try my email" or the sign-up form. notThem: it's a shared family
+  // number and they said "None of these".
+  | { name: "notFound"; phone: string; notThem?: boolean }
+  // A shared family number (Andrew, 10/2): "Which one is you?", a big
+  // button per account ("Sarah M."), and "None of these". digits: the
+  // number they typed.
+  | { name: "pick"; choices: CheckinChoice[]; digits: string }
   // A phone account, made: "That's it — your phone number is your account."
   | { name: "phoneMade"; phone: string }
   // A phone account with no name, back for its second visit: "Add your
@@ -111,6 +127,7 @@ const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 const TIMEOUT_MS: Record<CheckinStep["name"], number> = {
   phone: 0,
   notFound: 60_000,
+  pick: 45_000,
   phoneMade: 15_000,
   askName: 60_000,
   new: 90_000,
@@ -150,8 +167,9 @@ const MAX_ENTRY = 100;
 //   in today) while the server records the visit (display/customer/
 //   actions.ts). The register hears about it as an opaque request, shows
 //   staff who it is, puts them on the order (their card comes up beside
-//   it) and offers Undo. A shared family number waits for staff to pick
-//   the face, and a banner says so here once they do.
+//   it) and offers Undo. A shared family number asks "Which one is you?"
+//   here (first name and last initial only); the one they tap checks in
+//   the same way, and "None of these" goes on as a number we don't know.
 // - A number we don't know: "Just use my phone number" (a phone account,
 //   checked in with it), "Try my email" (most members without a phone on
 //   file have an email), or the sign-up form.
@@ -208,6 +226,9 @@ export default function CheckinKiosk({
   // A number they tried that we don't know (ten digits): offered to add to
   // the account their email finds, or filled in on the new-account form.
   const [tried, setTried] = useState<string | null>(null);
+  // A shared family number they said "None of these" to (ten digits): an
+  // account made with it now is theirs too, instead of asking again.
+  const [notThem, setNotThem] = useState<string | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -248,6 +269,7 @@ export default function CheckinKiosk({
   function resetForm() {
     setEntry("");
     setTried(null);
+    setNotThem(null);
     setFirstName("");
     setLastName("");
     setNewEmail("");
@@ -323,7 +345,8 @@ export default function CheckinKiosk({
     for (const [x, at] of confirmedHere.current) if (Date.now() - at > 5 * 60_000) confirmedHere.current.delete(x);
   }
 
-  // Staff picked them at the register (a shared family number).
+  // Confirmed by staff at a register (one from before shared numbers were
+  // picked here, Andrew 10/2).
   const onConfirmed = useEffectEvent((p: Partial<CheckinConfirmed> | null) => {
     if (!p || typeof p.id !== "string" || typeof p.firstName !== "string") return;
     // Only our own requests (another screen's check-ins aren't ours to announce).
@@ -332,8 +355,8 @@ export default function CheckinKiosk({
     cheer(p, true);
   });
 
-  // A check-in's banner (withToast: after staff picked them; a check-in done
-  // here has had its reward instead), their entrance, and a banner for each
+  // A check-in's banner (withToast: confirmed by staff; a check-in done here
+  // has had its reward instead), their entrance, and a banner for each
   // new badge.
   function cheer(p: Partial<CheckinConfirmed>, withToast: boolean) {
     if (typeof p.firstName !== "string") return;
@@ -641,6 +664,39 @@ export default function CheckinKiosk({
     landed(r.request, r.checkedIn, noCardNote(r.unlimited));
   }
 
+  // A shared family number: "Which one is you?".
+  function pickOne(r: CheckinPick, digits: string) {
+    takeDown();
+    setEntry("");
+    setStep({ name: "pick", choices: r.choices, digits });
+  }
+
+  // "Which one is you?" answered: checked in like any other (the reward,
+  // their card on the register, on the order).
+  async function choose(c: CheckinChoice) {
+    if (busy || step.name !== "pick") return;
+    const ticket = session.current;
+    setBusy(true);
+    setError(null);
+    startReward();
+    const r = await checkInNow(c.ref).catch(() => null);
+    setBusy(false);
+    if (ticket !== session.current) return takeDown();
+    if (!r || !r.ok) return failed(r?.error ?? OFFLINE);
+    if ("status" in r) return pickOne(r, step.digits);
+    landed(r.request, r.checkedIn, noCardNote(r.unlimited));
+  }
+
+  // "None of these": on as a number we don't know (their own phone
+  // account, their email, or the sign-up form).
+  function noneOfThese() {
+    if (busy || step.name !== "pick") return;
+    setError(null);
+    setTried(step.digits);
+    setNotThem(step.digits);
+    setStep({ name: "notFound", phone: formatPhone(step.digits), notThem: true });
+  }
+
   // "Add this phone?" answered (or walked away from): checked in now.
   async function choosePhone(add: boolean) {
     if (busy || step.name !== "found") return;
@@ -653,6 +709,8 @@ export default function CheckinKiosk({
     setBusy(false);
     if (ticket !== session.current) return takeDown();
     if (!r || !r.ok) return failed(r?.error ?? OFFLINE);
+    // Never for one account found by email; just in case.
+    if ("status" in r) return failed(OFFLINE);
     landed(r.request, r.checkedIn, noCardNote(was.unlimited));
   }
 
@@ -693,6 +751,7 @@ export default function CheckinKiosk({
       setEntry("");
       return setStep({ name: "notFound", phone: formatPhone(digits) });
     }
+    if (r.status === "pick") return pickOne(r, digits);
     if (r.askName) {
       takeDown();
       setEntry("");
@@ -710,11 +769,13 @@ export default function CheckinKiosk({
     setBusy(true);
     setError(null);
     startReward();
-    const r = await createPhoneAccount(tried).catch(() => null);
+    const r = await createPhoneAccount(tried, notThem === tried).catch(() => null);
     setBusy(false);
     if (ticket !== session.current) return takeDown();
     if (!r) return failed(OFFLINE);
     if (!r.ok) return failed(r.error);
+    // Someone put this number on their account a moment ago, and it's shared now.
+    if ("status" in r) return pickOne(r, tried);
     // Someone made an account with this number a moment ago: just checked in.
     landed(r.request, r.checkedIn, r.made ? { name: "phoneMade", phone } : null);
   }
@@ -732,6 +793,7 @@ export default function CheckinKiosk({
     if (ticket !== session.current) return takeDown();
     if (!r) return failed(OFFLINE);
     if (!r.ok) return failed(r.error);
+    if ("status" in r) return pickOne(r, step.digits);
     landed(r.request, r.checkedIn);
   }
 
@@ -746,6 +808,7 @@ export default function CheckinKiosk({
     setBusy(false);
     if (ticket !== session.current) return takeDown();
     if (!r || !r.ok) return failed(r?.error ?? OFFLINE);
+    if ("status" in r) return pickOne(r, step.digits);
     landed(r.request, r.checkedIn);
   }
 
@@ -760,13 +823,14 @@ export default function CheckinKiosk({
     setBusy(true);
     setError(null);
     startReward();
-    const r = await createKioskMember({ firstName, lastName, email: newEmail, phone: phone || null }).catch(() => null);
+    const r = await createKioskMember({ firstName, lastName, email: newEmail, phone: phone || null, notThem: !!phone && notThem === phone }).catch(() => null);
     setBusy(false);
     if (ticket !== session.current) return takeDown();
     if (!r) return failed(OFFLINE);
     if (!r.ok) return failed(r.error);
     // Their email (or number) is on an account after all: that one.
     if (r.status === "found") return found(r);
+    if (r.status === "pick") return pickOne(r, phone);
     if (r.status === "known") return landed(r.request, r.checkedIn);
     landed(r.request, r.checkedIn, { name: "created", firstName: r.firstName, claimUrl: r.claimUrl, emailed: r.emailed });
   }
@@ -899,7 +963,8 @@ export default function CheckinKiosk({
             <div className={k.eyebrow}>Check in · earn points</div>
             <h1 className={k.title}>Welcome! Are you new?</h1>
             <p className={k.sub} style={{ marginTop: 8, fontSize: 18 }}>
-              We don&apos;t have <strong style={{ color: "var(--cream)" }}>{step.phone}</strong> yet.
+              We don&apos;t have {step.notThem ? "you on " : ""}
+              <strong style={{ color: "var(--cream)" }}>{step.phone}</strong> yet.
             </p>
           </div>
           <button className={`${k.cta} ${k.choice}`} disabled={busy} onClick={usePhone}>
@@ -915,6 +980,32 @@ export default function CheckinKiosk({
               Sign up with name &amp; email
             </button>
           </div>
+          <button type="button" className={`${k.ghost} ${k.ghostShort}`} disabled={busy} onClick={reset}>
+            Start over
+          </button>
+        </>
+      )}
+
+      {step.name === "pick" && (
+        <>
+          <div>
+            <div className={k.eyebrow}>Check in · earn points</div>
+            <h1 className={k.title}>Which one is you?</h1>
+            <p className={k.sub} style={{ marginTop: 8, fontSize: 18 }}>
+              A few accounts share <strong style={{ color: "var(--cream)" }}>{formatPhone(step.digits)}</strong>.
+            </p>
+          </div>
+          <div className={k.pickList}>
+            {step.choices.map((c) => (
+              <button key={c.ref} className={`${k.cta} ${k.pick}`} disabled={busy} onClick={() => void choose(c)}>
+                {keepTogether(c.name)}
+              </button>
+            ))}
+          </div>
+          {error && <p className={k.error}>{error}</p>}
+          <button className={k.ghost} disabled={busy} onClick={noneOfThese}>
+            None of these
+          </button>
           <button type="button" className={`${k.ghost} ${k.ghostShort}`} disabled={busy} onClick={reset}>
             Start over
           </button>

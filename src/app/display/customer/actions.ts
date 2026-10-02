@@ -40,7 +40,9 @@ import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
 // sealed request) to show staff who came in, put them on the order and
 // offer Undo.
 // - A known number checks in. A shared family number (a few accounts)
-//   doesn't: staff pick the face at the register, as before.
+//   asks "Which one is you?" right there (first name and last initial
+//   only), and the one they tap checks in the same way (checkInNow).
+//   Nothing waits on staff (Andrew, 10/2).
 // - A known email checks in too, with a first name and last initial for
 //   "Welcome back, Sarah M.!", unless there's a number to offer adding
 //   first (then checkInNow, once they've answered).
@@ -53,12 +55,19 @@ import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
 // the screen asks once, gently, "Add your name?" (nameCheckin), and skipping
 // sends `request` as it is. Nothing else about them comes back.
 // checkedIn: the visit's recorded and paid (what the reward shows). Missing
-// for a shared family number (staff pick the face), or while "Add your
-// name?" is still to answer.
+// while "Add your name?" is still to answer.
+// pick: a shared family number, "Which one is you?" (CheckinPick).
 export type CheckinStart =
   | { ok: true; status: "known"; request: CheckinRequest; checkedIn?: TabletCheckin; unlimited?: true; askName?: true }
+  | CheckinPick
   | { ok: true; status: "new" }
   | { ok: false; error: string };
+
+// A shared family number: one button per account, "Sarah M." (a first name
+// and last initial, nothing else about them), each with its own sealed
+// request (that account and the number they typed) for checkInNow.
+export type CheckinChoice = { name: string; ref: string };
+export type CheckinPick = { ok: true; status: "pick"; choices: CheckinChoice[] };
 
 // Found by email. name: "Sarah M.". withPhone: the same check-in, also
 // adding the number they typed earlier (their account has none, and no
@@ -147,14 +156,15 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (found.ids.length === 0) return { ok: true, status: "new" };
+  // A shared family number: "Which one is you?" (checkInNow checks in the one
+  // they tap).
+  if (found.ids.length > 1) return pickFor(found.ids, digits);
   const unlimitedNow = unlimitedWithoutCard(found.ids);
-  // A shared family number (staff pick the face), or "Add your name?" to
-  // answer first (nameCheckin or checkInNow checks them in).
-  const ask = found.ids.length === 1 && (await namelessToAsk(found.ids[0]));
-  if (found.ids.length > 1 || ask) {
+  // "Add your name?" to answer first (nameCheckin or checkInNow checks them in).
+  if (await namelessToAsk(found.ids[0])) {
     const request = sealCheckin({ kind: "known", phone: digits });
     const flags = (await unlimitedNow) ? { unlimited: true as const } : {};
-    return { ok: true, status: "known", request, ...flags, ...(ask ? { askName: true as const } : {}) };
+    return { ok: true, status: "known", request, ...flags, askName: true };
   }
   const [unlimited, done] = await Promise.all([unlimitedNow, checkInHere({ memberId: found.ids[0], phone: digits })]);
   if (!done) return { ok: false, error: NOT_SAVED };
@@ -162,8 +172,12 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
 }
 
 // "Add this phone?" answered (the request they chose: with the number or
-// without), or "Add your name?" skipped: checked in now.
-export async function checkInNow(ref: string): Promise<{ ok: true; request: CheckinRequest; checkedIn?: TabletCheckin } | { ok: false; error: string }> {
+// without), "Add your name?" skipped, or "Which one is you?" answered:
+// checked in now. unlimited: that account is a former unlimited member's
+// with no card on file (the screen then says where it goes on).
+export async function checkInNow(
+  ref: string,
+): Promise<{ ok: true; request: CheckinRequest; checkedIn?: TabletCheckin; unlimited?: true } | CheckinPick | { ok: false; error: string }> {
   const screen = await assertDisplayScreen();
   const c = typeof ref === "string" ? openCheckin(ref) : null;
   if (!c || c.kind !== "known") return { ok: false, error: "That took too long. Please start again." };
@@ -171,13 +185,17 @@ export async function checkInNow(ref: string): Promise<{ ok: true; request: Chec
   if ("memberId" in c) {
     // Checked in already: the same request again.
     if (c.done) return { ok: true, request: { id: c.id, ref, kind: "known", done: true } };
-    const done = await checkInHere({ memberId: c.memberId, phone: c.phone, addPhone: c.addPhone, addName: c.addName, fresh: c.fresh });
-    return done ? { ok: true, ...done } : { ok: false, error: NOT_SAVED };
+    const [unlimited, done] = await Promise.all([
+      unlimitedWithoutCard([c.memberId]),
+      checkInHere({ memberId: c.memberId, phone: c.phone, addPhone: c.addPhone, addName: c.addName, fresh: c.fresh }),
+    ]);
+    return done ? { ok: true, ...done, ...(unlimited ? { unlimited: true as const } : {}) } : { ok: false, error: NOT_SAVED };
   }
   const found = await memberIdsWithPhone(c.phone);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (found.ids.length === 0) return { ok: false, error: "We couldn't find that number just now. Ask a staff member for help." };
-  if (found.ids.length > 1) return { ok: true, request: { id: c.id, ref, kind: "known" } };
+  // Someone else put this number on their account a moment ago.
+  if (found.ids.length > 1) return pickFor(found.ids, c.phone);
   const done = await checkInHere({ memberId: found.ids[0], phone: c.phone });
   return done ? { ok: true, ...done } : { ok: false, error: NOT_SAVED };
 }
@@ -195,6 +213,22 @@ async function namelessToAsk(memberId: string): Promise<boolean> {
   return visits[0].business_date !== visitBusinessDate(new Date());
 }
 
+// "Which one is you?": the accounts on a shared number, oldest first, each
+// as "Sarah M." (lib/card-match.ts shortName; a phone account with no name
+// is "Guest ·· 0199") with a sealed request for that account and the
+// number. Nothing else about them leaves the server.
+async function pickFor(ids: string[], digits: string): Promise<CheckinPick | { ok: false; error: string }> {
+  const { data, error } = await createAdminClient().from("members").select("id, name, phone").in("id", ids);
+  if (error || !data?.length) return { ok: false, error: LOOKUP_FAILED };
+  const byId = new Map(data.map((m) => [m.id as string, m]));
+  const choices = ids.flatMap((id) => {
+    const m = byId.get(id);
+    if (!m) return [];
+    return [{ name: shortName(memberLabel(m.name as string | null, m.phone as string | null)), ref: sealCheckin({ kind: "known", memberId: id, phone: digits }).ref }];
+  });
+  return choices.length ? { ok: true, status: "pick", choices } : { ok: false, error: LOOKUP_FAILED };
+}
+
 // "Add your name?" answered: the number they typed (again, so nothing about
 // the account rides on the screen) and a first name and last initial. They
 // check in now, and the name goes on with it: only onto that account, and
@@ -205,7 +239,7 @@ export async function nameCheckin(fields: {
   phone: string;
   firstName: string;
   lastInitial?: string | null;
-}): Promise<{ ok: true; request: CheckinRequest; firstName: string; checkedIn?: TabletCheckin } | { ok: false; error: string }> {
+}): Promise<{ ok: true; request: CheckinRequest; firstName: string; checkedIn?: TabletCheckin } | CheckinPick | { ok: false; error: string }> {
   const screen = await assertDisplayScreen();
   const digits = phoneDigits(String(fields?.phone ?? ""));
   if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
@@ -220,7 +254,7 @@ export async function nameCheckin(fields: {
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (found.ids.length === 0) return { ok: false, error: "We couldn't find that number just now. Ask a staff member for help." };
-  if (found.ids.length > 1) return { ok: true, request: sealCheckin({ kind: "known", phone: digits }), firstName };
+  if (found.ids.length > 1) return pickFor(found.ids, digits);
   const name = initial ? `${firstName} ${initial.toLocaleUpperCase()}.` : firstName;
   const done = await checkInHere({ memberId: found.ids[0], phone: digits, addName: name });
   return done ? { ok: true, ...done, firstName } : { ok: false, error: NOT_SAVED };
@@ -277,36 +311,12 @@ async function unlimitedWithoutCard(ids: string[]): Promise<boolean> {
   return data.every((m) => legacyNeedsSetup({ ...m, comped: !!m.comped }));
 }
 
-// A number we don't know: the customer gave a first name (and maybe an
-// email). Nothing is saved yet -- the register's "Create & attach" does that
-// once staff have seen them. Email opt-in stays off unless they ticked it.
-export async function startNewCheckin(fields: { phone: string; firstName: string; email: string; emailOptIn: boolean }): Promise<{ ok: true; request: CheckinRequest } | { ok: false; error: string }> {
-  const screen = await assertDisplayScreen();
-  const digits = phoneDigits(fields.phone);
-  if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
-  const firstName = cleanFirstName(fields.firstName);
-  if (!firstName) return { ok: false, error: "Type your first name (letters only)." };
-  const email = fields.email.trim() ? cleanEmail(fields.email) : null;
-  if (fields.email.trim() && !email) return { ok: false, error: "That email doesn't look right. Fix it, or leave it blank." };
-  if (!(await allowAttempt(`checkin-new:${screen.employeeId}`, 5, 60))) return { ok: false, error: TOO_MANY_TRIES };
-
-  // Someone may have signed up with this number since the lookup: then it's
-  // an ordinary check-in, confirmed by photo at the register.
-  const found = await memberIdsWithPhone(digits);
-  if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
-  if (found.ids.length > 0) return { ok: true, request: sealCheckin({ kind: "known", phone: digits }) };
-
-  return {
-    ok: true,
-    request: sealCheckin({ kind: "new", phone: digits, firstName, email, emailOptIn: !!email && fields.emailOptIn === true }),
-  };
-}
-
 // emailed: a setup link is on its way to their inbox (sent just after this
 // answers, so the line doesn't wait on it).
 export type KioskCreate =
   | { ok: true; status: "known"; request: CheckinRequest; checkedIn?: TabletCheckin }
   | CheckinFound
+  | CheckinPick
   | { ok: true; status: "created"; request: CheckinRequest; firstName: string; claimUrl: string | null; emailed: boolean; checkedIn: TabletCheckin }
   | { ok: false; error: string };
 
@@ -318,8 +328,11 @@ export type KioskCreate =
 // the QR code here or the setup link emailed to them now. Email marketing
 // stays off: the setup email is about their account, not a list.
 // An email or number that's on an account already (typed here, or signed
-// up since) checks in that account instead of making a second one.
-export async function createKioskMember(fields: { firstName: string; lastName: string; email: string; phone?: string | null }): Promise<KioskCreate> {
+// up since) checks in that account instead of making a second one; a
+// shared family number asks "Which one is you?". notThem: they've already
+// said "None of these" to that number, so they get an account of their own
+// on it.
+export async function createKioskMember(fields: { firstName: string; lastName: string; email: string; phone?: string | null; notThem?: boolean }): Promise<KioskCreate> {
   const screen = await assertDisplayScreen();
   const firstName = cleanFirstName(String(fields.firstName ?? ""));
   if (!firstName) return { ok: false, error: "Type your first name (letters only)." };
@@ -338,7 +351,7 @@ export async function createKioskMember(fields: { firstName: string; lastName: s
   if (digits) {
     const byPhone = await memberIdsWithPhone(digits);
     if (!byPhone.ok) return { ok: false, error: LOOKUP_FAILED };
-    if (byPhone.ids.length > 1) return { ok: true, status: "known", request: sealCheckin({ kind: "known", phone: digits }) };
+    if (byPhone.ids.length > 1 && fields.notThem !== true) return pickFor(byPhone.ids, digits);
     if (byPhone.ids.length === 1) {
       const done = await checkInHere({ memberId: byPhone.ids[0], phone: digits });
       return done ? { ok: true, status: "known", ...done } : { ok: false, error: NOT_SAVED };
@@ -382,10 +395,13 @@ export async function createKioskMember(fields: { firstName: string; lastName: s
 // email, email marketing off, no setup link, no QR code: they just type
 // the number each time. Their first visit is checked in with it (its
 // points, the Welcome badge's included). A number that's on an account by
-// now checks that account in instead.
+// now checks that account in instead, or asks "Which one is you?" for a
+// shared one, unless they've already said "None of these" to it (notThem):
+// then it's theirs too.
 export async function createPhoneAccount(
   phone: string,
-): Promise<{ ok: true; request: CheckinRequest; made: boolean; checkedIn?: TabletCheckin } | { ok: false; error: string }> {
+  notThem = false,
+): Promise<{ ok: true; request: CheckinRequest; made: boolean; checkedIn?: TabletCheckin } | CheckinPick | { ok: false; error: string }> {
   const screen = await assertDisplayScreen();
   const digits = phoneDigits(String(phone ?? ""));
   if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
@@ -393,7 +409,7 @@ export async function createPhoneAccount(
 
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
-  if (found.ids.length > 1) return { ok: true, request: sealCheckin({ kind: "known", phone: digits }), made: false };
+  if (found.ids.length > 1 && notThem !== true) return pickFor(found.ids, digits);
   if (found.ids.length === 1) {
     const done = await checkInHere({ memberId: found.ids[0], phone: digits });
     return done ? { ok: true, ...done, made: false } : { ok: false, error: NOT_SAVED };

@@ -97,7 +97,7 @@ interface CartLine {
 }
 
 // The Movies tab sits alongside the menu categories, and so does Customers
-// (check-ins waiting to confirm, who's checked in today, find by face).
+// (who's checked in today, find by face).
 const MOVIES_TAB = "__movies";
 const CUSTOMERS_TAB = "__customers";
 
@@ -347,8 +347,8 @@ export default function PosApp({
   const [busy, setBusy] = useState(false);
 
   // Check-ins from the customer screen. Always listening, whatever's on
-  // screen; staff answer them on the Customers tab, whose count shows how
-  // many are waiting.
+  // screen; nothing waits on staff (a shared family number is picked on the
+  // screen itself).
   // A check-in that finds one account puts them on the order by itself, the
   // latest one in taking over from whoever was on it (Andrew, 10/2), with
   // "Now on this order: Sarah M. (was Bob K.)" and Undo (swap). Never
@@ -391,10 +391,8 @@ export default function PosApp({
     onAttach: attachMember,
     autoAttach,
     autoUndo: (id) => void autoUndo(id),
-    hasOrder: cart.length > 0 || !!activeTabId,
     lastSale: lastReceipt,
   });
-  const waiting = checkins.pending.length;
   // Something on the Customers tab still to act on that isn't a check-in:
   // tickets to print, a possible duplicate account, or a former unlimited
   // member with no payment on file who isn't on the order.
@@ -1566,7 +1564,6 @@ export default function PosApp({
               pickTab(CUSTOMERS_TAB);
               setFindAt(Date.now());
             }}
-            waiting={waiting}
             readerId={readerId}
             toTablet={checkins.toTablet}
           />
@@ -1716,28 +1713,18 @@ export default function PosApp({
               {c.label}
             </button>
           ))}
-          {/* Last, so the menu tabs keep their places. Its count is the
-              check-ins waiting to confirm, and it pulses gently until
-              they're answered: nothing pops up over the menu buttons. Never
-              narrower than its name and count (an upright iPad gives it a
-              row of its own). */}
+          {/* Last, so the menu tabs keep their places. A dot when there's
+              something there to look at (nothing pops up over the menu
+              buttons). Never narrower than its name (an upright iPad gives
+              it a row of its own). */}
           <button
-            className={`chip relative flex min-w-fit flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${
-              categoryId === CUSTOMERS_TAB ? "chip-selected" : waiting > 0 ? "!border-[var(--accent)] motion-safe:animate-checkin-pulse" : ""
-            }`}
+            className={`chip relative flex min-w-fit flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${categoryId === CUSTOMERS_TAB ? "chip-selected" : ""}`}
             onClick={() => pickTab(CUSTOMERS_TAB)}
-            aria-label={`Customers${waiting > 0 ? `: ${waiting} check-in${waiting === 1 ? "" : "s"} waiting to confirm` : customersNote ? ": something to look at" : ""}`}
+            aria-label={`Customers${customersNote ? ": something to look at" : ""}`}
           >
             <CustomersIcon />
             Customers
-            {waiting > 0 ? (
-              <span className="min-w-6 rounded-full px-1.5 text-sm leading-6 text-white tabular-nums" style={{ background: "var(--accent)" }} aria-hidden>
-                {waiting}
-              </span>
-            ) : (
-              customersNote &&
-              categoryId !== CUSTOMERS_TAB && <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--foreground)" }} aria-hidden />
-            )}
+            {customersNote && categoryId !== CUSTOMERS_TAB && <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--foreground)" }} aria-hidden />}
           </button>
         </div>
         {customOpen && (
