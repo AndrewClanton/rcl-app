@@ -37,8 +37,19 @@ export const COMMON = [
   {
     name: "claim-steps",
     fmt: "png",
-    alt: "Three steps: the last 4 of your phone, then a password or Google, and you're in.",
+    alt: "Two steps: a password or Google, and you're in.",
     rect: (R) => R.box(R.kids(R.sec("claim"), 0, 0, 2)),
+    // The claim page no longer asks for the last 4 digits of their phone
+    // (10/1), so the design's first step (the phone tile and its arrow) is
+    // left out and the other two sit in the middle.
+    edit: (R) => {
+      const steps = R.kids(R.sec("claim"), 0, 0, 2);
+      return [
+        [steps, { justifyContent: "center", gap: "12px" }],
+        [steps.children[0], { display: "none" }],
+        [steps.children[1], { display: "none" }],
+      ];
+    },
   },
   {
     name: "claim-30sec",

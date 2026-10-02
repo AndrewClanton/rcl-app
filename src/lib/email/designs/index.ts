@@ -47,7 +47,8 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     category: "account",
     subject: "{first name}, the new Royale website is here",
     preheader: "Your account, points and badges are already set up. It takes about 30 seconds.",
-    // A phone on file: the claim page checks its last 4 digits.
+    // A phone on file: "Set my password" links are only made for accounts
+    // with one (lib/member-claim.ts hasPhoneOnFile).
     audience: { include: [{ r: "has_login", v: false }, { r: "has_phone", v: true }], order: "trust" },
     who: "Members with an email and a phone number on file who haven't set up a website login yet.",
     outcome: { key: "signed_in", label: "Signed in", about: "Set up their website login since the email" },

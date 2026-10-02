@@ -24,10 +24,6 @@ export type ClaimKind = "kiosk" | "receipt" | "email";
 // receipt links go home in a pocket; the invite email's last 30 days.
 export const CLAIM_LIFETIME_S: Record<ClaimKind, number> = { kiosk: 30 * 60, receipt: 14 * 86_400, email: 30 * 86_400 };
 
-// Wrong guesses at the last four of the phone before a link stops working
-// for good (on top of the per-minute limits in member-claim.ts).
-export const MAX_WRONG_DIGITS = 10;
-
 const VERSION = 1;
 // New kinds go on the end: a token stores its kind by position.
 const KINDS: ClaimKind[] = ["kiosk", "receipt", "email"];
@@ -107,33 +103,6 @@ export function emailClaimNonce(sendId: string): Buffer | null {
   return sign("email-nonce", sendId, 9);
 }
 
-// ---------- "the phone digits matched" ----------
-// Once someone types the right last four, this browser gets a short-lived
-// signed note saying so for that one link (kept in an httpOnly cookie by
-// the claim page). It lets them go off to Google to sign in and come back
-// without typing the digits again, and it's what the final link step
-// checks. Useless for any other link.
-
-export const DIGITS_PROOF_COOKIE = "rcl_claim_ok";
-const PROOF_LIFETIME_S = 30 * 60;
-
-export function sealDigitsProof(nonce: string, claimExp: number, now = Date.now()): { value: string; maxAge: number } | null {
-  const expS = Math.min(Math.floor(now / 1000) + PROOF_LIFETIME_S, Math.floor(claimExp / 1000));
-  const maxAge = expS - Math.floor(now / 1000);
-  if (maxAge <= 0) return null;
-  const sig = sign("digits", `${nonce}.${expS}`, 16);
-  return sig ? { value: `${nonce}.${expS}.${sig.toString("base64url")}`, maxAge } : null;
-}
-
-export function digitsProofOk(value: string | null | undefined, nonce: string, now = Date.now()): boolean {
-  const parts = typeof value === "string" ? value.split(".") : [];
-  if (parts.length !== 3 || parts[0] !== nonce || !/^\d{1,12}$/.test(parts[1])) return false;
-  if (Number(parts[1]) * 1000 <= now) return false;
-  const expected = sign("digits", `${parts[0]}.${parts[1]}`, 16);
-  const given = Buffer.from(parts[2], "base64url");
-  return !!expected && given.length === expected.length && timingSafeEqual(expected, given);
-}
-
 // ---------- a claim in progress on a new login ----------
 // The claim page's "Create account" puts the link's token on the new login
 // (user_metadata.rcl_claim). When Supabase's "Confirm email" is on, the
@@ -142,14 +111,14 @@ export function digitsProofOk(value: string | null | undefined, nonce: string, n
 // second, empty account before the claim page could link the real one.
 // This says whether that claim can still be finished (and where), so
 // linkMemberForUser can leave the linking to the claim page. Once the link
-// is used, runs out or locks, it no longer counts and sign-in works as usual.
+// is used or runs out, it no longer counts and sign-in works as usual.
 export async function pendingClaimFor(user: User): Promise<string | null> {
   const t = user.user_metadata?.rcl_claim;
   const c = typeof t === "string" ? openClaimToken(t) : null;
   if (!c || c.expired) return null;
   const admin = createAdminClient();
-  const { data: claim } = await admin.from("member_claims").select("member_id, used_at, failed_tries").eq("nonce", c.nonce).maybeSingle();
-  if (!claim || claim.member_id !== c.memberId || claim.used_at || claim.failed_tries >= MAX_WRONG_DIGITS) return null;
+  const { data: claim } = await admin.from("member_claims").select("member_id, used_at").eq("nonce", c.nonce).maybeSingle();
+  if (!claim || claim.member_id !== c.memberId || claim.used_at) return null;
   const { data: m } = await admin.from("members").select("auth_user_id, erased_at").eq("id", c.memberId).maybeSingle();
   if (!m || m.auth_user_id || m.erased_at) return null;
   return `${CLAIM_PATH}?t=${t}`;

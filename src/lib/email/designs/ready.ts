@@ -37,7 +37,7 @@ export async function designCampaign(key: DesignKey): Promise<CampaignRow | null
 export interface AudienceCount {
   willSend: number;
   excluded: { why: string; n: number }[];
-  noPhone: number; // the invite only: no login, but no phone to check
+  noPhone: number; // the invite only: no login, but no phone on file (no claim link can be made)
 }
 
 function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n: number }[] {

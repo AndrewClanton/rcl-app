@@ -228,7 +228,7 @@ export const HELP_TOPICS = {
     title: "Claim-your-account QR codes",
     area: "Register: members and the door",
     body:
-      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, lets them add a login and see their points online. The code alone isn't enough: they also type the last four digits of the phone on the account. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
+      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, lets them add a login and see their points online. Scanning it takes them straight to signing in (Google, or an email and password), and that login is attached to their account, so the code is the key: hand the receipt only to them. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
   },
   "easter-eggs": {
     title: "Just for fun (the ✨ button)",

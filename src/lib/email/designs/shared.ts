@@ -125,7 +125,7 @@ export function claimCard(ctx: Ctx, out: DesignOut): string {
   if (dev === "d") {
     out.bodyTexts.push(nameOr(r, "{first name}, it's already set up.", "It's already set up."), b.label);
     out.primaryButtons++;
-    out.text.push(`YOUR ACCOUNT\n${nameOr(r, "{first name}, it's already set up.", "It's already set up.")}\n${s === "claim" ? "The last 4 of your phone, then a password or Google, and you're in. About 30 seconds.\n" : ""}${b.label}: ${b.href}`);
+    out.text.push(`YOUR ACCOUNT\n${nameOr(r, "{first name}, it's already set up.", "It's already set up.")}\n${s === "claim" ? "Pick a password or use Google, and you're in. About 30 seconds.\n" : ""}${b.label}: ${b.href}`);
   }
   const inner = `${label("YOUR ACCOUNT", C.redD, dev)}
 ${blk(dev === "m" ? headM : headD, dev === "m" ? 24 : 28, dev === "m" ? 30 : 34, C.ink, "margin-top:10px;")}

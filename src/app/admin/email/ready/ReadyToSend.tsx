@@ -153,7 +153,7 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
                 )}
                 {card.count.noPhone > 0 && (
                   <p className="mt-2 text-xs text-[var(--muted)]">
-                    {people(card.count.noPhone)} with no login also have no phone on file, so they&apos;re left out: the &ldquo;Set my password&rdquo; page checks the last 4 digits of their phone. The door tablet or the register can sign them up in person.
+                    {people(card.count.noPhone)} with no login also have no phone on file, so they&apos;re left out: a &ldquo;Set my password&rdquo; link can only be made for an account with a phone number on it. The door tablet or the register can sign them up in person.
                   </p>
                 )}
               </>

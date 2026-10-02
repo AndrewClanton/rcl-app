@@ -52,6 +52,17 @@ async function encode(png, fmt) {
 
 async function snap(page, piece, dev) {
   await page.eval(HELPERS);
+  // A change to the design for this picture ([element, styles] pairs),
+  // undone after the shot.
+  if (piece.edit) await page.eval(`(() => { const list = (${piece.edit.toString()})(window.R, ${JSON.stringify(dev)}); window.__edit = list.map(([e, st]) => [e, e.getAttribute('style')]); list.forEach(([e, st]) => Object.assign(e.style, st)); return true; })()`);
+  try {
+    return await snapNow(page, piece, dev);
+  } finally {
+    if (piece.edit) await page.eval(`(() => { window.__edit.forEach(([e, st]) => st === null ? e.removeAttribute('style') : e.setAttribute('style', st)); return true; })()`);
+  }
+}
+
+async function snapNow(page, piece, dev) {
   const rect = await page.eval(`(${piece.rect.toString()})(window.R, ${JSON.stringify(dev)})`);
   const r = { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.w), h: Math.round(rect.h) };
   let hidden = 0;
