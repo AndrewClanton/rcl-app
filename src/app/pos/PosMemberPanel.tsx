@@ -11,7 +11,7 @@ import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checki
 import type { OpenReward } from "@/lib/visits-server";
 import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
 import LegacyPlusCard, { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
-import { memberSignal } from "./member-signal";
+import { memberSignal, memberStanding } from "./member-signal";
 
 // An Insiders+ member's free daily coffee today, as the register knows it
 // (PosApp): undefined while it's looked up, null if it couldn't be.
@@ -137,7 +137,7 @@ export default function PosMemberPanel({
   }
 
   const rate: MemberPriceTier = member?.price_tier ?? "adult";
-  const signal = memberSignal(member);
+  const standing = member ? memberStanding(member) : null;
   const source = member ? rateSource(member) : null;
   const showNoMatch = query.trim().length >= 2 && !searching && !error && results.length === 0;
 
@@ -147,13 +147,14 @@ export default function PosMemberPanel({
 
       {member ? (
         // Edged in gold for paying Insiders+, red for a former unlimited
-        // member who isn't paying (member-signal.ts), like the order above.
+        // member who isn't paying or Insiders+ with no card on file
+        // (member-signal.ts), like the order above.
         <div
-          className={`rounded-lg p-2.5 text-sm ${signal ? "border-2" : "border"}`}
-          style={{ borderColor: signal === "plus" ? "var(--gold)" : signal === "unlimited" ? "var(--accent)" : "var(--border)" }}
+          className={`rounded-lg p-2.5 text-sm ${standing === "insiders" ? "border" : "border-2"}`}
+          style={{ borderColor: standing === "plus" ? "var(--gold)" : standing === "insiders" ? "var(--border)" : "var(--accent)" }}
         >
           <div className="flex items-center gap-3">
-            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={member.tier === "Insiders+" && !member.legacyUnlimited} />
+            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={standing === "plus"} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-semibold">{member.name}</span>
@@ -177,11 +178,14 @@ export default function PosMemberPanel({
               <span className="min-w-0 flex-1">Unlimited: no payment on file. Set it up at the top of the order.</span>
             </div>
           ) : (
-            !member.subscribed &&
-            !member.comped && (
+            // Insiders+ with nothing paying for it: the red "no card on file"
+            // card, also up on the customer screen. Plain Insiders: an
+            // upgrade, folded away. Paid-for Insiders+ (a subscription,
+            // complimentary, or a gifted year): nothing to set up.
+            (standing === "nocard" || (standing === "insiders" && !member.subscribed && !member.comped)) && (
               <LegacyPlusCard
                 key={`unlimited-${member.id}`}
-                kind={member.tier === "Insiders+" ? "nocard" : "upgrade"}
+                kind={standing === "nocard" ? "nocard" : "upgrade"}
                 member={member}
                 readerId={readerId}
                 employeeId={employeeId}
@@ -286,7 +290,7 @@ export default function PosMemberPanel({
             <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
               {results.map((m) => (
                 <button key={m.id} className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => attach(m)}>
-                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} plus={m.tier === "Insiders+"} />
+                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} plus={memberSignal(m) === "plus"} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium">{m.name}</span>
                     <span style={{ color: "var(--muted)" }}>

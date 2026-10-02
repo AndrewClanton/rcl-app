@@ -78,6 +78,16 @@
       box-shadow: 0 0 0 9px rgb(237 28 36 / 0);
     }
   }
+
+  /* A check-in popping up over the top of the order (RegisterCheckins.tsx
+     CheckinArrivals): a short drop into place, only with motion-safe:. */
+  --animate-arrive-in: arrive-in 240ms ease-out both;
+  @keyframes arrive-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
 }
 
 body {

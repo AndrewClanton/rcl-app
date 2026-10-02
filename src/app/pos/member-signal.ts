@@ -11,7 +11,8 @@ import type { PosMember } from "./member-actions";
 //              (lib/legacy-plus.ts): NOT ACTIVE, red and black, never gold,
 //              so nobody takes them for an active member.
 //   null       anyone else (plain Insiders, Insiders+ set by hand with no
-//              card, or nobody on the order).
+//              card, or nobody on the order). memberStanding, below, tells
+//              those apart.
 export type MemberSignal = "plus" | "unlimited" | null;
 
 type SignalFields = Pick<PosMember, "tier" | "subscribed" | "comped" | "legacyUnlimited" | "plusPaid">;
@@ -21,6 +22,19 @@ export function memberSignal(m: SignalFields | null | undefined): MemberSignal {
   if (m.legacyUnlimited) return "unlimited";
   if (m.tier === "Insiders+" && (m.subscribed || m.comped || !!m.plusPaid)) return "plus";
   return null;
+}
+
+// Where a member stands, for the member box and the customer screen's
+// account panel: the signal above, plus
+//   nocard    Insiders+ set by hand with nothing paying for it: red like
+//             unlimited, never gold, with the ways to add a card.
+//   insiders  plain Insiders: points only, no discount.
+export type MemberStanding = "plus" | "nocard" | "unlimited" | "insiders";
+
+export function memberStanding(m: SignalFields): MemberStanding {
+  const signal = memberSignal(m);
+  if (signal) return signal;
+  return m.tier === "Insiders+" ? "nocard" : "insiders";
 }
 
 // The signal as PosApp last set it, for the phone header beside the

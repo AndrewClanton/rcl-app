@@ -36,9 +36,9 @@ export default function LegacyPlusCard({
   // Their Insiders+ is set up: the member as they are now.
   onDone: (m: PosMember) => void;
   toTablet: TabletSend;
-  // legacy: a former unlimited member (the gold flag). nocard: Insiders+ by
-  // hand with nothing billing them. upgrade: any other member, folded
-  // away behind one button until staff need it.
+  // legacy: a former unlimited member (red, NOT ACTIVE). nocard: Insiders+
+  // by hand with nothing billing them (red). upgrade: any other member,
+  // folded away behind one button until staff need it.
   kind?: "legacy" | "nocard" | "upgrade";
 }) {
   const [open, setOpen] = useState<"reader" | "phone" | null>(null);
@@ -52,14 +52,16 @@ export default function LegacyPlusCard({
   }
   const headline =
     kind === "legacy" ? "No payment on file for unlimited membership" : kind === "nocard" ? "Insiders+ with no card on file" : "Upgrade to Insiders+";
-  // Gold is for Insiders+ that's active; a former unlimited member who isn't
-  // paying gets the red NOT ACTIVE look instead (member-signal.ts).
+  // Gold is only for Insiders+ that's active (member-signal.ts): a former
+  // unlimited member who isn't paying gets the red NOT ACTIVE look, and
+  // Insiders+ with no card on file is red too (the customer screen says so
+  // as well). An upgrade is plain.
   const legacy = kind === "legacy";
   return (
     <div className="mt-2 overflow-hidden rounded-lg border-2 text-sm" style={{ borderColor: "var(--foreground)" }} role="status">
       <div
         className="flex items-center gap-1.5 px-2.5 py-1.5 font-bold leading-tight"
-        style={legacy ? { background: NOT_ACTIVE_RED, color: "#fff" } : { background: "var(--gold)", color: "var(--gold-foreground)" }}
+        style={kind === "upgrade" ? { background: "var(--surface-hover)", color: "var(--foreground)" } : { background: NOT_ACTIVE_RED, color: "#fff" }}
       >
         {legacy && <NotActiveStamp />}
         <span className="min-w-0 flex-1">{headline}</span>
@@ -80,7 +82,11 @@ export default function LegacyPlusCard({
           </button>
         </div>
         <p className="text-xs" style={{ color: "var(--muted)" }}>
-          {kind === "upgrade" ? "Charged today, then every month. Free movies and 10% off start right away." : "Not paying today? Ring them up like any guest."}
+          {kind === "upgrade"
+            ? "Charged today, then every month. Free movies and 10% off start right away."
+            : kind === "nocard"
+              ? "Charged today, then monthly. The customer screen asks too."
+              : "Not paying today? Ring them up like any guest."}
         </p>
       </div>
       {open && (
