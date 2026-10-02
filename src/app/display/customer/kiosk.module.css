@@ -202,6 +202,9 @@
   gap: 14px;
   text-align: center;
 }
+.done .title {
+  text-wrap: balance;
+}
 .check {
   width: 104px;
   height: 104px;
@@ -245,7 +248,7 @@
 }
 .claimTitle {
   font-family: var(--display);
-  font-size: clamp(20px, 2.8vh, 26px);
+  font-size: clamp(18px, 2.6vh, 26px);
   line-height: 1.1;
   color: var(--gold);
 }
@@ -254,6 +257,275 @@
     flex-direction: column;
     text-align: center;
   }
+}
+
+/* ---------- "Phone or email" ---------- */
+/* the keypad's display: an email typed there, and its clear button */
+.display {
+  position: relative;
+  padding: 0 8px;
+  min-width: 0;
+  white-space: nowrap;
+  /* a touch smaller than before, so a full number clears the × */
+  font-size: clamp(26px, 4.2vh, 42px);
+}
+.displayEmail {
+  max-width: calc(100% - 104px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: clamp(20px, 3.2vh, 28px);
+}
+.displayClear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  color: var(--cream-dim);
+  font-family: var(--body);
+  font-size: 26px;
+  line-height: 1;
+  touch-action: manipulation;
+}
+/* the keypad's "@ Email" key: gold, so the half of members who check in
+   by email find it */
+.keyEmail {
+  gap: 0;
+  align-content: center;
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.keyEmail:active {
+  color: var(--ink);
+}
+.keyAt {
+  font-family: var(--display);
+  font-size: clamp(26px, 3.8vh, 36px);
+  line-height: 1;
+}
+.keyAtLabel {
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The full keyboard (LetterKeys.tsx) takes the whole screen while it's up:
+   the check-in panel is too narrow for ten keys a row at 44px. Landscape
+   puts "Check in" beside what's typed; upright puts it under the keys. */
+.board {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 260px);
+  grid-template-areas:
+    "head head"
+    "entry cta"
+    "chips chips"
+    "keys keys";
+  align-content: center;
+  gap: clamp(8px, 1.6vh, 14px) 14px;
+  padding: clamp(12px, 2.4vh, 28px) clamp(16px, 3vw, 40px);
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255, 199, 44, 0.06) 1px, transparent 1.5px) 0 0 / 14px 14px,
+    var(--ink-2);
+  overflow-y: auto;
+}
+@media (max-aspect-ratio: 1/1) {
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "head"
+      "entry"
+      "chips"
+      "keys"
+      "cta";
+    align-content: end;
+    gap: 16px;
+    padding-bottom: 28px;
+  }
+}
+.boardHead {
+  grid-area: head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.boardActions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+.boardActions .ghost {
+  min-height: 48px;
+  padding: 0 16px;
+}
+.boardActions .ghostIcon {
+  width: 48px;
+  padding: 0;
+  font-size: 20px;
+}
+.boardError {
+  color: #ff8a8e;
+  font-size: 16px;
+  font-weight: 700;
+  margin: 4px 0 0;
+}
+.boardEntry {
+  grid-area: entry;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: clamp(54px, 9vh, 72px);
+  padding: 0 18px;
+  border: 3px solid var(--gold);
+  border-radius: 14px;
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: clamp(22px, 3.6vh, 32px);
+  overflow: hidden;
+}
+/* a long address keeps its end (where they're typing) in view */
+.boardText {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: safe center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.boardText > span {
+  flex: none;
+}
+.caret {
+  display: inline-block;
+  width: 3px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--gold);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.boardCta {
+  grid-area: cta;
+  min-height: clamp(54px, 9vh, 72px);
+  font-size: clamp(20px, 3vh, 26px);
+}
+.chips {
+  grid-area: chips;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: var(--ink);
+  color: var(--cream);
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.chip:active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--ink);
+}
+.letterKeys {
+  grid-area: keys;
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  gap: clamp(5px, 0.9vh, 8px);
+}
+.lkey {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: clamp(46px, 8.4vh, 74px);
+  border-radius: 10px;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  color: var(--cream);
+  font-family: var(--body);
+  font-size: clamp(22px, 3.4vh, 30px);
+  font-weight: 700;
+  transition: background 80ms, transform 80ms, border-color 80ms;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lkey:active {
+  background: var(--gold);
+  color: var(--ink);
+  border-color: var(--gold);
+  transform: scale(0.96);
+}
+.lkey:disabled {
+  opacity: 0.4;
+}
+.lkeySmall {
+  font-size: clamp(15px, 2.4vh, 20px);
+  color: var(--cream-dim);
+}
+.lkeyAt {
+  border-color: var(--gold);
+  color: var(--gold);
+  font-family: var(--display);
+}
+
+/* the new-account form: first and last name side by side */
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.inputCompact {
+  min-height: 52px;
+  font-size: 21px;
+  min-width: 0;
+  width: 100%;
+}
+.ghostShort {
+  min-height: 48px;
+}
+
+/* found by email: "Add this phone for one-tap check-in next time?" */
+.offer {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 16px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  background: var(--ink);
+}
+.offerTitle {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(19px, 2.8vh, 24px);
+  line-height: 1.15;
+  color: var(--gold);
+}
+.offerPhone {
+  font-family: var(--mono);
+  font-size: clamp(28px, 4.2vh, 38px);
+  font-variant-numeric: tabular-nums;
 }
 
 /* banners across the top of the check-in panel */

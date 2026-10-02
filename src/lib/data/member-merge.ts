@@ -9,6 +9,7 @@ import {
   countText,
   hasBilling,
   hasLogin,
+  isEmailSignUp,
   isLikelyTabletDuplicate,
   isTabletMade,
   mergeHref,
@@ -342,7 +343,7 @@ export interface DuplicatePair {
   sameEmail: boolean;
   samePhone: boolean;
   // Made at the tablet lately, with an older same-name account the tablet
-  // couldn't find by phone: the usual duplicate.
+  // couldn't find by phone, or the same email: the usual duplicate.
   likely: boolean;
   refusal: string | null;
   href: string; // the merge preview, keeping the suggested account
@@ -402,7 +403,7 @@ export async function getDuplicatePairs(): Promise<DuplicatesResult> {
       sameName: r.same_name,
       sameEmail: r.same_email,
       samePhone: r.same_phone,
-      likely: isLikelyTabletDuplicate(older, newer, r.same_name, now),
+      likely: isLikelyTabletDuplicate(older, newer, r.same_name, now, r.same_email),
       refusal: mergeRefusal(keep, drop),
       href: mergeHref(keep.id, drop.id),
     });
@@ -439,7 +440,7 @@ export async function duplicatesOf(memberId: string): Promise<DuplicatePair[]> {
         sameName: r.same_name,
         sameEmail: r.same_email,
         samePhone: r.same_phone,
-        likely: isLikelyTabletDuplicate(older, newer, r.same_name, now),
+        likely: isLikelyTabletDuplicate(older, newer, r.same_name, now, r.same_email),
         refusal: mergeRefusal(keep, drop),
         href: mergeHref(keep.id, drop.id),
       },
@@ -448,22 +449,36 @@ export async function duplicatesOf(memberId: string): Promise<DuplicatePair[]> {
 }
 
 // For the register, after a check-in is confirmed: is this an account the
-// tablet made lately, with an older same-name account that has no usable
-// phone? Then it's probably the same person. Only the older account's id
-// comes back (for a link to the merge preview); nothing is merged here.
-// Null when not, or when it can't tell (never in the way of a check-in).
+// tablet made lately (by phone, or by email with no phone), with an older
+// account that has the same email, or the same name and no usable phone?
+// Then it's probably the same person. Only the older account's id comes
+// back (for a link to the merge preview); nothing is merged here. Null
+// when not, or when it can't tell (never in the way of a check-in).
 export async function tabletDuplicateOf(memberId: string): Promise<{ olderId: string } | null> {
   if (!UUID.test(memberId)) return null;
   try {
     const db = createAdminClient();
-    const { data: m } = await db.from("members").select("id, created_at, phone, legacy_user_id, imported_at, erased_at").eq("id", memberId).maybeSingle();
-    if (!m || m.erased_at || !isTabletMade(m)) return null;
+    const { data: m } = await db.from("members").select("id, created_at, phone, email, legacy_user_id, imported_at, erased_at").eq("id", memberId).maybeSingle();
+    if (!m || m.erased_at || !(isTabletMade(m) || isEmailSignUp(m))) return null;
     const { data: pairs, error } = await db.rpc("member_duplicate_pairs", { p_member: memberId });
     if (error || !pairs?.length) return null;
-    const olderIds = (pairs as PairRow[]).filter((p) => p.same_name && p.newer_id === memberId).map((p) => p.older_id);
-    if (!olderIds.length) return null;
-    const { data: olders } = await db.from("members").select("id, created_at, phone, legacy_user_id, imported_at").in("id", olderIds).is("erased_at", null);
-    const hit = (olders ?? []).find((o) => isLikelyTabletDuplicate(o, m, true));
+    const mine = (pairs as PairRow[]).filter((p) => p.newer_id === memberId && (p.same_name || p.same_email));
+    if (!mine.length) return null;
+    const { data: olders } = await db
+      .from("members")
+      .select("id, created_at, phone, email, legacy_user_id, imported_at")
+      .in(
+        "id",
+        mine.map((p) => p.older_id),
+      )
+      .is("erased_at", null);
+    const pairOf = new Map(mine.map((p) => [p.older_id, p]));
+    // The same email first: that one is certainly them.
+    const hits = (olders ?? []).filter((o) => {
+      const p = pairOf.get(o.id as string);
+      return !!p && isLikelyTabletDuplicate(o, m, p.same_name, new Date(), p.same_email);
+    });
+    const hit = hits.find((o) => pairOf.get(o.id as string)?.same_email) ?? hits[0];
     return hit ? { olderId: hit.id as string } : null;
   } catch {
     return null;

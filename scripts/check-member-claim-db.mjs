@@ -6,7 +6,8 @@
 //    nothing throws, and the claim page says "try again" -- so the tablet
 //    shows its plain welcome and the receipt prints without a QR code.
 //  - After it: kiosk links last 30 minutes and receipt links two weeks; the
-//    repeat check holds back a second link; a link goes straight to signing
+//    repeat check holds back a second link; an account with no phone on
+//    file gets links too (10/1); a link goes straight to signing
 //    in (no phone digits, no lockout); expired, used, invalid and removed
 //    links; and every answer claim_member_account gives. The ones that would attach a
 //    login run inside a transaction that is rolled back, using an existing
@@ -210,10 +211,18 @@ try {
     check("only the server can run claim_member_account", !perm[0].anon && !perm[0].authed && perm[0].service);
     check("member_claims has row-level security on", perm[0].rls === true);
 
-    // ---------- an account that can't be claimed ----------
-    await c.query("update members set phone = null where id = $1", [memberId]);
-    check("no new link for an account with no phone on file", (await claim.issueClaimLink(memberId, "receipt")) === null);
+    // ---------- no phone needed (the tablet's "Phone or email", 10/1) ----------
+    await c.query("update members set phone = null, email = $2 where id = $1", [memberId, `claimcheck-${randomUUID()}@example.invalid`]);
+    const noPhoneUrl = await claim.issueClaimLink(memberId, "receipt");
+    check("an account with an email and no phone on file gets a link", isClaimUrl(noPhoneUrl));
+    if (noPhoneUrl) nonces.push(tok.openClaimToken(tokenOf(noPhoneUrl))?.nonce);
+    const noPhoneEmail = await claim.issueEmailClaimLinks([{ memberId, sendId: randomUUID(), queuedAt: new Date().toISOString() }]);
+    check("...and its invite email gets its own link too", isClaimUrl(noPhoneEmail.get(memberId)));
+    if (noPhoneEmail.get(memberId)) nonces.push(tok.openClaimToken(tokenOf(noPhoneEmail.get(memberId)))?.nonce);
     check("a link already made still opens once the phone is gone", (await claim.readClaim(tokenOf(kioskUrl))).state === "ready");
+    await c.query("update members set email = null where id = $1", [memberId]);
+
+    // ---------- an account that can't be claimed ----------
     await c.query("update members set phone = '(555) 010-4242', erased_at = now() where id = $1", [memberId]);
     check("a removed account says 'gone'", (await claim.readClaim(tokenOf(kioskUrl))).state === "gone");
     check("gone: finishing on a removed account", (await finish(fakeUser(free ?? randomUUID()), tokenOf(kioskUrl))).reason === "gone");

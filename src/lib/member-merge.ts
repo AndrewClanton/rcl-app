@@ -392,22 +392,37 @@ export function mergeSentence(name: string, points: number, visits: number, done
 
 export const RECENT_DAYS = 30;
 
-export type DuplicateCandidate = Pick<MergeMember, "id" | "created_at" | "phone" | "legacy_user_id" | "imported_at">;
+export type DuplicateCandidate = Pick<MergeMember, "id" | "created_at" | "phone" | "legacy_user_id" | "imported_at"> & { email?: string | null };
+
+function madeLately(m: DuplicateCandidate, now: Date): boolean {
+  const age = now.getTime() - time(m.created_at);
+  return m.legacy_user_id == null && !m.imported_at && age >= 0 && age <= RECENT_DAYS * 86_400_000;
+}
 
 // Made at the door tablet (or the register's quick sign-up) lately: a
 // phone they can be found by, not imported from the old site, created in
 // the last 30 days. Members has no "where it was made" column; this is
 // the same test the register's hint uses.
 export function isTabletMade(m: DuplicateCandidate, now: Date = new Date()): boolean {
-  const age = now.getTime() - time(m.created_at);
-  return m.legacy_user_id == null && !m.imported_at && usablePhone(m.phone) && age >= 0 && age <= RECENT_DAYS * 86_400_000;
+  return madeLately(m, now) && usablePhone(m.phone);
 }
 
-// The likely kind: the newer account was made at the tablet lately, and
-// the older one has the same name and no usable phone (so the tablet
-// couldn't have found it).
-export function isLikelyTabletDuplicate(older: DuplicateCandidate, newer: DuplicateCandidate, sameName: boolean, now: Date = new Date()): boolean {
-  return sameName && time(older.created_at) <= time(newer.created_at) && older.id !== newer.id && isTabletMade(newer, now) && !usablePhone(older.phone);
+// Made lately with an email and no usable phone: the tablet's "Phone or
+// email" sign-up when they leave the phone out (Andrew, 10/1). A website
+// sign-up looks the same, and is the same kind of duplicate.
+export function isEmailSignUp(m: DuplicateCandidate, now: Date = new Date()): boolean {
+  return madeLately(m, now) && !usablePhone(m.phone) && !!m.email?.trim();
+}
+
+// The likely kind: the newer account was made at the tablet lately (by
+// phone, or by email with no phone), and the older one has the same name
+// and no usable phone (so the tablet couldn't have found it by phone), or
+// the same email (the tablet finds an email that's on an account, so this
+// only happens when one slips past it).
+export function isLikelyTabletDuplicate(older: DuplicateCandidate, newer: DuplicateCandidate, sameName: boolean, now: Date = new Date(), sameEmail = false): boolean {
+  if (older.id === newer.id || time(older.created_at) > time(newer.created_at)) return false;
+  if (!isTabletMade(newer, now) && !isEmailSignUp(newer, now)) return false;
+  return sameEmail || (sameName && !usablePhone(older.phone));
 }
 
 // Which to keep by default: the older account (the old-site one, with the

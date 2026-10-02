@@ -11,7 +11,7 @@ export interface DesignRecipient {
   firstName: string | null;
   hasLogin: boolean;
   // Their own "Set my password" link (a claim link, kind 'email', 30 days),
-  // made at send time for someone with no login and a phone on file.
+  // made at send time for someone with no login.
   claimUrl: string | null;
   // Their own "Restart my unlimited" link (an Insiders+ finish link, kind
   // 'campaign', 30 days), made at send time.
@@ -60,7 +60,7 @@ function tagged(url: string, campaign: string, content: string, term: string, se
 export type ClaimState = "claim" | "login" | "account";
 
 // What the account button does for this person: their own claim link
-// ("Set my password"), or, with no phone on file to check, the ordinary
+// ("Set my password"), or, if no link could be made for them, the ordinary
 // sign-in ("Set up my login": using this address finds their account), or,
 // already signed up, their account.
 export function claimState(r: DesignRecipient): ClaimState {

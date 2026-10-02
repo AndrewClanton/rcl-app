@@ -14,7 +14,7 @@ type Mode = "signin" | "signup";
 // (from the old site, or the check-in tablet) who never made a login.
 const HELP_LABEL = "Forgot password or first time here?";
 
-type HelpOutcome = "reset" | "setup" | "ask_at_bar" | "generic";
+type HelpOutcome = "reset" | "setup" | "generic";
 
 // Google's own "G" mark, as their sign-in button guidelines ask for.
 function GoogleMark() {
@@ -246,15 +246,13 @@ export default function AccountForm({
     <form onSubmit={handleSubmit} className="sheet crop p-5 sm:p-6">
       {help && (
         <div className="notice notice-success mb-5" role="status">
-          <h2 className="text-lg font-semibold">{help.outcome === "ask_at_bar" ? "You're almost in" : "Check your email"}</h2>
+          <h2 className="text-lg font-semibold">Check your email</h2>
           <p className="mt-2 text-sm opacity-90">
             {help.outcome === "reset"
               ? "We emailed you a link to reset your password."
               : help.outcome === "setup"
                 ? `We emailed you a link to finish setting up your account. Your points are waiting.${gmailHint}`
-                : help.outcome === "ask_at_bar"
-                  ? `You don't have a website login yet, but your account and points are waiting. Ask us at the bar and we'll get you set up.${gmailHint}`
-                  : "If that email has an account, we've sent you a link."}
+                : "If that email has an account, we've sent you a link."}
           </p>
         </div>
       )}

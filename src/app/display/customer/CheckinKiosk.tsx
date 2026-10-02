@@ -4,8 +4,10 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   checkinTopic,
+  cleanEmail,
   formatPhone,
   isFullPhone,
+  phoneDigits,
   type CheckinConfirmed,
   type CheckinRequest,
   type PlusFinish,
@@ -15,7 +17,8 @@ import {
 } from "@/lib/checkin";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { finishShown, type FinishShown } from "./FinishCard";
-import { createKioskMember, startCheckin } from "./actions";
+import { createKioskMember, startCheckin, startEmailCheckin, type CheckinFound } from "./actions";
+import LetterKeys, { type LetterKey } from "./LetterKeys";
 import PointsCelebration from "./PointsCelebration";
 import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
 import type { CheckinTickets, TabletTicket } from "@/lib/door-tickets";
@@ -30,13 +33,24 @@ import k from "./kiosk.module.css";
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
 export type CheckinStep =
-  | { name: "phone" } // the keypad: always there between check-ins
-  | { name: "new" } // a number we don't know: first and last name
-  // A known number, sent to the register; back to the keypad shortly.
-  // unlimited: a former unlimited member with no card on file here
-  // (lib/legacy-plus.ts), told their card goes on at the register.
-  | { name: "sent"; unlimited?: boolean }
-  | { name: "created"; firstName: string; claimUrl: string | null }; // a new account, made
+  // "Phone or email": always there between check-ins. The number keypad,
+  // or with `letters` the full keyboard (over the whole screen while it's
+  // up). notFound: the number they typed that we don't know, formatted
+  // ("Try your email?").
+  | { name: "phone"; letters?: boolean; notFound?: string }
+  // Someone new: name and email, phone optional. missed: we looked up the
+  // email they typed and didn't find it.
+  | { name: "new"; missed?: boolean }
+  // Found by email, no phone on file, and they typed a number first:
+  // "Add this phone for one-tap check-in next time?" who: "Sarah M.".
+  | { name: "found"; who: string; phone: string; request: CheckinRequest; withPhone: CheckinRequest; unlimited?: boolean }
+  // Sent to the register; back to the keypad shortly. who: found by email
+  // ("Welcome back, Sarah M.!"). unlimited: a former unlimited member with
+  // no card on file here (lib/legacy-plus.ts), told their card goes on at
+  // the register.
+  | { name: "sent"; unlimited?: boolean; who?: string }
+  // A new account, made. emailed: a setup link is on its way to them.
+  | { name: "created"; firstName: string; claimUrl: string | null; emailed?: boolean };
 
 // Confirmations land as banners across the top of the panel, so they
 // never block the keypad for the next person. A new badge gets a banner of
@@ -80,35 +94,53 @@ const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 
 // Half-finished screens clear themselves when someone walks away. The
 // "no card on file" note for a former unlimited member stays long enough
-// to read.
-const TIMEOUT_MS: Record<CheckinStep["name"], number> = { phone: 0, new: 90_000, sent: 2_800, created: 25_000 };
+// to read, and so does a "Welcome back" with their name. Walking away from
+// "Add this phone?" checks them in without it (it was optional).
+const TIMEOUT_MS: Record<CheckinStep["name"], number> = { phone: 0, new: 90_000, found: 20_000, sent: 2_800, created: 25_000 };
 const UNLIMITED_NOTE_MS = 12_000;
-const timeoutFor = (step: CheckinStep) => (step.name === "sent" && step.unlimited ? UNLIMITED_NOTE_MS : TIMEOUT_MS[step.name]);
+const WELCOME_BACK_MS = 4_000;
+const timeoutFor = (step: CheckinStep) =>
+  step.name === "sent" && step.unlimited ? UNLIMITED_NOTE_MS : step.name === "sent" && step.who ? WELCOME_BACK_MS : TIMEOUT_MS[step.name];
+// Something typed and walked away from clears itself.
+const IDLE_MS = 45_000;
 
 // A request the register hasn't answered is resent until it has, and given
 // up after this long (the sealed reference expires then anyway).
 const OUTBOX_MS = 15 * 60_000;
 
-const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "clear", "0", "back"];
+// The number keypad. "email" switches to the full keyboard (LetterKeys).
+const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "email", "0", "back"];
 
-// The check-in half of the customer tablet: always the keypad, built for a
-// line at the door, where nobody waits on the bartender.
+// What's typed is a phone number while it's only digits, and an email
+// once it has an @ or a letter in it.
+const isEmailish = (s: string) => /[@a-z]/i.test(s);
+const MAX_ENTRY = 100;
+
+// The check-in half of the customer tablet: always "Phone or email", built
+// for a line at the door, where nobody waits on the bartender.
 // - A known number goes to the register as an opaque request and the panel
 //   is straight back to the keypad. Staff confirm by photo when they can;
 //   that pays the visit points, and a banner says so here.
-// - An unknown number asks for a first and last name and makes the account
-//   right away (email marketing off), then offers a QR code to finish on
-//   their own phone. Staff still confirm the visit on the register.
-// - A known number that's a former unlimited member's with no card on file
-//   here (lib/legacy-plus.ts) gets "Unlimited membership: no card on file"
-//   and where to tap their card (Andrew, 10/1): no name, nothing more. The
-//   register can then put a QR code up for them to add it on their phone.
-// This screen never shows anyone's details until staff have confirmed:
-// then just a first name and points, their profile line, and their
-// entrance in their color (lib/flair.ts; or a party in their birthday
-// week), and, for a member with no website login yet, a QR code in the
-// banner to set one up. When a sale with a member on it completes, the
-// register says so and the points burst plays here.
+// - A number we don't know doesn't make an account: "Try your email?" (most
+//   members without a phone on file have an email), with "I'm new here".
+// - A known email gets "Welcome back, Sarah M.!" (first name and last
+//   initial only, Andrew 10/1). If their account has no phone and they
+//   typed one first, they're offered to add it for next time; it's saved
+//   when staff confirm them at the register, which shows it on the card.
+// - Someone new gives their name and email (phone optional) and the
+//   account is made right away (email marketing off), then a QR code to
+//   finish on their own phone, and the same link by email. Staff still
+//   confirm the visit on the register.
+// - A known number or email that's a former unlimited member's with no
+//   card on file here (lib/legacy-plus.ts) gets "Unlimited membership: no
+//   card on file" and where to tap their card (Andrew, 10/1). The register
+//   can then put a QR code up for them to add it on their phone.
+// Until staff have confirmed, this screen shows nothing about anyone but
+// that "Sarah M." for an email. Then just a first name and points, their
+// profile line, and their entrance in their color (lib/flair.ts; or a
+// party in their birthday week), and, for a member with no website login
+// yet, a QR code in the banner to set one up. When a sale with a member on
+// it completes, the register says so and the points burst plays here.
 // initialStep is for previews only.
 // onTickets: someone's online tickets for today, after staff confirm their
 // check-in. CustomerDisplay shows them beside the order, clear of the keypad.
@@ -136,9 +168,15 @@ export default function CheckinKiosk({
   onPlusWelcome?: (firstName: string) => boolean;
 }) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
-  const [digits, setDigits] = useState("");
+  // "Phone or email", as typed.
+  const [entry, setEntry] = useState("");
+  // A number they tried that we don't know (ten digits): offered to add to
+  // the account their email finds, or filled in on the new-account form.
+  const [tried, setTried] = useState<string | null>(null);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newPhone, setNewPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -167,9 +205,12 @@ export default function CheckinKiosk({
   }
 
   function resetForm() {
-    setDigits("");
+    setEntry("");
+    setTried(null);
     setFirstName("");
     setLastName("");
+    setNewEmail("");
+    setNewPhone("");
     setError(null);
   }
 
@@ -338,7 +379,8 @@ export default function CheckinKiosk({
     }
   });
 
-  const timeUp = useEffectEvent(() => reset());
+  // Walked away from "Add this phone?": checked in without it.
+  const timeUp = useEffectEvent(() => (step.name === "found" ? choosePhone(false) : reset()));
 
   useEffect(() => {
     const supabase = createClient();
@@ -384,40 +426,119 @@ export default function CheckinKiosk({
     if (!ms) return;
     const timer = setTimeout(() => timeUp(), ms);
     return () => clearTimeout(timer);
-  }, [step, firstName, lastName]);
+  }, [step, firstName, lastName, newEmail, newPhone]);
 
-  // A number typed and walked away from clears itself.
+  // Something typed (or the full keyboard left up) and walked away from
+  // clears itself, back to the keypad.
   useEffect(() => {
-    if (step.name !== "phone" || !digits) return;
-    const timer = setTimeout(() => resetForm(), 45_000);
+    if (step.name !== "phone" || (!entry && !step.letters)) return;
+    const timer = setTimeout(() => timeUp(), IDLE_MS);
     return () => clearTimeout(timer);
-  }, [step.name, digits]);
+  }, [step, entry]);
 
   function queue(request: CheckinRequest) {
     outbox.current.set(request.id, { request, seen: false, at: Date.now() });
     send("checkin-request", request);
   }
 
+  const emailish = isEmailish(entry);
+  const entryReady = emailish ? !!cleanEmail(entry) : isFullPhone(entry);
+  const onKeypad = step.name === "phone" && !step.letters;
+
+  function showLetters(letters: boolean) {
+    setError(null);
+    if (step.name === "phone") setStep({ ...step, letters });
+  }
+
+  // One entry for both keyboards: the keypad's digits stop at a phone
+  // number's ten unless it's already an email.
+  function type(text: string) {
+    setError(null);
+    setEntry((e) => {
+      if (text === "@" && e.includes("@")) return e;
+      const next = (e + text).toLowerCase();
+      if (onKeypad && !isEmailish(next) && next.length > 10) return e;
+      return next.slice(0, MAX_ENTRY);
+    });
+  }
+
   function press(key: string) {
     setError(null);
-    if (key === "back") setDigits((d) => d.slice(0, -1));
-    else if (key === "clear") setDigits("");
-    else setDigits((d) => (d.length < 10 ? d + key : d));
+    if (key === "back") setEntry((e) => e.slice(0, -1));
+    else if (key === "clear") setEntry("");
+    else if (key === "email") showLetters(true);
+    else type(key);
+  }
+
+  function pressLetter(key: LetterKey) {
+    if (key === "digits") return showLetters(false);
+    press(key);
+  }
+
+  // "@gmail.com" and the like: in place of whatever comes after their @.
+  function domain(d: string) {
+    setError(null);
+    setEntry((e) => (e.split("@")[0] + d).toLowerCase().slice(0, MAX_ENTRY));
+  }
+
+  // "I'm new here": the form, with what they've typed so far filled in.
+  function startNew(missed = false) {
+    setError(null);
+    if (isEmailish(entry)) setNewEmail(entry);
+    const phone = tried ?? (isFullPhone(entry) ? entry : null);
+    if (phone) setNewPhone(formatPhone(phone));
+    setStep(missed ? { name: "new", missed: true } : { name: "new" });
+  }
+
+  // Found by email: straight to the register, or first "Add this phone?".
+  function found(r: CheckinFound) {
+    if (r.withPhone && r.phone) {
+      setStep({ name: "found", who: r.name, phone: r.phone, request: r.request, withPhone: r.withPhone, unlimited: r.unlimited });
+      return;
+    }
+    queue(r.request);
+    resetForm();
+    setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent", who: r.name });
+  }
+
+  function choosePhone(add: boolean) {
+    if (step.name !== "found") return;
+    queue(add ? step.withPhone : step.request);
+    resetForm();
+    setStep(step.unlimited ? { name: "sent", unlimited: true } : { name: "sent", who: step.who });
   }
 
   async function lookUp() {
-    if (busy || !isFullPhone(digits)) return;
+    if (busy || !entryReady) return;
     const ticket = session.current;
     setBusy(true);
     setError(null);
+    if (emailish) {
+      const r = await startEmailCheckin({ email: entry, phone: tried }).catch(() => null);
+      setBusy(false);
+      if (ticket !== session.current) return;
+      if (!r) return setError(OFFLINE);
+      if (!r.ok) return setError(r.error);
+      // Not one we know: make them an account (a typo can be fixed there,
+      // and an email that's on an account is still found).
+      if (r.status === "new") return startNew(true);
+      return found(r);
+    }
+    const digits = entry;
     const r = await startCheckin(digits).catch(() => null);
     setBusy(false);
     if (ticket !== session.current) return;
     if (!r) return setError(OFFLINE);
     if (!r.ok) return setError(r.error);
-    if (r.status === "new") return setStep({ name: "new" });
+    if (r.status === "new") {
+      // No account yet: their email first (most members without a phone on
+      // file have one), or "I'm new here".
+      setTried(digits);
+      setEntry("");
+      return setStep({ name: "phone", letters: true, notFound: formatPhone(digits) });
+    }
     queue(r.request);
-    setDigits("");
+    resetForm();
     setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent" });
   }
 
@@ -425,21 +546,26 @@ export default function CheckinKiosk({
     if (busy) return;
     if (!firstName.trim()) return setError("Type your first name.");
     if (!lastName.trim()) return setError("Type your last name.");
+    if (!cleanEmail(newEmail)) return setError("Check your email address.");
+    const phone = phoneDigits(newPhone);
+    if (phone && !isFullPhone(phone)) return setError("Check your phone number, or leave it blank.");
     const ticket = session.current;
     setBusy(true);
     setError(null);
-    const r = await createKioskMember({ phone: digits, firstName, lastName }).catch(() => null);
+    const r = await createKioskMember({ firstName, lastName, email: newEmail, phone: phone || null }).catch(() => null);
     setBusy(false);
     if (ticket !== session.current) return;
     if (!r) return setError(OFFLINE);
     if (!r.ok) return setError(r.error);
+    // Their email (or number) is on an account after all: that one.
+    if (r.status === "found") return found(r);
     queue(r.request);
     resetForm();
     if (r.status === "known") return setStep({ name: "sent" });
-    setStep({ name: "created", firstName: r.firstName, claimUrl: r.claimUrl });
+    setStep({ name: "created", firstName: r.firstName, claimUrl: r.claimUrl, emailed: r.emailed });
   }
 
-  const badAreaCode = digits.length === 10 && !isFullPhone(digits);
+  const badAreaCode = !emailish && entry.length === 10 && !isFullPhone(entry);
 
   return (
     <section className={k.checkin} aria-label="Check in">
@@ -468,35 +594,97 @@ export default function CheckinKiosk({
         </div>
       )}
 
-      {step.name === "phone" && (
+      {onKeypad && (
         <>
           <div>
             <div className={k.eyebrow}>Check in · earn points</div>
-            <h1 className={k.title}>Your phone number</h1>
+            <h1 className={k.title}>Phone or email</h1>
           </div>
-          <div className={k.display} aria-live="polite" aria-label="Phone number">
-            {digits ? formatPhone(digits) : <span className={k.placeholder}>(___) ___-____</span>}
+          <div className={k.display} aria-live="polite" aria-label="Phone or email">
+            {entry ? (
+              emailish ? (
+                <span className={k.displayEmail}>{entry}</span>
+              ) : (
+                formatPhone(entry)
+              )
+            ) : (
+              <span className={k.placeholder}>(___) ___-____</span>
+            )}
+            {entry && (
+              <button type="button" className={k.displayClear} disabled={busy} onClick={() => press("clear")} aria-label="Clear">
+                ×
+              </button>
+            )}
           </div>
           <div className={k.keys}>
             {KEYS.map((key) => (
               <button
                 key={key}
                 type="button"
-                className={`${k.key} ${key === "clear" || key === "back" ? k.keySmall : ""}`}
+                className={`${k.key} ${key === "back" ? k.keySmall : ""} ${key === "email" ? k.keyEmail : ""}`}
                 disabled={busy}
                 onClick={() => press(key)}
-                aria-label={key === "back" ? "Delete last digit" : key === "clear" ? "Clear" : key}
+                aria-label={key === "back" ? "Delete last character" : key === "email" ? "Use your email" : key}
               >
-                {key === "back" ? "⌫" : key === "clear" ? "Clear" : key}
+                {key === "back" ? (
+                  "⌫"
+                ) : key === "email" ? (
+                  <>
+                    <span className={k.keyAt}>@</span>
+                    <span className={k.keyAtLabel}>Email</span>
+                  </>
+                ) : (
+                  key
+                )}
               </button>
             ))}
           </div>
           {(error || badAreaCode) && <p className={k.error}>{error ?? "Start with your area code."}</p>}
-          <button className={k.cta} disabled={busy || !isFullPhone(digits)} onClick={lookUp}>
+          <button className={k.cta} disabled={busy || !entryReady} onClick={lookUp}>
             {busy ? "One moment…" : "Check in →"}
           </button>
-          <p className={k.foot}>New here? Same keypad. It takes ten seconds.</p>
+          <p className={k.foot}>Email works too: tap @. New here? Start the same way.</p>
         </>
+      )}
+
+      {step.name === "phone" && step.letters && (
+        <div className={k.board} role="group" aria-label="Check in with your email">
+          <div className={k.boardHead}>
+            <div style={{ minWidth: 0 }}>
+              <div className={k.eyebrow}>Check in · earn points</div>
+              <h1 className={k.title}>{step.notFound ? "Try your email?" : "Your email"}</h1>
+              {error ? (
+                <p className={k.boardError}>{error}</p>
+              ) : step.notFound ? (
+                <p className={k.sub}>We couldn&apos;t find {step.notFound}.</p>
+              ) : null}
+            </div>
+            <div className={k.boardActions}>
+              <button type="button" className={k.ghost} disabled={busy} onClick={() => startNew()}>
+                I&apos;m new here
+              </button>
+              <button type="button" className={`${k.ghost} ${k.ghostIcon}`} disabled={busy} onClick={reset} aria-label="Start over">
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className={k.boardEntry} aria-live="polite" aria-label="Phone or email">
+            <span className={k.boardText}>
+              {entry ? (
+                <span>
+                  {entry}
+                  <span className={k.caret} aria-hidden="true" />
+                </span>
+              ) : (
+                <span className={k.placeholder}>you@email.com</span>
+              )}
+            </span>
+          </div>
+          <button className={`${k.cta} ${k.boardCta}`} disabled={busy || !entryReady} onClick={lookUp}>
+            {busy ? "One moment…" : "Check in →"}
+          </button>
+          <LetterKeys disabled={busy} onKey={pressLetter} onDomain={domain} />
+        </div>
       )}
 
       {step.name === "new" && (
@@ -509,50 +697,104 @@ export default function CheckinKiosk({
         >
           <div>
             <div className={k.eyebrow}>Welcome to the Royale</div>
-            <h1 className={k.title}>What&apos;s your name?</h1>
-            <p className={k.sub} style={{ marginTop: 8 }}>
-              {formatPhone(digits)} is new to us. Free to join, and every visit earns points.
+            <h1 className={k.title}>Let&apos;s get you in</h1>
+            <p className={k.sub} style={{ marginTop: 6 }}>
+              {step.missed ? "We couldn't find that email. Fix it below, or join free." : "Free to join. Every visit earns points."}
             </p>
           </div>
+          <div className={k.fieldRow}>
+            <label className={k.field}>
+              <span className={k.fieldLabel}>First name</span>
+              <input
+                className={`${k.input} ${k.inputCompact}`}
+                autoFocus
+                autoComplete="given-name"
+                autoCapitalize="words"
+                enterKeyHint="next"
+                maxLength={40}
+                value={firstName}
+                onChange={(e) => {
+                  setError(null);
+                  setFirstName(e.target.value);
+                }}
+              />
+            </label>
+            <label className={k.field}>
+              <span className={k.fieldLabel}>Last name</span>
+              <input
+                className={`${k.input} ${k.inputCompact}`}
+                autoComplete="family-name"
+                autoCapitalize="words"
+                enterKeyHint="next"
+                maxLength={40}
+                value={lastName}
+                onChange={(e) => {
+                  setError(null);
+                  setLastName(e.target.value);
+                }}
+              />
+            </label>
+          </div>
           <label className={k.field}>
-            <span className={k.fieldLabel}>First name</span>
+            <span className={k.fieldLabel}>Email</span>
             <input
-              className={k.input}
-              autoFocus
-              autoComplete="given-name"
-              autoCapitalize="words"
+              className={`${k.input} ${k.inputCompact}`}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               enterKeyHint="next"
-              maxLength={40}
-              value={firstName}
+              maxLength={MAX_ENTRY}
+              value={newEmail}
               onChange={(e) => {
                 setError(null);
-                setFirstName(e.target.value);
+                setNewEmail(e.target.value);
               }}
             />
           </label>
           <label className={k.field}>
-            <span className={k.fieldLabel}>Last name</span>
+            <span className={k.fieldLabel}>Phone (optional)</span>
             <input
-              className={k.input}
-              autoComplete="family-name"
-              autoCapitalize="words"
+              className={`${k.input} ${k.inputCompact}`}
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel-national"
               enterKeyHint="done"
-              maxLength={40}
-              value={lastName}
+              maxLength={20}
+              value={newPhone}
               onChange={(e) => {
                 setError(null);
-                setLastName(e.target.value);
+                setNewPhone(e.target.value);
               }}
             />
           </label>
           {error && <p className={k.error}>{error}</p>}
-          <button type="submit" className={k.cta} disabled={busy || !firstName.trim() || !lastName.trim()}>
+          <button type="submit" className={k.cta} disabled={busy || !firstName.trim() || !lastName.trim() || !cleanEmail(newEmail)}>
             {busy ? "One moment…" : "Create my account →"}
           </button>
-          <button type="button" className={k.ghost} disabled={busy} onClick={reset}>
+          <button type="button" className={`${k.ghost} ${k.ghostShort}`} disabled={busy} onClick={reset}>
             Start over
           </button>
         </form>
+      )}
+
+      {step.name === "found" && (
+        <div className={k.done}>
+          <div className={k.eyebrow}>Found you</div>
+          <h1 className={k.title}>Welcome back, {keepTogether(step.who)}!</h1>
+          <div className={k.offer}>
+            <p className={k.offerTitle}>Add this phone for one-tap check-in next time?</p>
+            <div className={k.offerPhone}>{step.phone}</div>
+            <button className={k.cta} onClick={() => choosePhone(true)}>
+              Add it ✓
+            </button>
+            <button className={k.ghost} onClick={() => choosePhone(false)}>
+              Skip
+            </button>
+          </div>
+        </div>
       )}
 
       {step.name === "sent" && step.unlimited && (
@@ -573,7 +815,7 @@ export default function CheckinKiosk({
           <div className={k.check} aria-hidden="true">
             ✓
           </div>
-          <h1 className={k.title}>Thanks!</h1>
+          <h1 className={k.title}>{step.who ? `Welcome back, ${keepTogether(step.who)}!` : "Thanks!"}</h1>
           <p className={k.sub} style={{ fontSize: 20 }}>
             The box office will confirm you in a moment.
           </p>
@@ -587,7 +829,11 @@ export default function CheckinKiosk({
           <p className={k.sub} style={{ fontSize: 18 }}>
             The box office will confirm your first visit and your points will land.
           </p>
-          {step.claimUrl && <ClaimQrSlot url={step.claimUrl} />}
+          {step.claimUrl && isClaimUrl(step.claimUrl) ? (
+            <ClaimQrSlot url={step.claimUrl} emailed={!!step.emailed} />
+          ) : (
+            step.emailed && <p className={k.sub}>We emailed you a link to finish your account.</p>
+          )}
           <button className={k.cta} style={{ alignSelf: "stretch" }} onClick={reset}>
             Done · next person
           </button>
@@ -626,17 +872,21 @@ export default function CheckinKiosk({
 // The "finish on your phone" QR code for an account just made here: a
 // 30-minute claim link from createKioskMember (lib/member-claim.ts). With no
 // link (say the member_claims migration isn't applied yet), the screen is
-// the plain welcome.
-function ClaimQrSlot({ url }: { url: string }) {
+// the plain welcome. emailed: the same kind of link is in their inbox too.
+function ClaimQrSlot({ url, emailed }: { url: string; emailed: boolean }) {
   if (!isClaimUrl(url)) return null;
   return (
     <div className={k.claim}>
-      <ClaimQr url={url} size={188} label="QR code: finish your account on your phone" />
+      <ClaimQr url={url} size={150} label="QR code: finish your account on your phone" />
       <div className={k.claimCopy}>
-        <div className={k.claimTitle}>Scan to finish your account on your phone</div>
-        <p className={k.sub}>Add a login to see your points and visits. No need to hold up the line.</p>
+        <div className={k.claimTitle}>Scan to finish on your phone</div>
+        <p className={k.sub}>Add a login to see your points. No need to hold up the line.</p>
+        {emailed && <p className={k.sub}>Or use the link we emailed you.</p>}
       </div>
     </div>
   );
 }
+
+// "Sarah M." never breaks between the name and the initial.
+const keepTogether = (name: string) => name.replace(/ /g, " ");
 

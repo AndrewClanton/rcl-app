@@ -42,7 +42,7 @@ registerHooks({
 });
 
 const L = await import("../src/lib/member-merge.ts");
-const { usablePhone, normalName, mergeRefusal, mergedProfile, mergedVisitCount, badgeOverlap, mergeSentence, pointsText, isTabletMade, isLikelyTabletDuplicate, suggestKeep, mergeHref } = L;
+const { usablePhone, normalName, mergeRefusal, mergedProfile, mergedVisitCount, badgeOverlap, mergeSentence, pointsText, isTabletMade, isEmailSignUp, isLikelyTabletDuplicate, suggestKeep, mergeHref } = L;
 const { REFUSE_SAME, REFUSE_MISSING, REFUSE_ERASED, REFUSE_LOGINS, REFUSE_BILLING, CARRIED_LABEL, MERGE_MEMBER_COLUMNS } = L;
 
 let failures = 0;
@@ -224,6 +224,16 @@ eq("the Jake pair is flagged", isLikelyTabletDuplicate(imported, madeToday, true
 eq("not if the names differ", isLikelyTabletDuplicate(imported, madeToday, false, now), false);
 eq("not if the older one has a usable phone (the tablet would have found it)", isLikelyTabletDuplicate({ ...imported, phone: "417-555-0199" }, madeToday, true, now), false);
 eq("not the wrong way round", isLikelyTabletDuplicate(madeToday, imported, true, now), false);
+// "Phone or email" (10/1): the tablet also makes accounts with an email and no phone.
+const emailToday = { id: "c", created_at: "2026-10-01T02:00:00Z", phone: null, email: "jake@example.com", legacy_user_id: null, imported_at: null };
+eq("made today with an email and no phone counts as a sign-up", isEmailSignUp(emailToday, now), true);
+eq("...but isn't 'made at the tablet by phone'", isTabletMade(emailToday, now), false);
+eq("an import with an email isn't a sign-up", isEmailSignUp({ ...imported, email: "jake@example.com" }, now), false);
+eq("nor one with no email", isEmailSignUp({ ...emailToday, email: null }, now), false);
+eq("an email sign-up and an older same-name account with no phone are flagged", isLikelyTabletDuplicate(imported, emailToday, true, now), true);
+eq("the same email is flagged even when the older one has a usable phone", isLikelyTabletDuplicate({ ...imported, phone: "417-555-0199" }, emailToday, false, now, true), true);
+eq("the same email from the phone side too", isLikelyTabletDuplicate({ ...imported, phone: "417-555-0199" }, madeToday, false, now, true), true);
+eq("but not when neither account is new", isLikelyTabletDuplicate(imported, { ...imported, id: "z" }, false, now, true), false);
 eq("the older account is kept by default", suggestKeep(madeToday, imported).keep.id, "a");
 eq("the review link", mergeHref("k", "d"), "/admin/members/k/merge?drop=d");
 

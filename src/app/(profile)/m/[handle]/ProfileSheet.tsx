@@ -28,7 +28,7 @@ export default function ProfileSheet({ p }: { p: PublicProfile }) {
       <section className="rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] p-5 sm:p-6">
         <h2 className="font-display text-xl">Start your own</h2>
         <p className="mt-1 text-[15px] text-[var(--muted)]">
-          Royale Insiders is free. Check in at the door with your phone number, earn points and badges, pick your own check-in entrance, and share a page like
+          Royale Insiders is free. Check in at the door with your phone number or email, earn points and badges, pick your own check-in entrance, and share a page like
           this one.
         </p>
         <div className="mt-4 flex flex-wrap gap-3">
