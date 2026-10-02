@@ -1,16 +1,18 @@
-// Check-in for points, shared by the customer screen (which asks) and the
-// register (which confirms). They talk over their own Realtime broadcast
-// channel, next to the cart mirror's (see registerChannel.ts), named from the
-// same server-side secret.
+// Check-in for points, shared by the customer screen (which checks people
+// in) and the register (which shows staff who just came in). They talk over
+// their own Realtime broadcast channel, next to the cart mirror's (see
+// registerChannel.ts), named from the same server-side secret.
 //
-// Nothing on the channel identifies anyone until staff say it's them: a
-// request carries only an opaque, sealed reference (lib/checkin-server.ts)
-// that the register trades for the details through a staff-only server
-// action. After staff confirm, the screen gets a first name and a points
+// Typing a phone number or email at the screen is the check-in (Andrew,
+// 10/2): the screen's server action records the visit and pays its points
+// there and then, and the screen plays the reward. Nothing on the channel
+// identifies anyone: a request carries only an opaque, sealed reference
+// (lib/checkin-server.ts) that the register trades for the details through
+// a staff-only server action, to show who it is and put them on the order,
+// with Undo for a mistake. A shared family number still waits for staff to
+// pick the face; once they do, the screen gets a first name and a points
 // balance, their profile line (unless staff hid it) and their check-in
-// flair as catalog keys (lib/flair.ts), never anything else -- plus, for a
-// member with no website login yet, a claim link (lib/claim-link.ts) to
-// show as a QR code.
+// flair as catalog keys (lib/flair.ts), never anything else.
 //
 // Events:
 //   screen -> register  "checkin-request"   CheckinRequest (resent until seen)
@@ -36,11 +38,22 @@ import { isGuestName } from "@/lib/member-name";
 
 export type CheckinKind = "known" | "new";
 
+// done: the visit is already recorded and paid (Andrew, 10/2: typing your
+// number or email at the screen IS the check-in), so the register just shows
+// who it is, puts them on the order and offers Undo. Without it (a shared
+// family number, where staff pick the face) staff still check them in.
+// The register never trusts this flag: the sealed reference says the same.
 export interface CheckinRequest {
   id: string;
   ref: string;
   kind: CheckinKind;
+  done?: boolean;
 }
+
+// What the screen gets back the moment its check-in is recorded (display/
+// customer/actions.ts): the same things a register's confirmation carries,
+// for the reward that plays there.
+export type TabletCheckin = Omit<CheckinConfirmed, "id" | "claimUrl">;
 
 export interface CheckinConfirmed {
   id: string;

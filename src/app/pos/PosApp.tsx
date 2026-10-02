@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot, type TabletProfile } from "@/lib/registerChannel";
+import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type TabletProfile } from "@/lib/registerChannel";
+import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -277,6 +278,12 @@ export default function PosApp({
     setMember(m);
     if (m) setMonthlyMember(false);
   }
+  // Who's on the order right now, for a check-in whose lookup finishes
+  // between renders (autoAttach).
+  const memberNow = useRef<PosMember | null>(null);
+  useEffect(() => {
+    memberNow.current = member;
+  }, [member]);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   // The tab whose last save failed; its warning shows while it's on screen.
@@ -342,7 +349,51 @@ export default function PosApp({
   // Check-ins from the customer screen. Always listening, whatever's on
   // screen; staff answer them on the Customers tab, whose count shows how
   // many are waiting.
-  const checkins = useRegisterCheckins({ registerTopic, member, onAttach: attachMember, hasOrder: cart.length > 0 || !!activeTabId, lastSale: lastReceipt });
+  // A check-in that finds one account puts them on the order by itself, the
+  // latest one in taking over from whoever was on it (Andrew, 10/2), with
+  // "Now on this order: Sarah M. (was Bob K.)" and Undo (swap). Never
+  // mid-payment (the check-in pop-up lets staff choose then), and not on a
+  // register nobody's looking at (a phone left open on /pos).
+  // The note shows for 20 seconds (swapNote: its key); who to put back
+  // stays while the newcomer is on the order.
+  const [swap, setSwap] = useState<{ key: number; now: PosMember; was: PosMember } | null>(null);
+  const [swapNote, setSwapNote] = useState<number | null>(null);
+  useEffect(() => {
+    if (!swapNote) return;
+    const timer = setTimeout(() => setSwapNote(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [swapNote]);
+  const swapShown = swap && swapNote === swap.key && member?.id === swap.now.id ? swap : null;
+  function autoAttach(m: PosMember): boolean {
+    if (payOpen || busy || finalizingRef.current || document.visibilityState !== "visible") return false;
+    const was = memberNow.current;
+    if (was?.id === m.id) return true;
+    memberNow.current = m;
+    attachMember(m);
+    const key = Date.now();
+    setSwap(was ? { key, now: m, was } : null);
+    setSwapNote(was ? key : null);
+    return true;
+  }
+  // Off again ("Not them", "Undo", or "Done" / "That's not me" on the
+  // customer screen): whoever they took over from comes back.
+  function autoUndo(memberId: string): PosMember | null {
+    if (memberNow.current?.id !== memberId) return null;
+    const back = swap?.now.id === memberId ? swap.was : null;
+    memberNow.current = back;
+    attachMember(back);
+    setSwap(null);
+    return back;
+  }
+  const checkins = useRegisterCheckins({
+    registerTopic,
+    member,
+    onAttach: attachMember,
+    autoAttach,
+    autoUndo: (id) => void autoUndo(id),
+    hasOrder: cart.length > 0 || !!activeTabId,
+    lastSale: lastReceipt,
+  });
   const waiting = checkins.pending.length;
   // Something on the Customers tab still to act on that isn't a check-in:
   // tickets to print, a possible duplicate account, or a former unlimited
@@ -584,6 +635,41 @@ export default function PosApp({
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
+  // A form staff fill in for a guest standing there shows on the customer
+  // screen as it's typed (tablet-setup.tsx), and the guest's "✓ That's
+  // right" there comes back here to the open form, which saves it.
+  const setupForms = useRef(new Map<string, () => void>());
+  const tabletSetup = useMemo<TabletSetupLink>(
+    () => ({
+      send: (event, payload) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
+      listen: (id, onOk) => {
+        setupForms.current.set(id, onOk);
+        return () => {
+          if (setupForms.current.get(id) === onOk) setupForms.current.delete(id);
+        };
+      },
+    }),
+    [],
+  );
+  const onSetupOk = useEffectEvent((id: unknown) => {
+    if (typeof id === "string") setupForms.current.get(id)?.();
+  });
+
+  // "Done" or "That's not me" under their card on the customer screen: off
+  // the order, if they're still the one on it ("Done" only while nothing's
+  // rung up: once it is, they're buying), and whoever their check-in took
+  // over from comes back. "That's not me" also lets go of the check-in
+  // that put them there.
+  const onMemberOff = useEffectEvent((p: Partial<MemberOff> | null) => {
+    if (!p || typeof p.firstName !== "string" || !member || firstNameFor(member.name) !== p.firstName) return;
+    if (p.why !== "not-me" && (cart.length > 0 || activeTabId)) return;
+    const back = autoUndo(member.id);
+    if (p.why === "not-me") checkins.notMe(member.id);
+    const message = `${member.name} tapped ${p.why === "not-me" ? "“That's not me”" : "Done"} on the customer screen, so they're off the order${back ? ` and ${back.name} is back on it` : ""}.`;
+    setToast(message);
+    setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
+  });
+
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(registerTopic);
@@ -592,6 +678,8 @@ export default function PosApp({
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
       })
+      .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
+      .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -1158,6 +1246,7 @@ export default function PosApp({
         <CheckinArrivals
           arrivals={checkins.arrivals}
           onDismiss={checkins.dismissArrival}
+          onUndo={checkins.undo}
           onOpen={(id) => {
             checkins.dismissArrival(id);
             pickTab(CUSTOMERS_TAB);
@@ -1315,6 +1404,25 @@ export default function PosApp({
             </div>
           )}
 
+          {/* A check-in on the customer screen took over the order from whoever was on it. */}
+          {swapShown && (
+            <div className="notice notice-success flex items-center gap-2 !py-1 !pl-2.5 !pr-1 text-sm" role="status">
+              <span className="min-w-0 flex-1 leading-snug">
+                <strong>Now on this order: {shortName(swapShown.now.name)}</strong> (was {shortName(swapShown.was.name)})
+              </span>
+              <button className="btn-secondary min-h-11 shrink-0 !px-4 !py-1 text-sm font-bold" onClick={() => autoUndo(swapShown.now.id)}>
+                Undo
+              </button>
+              <button
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-lg leading-none"
+                style={{ color: "var(--muted)" }}
+                aria-label="Dismiss"
+                onClick={() => setSwapNote(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
           {toast && (
             <div className="notice notice-success p-2.5 text-xs">
               {toast}
@@ -1425,9 +1533,12 @@ export default function PosApp({
             )
           )}
 
+          {/* Its "+ Add name" / "+ Add email" show on the customer screen as they're typed. */}
+          <TabletSetupContext value={tabletSetup}>
           <PosMemberPanel
             member={member}
             onChange={attachMember}
+            visit={checkins.visitFor(memberId)}
             coffee={
               isPlus
                 ? {
@@ -1450,6 +1561,7 @@ export default function PosApp({
             readerId={readerId}
             toTablet={checkins.toTablet}
           />
+          </TabletSetupContext>
 
           <div className="space-y-1 pt-1">
           {/* With a member on the order, their discount is ticked by itself
@@ -1631,7 +1743,10 @@ export default function PosApp({
 
         <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
         {categoryId === CUSTOMERS_TAB ? (
-          <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={attachMember} findAt={findAt} readerId={readerId} employeeId={employeeId} />
+          // Its "New phone account" shows on the customer screen as it's typed.
+          <TabletSetupContext value={tabletSetup}>
+            <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={attachMember} findAt={findAt} readerId={readerId} employeeId={employeeId} />
+          </TabletSetupContext>
         ) : categoryId === MOVIES_TAB ? (
           <MovieTickets
             initial={initialScreenings}

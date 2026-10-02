@@ -7,17 +7,18 @@ import InfoTip from "@/components/help/InfoTip";
 import { checkinTopic, firstNameOf, last10, type CheckinConfirmed, type CheckinKind, type CheckinRequest, type PointsEarned } from "@/lib/checkin";
 import type { ReceiptData } from "@/lib/print/receipt";
 import { POINTS_PER_REWARD } from "@/lib/loyalty";
-import { REWARD_LABEL, badgeList } from "@/lib/visits";
+import { REWARD_LABEL, badgeFor, badgeList } from "@/lib/visits";
 import { entranceFor, flairColor, parseFlair } from "@/lib/flair";
-import { confirmVisit, createCheckinMember, getDuplicateHint, getHereToday, resolveCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
+import { confirmVisit, createCheckinMember, getDuplicateHint, getHereToday, resolveCheckin, undoCheckin, type CheckinCard, type HereToday } from "./checkin-actions";
 import { getPosMember, type PosMember } from "./member-actions";
 import { getMemberTicketsToday } from "./scan-actions";
 import { printDoorTickets } from "./door-print";
 import { usePrintTarget } from "./printing";
 import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
 import { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
-import { memberSignal } from "./member-signal";
+import { memberSignal, memberStanding } from "./member-signal";
 import { shortName } from "@/lib/card-match";
+import type { VisitWaiting } from "./PosMemberPanel";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -62,7 +63,11 @@ function phoneEnding(m: PosMember) {
 
 // A check-in that just came in from the customer screen, popped up over the
 // top of the order (CheckinArrivals): their face and name, big, so staff
-// put the two together, and a tap to confirm them on the Customers tab.
+// put the two together. Checked in already at the screen (done): what
+// staff need to give great service (where they stand and the one most
+// useful thing to know or do, serviceNote) and "Undo / Not them" for a
+// mistake. A shared family number still waiting: a tap to pick who it is
+// on the Customers tab.
 export interface Arrival {
   id: string; // the check-in's
   name: string; // "Sarah M."
@@ -70,12 +75,61 @@ export interface Arrival {
   plus: boolean; // Insiders+ that's paid for: the gold ring
   color: string | null; // their favorite color (lib/flair.ts), a stripe down the side
   note: string;
+  tone?: "red" | "gold" | null; // the note's: red for no payment on file
+  sub?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
+  done?: boolean;
+  working?: boolean; // being undone
 }
 
-// Up this long, at most this many at once (the newest), and gone as soon
-// as the check-in is answered.
+// Up this long (a little longer for a check-in that's done: there's more
+// to read), at most this many at once (the newest), and gone as soon as
+// it's answered or undone.
 const ARRIVAL_MS = 8_000;
+const DONE_ARRIVAL_MS = 12_000;
 const ARRIVALS_MAX = 2;
+
+// A check-in done at the screen (its visit recorded and paid there), kept
+// for Undo while its sealed reference lasts. auto: it put them on the order.
+export interface RecentCheckin {
+  id: string;
+  ref: string;
+  at: number;
+  member: PosMember;
+  card: Extract<CheckinCard, { kind: "known" }>;
+  auto: boolean;
+  working: boolean;
+}
+
+// The one most useful thing for staff to know about who just walked in,
+// most urgent first: money (red), a first visit, their birthday week, a
+// name to ask for, a free coffee waiting, a new badge; else where they
+// stand.
+export function serviceNote(m: PosMember, card: Extract<CheckinCard, { kind: "known" }>): { text: string; tone: "red" | "gold" | null } {
+  if (m.legacyUnlimited) return { text: "No payment on file for unlimited", tone: "red" };
+  const signal = memberStanding(m);
+  if (signal === "nocard") return { text: "Insiders+ · no card on file", tone: "red" };
+  if (card.today?.visits === 1 || (card.fresh && !card.today)) return { text: "First visit · welcome them!", tone: "gold" };
+  if (m.partyWeek) return { text: "🎂 Birthday week!", tone: "gold" };
+  if (m.named === false) return { text: "Ask their name?", tone: null };
+  if (signal === "plus" && card.coffee === "ready") return { text: "Insiders+ · free coffee ready ☕", tone: "gold" };
+  const badges = (card.today?.badges ?? []).flatMap((k) => badgeFor(k)?.label ?? []);
+  if (badges.length) return { text: `New badge: ${badges.join(", ")}`, tone: "gold" };
+  return { text: signal === "plus" ? "Insiders+ · Active" : `${m.tier}`, tone: null };
+}
+
+// "+5 pts · 140 pts · 🔥 3 weeks", or "Already checked in today · 140 pts".
+function visitLine(m: PosMember, card: Extract<CheckinCard, { kind: "known" }>): string {
+  const t = card.today;
+  const streak = t?.streak && t.streak > 1 ? ` · 🔥 ${t.streak} weeks` : "";
+  if (card.paid === false) return `Already checked in today · ${pts(m.points)}`;
+  return `${t?.points ? `+${pts(t.points)} · ` : ""}${pts(m.points)}${streak}`;
+}
+
+// Checked in at the screen a moment ago. One from longer ago (a register
+// that opened since, or was offline) is shown, but not put on the order:
+// they've likely gone, and the order on screen is someone else's.
+const AUTO_ATTACH_S = 120;
+const fresh = (card: Extract<CheckinCard, { kind: "known" }>) => (card.age ?? 0) < AUTO_ATTACH_S;
 
 // The tablet's "Just use my phone number" just made it (lib/member-name.ts).
 function freshPhoneAccount(card: Extract<CheckinCard, { kind: "known" }>) {
@@ -86,12 +140,13 @@ function arrivalFor(id: string, card: CheckinCard): Arrival {
   if (card.kind === "new") return { id, name: card.firstName, photo: null, plus: false, color: null, note: "New regular · just signed up" };
   if (card.matches.length === 1) {
     const m = card.matches[0];
+    const face = { id, name: shortName(m.name), photo: m.avatar_url, plus: memberSignal(m) === "plus", color: flairColor(m.flair?.color)?.hex ?? null };
+    if (card.done) {
+      const note = serviceNote(m, card);
+      return { ...face, note: note.text, tone: note.tone, sub: visitLine(m, card), done: true };
+    }
     return {
-      id,
-      name: shortName(m.name),
-      photo: m.avatar_url,
-      plus: memberSignal(m) === "plus",
-      color: flairColor(m.flair?.color)?.hex ?? null,
+      ...face,
       note: freshPhoneAccount(card) ? "New phone account · just joined" : card.fresh ? "New regular · just signed up" : card.addName ? `Just checked in · adding name ${card.addName}` : "Just checked in",
     };
   }
@@ -120,8 +175,20 @@ export interface Checkins {
   // (lib/legacy-plus.ts): the card to set it up, top of the Customers tab.
   unlimited: PosMember | null;
   printing: boolean;
+  // Check-ins done at the screen lately, newest first, for Undo.
+  recent: RecentCheckin[];
   retry: (p: Pending) => void;
   confirm: (p: Pending, m: PosMember, addToOrder: boolean) => void;
+  // "Undo / Not them" on a done check-in (its pop-up, the Member box, or
+  // the Customers tab): the visit and its points taken back.
+  undo: (id: string) => void;
+  // The member on the order's check-in from the screen, for the order's
+  // Member box: done (with Undo), or still waiting (confirm or Not them).
+  visitFor: (memberId: string | null) => VisitWaiting | null;
+  // The guest tapped "That's not me" under their card on the customer
+  // screen (PosApp has taken them off the order): the check-in that put
+  // them there is undone too.
+  notMe: (memberId: string) => void;
   create: (p: Pending, existingId: string | null, addToOrder: boolean) => void;
   decline: (p: Pending) => void;
   printTonight: () => void;
@@ -137,36 +204,45 @@ export interface Checkins {
 
 // The register's side of "Check in for points" on the customer screen.
 // Always running while the register is open (PosApp calls it), whatever is
-// on screen: it listens for check-ins, keeps them until staff answer, and
-// tells the customer screen what happened. What staff see lives on the
-// register's Customers tab (CustomersTab.tsx), and the tab's count shows how
-// many are waiting, so nothing floats over the menu buttons. A new one also
-// pops up over the top of the order for a few seconds (CheckinArrivals).
+// on screen: it listens for check-ins and tells the customer screen what
+// happened. What staff see lives on the register's Customers tab
+// (CustomersTab.tsx), so nothing floats over the menu buttons, and each new
+// check-in pops up over the top of the order for a few seconds
+// (CheckinArrivals).
 //
-// A check-in waits as a card -- photo, full name, last four of the phone
-// (or "By email") -- for staff to Check in (that's them) or say Not them.
-// Found by email with no phone on file, the card can say "Will add phone":
-// the number they typed is saved when staff check them in. A number we
-// don't know shows as "New regular" with Create. Cards wait up to 15 minutes, and
-// if there's no order open yet, "+ order" puts them on the next one. When a
-// sale with a member on it completes, this tells the customer screen to play
-// the points burst.
+// Typing a number or email at the screen is the check-in (Andrew, 10/2):
+// its visit is recorded and paid there (display/customer/actions.ts), so
+// there's nothing for staff to confirm. Here it goes straight onto the
+// order, the latest one in taking over from whoever was on it (autoAttach,
+// PosApp: never mid-payment), and the pop-up shows who it is and the one
+// thing to know (serviceNote). "Undo / Not them" (the pop-up, the order's
+// Member box, or Just checked in on the Customers tab) takes the visit and
+// its points back and takes them off the order (autoUndo: whoever they
+// took over from comes back).
 //
-// Confirming is a visit (lib/visits.ts): Check in pays the check-in's points
-// and any new badges without touching the order, so a group can check in as
-// they walk in and buy later; "+ add to order" also puts them on the order.
-// Everyone checked in today is listed under "Checked in today", faces first,
-// so staff learn names and can put someone on an order with one tap.
+// Only a phone number shared by a few accounts still waits as a card for
+// staff to pick the face (Waiting to confirm); its Check in pays the visit
+// (lib/visits.ts), and "+ add to order" also puts them on the order.
+// Everyone checked in today is listed under "Checked in today", faces
+// first, so staff learn names and can put someone on an order with one
+// tap. When a sale with a member on it completes, this tells the customer
+// screen to play the points burst.
 export function useRegisterCheckins({
   registerTopic,
   member,
   onAttach,
+  autoAttach,
+  autoUndo,
   hasOrder,
   lastSale,
 }: {
   registerTopic: string;
   member: PosMember | null;
   onAttach: (m: PosMember) => void;
+  // Puts them on the order: true if it did.
+  autoAttach?: (m: PosMember) => boolean;
+  // Takes someone autoAttach put on the order off it again.
+  autoUndo?: (memberId: string) => void;
   hasOrder: boolean;
   lastSale: ReceiptData | null;
 }): Checkins {
@@ -192,6 +268,19 @@ export function useRegisterCheckins({
   // again, and every request already on screen (screens resend until seen).
   const answered = useRef(new Map<string, { event: string; payload: object }>());
   const shown = useRef(new Set<string>());
+  // Check-ins still waiting that put their member on the order by
+  // themselves: check-in id -> member id.
+  const [autoOn, setAutoOn] = useState<Record<string, string>>({});
+  // Check-ins done at the screen, newest first, for Undo.
+  const [recent, setRecent] = useState<RecentCheckin[]>([]);
+  // The latest autoAttach and member on the order (a lookup or a check-in
+  // finishes after the render it began in).
+  const autoRef = useRef(autoAttach);
+  const memberNow = useRef(member);
+  useEffect(() => {
+    autoRef.current = autoAttach;
+    memberNow.current = member;
+  });
 
   function send(event: string, payload: object) {
     channelRef.current?.send({ type: "broadcast", event, payload });
@@ -210,20 +299,52 @@ export function useRegisterCheckins({
     remember(id, event, payload);
     send(event, payload);
     setPending((ps) => ps.filter((p) => p.id !== id));
+    setAutoOn((a) => (id in a ? Object.fromEntries(Object.entries(a).filter(([k]) => k !== id)) : a));
   }
 
-  async function load(id: string, ref: string) {
+  // A request from the screen: who it is. Done at the screen already (its
+  // visit recorded and paid there, as almost every one is): straight to
+  // `recent`, on the order, and a pop-up for staff. Otherwise (a shared
+  // family number) it waits in `pending` for staff to pick the face.
+  async function load(id: string, ref: string, kind: CheckinKind) {
     patch(id, { error: null, working: true });
     const r = await resolveCheckin(ref).catch(() => null);
-    if (!r) return patch(id, { working: false, error: OFFLINE });
+    const waiting = (changes: Partial<Pending>) =>
+      setPending((ps) =>
+        ps.some((p) => p.id === id) ? ps.map((p) => (p.id === id ? { ...p, ...changes } : p)) : [...ps, { id, ref, kind, at: clock(), card: null, error: null, working: false, ...changes }],
+      );
+    if (!r) return waiting({ working: false, error: OFFLINE });
     if (!r.ok) {
       // Too old to use: the screen has long since moved on.
       if (r.expired) return answer(id, "checkin-declined", { id });
-      return patch(id, { working: false, error: r.error });
+      return waiting({ working: false, error: r.error });
     }
-    patch(id, { working: false, card: r.card });
+    if (r.card.kind === "known" && r.card.done && r.card.matches.length === 1) return checkedIn(id, ref, r.card);
+    waiting({ working: false, card: r.card });
     send("checkin-seen", { id });
-    arrive(arrivalFor(id, r.card));
+    // One account: on the order now (unless it's mid-payment).
+    const one = r.card.kind === "known" && r.card.matches.length === 1 ? r.card.matches[0] : null;
+    const auto = !!one && r.card.kind === "known" && fresh(r.card) && !!autoRef.current?.(one);
+    if (one && auto) setAutoOn((a) => ({ ...a, [id]: one.id }));
+    const a = arrivalFor(id, r.card);
+    arrive(auto ? { ...a, note: "Now on this order" } : a);
+  }
+
+  // Checked in at the screen: seen (so it stops resending), on the order
+  // (the latest one in takes over, unless it's mid-payment), a pop-up with
+  // what staff need to know, and the same follow-ups a confirmation had.
+  function checkedIn(id: string, ref: string, card: Extract<CheckinCard, { kind: "known" }>) {
+    const m = card.matches[0];
+    setPending((ps) => ps.filter((p) => p.id !== id));
+    remember(id, "checkin-seen", { id });
+    send("checkin-seen", { id });
+    const auto = fresh(card) && !!autoRef.current?.(m);
+    setRecent((rs) => [{ id, ref, at: clock(), member: m, card, auto, working: false }, ...rs.filter((x) => x.id !== id)].slice(0, 12));
+    arrive(arrivalFor(id, card));
+    followUp(id, m);
+    const bits = [card.fresh ? `New regular ${m.name} checked in on the screen.` : `${m.name} checked in on the screen.`, visitLine(m, card) + "."];
+    if (auto) bits.push("They're on the order.");
+    setNotice(bits.join(" "));
   }
 
   function arrive(a: Arrival) {
@@ -231,7 +352,55 @@ export function useRegisterCheckins({
     arrived.current.add(a.id);
     if (arrived.current.size > 50) arrived.current.delete(arrived.current.values().next().value as string);
     setArrivals((as) => [...as, a].slice(-ARRIVALS_MAX));
-    setTimeout(() => dismissArrival(a.id), ARRIVAL_MS);
+    setTimeout(() => dismissArrival(a.id), a.done ? DONE_ARRIVAL_MS : ARRIVAL_MS);
+  }
+
+  // After a check-in: their tickets for today, if they bought any online (a
+  // Print row on the Customers tab, and the tickets on the customer screen),
+  // a possible second account for an older member, and the card to set up
+  // an unlimited membership with no payment on file. Each its own message,
+  // so nothing waits on another.
+  function followUp(id: string, m: PosMember) {
+    void getMemberTicketsToday(m.id)
+      .then((t) => {
+        if (!t.ok || t.tickets.length === 0) return;
+        setTonight({ member: m, tickets: t.tickets });
+        const shown: CheckinTickets = { id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
+        send("checkin-tickets", shown);
+      })
+      .catch(() => {});
+    // Possibly a second account for an older member (made at the tablet,
+    // same name, the old one has no usable phone).
+    setDupHint(null);
+    void getDuplicateHint(m.id)
+      .then((h) => {
+        if (h) setDupHint({ name: m.name, href: h.href, olderId: h.olderId, unlimited: h.unlimited });
+      })
+      .catch(() => {});
+    // No payment on file for their unlimited membership: the card to set it
+    // up goes to the top of the Customers tab.
+    setUnlimited(m.legacyUnlimited ? m : null);
+    void refreshHere();
+  }
+
+  // "Undo / Not them": the check-in's visit and its points taken back
+  // (undoCheckin), and off the order if it put them there (whoever they
+  // took over from comes back). detach false: they're off it already (they
+  // said "That's not me" on the screen).
+  async function undo(id: string, detach = true) {
+    const rec = recent.find((r) => r.id === id);
+    if (!rec || rec.working) return;
+    setRecent((rs) => rs.map((r) => (r.id === id ? { ...r, working: true } : r)));
+    const r = await undoCheckin(rec.member.id, rec.ref).catch(() => null);
+    if (!r?.ok) {
+      setRecent((rs) => rs.map((x) => (x.id === id ? { ...x, working: false } : x)));
+      return setNotice(`${rec.member.name}: ${r?.error ?? OFFLINE}`);
+    }
+    setRecent((rs) => rs.filter((x) => x.id !== id));
+    dismissArrival(id);
+    if (detach) autoUndo?.(rec.member.id);
+    setNotice(`${rec.member.name}: ${r.note}`);
+    void refreshHere();
   }
 
   function dismissArrival(id: string) {
@@ -247,8 +416,9 @@ export function useRegisterCheckins({
     const r = await confirmVisit(cardMember.id, p.ref).catch(() => null);
     const m = (r?.ok && r.member) || cardMember;
     const visit = r?.ok ? r.visit : null;
-    const already = member?.id === m.id;
-    if (addToOrder) onAttach(m);
+    const already = memberNow.current?.id === m.id;
+    // On the order already: refreshed there too (their new points).
+    if (addToOrder || already) onAttach(m);
     const confirmed: CheckinConfirmed = {
       id: p.id,
       firstName: firstNameOf(m.name),
@@ -265,29 +435,7 @@ export function useRegisterCheckins({
       ...(m.tagline ? { line: m.tagline } : {}),
     };
     answer(p.id, "checkin-confirmed", confirmed);
-    // Their tickets for today, if they bought any online: a Print row on the
-    // Customers tab, and the tickets on the customer screen. A separate
-    // message, so the confirmation above never waits on it.
-    void getMemberTicketsToday(m.id)
-      .then((t) => {
-        if (!t.ok || t.tickets.length === 0) return;
-        setTonight({ member: m, tickets: t.tickets });
-        const shown: CheckinTickets = { id: p.id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
-        send("checkin-tickets", shown);
-      })
-      .catch(() => {});
-    // Possibly a second account for an older member (made at the tablet,
-    // same name, the old one has no usable phone). Also its own message,
-    // after the confirmation.
-    setDupHint(null);
-    void getDuplicateHint(m.id)
-      .then((h) => {
-        if (h) setDupHint({ name: m.name, href: h.href, olderId: h.olderId, unlimited: h.unlimited });
-      })
-      .catch(() => {});
-    // No payment on file for their unlimited membership: the card to set it
-    // up goes to the top of the Customers tab.
-    setUnlimited(m.legacyUnlimited ? m : null);
+    followUp(p.id, m);
     const bits = [
       isNew && m.phoneOnly && m.named === false
         ? `New phone account ${m.name} is set up and checked in. Add their name from the member box anytime.`
@@ -305,7 +453,6 @@ export function useRegisterCheckins({
     if (r?.ok && r.nameNote) bits.push(r.nameNote);
     if (note) bits.push(note);
     setNotice(bits.join(" "));
-    void refreshHere();
   }
 
   async function create(p: Pending, existingId: string | null, addToOrder: boolean) {
@@ -335,8 +482,36 @@ export function useRegisterCheckins({
     if (list) setHere(list);
   }
 
+  // Not them: a check-in that put them on the order takes them off again.
   function decline(p: Pending) {
+    const put = autoOn[p.id];
     answer(p.id, "checkin-declined", { id: p.id });
+    if (put) autoUndo?.(put);
+  }
+
+  // The one account's check-in, for "✓ Check in" on its pop-up or in the
+  // Member box: on the order already, they're refreshed there (their new
+  // points, in confirm); otherwise the order is left as it is.
+  function confirmOne(p: Pending) {
+    if (p.card?.kind !== "known" || p.card.matches.length !== 1) return;
+    void confirm(p, p.card.matches[0], p.card.fresh === true, null, false);
+  }
+
+  function visitFor(memberId: string | null): VisitWaiting | null {
+    if (!memberId) return null;
+    const rec = recent.find((r) => r.member.id === memberId);
+    if (rec) return { done: true, auto: rec.auto, working: rec.working, line: visitLine(rec.member, rec.card), undo: () => void undo(rec.id) };
+    const p = pending.find((x) => x.card?.kind === "known" && x.card.matches.length === 1 && x.card.matches[0].id === memberId);
+    if (!p) return null;
+    return { done: false, auto: autoOn[p.id] === memberId, working: p.working, confirm: () => confirmOne(p), undo: () => decline(p) };
+  }
+
+  // "That's not me" on the customer screen: the check-in that put them on
+  // the order is undone (its visit and points), or one still waiting is
+  // answered without the "see the box office" banner.
+  function notMe(memberId: string) {
+    for (const r of recent) if (r.member.id === memberId && r.auto) void undo(r.id, false);
+    for (const [id, put] of Object.entries(autoOn)) if (put === memberId) answer(id, "checkin-declined", { id, quiet: true });
   }
 
   async function openOlder() {
@@ -361,8 +536,9 @@ export function useRegisterCheckins({
     shown.current.add(id);
     const at = clock();
     setNow(at);
-    setPending((ps) => [...ps, { id, ref, kind, at, card: null, error: null, working: true }]);
-    void load(id, ref);
+    // Done at the screen: nothing to wait on (it shows once it's looked up).
+    if (raw.done !== true) setPending((ps) => [...ps, { id, ref, kind, at, card: null, error: null, working: true }]);
+    void load(id, ref, kind);
   });
 
   // The customer backed out on the screen.
@@ -409,16 +585,18 @@ export function useRegisterCheckins({
     };
   }, [registerTopic]);
 
-  // Keeps the "n min ago" labels current, and lets old cards go.
+  // Keeps the "n min ago" labels current, and lets old cards go (and done
+  // check-ins' Undo, with their sealed reference).
   useEffect(() => {
-    if (!pending.length) return;
+    if (!pending.length && !recent.length) return;
     const timer = setInterval(() => {
       const t = clock();
       setNow(t);
       setPending((ps) => ps.filter((p) => t - p.at < LIFETIME_MS));
+      setRecent((rs) => (rs.some((r) => t - r.at >= LIFETIME_MS) ? rs.filter((r) => t - r.at < LIFETIME_MS) : rs));
     }, 30_000);
     return () => clearInterval(timer);
-  }, [pending.length]);
+  }, [pending.length, recent.length]);
 
   // Nothing covers the menu any more, so the result can stay up long enough
   // to read (or until it's closed).
@@ -466,9 +644,15 @@ export function useRegisterCheckins({
 
   return {
     pending,
-    // Only while the check-in is still waiting: answered here, on the other
-    // register, or backed out of on the screen, it's gone.
-    arrivals: arrivals.filter((a) => pending.some((p) => p.id === a.id)),
+    // Only while the check-in is still waiting (answered here, on the other
+    // register, or backed out of on the screen, it's gone), or done and not
+    // undone.
+    arrivals: arrivals.flatMap((a) => {
+      const p = pending.find((x) => x.id === a.id);
+      if (p) return [{ ...a, working: p.working }];
+      const r = recent.find((x) => x.id === a.id);
+      return r ? [{ ...a, working: r.working }] : [];
+    }),
     dismissArrival,
     now,
     here,
@@ -477,10 +661,14 @@ export function useRegisterCheckins({
     dupHint,
     unlimited,
     printing,
-    retry: (p) => void load(p.id, p.ref),
+    recent,
+    retry: (p) => void load(p.id, p.ref, p.kind),
     // A "known" card for an account the tablet just made is that person's
     // first visit, so the tablet greets them as new.
     confirm: (p, m, addToOrder) => void confirm(p, m, p.card?.kind === "known" && p.card.fresh === true, null, addToOrder),
+    undo: (id) => void undo(id),
+    visitFor,
+    notMe,
     create: (p, existingId, addToOrder) => void create(p, existingId, addToOrder),
     decline,
     printTonight: () => void printTonight(),
@@ -496,9 +684,21 @@ export function useRegisterCheckins({
 // "Sarah M. · Just checked in", popped up over the top of the order (the
 // cashier and tab rows) for 8 seconds: never over the menu buttons or the
 // order's total, and nothing to answer. The face and name are big so staff
-// learn names; a tap opens the Customers tab to confirm them. Two at most,
-// newest last.
-export function CheckinArrivals({ arrivals, onOpen, onDismiss }: { arrivals: Arrival[]; onOpen: (id: string) => void; onDismiss: (id: string) => void }) {
+// learn names. Checked in at the screen already: where they stand and the
+// one thing to know (red for no payment on file), with "Undo / Not them"
+// for a mistake. Still waiting (a shared family number): a tap opens the
+// Customers tab to pick who it is. Two at most, newest last.
+export function CheckinArrivals({
+  arrivals,
+  onOpen,
+  onUndo,
+  onDismiss,
+}: {
+  arrivals: Arrival[];
+  onOpen: (id: string) => void;
+  onUndo: (id: string) => void;
+  onDismiss: (id: string) => void;
+}) {
   if (!arrivals.length) return null;
   return (
     <div className="pointer-events-none absolute inset-x-2 top-2 z-30 grid gap-2" role="status" aria-live="polite">
@@ -517,12 +717,31 @@ export function CheckinArrivals({ arrivals, onOpen, onDismiss }: { arrivals: Arr
             <MemberAvatar name={a.name} url={a.photo} size={60} plus={a.plus} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-xl font-black leading-tight">{a.name}</span>
-              <span className="block truncate text-sm">{a.note}</span>
-              <span className="block text-xs font-bold" style={{ color: "var(--accent)" }}>
-                Tap to confirm on Customers
-              </span>
+              {a.done ? (
+                <>
+                  <span
+                    className={`mt-0.5 inline-block max-w-full rounded px-1.5 py-px text-sm font-bold leading-tight ${a.tone === "red" ? "text-white" : ""}`}
+                    style={a.tone === "red" ? { background: NOT_ACTIVE_RED } : a.tone === "gold" ? { background: "var(--gold)", color: "var(--gold-foreground)" } : undefined}
+                  >
+                    {a.note}
+                  </span>
+                  {a.sub && <span className="block truncate text-xs tabular-nums">{a.sub}</span>}
+                </>
+              ) : (
+                <>
+                  <span className="block truncate text-sm">{a.note}</span>
+                  <span className="block text-xs font-bold" style={{ color: "var(--accent)" }}>
+                    Tap to pick who it is on Customers
+                  </span>
+                </>
+              )}
             </span>
           </button>
+          {a.done && (
+            <button className="btn-secondary min-h-12 w-[5.5rem] shrink-0 !px-2 !py-1 text-sm font-bold leading-tight" disabled={a.working} onClick={() => onUndo(a.id)}>
+              {a.working ? "Undoing…" : "Undo / Not them"}
+            </button>
+          )}
           <DismissButton label="Dismiss" onClick={() => onDismiss(a.id)} />
         </div>
       ))}
@@ -605,7 +824,8 @@ export function WaitingToConfirm({ checkins, current, hasOrder }: { checkins: Ch
       </h2>
       {pending.length === 0 ? (
         <p className="rounded-lg border border-dashed px-3 py-3 text-sm" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
-          Nobody waiting. When someone checks in on the customer screen, they show up here for you to confirm.
+          Nobody waiting. Check-ins on the customer screen go through by themselves; only a phone number shared by a few accounts waits here for you to pick
+          who it is.
         </p>
       ) : (
         <div className="grid max-w-2xl gap-3">
@@ -670,6 +890,40 @@ export function WaitingToConfirm({ checkins, current, hasOrder }: { checkins: Ch
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+// Check-ins done at the customer screen in the last 15 minutes, newest
+// first: who, what it paid, the one thing to know, and "Undo / Not them"
+// for a mistake (the visit and its points taken back).
+export function JustCheckedIn({ checkins }: { checkins: Checkins }) {
+  const { recent } = checkins;
+  if (!recent.length) return null;
+  return (
+    <section aria-labelledby="checkins-just">
+      <h2 id="checkins-just" className="eyebrow mb-2">
+        Just checked in on the screen · {recent.length}
+      </h2>
+      <ul className="grid max-w-2xl gap-2">
+        {recent.slice(0, 6).map((r) => {
+          const note = serviceNote(r.member, r.card);
+          return (
+            <li key={r.id} className="flex items-center gap-3 rounded-lg border px-3 py-2" style={{ borderColor: "var(--border)", ...accent(r.member) }}>
+              <MemberAvatar name={r.member.name} url={r.member.avatar_url} size={44} plus={memberSignal(r.member) === "plus"} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-bold leading-tight">{r.member.name}</span>
+                <span className="block truncate text-xs" style={{ color: note.tone === "red" ? "var(--danger-text)" : "var(--muted)" }}>
+                  {note.text} · {visitLine(r.member, r.card)}
+                </span>
+              </span>
+              <button className="btn-secondary min-h-11 shrink-0 !px-3 !py-1 text-sm" disabled={r.working} onClick={() => checkins.undo(r.id)}>
+                {r.working ? "Undoing…" : "Undo / Not them"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

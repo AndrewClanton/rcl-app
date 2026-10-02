@@ -7,7 +7,9 @@ import InfoTip from "@/components/help/InfoTip";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import { addPosMemberEmail, addPosMemberName, searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
-import { firstNameOf } from "@/lib/checkin";
+import { cleanEmail, firstNameOf } from "@/lib/checkin";
+import { maskEmail, setupName } from "@/lib/registerChannel";
+import { useTabletMirror } from "./tablet-setup";
 import { PhoneOnlyTag } from "./RegisterCheckins";
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
@@ -24,6 +26,20 @@ export interface PanelCoffee {
 }
 
 const SIGNED_OUT = "The register couldn't reach the server. Check the connection, or sign in again if it has been a while.";
+
+// The member on the order checked in on the customer screen
+// (RegisterCheckins). done: it went through there (its visit and points),
+// so this just says so, with "Undo / Not them" for a mistake. Otherwise
+// it's still waiting on staff (a shared family number): one tap confirms
+// it's them, or says it isn't.
+export interface VisitWaiting {
+  done: boolean;
+  auto: boolean; // the check-in put them on the order by itself
+  working: boolean;
+  line?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
+  confirm?: () => void;
+  undo: () => void;
+}
 
 function shortDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
@@ -59,6 +75,7 @@ export default function PosMemberPanel({
   waiting,
   readerId,
   toTablet,
+  visit = null,
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
@@ -75,6 +92,7 @@ export default function PosMemberPanel({
   // upgrade): this register's card reader, and the customer screen.
   readerId: string | null;
   toTablet: TabletSend;
+  visit?: VisitWaiting | null;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosMember[]>([]);
@@ -155,6 +173,47 @@ export default function PosMemberPanel({
           className={`rounded-lg p-2.5 text-sm ${standing === "insiders" ? "border" : "border-2"}`}
           style={{ borderColor: standing === "plus" ? "var(--gold)" : standing === "insiders" ? "var(--border)" : "var(--accent)" }}
         >
+          {visit?.done ? (
+            <div className="-mx-2.5 -mt-2.5 mb-2.5 flex items-center gap-2 rounded-t-[7px] px-2.5 py-1.5" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }} role="status">
+              <span className="min-w-0 flex-1 leading-tight">
+                <span className="block text-sm font-bold">📲 Checked in on the screen{visit.auto ? " · on this order" : ""}</span>
+                {visit.line && <span className="block truncate text-xs tabular-nums">{visit.line}</span>}
+              </span>
+              <button
+                className="min-h-11 shrink-0 rounded-md border-2 px-3 text-sm font-bold"
+                style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
+                disabled={visit.working}
+                onClick={visit.undo}
+              >
+                {visit.working ? "Undoing…" : "Undo / Not them"}
+              </button>
+            </div>
+          ) : (
+            visit && (
+              <div className="-mx-2.5 -mt-2.5 mb-2.5 rounded-t-[7px] px-2.5 py-2" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }} role="status">
+                <div className="text-sm font-bold leading-tight">📲 Checked in on the customer screen</div>
+                <div className="text-xs">{visit.auto ? "Put on this order for you. " : ""}Is it them? Confirm for their visit points.</div>
+                <div className="mt-1.5 flex gap-2">
+                  <button
+                    className="min-h-11 flex-[3] rounded-md border-2 px-3 text-base font-black"
+                    style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
+                    disabled={visit.working}
+                    onClick={visit.confirm}
+                  >
+                    {visit.working ? "Checking in…" : "✓ Confirm visit"}
+                  </button>
+                  <button
+                    className="min-h-11 flex-[2] rounded-md border-2 px-3 text-sm font-bold"
+                    style={{ borderColor: "var(--foreground)" }}
+                    disabled={visit.working}
+                    onClick={visit.undo}
+                  >
+                    Not them
+                  </button>
+                </div>
+              </div>
+            )
+          )}
           <div className="flex items-center gap-3">
             <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={standing === "plus"} />
             <div className="min-w-0 flex-1">
@@ -354,7 +413,9 @@ export default function PosMemberPanel({
 // "Add name" / "Add email" for an account missing one: a phone account
 // (lib/member-name.ts) whose guest wants their name on it, or an email to
 // sign in on the website. Adding only: changing what's there is Back
-// office's job.
+// office's job. The customer screen follows along as it's typed (the name
+// as a first name and last initial, the email masked), and the guest's
+// "✓ That's right" there saves it (tablet-setup.tsx).
 function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMember, message: string) => void }) {
   const [open, setOpen] = useState<"name" | "email" | null>(null);
   const [first, setFirst] = useState("");
@@ -363,8 +424,17 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
   const [optIn, setOptIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ready = open === "name" ? !!first.trim() : !!cleanEmail(email);
+  // The guest's "✓ That's right" on the customer screen saves it too.
+  const tablet = useTabletMirror(
+    open !== null,
+    open === "email" ? { what: "email", email: maskEmail(email), ready, hold: !!error } : { what: "name", name: setupName(first, last), ready, hold: !!error },
+    () => void save(),
+  );
+  const mirrored = tablet.mirrored;
 
   async function save() {
+    if (busy || !open || !ready) return;
     setBusy(true);
     setError(null);
     const r =
@@ -374,6 +444,7 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
     setBusy(false);
     if (!r) return setError(SIGNED_OUT);
     if (!r.ok) return setError(r.error);
+    tablet.saved();
     setOpen(null);
     onSaved(r.member, r.message);
   }
@@ -382,12 +453,12 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
     return (
       <div className="mt-2 flex flex-wrap gap-1.5">
         {member.named === false && (
-          <button className="btn-secondary min-h-9 !px-2.5 !py-1 text-xs" onClick={() => setOpen("name")}>
+          <button className="btn-secondary min-h-11 !px-3 !py-1 text-xs" onClick={() => setOpen("name")}>
             + Add name
           </button>
         )}
         {!member.email && (
-          <button className="btn-secondary min-h-9 !px-2.5 !py-1 text-xs" onClick={() => setOpen("email")}>
+          <button className="btn-secondary min-h-11 !px-3 !py-1 text-xs" onClick={() => setOpen("email")}>
             + Add email
           </button>
         )}
@@ -406,13 +477,34 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
     >
       {open === "name" ? (
         <div className="grid grid-cols-[3fr_2fr] gap-1.5">
-          <input className="input !py-1.5 text-sm" placeholder="First name" aria-label="First name" autoFocus maxLength={40} value={first} onChange={(e) => setFirst(e.target.value)} />
-          <input className="input !py-1.5 text-sm" placeholder="Last (optional)" aria-label="Last name or initial (optional)" maxLength={40} value={last} onChange={(e) => setLast(e.target.value)} />
+          <input
+            className="input min-h-11 !py-1.5 text-sm"
+            placeholder="First name"
+            aria-label="First name"
+            autoFocus
+            maxLength={40}
+            value={first}
+            onChange={(e) => {
+              setError(null);
+              setFirst(e.target.value);
+            }}
+          />
+          <input
+            className="input min-h-11 !py-1.5 text-sm"
+            placeholder="Last (optional)"
+            aria-label="Last name or initial (optional)"
+            maxLength={40}
+            value={last}
+            onChange={(e) => {
+              setError(null);
+              setLast(e.target.value);
+            }}
+          />
         </div>
       ) : (
         <>
           <input
-            className="input !py-1.5 text-sm"
+            className="input min-h-11 !py-1.5 text-sm"
             type="email"
             inputMode="email"
             autoCapitalize="none"
@@ -423,10 +515,13 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
             autoFocus
             maxLength={254}
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setError(null);
+              setEmail(e.target.value);
+            }}
           />
-          <label className="flex items-center gap-1.5 text-xs">
-            <input type="checkbox" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} />
+          <label className="flex min-h-11 items-center gap-2 text-xs">
+            <input type="checkbox" className="h-5 w-5" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} />
             They want our emails (news and showtimes)
           </label>
         </>
@@ -436,13 +531,18 @@ function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMe
           {error}
         </div>
       )}
+      {mirrored && (
+        <div className="text-xs" style={{ color: "var(--muted)" }}>
+          On the customer screen as you type{open === "email" ? " (masked)" : ""}: they can tap ✓ That&apos;s right.
+        </div>
+      )}
       <div className="flex gap-1.5">
-        <button type="submit" className="btn-primary min-h-9 flex-1 !py-1 text-xs" disabled={busy || (open === "name" ? !first.trim() : !email.trim())}>
+        <button type="submit" className="btn-primary min-h-11 flex-1 !py-1 text-xs" disabled={busy || !ready}>
           {busy ? "Saving…" : open === "name" ? "Save name" : "Save email"}
         </button>
         <button
           type="button"
-          className="btn-secondary min-h-9 !px-3 !py-1 text-xs"
+          className="btn-secondary min-h-11 !px-3 !py-1 text-xs"
           disabled={busy}
           onClick={() => {
             setOpen(null);

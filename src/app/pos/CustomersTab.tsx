@@ -3,17 +3,18 @@
 import { useEffect, useRef } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import MemberFinder from "./MemberFinder";
-import { CheckedInToday, CheckinResults, WaitingToConfirm, type Checkins } from "./RegisterCheckins";
+import { CheckedInToday, CheckinResults, JustCheckedIn, WaitingToConfirm, type Checkins } from "./RegisterCheckins";
 import LegacyPlusCard from "./LegacyPlusCard";
 import type { PosMember } from "./member-actions";
 
 // The register's Customers tab, beside the menu categories: everything about
 // who's buying, in one place and never on top of the menu buttons.
-//   1. What just happened (a check-in confirmed, tickets to print, a former
+//   1. What just happened (a check-in, tickets to print, a former
 //      unlimited member with no payment on file).
-//   2. Waiting to confirm: check-ins from the customer screen.
-//   3. Checked in today: one tap puts someone on the order.
-//   4. Find a customer: search, and the regulars' faces.
+//   2. Just checked in on the screen: the last 15 minutes, with Undo.
+//   3. Waiting to confirm: a shared family number, to pick who it is.
+//   4. Checked in today: one tap puts someone on the order.
+//   5. Find a customer: search, and the regulars' faces.
 // `findAt` changes when someone taps "Find by photo" in the order's Member
 // box: the tab then scrolls down to Find a customer.
 export default function CustomersTab({
@@ -85,6 +86,7 @@ export default function CustomersTab({
           />
         </section>
       )}
+      <JustCheckedIn checkins={checkins} />
       <WaitingToConfirm checkins={checkins} current={current} hasOrder={hasOrder} />
       <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} />
       <div ref={findRef} className="scroll-mt-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>

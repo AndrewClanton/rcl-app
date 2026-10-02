@@ -64,3 +64,76 @@ export interface TabletProfile {
 }
 
 export const EMPTY_CART_SNAPSHOT: RegisterCartSnapshot = { orderName: "", items: [], subtotal: 0, tax: 0, total: 0 };
+
+// Staff setting up a guest's account on the register, for a guest who'd
+// rather just tell them: the "New phone account" form (MemberFinder.tsx),
+// or "+ Add name" / "+ Add email" on the member box (PosMemberPanel.tsx).
+// The customer screen mirrors it as they type ("We're setting up your
+// account"), so the guest can check it and tap "✓ That's right"
+// ("staff-setup-ok" { id }, back to the register, which saves it). Only
+// what's being typed, and only so much of it: the phone number, a first
+// name and last initial, an email masked (maskEmail). Never a member id,
+// never anything already on the account.
+// "staff-setup": this, as they type (debounced) and once it's saved;
+// "staff-setup-end" ({ id }): Cancel, the screen goes back to normal.
+export interface StaffSetup {
+  id: string; // this form, opened once
+  stage: "typing" | "saved";
+  what: "phone" | "name" | "email";
+  phone?: string; // "(417) 555-01", as typed so far
+  name?: string; // "Sarah M."
+  email?: string; // "s•••@gmail.com"
+  ready?: boolean; // what's typed could be saved: "✓ That's right" works
+  hold?: boolean; // the register couldn't save it: staff are on it
+}
+
+// "Done" or "That's not me" under the member's card on the customer
+// screen: off the order ("member-off", to the register). firstName: the
+// one the screen shows (the cart's member.firstName), so a register that's
+// moved on to someone else leaves them be.
+export interface MemberOff {
+  firstName: string;
+  why: "done" | "not-me";
+}
+
+// Mail providers shown whole; any other domain is masked like the name.
+const COMMON_MAIL = new Set([
+  "gmail.com",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+  "msn.com",
+  "aol.com",
+  "att.net",
+  "sbcglobal.net",
+  "comcast.net",
+  "proton.me",
+  "protonmail.com",
+]);
+
+// "sarah.miller@gmail.com" -> "s•••@gmail.com"; "sam@millerlaw.com" ->
+// "s•••@m•••.com". As much as is typed so far: "sar" -> "s•••".
+export function maskEmail(input: string): string {
+  const t = input.trim().toLowerCase().slice(0, 254);
+  if (!t) return "";
+  const at = t.indexOf("@");
+  const local = at < 0 ? t : t.slice(0, at);
+  const head = local ? `${local[0]}•••` : "";
+  if (at < 0) return head;
+  const domain = t.slice(at + 1);
+  if (!domain || COMMON_MAIL.has(domain)) return `${head}@${domain}`;
+  const dot = domain.lastIndexOf(".");
+  const tld = dot > 0 ? domain.slice(dot, dot + 8) : "";
+  return `${head}@${domain[0]}•••${tld}`;
+}
+
+// "Sarah" and "Miller" -> "Sarah M.": a first name and last initial only.
+export function setupName(first: string, last = ""): string {
+  const f = first.trim().replace(/\s+/g, " ").slice(0, 40);
+  const l = last.trim().charAt(0).toLocaleUpperCase();
+  return f && l ? `${f} ${l}.` : f;
+}

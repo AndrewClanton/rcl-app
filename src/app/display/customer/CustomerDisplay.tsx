@@ -11,7 +11,9 @@ import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
 import FinishCard, { finishShown, type FinishShown } from "./FinishCard";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
-import { AccountPanel, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
+import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
+import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
+import type { MemberOff, StaffSetup } from "@/lib/registerChannel";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
@@ -21,6 +23,11 @@ export interface PromoMovie {
   posterUrl: string | null;
   nextShowtime: string;
 }
+
+// "You're all set" stays this long; a setup nothing more is heard about
+// (the register closed mid-way) goes after this.
+const SETUP_DONE_MS = 4_500;
+const SETUP_STALE_MS = 4 * 60_000;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -46,7 +53,13 @@ function showtime(iso: string) {
 // The register's ✨ Celebrate throws streamers across the whole screen, and
 // so does Rewind (Back office found a regular's visits from before the new
 // system), under the kiosk's "Welcome back".
-// previewCart / previewStep / previewTickets / previewFinish are for previews only.
+// Their card (or their account) stays up the whole time they're on the
+// order, with "Done" and "That's not me" under it: either takes them off the
+// order and the screen goes back to normal (MemberCards.tsx MemberActions).
+// When staff set up a guest's account on the register for them, the whole
+// screen follows along as it's typed (StaffSetupView.tsx).
+// previewCart / previewStep / previewTickets / previewFinish / previewSetup
+// are for previews only.
 export default function CustomerDisplay({
   movies,
   registerTopic,
@@ -55,6 +68,7 @@ export default function CustomerDisplay({
   previewStep,
   previewTickets,
   previewFinish,
+  previewSetup,
 }: {
   movies: PromoMovie[];
   registerTopic: string;
@@ -63,8 +77,69 @@ export default function CustomerDisplay({
   previewStep?: CheckinStep;
   previewTickets?: TicketsShown;
   previewFinish?: PlusFinish;
+  previewSetup?: ShownSetup;
 }) {
   const [cart, setCart] = useState<RegisterCartSnapshot | null>(previewCart ?? null);
+  const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+  const toRegister = useCallback((event: string, payload: object) => {
+    channelRef.current?.send({ type: "broadcast", event, payload });
+  }, []);
+
+  // Staff setting up this guest's account on the register, as it's typed:
+  // up until it's saved ("You're all set" for a moment) or cancelled. One
+  // left behind (the register closed mid-way) goes after a few minutes.
+  const [setup, setSetup] = useState<ShownSetup | null>(previewSetup ?? null);
+  useEffect(() => {
+    if (!setup) return;
+    const timer = setTimeout(() => setSetup(null), setup.stage === "saved" ? SETUP_DONE_MS : SETUP_STALE_MS);
+    return () => clearTimeout(timer);
+  }, [setup]);
+  const onSetup = useCallback((p: Partial<StaffSetup> | null) => {
+    const next = parseSetup(p);
+    if (!next) return;
+    setSetup((was) => {
+      const same = was?.id === next.id;
+      // "Saved" for a setup this screen never saw (it was reloading): still "You're all set".
+      if (next.stage === "saved") return { ...(same && was ? was : next), stage: "saved", sent: false };
+      // The guest's "✓ That's right" holds until what's typed changes.
+      const unchanged = same && was && was.phone === next.phone && was.name === next.name && was.email === next.email && !next.hold;
+      return { ...next, sent: !!unchanged && !!was?.sent };
+    });
+  }, []);
+  const onSetupEnd = useCallback((id: unknown) => {
+    setSetup((was) => (was && was.id === id && was.stage === "typing" ? null : was));
+  }, []);
+  const setupOk = useCallback(() => {
+    if (!setup || setup.stage !== "typing" || !setup.ready) return;
+    toRegister("staff-setup-ok", { id: setup.id });
+    setSetup({ ...setup, sent: true });
+  }, [setup, toRegister]);
+  // Their "✓ That's right" didn't save (nothing came back): it can be tapped again.
+  useEffect(() => {
+    if (!setup?.sent) return;
+    const timer = setTimeout(() => setSetup((s) => (s && s.sent ? { ...s, sent: false } : s)), 10_000);
+    return () => clearTimeout(timer);
+  }, [setup]);
+
+  // "Done" or "That's not me" under their card: hidden at once (by the first
+  // name the screen shows) while the register takes them off the order. If
+  // it doesn't (it had moved on), the card comes back.
+  const [offFor, setOffFor] = useState<string | null>(null);
+  const [home, setHome] = useState(0);
+  useEffect(() => {
+    if (!offFor) return;
+    const timer = setTimeout(() => setOffFor(null), 6_000);
+    return () => clearTimeout(timer);
+  }, [offFor]);
+  const memberOff = useCallback(
+    (firstName: string, why: MemberOff["why"]) => {
+      const off: MemberOff = { firstName, why };
+      toRegister("member-off", off);
+      setOffFor(firstName);
+      setHome((n) => n + 1);
+    },
+    [toRegister],
+  );
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[]; banner?: string | null } | null>(null);
   const [rickroll, setRickroll] = useState<number | null>(null);
   // Online tickets for whoever just checked in, beside the order for a bit.
@@ -113,6 +188,8 @@ export default function CustomerDisplay({
       const now = next.member ?? null;
       lastMember.current = now;
       setCart(next);
+      // Someone they said "Done" or "That's not me" for is off the order.
+      setOffFor((off) => (off && now?.firstName === off ? off : null));
       const justSetUp = needsCard(before) && !!now && !needsCard(now) && now.plus && now.firstName === before?.firstName;
       if (justSetUp && celebrated.current !== now.firstName) celebrate(now.firstName, !!before?.noCard);
       if (!needsCard(now)) setSetUp(null);
@@ -145,6 +222,8 @@ export default function CustomerDisplay({
       channel = supabase
         .channel(registerTopic)
         .on("broadcast", { event: "cart" }, (msg) => onCart(msg.payload as RegisterCartSnapshot))
+        .on("broadcast", { event: "staff-setup" }, (msg) => onSetup(msg.payload))
+        .on("broadcast", { event: "staff-setup-end" }, (msg) => onSetupEnd(msg.payload?.id))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
         .on("broadcast", { event: "rickroll" }, () => setRickroll((on) => (on ? null : Date.now())))
         .on("broadcast", { event: "rickroll-stop" }, () => setRickroll(null))
@@ -153,13 +232,15 @@ export default function CustomerDisplay({
           // broadcast: ask the register to resend its current state.
           if (status === "SUBSCRIBED") channel?.send({ type: "broadcast", event: "request-state", payload: {} });
         });
+      channelRef.current = channel;
     });
 
     return () => {
       cancelled = true;
+      channelRef.current = null;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [registerTopic, onCart]);
+  }, [registerTopic, onCart, onSetup, onSetupEnd]);
 
   const hasOrder = !!cart && cart.items.length > 0;
   const clearBurst = useCallback(() => setBurst(null), []);
@@ -174,46 +255,60 @@ export default function CustomerDisplay({
   // Anyone else on the order with nothing rung up yet sees their card
   // (MemberCard); once something's rung up, their account sits at the foot
   // of the order.
-  const who = cart?.member ?? null;
+  // Not someone who just said "Done" or "That's not me" (offFor).
+  const who = cart?.member && cart.member.firstName !== offFor ? cart.member : null;
   const cardFor = who && needsCard(who) && who.firstName !== setUp && !finish && !welcome ? who : null;
   const cardKind = who?.unlimited ? "unlimited" : "nocard";
   const hero = !hasOrder && !tickets;
+  // "You're all set, Sarah!": the name staff typed, or the one on the order.
+  const greet = setup?.name ? setup.name.split(" ")[0] : who && !isGuestName(who.firstName) ? who.firstName : null;
 
   return (
     <div className={k.screen}>
       <CheckinKiosk
         registerTopic={registerTopic}
+        home={home}
         initialStep={previewStep}
         onTickets={setTickets}
         onRewind={rewindStreamers}
         onFinish={setFinish}
         onPlusWelcome={onPlusWelcome}
       />
-      <aside className={`${k.side} ${!hero && (cardFor || welcome) ? k.sideTight : ""}`}>
+      <aside className={`${k.side} ${!hero && (cardFor || welcome) ? k.sideTight : ""} ${who && !hasOrder ? k.sideCard : ""}`}>
         {finish && <FinishCard key={finish.key} shown={finish} />}
         {welcome && !hero && <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero={false} />}
         {cardFor && !hero && <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero={false} />}
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
         {hasOrder ? (
-          <OrderReceipt cart={cart} />
+          <OrderReceipt cart={who ? cart : { ...cart, member: null }} onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined} />
         ) : welcome && hero ? (
           <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero />
         ) : cardFor && hero ? (
           <>
             <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero />
             <AccountPanel member={cardFor} alone />
+            <MemberActions onOff={(why) => memberOff(cardFor.firstName, why)} />
           </>
         ) : who && hero && !finish ? (
-          <MemberCard member={who} />
+          <>
+            <MemberCard member={who} />
+            <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
+          </>
         ) : who ? (
-          <AccountPanel member={who} alone />
+          <>
+            <AccountPanel member={who} alone />
+            <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
+          </>
         ) : (
           <Welcome movies={movies} />
         )}
       </aside>
+      {setup && <StaffSetupView setup={setup} greet={greet} onOk={setupOk} />}
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
-      {version && <AutoUpdate current={version} busy={hasOrder || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome} />}
+      {version && (
+        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome} />
+      )}
     </div>
   );
 }
@@ -288,7 +383,8 @@ function BadgePitch() {
 // rung up, any savings, the total, and (once they've checked in) whose order
 // it is, their account (where they stand, points and perks) and the points
 // it earns.
-export function OrderReceipt({ cart }: { cart: RegisterCartSnapshot }) {
+// onNotMe: "That's not me" on their account, in case it isn't theirs.
+export function OrderReceipt({ cart, onNotMe }: { cart: RegisterCartSnapshot; onNotMe?: () => void }) {
   const who = cart.member;
   const earn = cart.pointsToEarn ?? 0;
   const count = cart.items.reduce((n, i) => n + i.quantity, 0);
@@ -340,7 +436,7 @@ export function OrderReceipt({ cart }: { cart: RegisterCartSnapshot }) {
         </div>
       </div>
       {who ? (
-        <AccountPanel member={who} earn={earn} />
+        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} />
       ) : (
         earn > 0 && (
           <div className={k.earn}>

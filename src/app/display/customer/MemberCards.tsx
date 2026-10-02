@@ -149,9 +149,27 @@ function perksToday(m: TabletMember, standing: Standing, onOrder: boolean): stri
   return out;
 }
 
+// "Done" and "That's not me" under their card while nothing's rung up: either
+// takes them off the order (the register's "member-off") and the screen goes
+// back to normal. Nothing times it out while they're on the order. Once
+// something's rung up they're buying, so only "That's not me" is offered,
+// on their account at the foot of the order (AccountPanel onNotMe).
+export function MemberActions({ onOff }: { onOff: (why: "done" | "not-me") => void }) {
+  return (
+    <div className={k.memberActions}>
+      <button type="button" className={`${k.cta} ${k.memberDone}`} onClick={() => onOff("done")}>
+        Done
+      </button>
+      <button type="button" className={`${k.ghost} ${k.memberNotMe}`} onClick={() => onOff("not-me")}>
+        That&apos;s not me
+      </button>
+    </div>
+  );
+}
+
 // Beside the order (`earn`: the points this order earns), or on its own
 // under a red card or tonight's tickets while nothing's rung up yet.
-export function AccountPanel({ member, earn, alone = false }: { member: TabletMember; earn?: number; alone?: boolean }) {
+export function AccountPanel({ member, earn, alone = false, onNotMe }: { member: TabletMember; earn?: number; alone?: boolean; onNotMe?: () => void }) {
   const standing = standingOf(member);
   const pts = points(member.points);
   const perks = perksToday(member, standing, !alone);
@@ -172,6 +190,11 @@ export function AccountPanel({ member, earn, alone = false }: { member: TabletMe
           <span className={k.earnBig}>+{earn}</span>
           <span className={k.accountEarnLabel}>this order</span>
         </div>
+      )}
+      {onNotMe && (
+        <button type="button" className={k.accountNotMe} onClick={onNotMe}>
+          That&apos;s not me
+        </button>
       )}
     </section>
   );

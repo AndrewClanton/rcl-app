@@ -5,6 +5,8 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { createPhoneMember, getRegulars, searchPosMembers, type PosMember, type Regular } from "./member-actions";
 import { memberSignal } from "./member-signal";
 import { formatPhone, isFullPhone, phoneDigits } from "@/lib/checkin";
+import { setupName } from "@/lib/registerChannel";
+import { useTabletMirror } from "./tablet-setup";
 
 // A search that's a phone number (only digits and phone punctuation), for
 // filling in the new account's number.
@@ -78,7 +80,7 @@ export default function MemberFinder({
         </h2>
         {allowNew && making === null && (
           <button
-            className="btn-secondary min-h-10 shrink-0 !px-3 !py-1.5 text-sm"
+            className="btn-secondary min-h-11 shrink-0 !px-3 !py-1.5 text-sm"
             onClick={() => {
               setMade(null);
               setMaking(searchDigits(query));
@@ -175,6 +177,10 @@ export default function MemberFinder({
 
 // Their number and, if they like, a first name. A number that's on an
 // account already puts that account on the order instead.
+// On the register, the customer screen follows along as it's typed ("We're
+// setting up your account": the number and name, nothing else), for a
+// guest who'd rather just tell staff; their "✓ That's right" there saves
+// it, the same as the button here (tablet-setup.tsx).
 function NewPhoneAccount({
   start,
   make,
@@ -192,6 +198,8 @@ function NewPhoneAccount({
   const [error, setError] = useState<string | null>(null);
   const digits = phoneDigits(phone);
   const ready = isFullPhone(digits);
+  // The guest's "✓ That's right" on the customer screen saves it too.
+  const tablet = useTabletMirror(true, { what: "phone", phone, name: setupName(first), ready, hold: !!error }, () => void save());
 
   async function save() {
     if (!ready || busy) return;
@@ -201,6 +209,7 @@ function NewPhoneAccount({
     setBusy(false);
     if (!r) return setError("Couldn't reach the server. Check the connection and try again.");
     if (!r.ok) return setError(r.error);
+    tablet.saved();
     onDone(r.member, r.message);
   }
 
@@ -217,6 +226,7 @@ function NewPhoneAccount({
       <div className="font-bold">New phone account</div>
       <p className="mb-2 text-xs" style={{ color: "var(--muted)" }}>
         Just their phone number: no email, no password. They type it at check-in to earn points.
+        {tablet.mirrored && " It shows on the customer screen as you type, so they can check it and tap ✓ That's right."}
       </p>
       <div className="grid gap-2 sm:grid-cols-[3fr_2fr]">
         <label className="text-xs font-bold">
