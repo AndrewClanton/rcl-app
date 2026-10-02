@@ -60,13 +60,15 @@ function centralHour(iso: string) {
 }
 
 // Members who joined, and check-ins, between two instants. Best effort:
-// null if a table can't be read, so the sales still show.
+// null if a table can't be read, so the sales still show. Old-site accounts
+// count on the day they moved over (imported_at): their created_at is when
+// they joined the old site, years back for some.
 async function memberActivity(start: string, end: string, firstDate: string, lastDate: string): Promise<MemberActivity | null> {
   const supabase = createAdminClient();
   try {
     const [joined, imported, visits] = await Promise.all([
       supabase.from("members").select("id", { count: "exact", head: true }).is("legacy_user_id", null).gte("created_at", start).lt("created_at", end),
-      supabase.from("members").select("id", { count: "exact", head: true }).not("legacy_user_id", "is", null).gte("created_at", start).lt("created_at", end),
+      supabase.from("members").select("id", { count: "exact", head: true }).not("legacy_user_id", "is", null).gte("imported_at", start).lt("imported_at", end),
       fetchAll<{ member_id: string }>((from, to) =>
         supabase.from("member_visits").select("member_id").gte("business_date", firstDate).lte("business_date", lastDate).lt("checked_in_at", end).order("id").range(from, to),
       ),
