@@ -24,6 +24,7 @@ export const db = {
   menu_items: [],
   house_events: [],
   employees: [],
+  legacy_billing_payers: [],
 };
 
 // Unique keys per table (nulls never clash), like the migration's.

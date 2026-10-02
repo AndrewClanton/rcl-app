@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { issueEmailClaimLinks } from "@/lib/member-claim";
 import { CAMPAIGN_COLUMNS, shapeOf, type CampaignRow, type FrozenLink } from "./campaign";
-import { loadFacts, queueSends, resolveAudience } from "./audience";
+import { loadFacts, oldSystemPayers, queueSends, resolveAudience } from "./audience";
 import { firstNameOf, scrubAddresses } from "./format";
 import { hashEmail } from "./hash";
 import { lintCampaign, type LintResult } from "./lint";
@@ -1091,10 +1091,11 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       result.error = e instanceof Error ? e.message : "Couldn't check the caps.";
       return result;
     }
-    const [spend, claims, stillLegacy] = await Promise.all([
+    const [spend, claims, stillLegacy, paidOld] = await Promise.all([
       needsSpend ? ticketSpend(ids, t) : Promise.resolve(new Map<string, { n: number; spend: number }>()),
       needsClaim ? issueEmailClaimLinks(rows.filter((r) => r.member_id).map((r) => ({ memberId: r.member_id as string, sendId: r.id, queuedAt: r.created_at }))) : Promise.resolve(new Map<string, string>()),
       needs?.finish ? legacyStillNeedsSetup(ids) : Promise.resolve(null),
+      needs?.finish ? oldSystemPayers() : Promise.resolve(null),
     ]);
 
     const items: OutgoingEmail[] = [];
@@ -1108,6 +1109,7 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       // their Insiders+ is paid for.
       if (verdict.ok && design === "royale-is-here" && m?.auth_user_id) verdict = { ok: false, status: "cancelled", why: "Set up a website login before it went" };
       if (verdict.ok && stillLegacy && m && !stillLegacy.has(m.id)) verdict = { ok: false, status: "cancelled", why: "Their Insiders+ was set up before it went" };
+      if (verdict.ok && paidOld && m && paidOld.has(m.id)) verdict = { ok: false, status: "cancelled", why: EXCLUSION_LABEL.paid_old_system };
       if (!verdict.ok) {
         await admin.from("email_sends").update({ status: verdict.status, error: verdict.why }).eq("id", r.id).eq("status", "queued");
         result.cancelled++;

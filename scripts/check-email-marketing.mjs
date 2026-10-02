@@ -977,12 +977,15 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   const legacy = Array.from({ length: 3 }, (_, i) => mkMember(700 + i, { legacy_plus: true, tier: "Insiders+", stripe_subscription_id: null, subscription_status: null, comped: false, plus_gift_until: null }));
   mkMember(710, { legacy_plus: true, comped: true }); // complimentary: nothing to restart
   mkMember(711, { legacy_plus: true, stripe_subscription_id: "sub_1", subscription_status: "active" }); // paying already
+  // Nothing paying here, but the old system still charged them in September.
+  const oldPayer = mkMember(712, { legacy_plus: true, tier: "Insiders+", stripe_subscription_id: null, subscription_status: null, comped: false, plus_gift_until: null });
+  db.legacy_billing_payers.push({ member_id: oldPayer.id, last_paid_on: "2026-09-02", note: null });
   const c3 = mkDesign("press-play");
   if (canGo) {
     await roomFor4();
     const b3 = resend.sent.length;
     await sender.prepareWave(await sender.getCampaign(c3.id), empty, now);
-    eq("press play: only the former unlimited members with nothing paying are chosen", queuedOf(c3).map((s) => s.member_id).sort(), legacy.map((m) => m.id).sort());
+    eq("press play: only the former unlimited members with nothing paying (here or on the old system) are chosen", queuedOf(c3).map((s) => s.member_id).sort(), legacy.map((m) => m.id).sort());
     legacy[1].stripe_subscription_id = "sub_2";
     legacy[1].subscription_status = "active";
     await sender.deliverQueued(await sender.getCampaign(c3.id), empty, Date.now() + 30_000);
@@ -1009,6 +1012,7 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   check("ready: a test's buttons open the ordinary pages, not anyone's own link", !/\/account\/claim\?t=|\/membership\/finish\?t=/.test(resend.sent[bt].html));
   const counts = await ready.countAudiences({});
   check("ready: live counts for all three", ["royale-is-here", "come-in", "press-play"].every((k) => typeof counts[k].willSend === "number"));
+  check("ready: press play's left-out list counts the old system's September payers", counts["press-play"].excluded.some((e) => e.why === "Paid on the old system in September" && e.n === 1), JSON.stringify(counts["press-play"].excluded));
 
   db.email_settings.splice(db.email_settings.findIndex((s) => s.key === "resend_plan"), 1);
   db.members.push(...saved);

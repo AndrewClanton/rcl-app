@@ -9,11 +9,11 @@ function hero(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
   const d = DEV[dev];
   if (dev === "d") {
-    out.text.push("UNLIMITED\nYOUR UNLIMITED IS ON PAUSE.\nOur old website's billing didn't make the move. That's on us.");
-    out.bodyTexts.push("Your unlimited is on pause.", "Our old website's billing didn't make the move. That's on us.");
+    out.text.push("UNLIMITED\nYOUR UNLIMITED IS ON PAUSE.\nOur old system isn't charging you, so nothing's owed. That's on us.");
+    out.bodyTexts.push("Your unlimited is on pause.", "Our old system isn't charging you, so nothing's owed. That's on us.");
   }
   return `${artPic("tape", ctx, "An old TV paused, and a VHS tape labeled Unlimited, with your name.", C.ink)}
-${band(C.ink, `${label("UNLIMITED", C.gold, dev)}${h1(`Your unlimited<br>is on ${red("pause")}.`, dev)}${txt("Our old website's billing didn't make the move. That's on us.", d.lede, d.ledelh, C.cream, `margin-top:${dev === "m" ? 12 : 16}px;`)}`, `0 ${d.G}px ${dev === "m" ? 36 : 44}px`)}`;
+${band(C.ink, `${label("UNLIMITED", C.gold, dev)}${h1(`Your unlimited<br>is on ${red("pause")}.`, dev)}${txt("Our old system isn't charging you, so nothing's owed. That's on us.", d.lede, d.ledelh, C.cream, `margin-top:${dev === "m" ? 12 : 16}px;`)}`, `0 ${d.G}px ${dev === "m" ? 36 : 44}px`)}`;
 }
 
 function chip(id: string, text: string): string {
