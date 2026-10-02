@@ -1,13 +1,13 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { ROADMAP_STATUSES, STATUS_LABEL, SUMMARY_MAX, TITLE_MAX, creditName, type RoadmapStatus } from "@/lib/roadmap";
+import { NOTES_MAX, ROADMAP_STATUSES, STATUS_LABEL, SUMMARY_MAX, TITLE_MAX, type RoadmapStatus } from "@/lib/roadmap";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { logRoadmapRequest, searchRoadmapRequesters, type RoadmapItemInput } from "./actions";
+import { logRoadmapRequest, searchRoadmapRequesters, type Result, type RoadmapItemInput } from "./actions";
 
 // The forms behind Back office → Roadmap: add or edit an item, log
-// someone's request, who asked and whether they're credited, and the share
-// link. They open in a side sheet, so they're one column.
+// someone's request, and who asked. They open in a side sheet, so they're
+// one column.
 
 export const STATUS_HINT: Record<RoadmapStatus, string> = {
   idea: "Considering it",
@@ -17,10 +17,6 @@ export const STATUS_HINT: Record<RoadmapStatus, string> = {
   live: "Shipped",
   not_doing: "Decided against",
 };
-
-function shareUrl(slug: string) {
-  return `${window.location.origin}/whats-new/${slug}`;
-}
 
 // ---------- who asked ----------
 
@@ -117,26 +113,7 @@ function RequesterPicker({ value, onChange }: { value: Requester; onChange: (r: 
   );
 }
 
-function CreditBox({ requester, checked, onChange }: { requester: Requester; checked: boolean; onChange: (v: boolean) => void }) {
-  const who = requester.memberId ? requester.memberLabel : requester.name;
-  const shown = creditName(who);
-  const disabled = !requester.memberId && !requester.name?.trim();
-  return (
-    <label className={`flex items-start gap-2 text-sm ${disabled ? "opacity-50" : ""}`}>
-      <input type="checkbox" className="mt-0.5 h-5 w-5" checked={checked && !disabled} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      <span>
-        <b>Credit them publicly</b>
-        <span className="block text-xs text-[var(--muted)]">
-          {shown ? <>Shows &quot;Suggested by {shown}&quot;, only with their OK. Never a staff member.</> : "First name and last initial, only with their OK."}
-        </span>
-      </span>
-    </label>
-  );
-}
-
 // ---------- add / edit ----------
-
-export type FormValues = Omit<RoadmapItemInput, "confirmNames">;
 
 export function ItemForm({
   initial,
@@ -144,57 +121,26 @@ export function ItemForm({
   submitLabel,
   onSave,
   onDone,
-  afterSave,
 }: {
-  initial: FormValues;
+  initial: RoadmapItemInput;
   requesterLabel: string | null;
   submitLabel: string;
-  onSave: (input: RoadmapItemInput) => Promise<{ ok: true; slug?: string } | { ok: false; error: string; confirm?: string[] }>;
+  onSave: (input: RoadmapItemInput) => Promise<Result>;
   onDone: () => void;
-  afterSave?: "share";
 }) {
-  const [v, setV] = useState<FormValues>(initial);
+  const [v, setV] = useState<RoadmapItemInput>(initial);
   const [requester, setRequester] = useState<Requester>({ memberId: initial.requesterMemberId, memberLabel: requesterLabel, name: initial.requesterName });
-  const [error, setError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<string[] | null>(null);
-  const [saved, setSaved] = useState<string | null>(null);
-  const [pending, run] = useRefreshingAction();
-
-  function save(confirmNames: boolean) {
-    setError(null);
-    run(async () => {
-      const r = await onSave({ ...v, requesterMemberId: requester.memberId, requesterName: requester.memberId ? null : requester.name, confirmNames });
-      if (r.ok) {
-        setConfirm(null);
-        if (afterSave === "share" && r.slug) setSaved(r.slug);
-        else onDone();
-      } else {
-        setError(r.error);
-        setConfirm(r.confirm?.length ? r.confirm : null);
-      }
-      return null;
-    });
-  }
-
-  if (saved) {
-    return (
-      <div className="space-y-3">
-        <p className="font-semibold">Added. {v.isPublic ? "Send them the link so they can follow it:" : "It's staff only for now: the link works once it's on the public page."}</p>
-        <CopyShareLink slug={saved} isPublic={v.isPublic} wide />
-        <div>
-          <button type="button" onClick={onDone} className="btn-secondary min-h-11">
-            Done
-          </button>
-        </div>
-      </div>
-    );
-  }
+  const [pending, run, error] = useRefreshingAction();
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        save(false);
+        run(async () => {
+          const r = await onSave({ ...v, requesterMemberId: requester.memberId, requesterName: requester.memberId ? null : requester.name });
+          if (r.ok) onDone();
+          return r;
+        }, { quiet: true });
       }}
       className="space-y-4"
     >
@@ -203,43 +149,31 @@ export function ItemForm({
         <input className="input" value={v.title} onChange={(e) => setV({ ...v, title: e.target.value })} maxLength={TITLE_MAX} required placeholder="Latte flavors and free alt milks" />
       </label>
       <label className="block">
-        <span className="label-xs block">Public summary: plain words a customer understands</span>
+        <span className="label-xs block">Summary: what it is, in a line or two</span>
         <textarea className="input min-h-24" value={v.summary} onChange={(e) => setV({ ...v, summary: e.target.value })} maxLength={SUMMARY_MAX} placeholder="Vanilla, caramel or mocha in any latte, and oat or almond milk at no charge." />
       </label>
       <label className="block">
-        <span className="label-xs block">Internal notes (staff only, never public)</span>
-        <textarea className="input min-h-20" value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} maxLength={4000} />
+        <span className="label-xs block">Internal notes</span>
+        <textarea className="input min-h-20" value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} maxLength={NOTES_MAX} />
       </label>
-      <div className="flex flex-wrap gap-4">
-        <label className="block">
-          <span className="label-xs block">Status</span>
-          <select className="input min-h-11" value={v.status} onChange={(e) => setV({ ...v, status: e.target.value as RoadmapStatus })}>
-            {ROADMAP_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]} ({STATUS_HINT[s]})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex min-h-11 items-center gap-2 self-end text-sm font-semibold">
-          <input type="checkbox" className="h-5 w-5" checked={v.isPublic} onChange={(e) => setV({ ...v, isPublic: e.target.checked })} />
-          On the public page (What&apos;s new)
-        </label>
-      </div>
+      <label className="block">
+        <span className="label-xs block">Status</span>
+        <select className="input min-h-11" value={v.status} onChange={(e) => setV({ ...v, status: e.target.value as RoadmapStatus })}>
+          {ROADMAP_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]} ({STATUS_HINT[s]})
+            </option>
+          ))}
+        </select>
+      </label>
       <div>
         <span className="label-xs block">Who asked for it</span>
         <RequesterPicker value={requester} onChange={setRequester} />
       </div>
-      <CreditBox requester={requester} checked={v.creditOk} onChange={(c) => setV({ ...v, creditOk: c })} />
       {error && (
-        <div className="notice notice-warn" role="alert">
+        <p className="notice notice-warn" role="alert">
           {error}
-          {confirm && (
-            <button type="button" disabled={pending} onClick={() => save(true)} className="mt-2 block min-h-11 font-bold underline">
-              It&apos;s a false alarm: save anyway
-            </button>
-          )}
-        </div>
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={pending || !v.title.trim()} className="btn-primary min-h-11">
@@ -253,17 +187,19 @@ export function ItemForm({
   );
 }
 
-export function LogRequestForm({ onDone, canEdit }: { onDone: () => void; canEdit: boolean }) {
-  const [body, setBody] = useState("");
+// ---------- log a request (managers) ----------
+
+export function LogRequestForm({ onDone }: { onDone: () => void }) {
+  const [title, setTitle] = useState("");
+  const [details, setDetails] = useState("");
   const [requester, setRequester] = useState<Requester>({ memberId: null, memberLabel: null, name: null });
-  const [creditOk, setCreditOk] = useState(false);
   const [pending, run, error] = useRefreshingAction();
   const [sent, setSent] = useState(false);
 
   if (sent) {
     return (
       <div className="space-y-3">
-        <p className="font-semibold">Logged. It&apos;s in the suggestions inbox{canEdit ? "" : " for an owner or admin to say yes or no"}.</p>
+        <p className="font-semibold">Logged. It&apos;s on the list under Ideas for an owner or admin to look at.</p>
         <button type="button" onClick={onDone} className="btn-secondary min-h-11">
           Done
         </button>
@@ -276,7 +212,7 @@ export function LogRequestForm({ onDone, canEdit }: { onDone: () => void; canEdi
       onSubmit={(e) => {
         e.preventDefault();
         run(async () => {
-          const r = await logRoadmapRequest({ body, requesterMemberId: requester.memberId, requesterName: requester.name, creditOk });
+          const r = await logRoadmapRequest({ title, details, requesterMemberId: requester.memberId, requesterName: requester.memberId ? null : requester.name });
           if (r.ok) setSent(true);
           return r;
         }, { quiet: true });
@@ -285,45 +221,24 @@ export function LogRequestForm({ onDone, canEdit }: { onDone: () => void; canEdi
     >
       <label className="block">
         <span className="label-xs block">What did they ask for?</span>
-        <textarea className="input min-h-28" value={body} onChange={(e) => setBody(e.target.value)} maxLength={1000} required placeholder="A Studio Ghibli marathon on a Sunday afternoon" />
+        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={TITLE_MAX} required placeholder="A Studio Ghibli marathon on a Sunday afternoon" />
+      </label>
+      <label className="block">
+        <span className="label-xs block">Anything else they said (optional)</span>
+        <textarea className="input min-h-24" value={details} onChange={(e) => setDetails(e.target.value)} maxLength={NOTES_MAX} />
       </label>
       <div>
         <span className="label-xs block">Who asked</span>
         <RequesterPicker value={requester} onChange={setRequester} />
       </div>
-      <CreditBox requester={requester} checked={creditOk} onChange={setCreditOk} />
       {error && (
         <p className="notice notice-warn" role="alert">
           {error}
         </p>
       )}
-      <button type="submit" disabled={pending || !body.trim()} className="btn-primary min-h-11">
-        {pending ? "Saving..." : "Add to the inbox"}
+      <button type="submit" disabled={pending || !title.trim()} className="btn-primary min-h-11">
+        {pending ? "Saving..." : "Add to Ideas"}
       </button>
     </form>
-  );
-}
-
-// ---------- the share link ----------
-
-export function CopyShareLink({ slug, isPublic, wide = false }: { slug: string; isPublic: boolean; wide?: boolean }) {
-  const [copied, setCopied] = useState<"yes" | "no" | null>(null);
-  return (
-    <span className="inline-flex flex-wrap items-center gap-2">
-      <button
-        type="button"
-        onClick={() =>
-          navigator.clipboard.writeText(shareUrl(slug)).then(
-            () => setCopied("yes"),
-            () => setCopied("no"),
-          )
-        }
-        className={`${wide ? "btn-primary" : "btn-secondary !px-4"} min-h-11`}
-        title={isPublic ? "Copy the link to its page on What's new" : "Staff only: the link works once it's on the public page"}
-      >
-        {copied === "yes" ? "Copied ✓" : "Copy share link"}
-      </button>
-      {copied === "no" && <span className="font-mono text-xs select-all">/whats-new/{slug}</span>}
-    </span>
   );
 }

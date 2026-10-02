@@ -118,11 +118,10 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     },
     {
       href: "/admin/roadmap",
-      label: "Roadmap & What's new",
-      about: "What's shipped, being built and next in line (staff only), plus the suggestions inbox.",
-      keywords: "roadmap whats new what's new changelog queue ideas suggestions requests votes features shipped release version",
+      label: "Roadmap",
+      about: "What's shipped, being built, next in line and the ideas. Staff only.",
+      keywords: "roadmap changelog queue ideas requests features shipped release version",
       min: "manager",
-      badge: "roadmap",
     },
     {
       href: "/admin/members/old-site",

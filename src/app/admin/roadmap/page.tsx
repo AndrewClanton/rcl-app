@@ -9,20 +9,17 @@ function renderTime() {
   return Date.now();
 }
 
-// The list behind the public What's new page, drawn like it: everything
-// shipped, being built, in line, and the ideas, plus the inbox of
-// suggestions. Owners and admins run it; managers see it and log requests
+// The crew's roadmap, staff only: everything shipped, being built, in line,
+// and the ideas. Owners and admins run it; managers see it and log requests
 // people make at the bar. The page header is drawn by RoadmapManager, so
 // its buttons can open the add and log sheets.
 export default async function AdminRoadmapPage() {
   const staff = await requireManager();
-  const data = await getAdminRoadmap();
+  const items = await getAdminRoadmap();
   const owner = staff.role === "owner";
   return (
     <RoadmapManager
-      items={data.items}
-      inbox={data.inbox}
-      decided={data.decided}
+      items={items}
       canEdit={hasAdminAccess(staff.role)}
       version={owner ? appVersion().line : null}
       showVersions={owner}

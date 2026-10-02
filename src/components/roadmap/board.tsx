@@ -1,25 +1,19 @@
 import { STATUS_LABEL, longDate, timeAgo, type RoadmapStatus } from "@/lib/roadmap";
 
-// The pieces What's new (/whats-new) and Back office → Roadmap are both
-// drawn with, so the crew's board looks like the one customers see: the
-// status tags, the cards, the "#3 in line" tickets, and Just shipped a day
-// at a time.
+// The pieces Back office → Roadmap is drawn with: the status tags, the
+// cards, the "#3 in line" tickets, and Just shipped a day at a time.
 //
-// Each card takes its title (a link on What's new, a button in Back office)
-// and its "I want this too" spot from the page that draws it, plus `staff`:
-// the strip Back office adds under a card. `crop` adds the print kit's crop
-// marks, which are for the public site only. No hooks and no server code,
-// so a server page and a browser-side screen can both use them.
+// Each card takes its title (a button that opens the item) and `staff`:
+// the strip under a card with who asked, notes and Manage. No hooks and no
+// server code.
 
-// What a card needs to know about an item. What's new's items have all of
-// it; Back office builds it from its own.
+// What a card needs to know about an item.
 export interface BoardItem {
   status: RoadmapStatus;
   title: string;
   summary: string;
   position: number | null; // "#3 in line", for queued items
   updatedAt: string;
-  credit: string | null; // "Jake B.", only with the requester's OK
 }
 
 // A red dot that pings: something is happening right now.
@@ -48,51 +42,21 @@ export function StatusTag({ status, position, className = "" }: { status: Roadma
 }
 
 // A section's heading: a small kicker over a big title with its count.
-// `compact` is a size down, for Back office, where the page's own title
-// is smaller than What's new's masthead.
-export function SectionHead({
-  id,
-  kicker,
-  title,
-  count,
-  live = false,
-  compact = false,
-  children,
-}: {
-  id: string;
-  kicker: string;
-  title: string;
-  count?: number;
-  live?: boolean;
-  compact?: boolean;
-  children?: React.ReactNode;
-}) {
+export function SectionHead({ id, kicker, title, count, live = false, children }: { id: string; kicker: string; title: string; count?: number; live?: boolean; children?: React.ReactNode }) {
   return (
-    <div className={`${compact ? "mb-4" : "mb-6"} flex flex-wrap items-end justify-between gap-x-6 gap-y-2`}>
+    <div className="mb-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
       <div>
         <div className="flex items-center gap-2 font-mono text-[11px] font-bold tracking-[0.12em] text-[var(--muted)] uppercase">
           {live && <LivePulse small />}
           {kicker}
         </div>
-        <h2 id={id} className={`font-display mt-1 leading-tight ${compact ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl"}`}>
+        <h2 id={id} className="font-display mt-1 text-2xl leading-tight sm:text-3xl">
           {title}
           {typeof count === "number" && count > 0 && <span className="ml-2 align-middle font-mono text-base text-[var(--muted)] tabular-nums">({count})</span>}
         </h2>
       </div>
       {children}
     </div>
-  );
-}
-
-export function Credit({ name, className = "" }: { name: string | null; className?: string }) {
-  if (!name) return null;
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-sm font-bold ${className}`}>
-      <span aria-hidden className="grid h-5 w-5 place-items-center rounded-full border-2 border-[var(--foreground)] bg-[var(--gold)] text-[10px] leading-none">
-        ★
-      </span>
-      Suggested by {name}
-    </span>
   );
 }
 
@@ -116,11 +80,9 @@ export function BoardStat({ k, v, href }: { k: string; v: number; href: string }
 }
 
 // "Live board": an ink bar over four counts that jump to their sections.
-// `footer` sits under the counts (Back office puts its public/staff-only
-// tally there).
-export function LiveBoard({ lastUpdate, now, crop = false, footer, children }: { lastUpdate: string | null; now: number; crop?: boolean; footer?: React.ReactNode; children: React.ReactNode }) {
+export function LiveBoard({ lastUpdate, now, children }: { lastUpdate: string | null; now: number; children: React.ReactNode }) {
   return (
-    <div className={`sheet ${crop ? "crop" : ""}`}>
+    <div className="sheet">
       <div className="spec-head rounded-t-[4px]">
         <span className="inline-flex items-center gap-2">
           <LivePulse small />
@@ -129,7 +91,6 @@ export function LiveBoard({ lastUpdate, now, crop = false, footer, children }: {
         {lastUpdate && <span className="font-mono text-[10.5px] font-normal tracking-[0.06em] normal-case opacity-80">Last change {timeAgo(lastUpdate, now)}</span>}
       </div>
       <div className="spec-grid !grid-cols-2 sm:!grid-cols-4">{children}</div>
-      {footer}
     </div>
   );
 }
@@ -139,16 +100,14 @@ export function LiveBoard({ lastUpdate, now, crop = false, footer, children }: {
 interface CardProps {
   item: BoardItem;
   title: React.ReactNode;
-  vote?: React.ReactNode;
   staff?: React.ReactNode;
-  crop?: boolean;
   className?: string;
 }
 
 // Building now: the big cards.
-export function BuildingCard({ item, now, title, vote, staff, crop = false, className = "" }: CardProps & { now: number }) {
+export function BuildingCard({ item, now, title, staff, className = "" }: CardProps & { now: number }) {
   return (
-    <article className={`sheet flex flex-col ${crop ? "crop" : ""} ${className}`}>
+    <article className={`sheet flex flex-col ${className}`}>
       <div className="flex flex-1 flex-col p-5 sm:p-6">
         <div className="flex items-center justify-between gap-3">
           <span className="inline-flex items-center gap-2">
@@ -159,12 +118,6 @@ export function BuildingCard({ item, now, title, vote, staff, crop = false, clas
         </div>
         <h3 className="font-display mt-4 text-2xl leading-tight text-balance">{title}</h3>
         {item.summary && <p className="mt-2 flex-1 text-[15px] text-[var(--muted)]">{item.summary}</p>}
-        {(item.credit || vote) && (
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
-            <Credit name={item.credit} />
-            {vote}
-          </div>
-        )}
       </div>
       {staff}
     </article>
@@ -176,8 +129,9 @@ export const QUEUE_TICKET =
   "font-display grid h-14 w-14 place-items-center rounded-[4px] border-2 border-[var(--foreground)] bg-[var(--gold)] text-2xl leading-none tabular-nums shadow-[3px_3px_0_var(--foreground)] sm:h-16 sm:w-16 sm:text-3xl";
 
 // Up next: one numbered row per item, in line order. `ticket` replaces the
-// number (Back office's is the drag handle). The page wraps it in an <li>.
-export function QueueCard({ item, now, title, vote, staff, ticket, className = "" }: CardProps & { now: number; ticket?: React.ReactNode }) {
+// number (the drag handle, for owners and admins). The page wraps it in an
+// <li>.
+export function QueueCard({ item, now, title, staff, ticket, className = "" }: CardProps & { now: number; ticket?: React.ReactNode }) {
   return (
     <div className={`sheet ${className}`}>
       <div className="flex gap-4 p-4 sm:gap-5 sm:p-5">
@@ -190,9 +144,7 @@ export function QueueCard({ item, now, title, vote, staff, ticket, className = "
         <div className="min-w-0 flex-1">
           <h3 className="font-display text-xl leading-tight text-balance">{title}</h3>
           {item.summary && <p className="mt-1.5 text-[15px] text-[var(--muted)]">{item.summary}</p>}
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-            {vote}
-            <Credit name={item.credit} />
+          <div className="mt-3">
             <Updated at={item.updatedAt} now={now} />
           </div>
         </div>
@@ -202,19 +154,13 @@ export function QueueCard({ item, now, title, vote, staff, ticket, className = "
   );
 }
 
-// Ideas we're considering: compact cards, most wanted first.
-export function IdeaCard({ item, title, vote, staff, className = "" }: CardProps) {
+// Ideas: compact cards, in the list's order.
+export function IdeaCard({ item, title, staff, className = "" }: CardProps) {
   return (
     <article className={`flex flex-col rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] ${className}`}>
       <div className="flex flex-1 flex-col p-4">
         <h3 className="font-display text-lg leading-tight text-balance">{title}</h3>
         {item.summary && <p className="mt-1.5 line-clamp-4 flex-1 text-sm text-[var(--muted)]">{item.summary}</p>}
-        {(item.credit || vote) && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-            {vote}
-            <Credit name={item.credit} className="!text-xs" />
-          </div>
-        )}
       </div>
       {staff}
     </article>
@@ -233,7 +179,6 @@ export function ShippedRow({ item, title, staff, mark, className = "" }: CardPro
       <div className="min-w-0 flex-1">
         <h3 className="text-[17px] leading-snug font-bold">{title}</h3>
         {item.summary && <p className="mt-1 text-[15px] text-[var(--muted)]">{item.summary}</p>}
-        {item.credit && <Credit name={item.credit} className="mt-2" />}
         {staff}
       </div>
     </li>
@@ -242,9 +187,9 @@ export function ShippedRow({ item, title, staff, mark, className = "" }: CardPro
 
 // One day of Just shipped: the date on an ink bar, the releases those
 // changes went out in beside it, and the day's rows.
-export function ShippedDay({ date, releases, crop = false, children }: { date: string; releases: string[]; crop?: boolean; children: React.ReactNode }) {
+export function ShippedDay({ date, releases, children }: { date: string; releases: string[]; children: React.ReactNode }) {
   return (
-    <section className={`sheet ${crop ? "crop" : ""}`} aria-label={longDate(date)}>
+    <section className="sheet" aria-label={longDate(date)}>
       <h3 className="spec-head rounded-t-[4px]">
         <span>{longDate(date)}</span>
         {releases.length > 0 && <span className="font-mono text-[10.5px] font-normal tracking-[0.08em] opacity-70">Release {releases.join(", ")}</span>}
