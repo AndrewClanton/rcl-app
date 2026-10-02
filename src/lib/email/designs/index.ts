@@ -81,9 +81,12 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     kind: "announcement",
     category: "account",
     subject: "{first name}, your unlimited is on pause",
-    preheader: "Our old website's billing didn't make the move. Nothing's owed. Restart online or at the register.",
+    // Not "you were never charged": a few on the list were, some months
+    // (the old system's recurring billing). The ones it still charged in
+    // September are left out (legacy_billing_payers).
+    preheader: "Our old system isn't charging you. Nothing's owed. Restart online or at the register.",
     audience: { include: [{ r: "legacy_needs_setup" }], order: "trust" },
-    who: "Former unlimited members (they paid for unlimited on the old website) with nothing paying for their Insiders+ now.",
+    who: "Former unlimited members (they paid for unlimited on the old website) with nothing paying for their Insiders+ now, here or on the old system.",
     outcome: { key: "plus", label: "Set up Insiders+", about: "Paying for Insiders+ now" },
     needs: { claim: false, finish: true, art: ["tape"] },
     draw: pressPlay,

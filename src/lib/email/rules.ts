@@ -36,6 +36,9 @@ export interface RuleContext {
   // Former unlimited members with nothing paying for their Insiders+ now
   // (lib/legacy-plus.ts legacyNeedsSetup), found by the server beforehand.
   legacyNeedsSetup?: Set<string>;
+  // Of those, the ones the old system still charges (legacy_billing_payers,
+  // 20261002040000): resolveAudience leaves them out as "paid_old_system".
+  paidOldSystem?: Set<string>;
 }
 
 export const genreKey = (r: { v: string; within: number; min: number }) => `${r.v.toLowerCase()}|${r.within}|${r.min}`;

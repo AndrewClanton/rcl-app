@@ -13,7 +13,9 @@ import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
 //   1. hard filters: email on, the campaign's category on, not paused, not
 //      gone quiet (except "Still want these?"), address not on the
 //      never-mail list, not already sent this campaign (or dedupe key);
-//   2. the segment: every include rule, minus any exclude rule;
+//   2. the segment: every include rule, minus any exclude rule (and for
+//      "former unlimited, nothing paying now", minus anyone the old system
+//      still charges);
 //   3. the caps (rules.ts), at the time it would arrive;
 //   4. warm-up order and wave size (order 'trust', limit);
 //   5. the holdout: a fixed ~pct% get a row but no email, to measure lift.
@@ -132,12 +134,25 @@ export async function legacyNeedingSetup(): Promise<Set<string>> {
   return out;
 }
 
+// Former unlimited members the old system still charged in September
+// (legacy_billing_payers, 20261002040000): "nothing paying now" isn't true
+// for them. Empty before that migration.
+export async function oldSystemPayers(): Promise<Set<string>> {
+  const { data, error } = await createAdminClient().from("legacy_billing_payers").select("member_id");
+  if (error) {
+    if (error.code === "42P01" || error.code === "PGRST205") return new Set();
+    throw new Error("Couldn't read who pays on the old system.");
+  }
+  return new Set((data ?? []).map((r) => r.member_id as string));
+}
+
 const usesRule = (a: Audience, r: Rule["r"]) => [...(a.include ?? []), ...(a.exclude ?? [])].some((x) => x.r === r);
 
 export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> {
   const today = businessDay(now).date;
   const ctx: RuleContext = { now, today };
   if (usesRule(a, "legacy_needs_setup")) ctx.legacyNeedsSetup = await legacyNeedingSetup();
+  if ((a.include ?? []).some((x) => x.r === "legacy_needs_setup")) ctx.paidOldSystem = await oldSystemPayers();
   const genres = genreRules(a);
   if (genres.length) {
     ctx.genreMembers = new Map();
@@ -213,6 +228,12 @@ export async function resolveAudience(
     }
     if (!matchesAudience(f, c.audience, ctx)) {
       skip("segment");
+      continue;
+    }
+    // "Former unlimited, nothing paying now", but the old system still
+    // charged them (counted on its own, so the screen can say so).
+    if (ctx.paidOldSystem?.has(f.memberId)) {
+      skip("paid_old_system");
       continue;
     }
     const cap = capCheck(f.sends, c, opts.at, { createdAt: f.createdAt, imported: f.imported });
