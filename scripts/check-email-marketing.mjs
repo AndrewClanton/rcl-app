@@ -54,6 +54,8 @@ process.env.EMAIL_FROM = "Royale Cinema Lounge <hello@royalecinemajoplin.com>";
 process.env.EMAIL_TOKEN_SECRET = randomBytes(32).toString("base64url");
 process.env.EMAIL_SENDING_ENABLED = "true";
 process.env.EMAIL_SCHEDULE_AHEAD_HOURS = "60";
+// The Back office switch (email_settings), on for these checks; it's off by default.
+db.email_settings.push({ key: "sending_switch", value: { on: true, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
 const WEBHOOK_SECRET = `whsec_${randomBytes(24).toString("base64")}`;
 process.env.RESEND_WEBHOOK_SECRET = WEBHOOK_SECRET;
 delete process.env.CRON_SECRET;
@@ -388,7 +390,7 @@ setLineup({ films, happenings: [] });
   eq("kill switch: nothing goes, the campaign stays scheduled with a reason", [r4.ran, db.email_campaigns.find((x) => x.id === c4.id).status, !!db.email_campaigns.find((x) => x.id === c4.id).error], [false, "scheduled", true]);
   process.env.EMAIL_SENDING_ENABLED = "true";
   process.env.EMAIL_FROM = "Royale <onboarding@resend.dev>";
-  check("kill switch: a @resend.dev sender refuses list email", !sender.sendingGate().ok);
+  check("kill switch: a @resend.dev sender refuses list email", !(await sender.sendingGate()).ok);
   process.env.EMAIL_FROM = "Royale Cinema Lounge <hello@royalecinemajoplin.com>";
   db.email_campaigns.splice(db.email_campaigns.findIndex((x) => x.id === c4.id), 1);
 
@@ -1066,7 +1068,7 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   process.env.EMAIL_SENDING_ENABLED = "false";
   const t1 = await readyActions.sendDesignTest("come-in");
   const s1 = await readyActions.sendDesign("come-in", randomUUID());
-  check("ready: with sending switched off, no test and no send ('ask Andrew')", !t1.ok && !s1.ok && /switched off/.test(t1.error) && /Ask Andrew/.test(s1.error), JSON.stringify([t1, s1]));
+  check("ready: with the Vercel master setting off, no test and no send (says an owner turns it on, names nobody)", !t1.ok && !s1.ok && /sending is off/.test(t1.error) && /An owner turns it on/.test(s1.error) && !/Andrew/.test(t1.error + s1.error), JSON.stringify([t1, s1]));
   process.env.EMAIL_SENDING_ENABLED = "true";
   const s2 = await readyActions.sendDesign("come-in", randomUUID());
   check("ready: nothing goes until the pictures are on our server", !s2.ok && /pictures/.test(s2.error), JSON.stringify(s2));
@@ -1077,6 +1079,67 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   const counts = await ready.countAudiences({});
   check("ready: live counts for all three", ["royale-is-here", "come-in", "press-play"].every((k) => typeof counts[k].willSend === "number"));
   check("ready: press play's left-out list counts the old system's September payers", counts["press-play"].excluded.some((e) => e.why === "Paid on the old system in September" && e.n === 1), JSON.stringify(counts["press-play"].excluded));
+
+  // ---- v1.10: the Back office switch (under the Vercel master setting) ----
+  const switchRow = db.email_settings.find((s) => s.key === "sending_switch");
+  switchRow.value = { on: false };
+  const t3 = await readyActions.sendDesignTest("come-in");
+  check("switch: off in Back office (Vercel on): no test, and it says an owner can turn it on", !t3.ok && /An owner can turn it on/.test(t3.error) && !/Andrew/.test(t3.error), JSON.stringify(t3));
+  const sendMod = await load("lib/email/send.ts");
+  const bt3 = resend.sent.length;
+  const receipt = await sendMod.sendEmail("someone@example.com", "Your receipt", "<p>Thanks</p>");
+  check("switch: receipts and other one-to-one email still go while it's off", receipt.ok && resend.sent.length === bt3 + 1, JSON.stringify(receipt));
+  db.email_settings.splice(db.email_settings.indexOf(switchRow), 1);
+  check("switch: no setting saved counts as off", !(await sender.sendingGate()).ok);
+  const on = await actions.setSendingSwitch(true);
+  check("switch: the owners' action turns it on at once", on.ok && (await sender.sendingGate()).ok, JSON.stringify(on));
+
+  // ---- v1.10: Pause calls back what's waiting at Resend ----
+  const later = new Date(Date.now() + 6 * HOUR).toISOString();
+  const atResend = (c, n, extra = {}) =>
+    Array.from({ length: n }, () => {
+      const s = { id: randomUUID(), campaign_id: c.id, member_id: randomUUID(), status: "scheduled", dedupe_key: "", deliver_at: later, resend_email_id: `re_${randomUUID()}`, batch_key: "k", created_at: new Date().toISOString(), ...extra };
+      db.email_sends.push(s);
+      return s;
+    });
+  const cp = mkDesign("come-in");
+  Object.assign(cp, { status: "scheduled", created_at: "2099-01-01T00:00:00Z" });
+  atResend(cp, 3);
+  const p1 = await readyActions.pauseDesign("come-in");
+  check("pause: pauses, calls back the 3 waiting at Resend into the queue, and says so", p1.ok && cp.status === "paused" && queuedOf(cp).length === 3 && /Paused\./.test(p1.message) && /3 called back from Resend; 0 had already gone/.test(p1.message), JSON.stringify(p1));
+  cp.status = "cancelled";
+
+  // ---- v1.10: the brake (each wave's bounces and complaints) ----
+  eq(
+    "brake: 5 of 100 bounced is fine, 6 isn't; 1 spam complaint in 100 is too many",
+    [sender.brakeVerdict({ n: 2, day: "d", sent: 100, bounced: 5, complained: 0 }), sender.brakeVerdict({ n: 2, day: "d", sent: 100, bounced: 6, complained: 0 }), !!sender.brakeVerdict({ n: 2, day: "d", sent: 100, bounced: 0, complained: 1 })],
+    [null, "Paused: 6 of 100 in wave 2 bounced. Check the list before sending more.", true],
+  );
+  const cb = mkDesign("press-play");
+  Object.assign(cb, { status: "scheduled", created_at: "2099-01-01T00:00:00Z" });
+  const waveDay = cdt("2026-10-20", "10:30").toISOString();
+  for (let i = 0; i < 20; i++) db.email_sends.push({ id: randomUUID(), campaign_id: cb.id, member_id: randomUUID(), status: i < 2 ? "bounced" : "delivered", bounce_type: i < 2 ? "Permanent" : null, complained_at: null, dedupe_key: "", created_at: waveDay });
+  atResend(cb, 2, { created_at: waveDay });
+  const b1 = await sender.enforceWaveBrake(await sender.getCampaign(cb.id), { recall: "now" });
+  check("brake: 2 of 22 bounced pauses that email, in plain words, and calls back what's waiting", !!b1 && /^Paused: 2 of 22 in wave 1 bounced\. Check the list/.test(b1.reason) && cb.status === "paused" && cb.error.startsWith(sender.BRAKE_PREFIX) && b1.recall?.recalled === 2, JSON.stringify(b1));
+  const r1 = await readyActions.resumeDesign("press-play");
+  check("brake: carrying on needs what you checked", !r1.ok && /what you checked/.test(r1.error) && cb.status === "paused", JSON.stringify(r1));
+  await readyActions.resumeDesign("press-play", "Old addresses from 2019; fine.");
+  check("brake: carrying on clears that wave, and the same numbers don't stop it again", paceOf(cb).brakeOk === "2026-10-20" && cb.status !== "paused" && !(await sender.enforceWaveBrake({ ...(await sender.getCampaign(cb.id)), status: "scheduled" })), JSON.stringify([cb.status, cb.error, paceOf(cb)]));
+  cb.status = "cancelled";
+
+  // ---- v1.10: ready-made emails stay 3 days apart for each person ----
+  {
+    const audience = await load("lib/email/audience.ts");
+    const at = cdt("2026-10-21", "10:30");
+    const had = (days) => facts({ sends: [{ c: "OTHER", t: new Date(at.getTime() - days * DAY).toISOString(), k: "invite", a: null, g: "account", x: null, s: "delivered", ck: false }] });
+    const r = await audience.resolveAudience(
+      { id: randomUUID(), kind: "announcement", category: "account", automation: null, audience: { include: [{ r: "all" }] }, holdoutPct: 0 },
+      { at, now: at, facts: [had(1), had(4), facts()], spacing: { others: new Map([["OTHER", "The new Royale is here"]]), days: 3 } },
+    );
+    eq("gap: had another ready-made email yesterday -> a later wave; 4 days ago or never -> this one", [r.willSend, r.excluded.design_gap, [...r.spaced]], [2, 1, [["The new Royale is here", 1]]]);
+  }
+  check("starters: the old invite and Insiders+ come-back are retired", !(await load("lib/email/templates.ts")).STARTERS.some((s) => ["invite", "plus_comeback"].includes(s.key)));
 
   db.email_settings.splice(db.email_settings.findIndex((s) => s.key === "resend_plan"), 1);
   db.members.push(...saved);

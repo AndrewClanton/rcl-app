@@ -452,6 +452,8 @@ export async function assertStaff() {
 }
 export const assertManager = assertStaff;
 export const assertAdmin = assertStaff;
+export const assertOwner = assertStaff;
+export const isOwner = () => true;
 export const requireManager = assertStaff;
 export const requireAdmin = assertStaff;
 export const requireStaff = assertStaff;

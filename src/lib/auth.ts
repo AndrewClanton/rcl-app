@@ -165,3 +165,14 @@ export async function requireOwner(): Promise<StaffSession> {
   if (session.role !== "owner") redirect("/admin");
   return session;
 }
+
+export function isOwner(role: EmployeeRole): boolean {
+  return role === "owner";
+}
+
+// requireOwner() for actions (e.g. the Email page's Sending on/off switch).
+export async function assertOwner(): Promise<StaffSession> {
+  const session = await assertStaff();
+  if (!isOwner(session.role)) throw new Error("Not authorized");
+  return session;
+}

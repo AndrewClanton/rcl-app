@@ -144,6 +144,7 @@ export const EXCLUSIONS = [
   "wave_limit",
   "bad_address",
   "paid_old_system",
+  "design_gap",
 ] as const;
 export type Exclusion = (typeof EXCLUSIONS)[number];
 
@@ -163,6 +164,7 @@ export const EXCLUSION_LABEL: Record<Exclusion, string> = {
   wave_limit: "Waiting for the next wave",
   bad_address: "Address doesn't look deliverable",
   paid_old_system: "Paid on the old system in September",
+  design_gap: "Had another ready-made email in the last 3 days (gets this one in a later wave)",
 };
 
 // ---------- facts about one member (member_email_facts) ----------

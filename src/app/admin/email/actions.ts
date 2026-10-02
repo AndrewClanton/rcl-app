@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assertAdmin, assertManager } from "@/lib/auth";
+import { assertAdmin, assertManager, assertOwner } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "@/lib/email/campaign";
@@ -18,10 +18,12 @@ import {
   runCampaign,
   scheduleAheadMs,
   sendTestEmail,
+  SENDING_SWITCH,
   sendingGate,
   stopCampaignSends,
   type RecallResult,
 } from "@/lib/email/campaign-send";
+import { UNSUBSCRIBE_TESTED } from "@/lib/email/go-live";
 import { runDueNow } from "@/lib/email/dispatch";
 import { hashEmail } from "@/lib/email/hash";
 import { cancelPendingSends, suppressHash } from "@/lib/email/consent";
@@ -246,7 +248,7 @@ export async function scheduleCampaign(id: string, input: ScheduleInput): Promis
     .in("status", ["draft", "paused"]);
   if (error) return { ok: false, error: error.code === "23505" ? "Another lineup is already scheduled for that week." : "Couldn't schedule it. Try again." };
 
-  const gate = sendingGate();
+  const gate = await sendingGate();
   const moved = slot.getTime() - when.getTime() > 60_000 ? " (moved into sending hours: 9 AM to 7 PM, Monday to Saturday)" : "";
   const whenText = slot.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
   if (!gate.ok) {
@@ -331,7 +333,7 @@ export async function resumeCampaign(id: string): Promise<Result> {
   const c = await getCampaign(id);
   const planned = c?.scheduled_for && Date.parse(c.scheduled_for) > Date.now() ? new Date(c.scheduled_for) : new Date();
   const slot = nextSendSlot(planned);
-  if (c && sendingGate().ok && centralParts(slot).date === centralParts(new Date()).date) {
+  if (c && (await sendingGate()).ok && centralParts(slot).date === centralParts(new Date()).date) {
     const r = await runCampaign(id, Date.now() + 240_000);
     revalidate(id);
     if (r.note && r.status === "paused") return { ok: false, error: r.note };
@@ -356,7 +358,7 @@ export async function resumeAllSending(reason: string): Promise<Result<{ message
   await admin.from("email_settings").upsert({ key: "guardrail_resumed", value: { at: new Date().toISOString(), reason: why.slice(0, 300) }, updated_by: staff.employeeId, updated_at: new Date().toISOString() }, { onConflict: "key" });
   await admin.from("email_campaigns").update({ status: "scheduled", error: null }).eq("status", "paused").is("automation", null).like("error", "Guardrail:%");
   await admin.from("email_campaigns").update({ status: "scheduled", error: null }).eq("status", "paused").is("automation", null).like("error", "Stopped:%");
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) {
     revalidate();
     return { ok: true, message: `Resumed, but nothing goes until this is fixed: ${gate.reason}` };
@@ -382,9 +384,10 @@ export async function resumeAllSending(reason: string): Promise<Result<{ message
 // later is called back, soonest first, and carries on being called back
 // (in fresh runs, or from the page) until none is left.
 // EMAIL_SENDING_ENABLED=false alone only stops new hand-overs until the next
-// cron run; this is immediate.
+// cron run; this is immediate. Managers too: whoever can start a send can
+// stop one (stopping is always safe). Resuming stays with admins and owners.
 export async function stopAllSending(reason: string): Promise<Result<RecallResult>> {
-  const staff = await assertAdmin();
+  const staff = await assertManager();
   const why = String(reason ?? "").trim().slice(0, 200);
   if (why.length < 5) return { ok: false, error: "Say why (a few words)." };
   try {
@@ -400,9 +403,9 @@ export async function stopAllSending(reason: string): Promise<Result<RecallResul
 
 // While sending is stopped: call back what's still waiting at Resend (the
 // Email page's button; it can be pressed again, and the page carries on by
-// itself while it's open).
+// itself while it's open). Managers too, like the emergency stop it finishes.
 export async function recallWaiting(): Promise<Result<RecallResult>> {
-  await assertAdmin();
+  await assertManager();
   const reason = await recallReason();
   if (!reason) return { ok: false, error: "Sending isn't stopped. Use \"Stop all sending\" first." };
   try {
@@ -412,6 +415,51 @@ export async function recallWaiting(): Promise<Result<RecallResult>> {
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't call it back." };
   }
+}
+
+// ---------- Sending on/off (owners) ----------
+// The Back office switch under the Vercel master setting (campaign-send.ts
+// sendingGate). It takes effect at once. Turning it off also calls back
+// what's waiting at Resend for later, as the emergency stop does (the emails
+// it belonged to pause, for an admin to decide). Receipts, password resets
+// and claim links never go through it.
+export async function setSendingSwitch(on: boolean): Promise<Result<{ message: string }>> {
+  const staff = await assertOwner();
+  const now = new Date().toISOString();
+  const { error } = await createAdminClient()
+    .from("email_settings")
+    .upsert({ key: SENDING_SWITCH, value: { on: on === true, at: now }, updated_by: staff.employeeId, updated_at: now }, { onConflict: "key" });
+  if (error) return { ok: false, error: "Couldn't save it. Try again." };
+  revalidate();
+  revalidatePath("/admin/email/ready");
+  if (on === true) {
+    const gate = await sendingGate();
+    return { ok: true, message: gate.ok ? "Sending is on. Emails to lists go only when someone sends them, or at the time they were scheduled for." : `The switch is on, but nothing goes until this is fixed: ${gate.reason}` };
+  }
+  let r: RecallResult | null = null;
+  try {
+    r = await recallAll("Sending was switched off in Back office.", { deadline: Date.now() + 120_000 });
+  } catch {
+    r = null;
+  }
+  revalidate();
+  if (!r) return { ok: true, message: "Sending is off. Couldn't call back what's waiting at Resend just now; the next email run does it." };
+  const back = r.recalled ? ` ${r.recalled.toLocaleString()} called back from Resend.` : "";
+  const rest = r.left ? ` ${r.left.toLocaleString()} still waiting there are called back in the background, or press Call back below.` : "";
+  return { ok: true, message: `Sending is off. Nothing more goes to a list.${back}${rest}` };
+}
+
+// The go-live checklist's one hand tick: someone opened a test email and its
+// unsubscribe link worked. Managers and up.
+export async function markUnsubscribeTested(done: boolean): Promise<Result> {
+  const staff = await assertManager();
+  const now = new Date().toISOString();
+  const { error } = await createAdminClient()
+    .from("email_settings")
+    .upsert({ key: UNSUBSCRIBE_TESTED, value: { done: done === true, at: now }, updated_by: staff.employeeId, updated_at: now }, { onConflict: "key" });
+  if (error) return { ok: false, error: "Couldn't save it. Try again." };
+  revalidate();
+  return { ok: true };
 }
 
 // ---------- the warm-up tool ----------
@@ -456,7 +504,7 @@ export async function sendNextWave(id: string, size: number, override: string | 
       updated_at: waveAt,
     })
     .eq("id", id);
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) {
     revalidate(id);
     return { ok: true, message: `${queued} queued, but nothing goes until this is fixed: ${gate.reason}` };

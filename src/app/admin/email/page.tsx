@@ -1,7 +1,9 @@
 import Link from "next/link";
-import { hasAdminAccess, requireManager } from "@/lib/auth";
+import { hasAdminAccess, isOwner, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import { getOverview, type CampaignSummary } from "@/lib/email/reports";
+import { goLiveChecklist } from "@/lib/email/go-live";
+import GoLive from "./GoLive";
 import { CONSENT_LABEL, KIND_LABEL, type ConsentSource } from "@/lib/email/types";
 import { whenLabel } from "@/lib/email/format";
 import { NewEmailButtons, RecallWaiting, ResumeSending, StopSending } from "./OverviewControls";
@@ -61,7 +63,7 @@ function CampaignRowView({ s }: { s: CampaignSummary }) {
 export default async function EmailPage() {
   const staff = await requireManager();
   const admin = hasAdminAccess(staff.role);
-  const o = await getOverview();
+  const [o, goLive] = await Promise.all([getOverview(), goLiveChecklist()]);
   const r = o.rates30;
   const complaintRate = r.delivered ? r.complaints / r.delivered : 0;
   const bounceRate = r.delivered ? r.hardBounces / r.delivered : 0;
@@ -93,33 +95,34 @@ export default async function EmailPage() {
       {o.paused_by_guardrail && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            <strong>{o.paused_by_guardrail.by === "Stopped" ? "Sending is stopped." : "Sending is paused by a guardrail."}</strong> {o.paused_by_guardrail.reason.replace(/[.!?]?\s*$/, ".")} Nothing goes
-            to a list until an admin has looked and resumed it. Check the latest emails below and Google Postmaster Tools first.
+            <strong>{o.paused_by_guardrail.by === "Stopped" ? "Sending is stopped." : "Sending was paused automatically."}</strong> {o.paused_by_guardrail.reason.replace(/[.!?]?\s*$/, ".")}{" "}
+            Nothing goes to a list until an admin or owner has looked and resumed it. Check the latest emails below and Google Postmaster Tools first.
           </p>
           <p>
             {o.waitingAtResend > 0
               ? `${o.waitingAtResend.toLocaleString()} ${o.waitingAtResend === 1 ? "email is" : "emails are"} still waiting at Resend to go out later${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : ""}.`
               : "Nothing is waiting at Resend to go out later."}
           </p>
-          {admin && o.waitingAtResend > 0 && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
-          {admin && <ResumeSending />}
+          {o.waitingAtResend > 0 && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
+          {admin ? <ResumeSending /> : <p className="text-xs">An admin or owner can resume sending here once they&apos;ve checked.</p>}
         </div>
       )}
       {!o.gate.ok && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            Not sending to lists yet: {o.gate.reason}
+            Not sending to lists right now: {o.gate.reason}
             {o.waitingAtResend > 0 && !o.paused_by_guardrail
-              ? ` ${o.waitingAtResend.toLocaleString()} handed to Resend earlier ${o.waitingAtResend === 1 ? "is" : "are"} still waiting to go out${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : "; they're called back on the next morning run, or now with the button below"}.`
+              ? ` ${o.waitingAtResend.toLocaleString()} handed to Resend earlier ${o.waitingAtResend === 1 ? "is" : "are"} still waiting to go out${o.recallRunning ? ", and being called back right now (reload to see the count go down)" : "; they're called back on the next email run, or now with the button below"}.`
               : ""}{" "}
-            Test copies still go to your own inbox.
+            Receipts, password resets and test copies to your own inbox still go.
           </p>
-          {admin && o.waitingAtResend > 0 && !o.paused_by_guardrail && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
+          {o.waitingAtResend > 0 && !o.paused_by_guardrail && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
         </div>
       )}
+      <GoLive data={goLive} isOwner={isOwner(staff.role)} />
       {o.pausedEmails.length > 0 && (
         <div className="notice notice-warn text-sm">
-          <p className="font-semibold">Paused, waiting for an admin to decide:</p>
+          <p className="font-semibold">Paused, waiting for someone to decide:</p>
           <ul className="mt-1 list-disc pl-5">
             {o.pausedEmails.map((c) => (
               <li key={c.id}>
@@ -132,19 +135,17 @@ export default async function EmailPage() {
           </ul>
         </div>
       )}
-      {admin && (
-        <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
-          <summary className="cursor-pointer font-semibold">
-            Emergency stop
-            {o.waitingAtResend > 0 ? <span className="font-normal text-[var(--muted)]"> · {o.waitingAtResend.toLocaleString()} waiting at Resend for later</span> : null}
-          </summary>
-          <p className="my-2 text-[var(--muted)]">
-            Pauses every email to a list and calls back everything Resend is holding for later (a big list takes a few minutes; it carries on until none is
-            left). Switching EMAIL_SENDING_ENABLED off in Vercel only stops new hand-overs until the next morning run; this is immediate. It can be pressed again.
-          </p>
-          <StopSending />
-        </details>
-      )}
+      <details className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 text-sm">
+        <summary className="cursor-pointer font-semibold">
+          Emergency stop
+          {o.waitingAtResend > 0 ? <span className="font-normal text-[var(--muted)]"> · {o.waitingAtResend.toLocaleString()} waiting at Resend for later</span> : null}
+        </summary>
+        <p className="my-2 text-[var(--muted)]">
+          Pauses every email to a list and calls back everything our email service (Resend) is holding to send later (a big list takes a few minutes; it carries on
+          until none is left). Anyone who can send can press it, and it can be pressed again. Only an admin or owner can resume afterwards.
+        </p>
+        <StopSending />
+      </details>
 
       <section className="grid gap-3 sm:grid-cols-4">
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">

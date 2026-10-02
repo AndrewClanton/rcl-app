@@ -65,7 +65,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           initialData={data}
           options={options}
           canSend={hasAdminAccess(staff.role)}
-          gate={sendingGate()}
+          gate={await sendingGate()}
           sender={senderStatus()}
           myEmail={staff.email}
           myFirstName={firstNameOf(staff.name)}

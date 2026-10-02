@@ -4,7 +4,7 @@ import { exactEmail } from "@/lib/email-match";
 import { hashEmail } from "./hash";
 import { scrubAddresses } from "./format";
 import { cancelPendingSends, logAddressEvent, logMemberEvent, setMarketingOptIn, suppressHash } from "./consent";
-import { enforceGuardrails } from "./campaign-send";
+import { brakeForSend, enforceGuardrails } from "./campaign-send";
 
 // What Resend tells us about each email it handled (the webhook at
 // /api/resend/webhook): delivered, bounced, complained, opened, failed,
@@ -105,15 +105,15 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
   }
 
   // 2. Which email this was.
-  let send: { id: string; member_id: string | null; status: string; delivered_at: string | null } | null = null;
+  let send: { id: string; campaign_id: string | null; member_id: string | null; status: string; delivered_at: string | null } | null = null;
   if (d.email_id) {
-    const { data, error } = await admin.from("email_sends").select("id, member_id, status, delivered_at").eq("resend_email_id", d.email_id).maybeSingle();
+    const { data, error } = await admin.from("email_sends").select("id, campaign_id, member_id, status, delivered_at").eq("resend_email_id", d.email_id).maybeSingle();
     if (error) throw new Error("send lookup failed");
     send = data;
   }
   const tagged = tagValue(d.tags, "send");
   if (!send && tagged && UUID.test(tagged)) {
-    const { data, error } = await admin.from("email_sends").select("id, member_id, status, delivered_at").eq("id", tagged).maybeSingle();
+    const { data, error } = await admin.from("email_sends").select("id, campaign_id, member_id, status, delivered_at").eq("id", tagged).maybeSingle();
     if (error) throw new Error("send lookup failed");
     send = data;
     if (send && d.email_id) await admin.from("email_sends").update({ resend_email_id: d.email_id }).eq("id", send.id).is("resend_email_id", null);
@@ -169,6 +169,8 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
         }
       }
       await enforceGuardrails(now);
+      // And that one email's own brake (Ready to send's waves).
+      if (permanent) await brakeForSend(send?.campaign_id, now);
       break;
     }
     case "complained": {
@@ -184,6 +186,7 @@ export async function handleResendEvent(event: ResendEvent, svixId: string, now 
       if (!ids.length && to) await logAddressEvent(to, "complaint", "webhook");
       effect = `opted out ${ids.length}, suppressed`;
       await enforceGuardrails(now);
+      await brakeForSend(send?.campaign_id, now);
       break;
     }
     case "opened":
