@@ -17,14 +17,14 @@ export const CHECKIN_LIFETIME_MS = 15 * 60_000;
 
 export type CheckinDetails =
   // By phone: whoever has these ten digits (a shared family number can be
-  // a few accounts; staff pick the face).
+  // a few accounts; the screen asks "Which one is you?").
   // fresh: an account the tablet just made for a new customer.
   | { kind: "known"; phone: string; fresh?: boolean }
   // One account: found by the email typed at the tablet, or just made
   // there. phone: the ten digits it was found or made with, if any (for
   // "Phone ending" on the register's card). addPhone: ten digits they
   // typed and said yes to adding (their account has none), saved with the
-  // check-in (at the screen, or pos/checkin-actions.ts confirmVisit).
+  // check-in at the screen.
   // addName: "Sarah M.", typed at the tablet's "Add your name?" by a phone
   // account with none (lib/member-name.ts), saved the same way.
   // done: the screen recorded the visit itself (display/customer/
@@ -91,8 +91,7 @@ export async function memberIdWithEmail(email: string): Promise<string | null> {
 }
 
 // The number from the tablet's "Add this phone for one-tap check-in next
-// time", once they've checked in (display/customer/actions.ts, or pos/checkin-actions.ts
-// confirmVisit): only onto the account the request was sealed for (or the
+// time", once they've checked in (display/customer/actions.ts): only onto the account the request was sealed for (or the
 // one it was merged into), only while it still has no usable phone, and
 // only a number no other account has. Says what happened, for the
 // register's note; null when there was nothing to add. Never throws.

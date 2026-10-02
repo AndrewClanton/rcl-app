@@ -9,10 +9,11 @@
 // identifies anyone: a request carries only an opaque, sealed reference
 // (lib/checkin-server.ts) that the register trades for the details through
 // a staff-only server action, to show who it is and put them on the order,
-// with Undo for a mistake. A shared family number still waits for staff to
-// pick the face; once they do, the screen gets a first name and a points
-// balance, their profile line (unless staff hid it) and their check-in
-// flair as catalog keys (lib/flair.ts), never anything else.
+// with Undo for a mistake. A shared family number asks "Which one is you?"
+// on the screen (first names and last initials only). The screen gets a
+// first name and a points balance, their profile line (unless staff hid
+// it) and their check-in flair as catalog keys (lib/flair.ts), never
+// anything else.
 //
 // Events:
 //   screen -> register  "checkin-request"   CheckinRequest (resent until seen)
@@ -40,8 +41,8 @@ export type CheckinKind = "known" | "new";
 
 // done: the visit is already recorded and paid (Andrew, 10/2: typing your
 // number or email at the screen IS the check-in), so the register just shows
-// who it is, puts them on the order and offers Undo. Without it (a shared
-// family number, where staff pick the face) staff still check them in.
+// who it is, puts them on the order and offers Undo. Without it (from a
+// screen that hasn't updated since 10/2) the register lets it go.
 // The register never trusts this flag: the sealed reference says the same.
 export interface CheckinRequest {
   id: string;
@@ -65,8 +66,8 @@ export interface CheckinConfirmed {
   // everything it paid. Missing if the visit couldn't be saved.
   visit?: { earned: number; visitPoints: number; weekStreak: number; alreadyToday: boolean; badges: EarnedBadge[] };
   // "Scan to see your points online": a member with no login yet, confirmed
-  // by staff (pos/checkin-actions.ts confirmVisit). The screen only shows it
-  // if it passes isClaimUrl.
+  // by staff at a register from before 10/2. The screen only shows it if it
+  // passes isClaimUrl.
   claimUrl?: string;
   // Their entrance (lib/flair.ts): catalog keys only, which the screen looks
   // up in its own catalog (anything unknown plays as classic). entrance is

@@ -221,6 +221,60 @@ try {
     const junk = await pos.addPosMemberEmail(np2.member.id, { email: "not an email" });
     check("junk email is refused", !junk.ok);
   }
+
+  // A shared family number (Andrew, 10/2): the tablet asks "Which one is
+  // you?" itself, nothing waits on staff.
+  console.log("-- the tablet: a shared family number");
+  const p4 = await freeNumber();
+  const family = [];
+  for (const who of ["Shara", "Sharb"]) {
+    const { data } = await db
+      .from("members")
+      .insert({ name: `${who} Q${tag}`, phone: formatPhone(p4), email: null, email_opt_in: false, points: 0, tier: "Insiders" })
+      .select("id")
+      .single();
+    if (data) {
+      made.push(data.id);
+      family.push(data.id);
+    }
+  }
+  check("two accounts share the number", family.length === 2);
+  const pick = await tablet.startCheckin(p4);
+  const choices = pick.ok && pick.status === "pick" ? pick.choices : [];
+  check(
+    "'Which one is you?': a choice each, oldest first, first name and last initial only",
+    choices.length === 2 && choices[0].name === "Shara Q." && choices[1].name === "Sharb Q." && Object.keys(pick).sort().join() === "choices,ok,status" && choices.every((c) => Object.keys(c).sort().join() === "name,ref"),
+  );
+  const sealedChoice = choices[0] ? server.openCheckin(choices[0].ref) : null;
+  check("each choice is sealed to its own account and the number, not checked in yet", sealedChoice?.memberId === family[0] && sealedChoice.phone === p4 && !sealedChoice.done);
+  const picked = choices[0] ? await tablet.checkInNow(choices[0].ref) : null;
+  const pickedSeal = picked?.ok && !("status" in picked) ? server.openCheckin(picked.request.ref) : null;
+  check(
+    "tapping one checks that one in, like any check-in",
+    !!pickedSeal && picked.checkedIn?.visit?.earned > 0 && picked.checkedIn.firstName === "Shara" && pickedSeal.memberId === family[0] && pickedSeal.done === true && pickedSeal.paid === true,
+  );
+  const pickedCard = pickedSeal ? await register.resolveCheckin(picked.request.ref) : null;
+  check("the register's card is that one, done (on the order by itself)", pickedCard?.ok && pickedCard.card.done === true && pickedCard.card.matches.length === 1 && pickedCard.card.matches[0].id === family[0]);
+  const other = choices[1] ? await tablet.checkInNow(choices[1].ref) : null;
+  check("the other one checks in on their own", other?.ok && !("status" in other) && other.checkedIn?.visit?.alreadyToday === false && server.openCheckin(other.request.ref)?.memberId === family[1]);
+  const glance = await register.getMemberGlance(family[0]);
+  check("the register's hold-for-details panel: one visit, today's time, member since", glance?.visits === 1 && !!glance.todayAt && !!glance.since && glance.lastVisit === null);
+  const askAgain = await tablet.createPhoneAccount(p4);
+  check("'Just use my phone number' on it asks which one first", askAgain.ok && askAgain.status === "pick" && askAgain.choices.length === 2);
+  const named = await tablet.nameCheckin({ phone: p4, firstName: "Shara" });
+  check("so does 'Add your name?'", named.ok && named.status === "pick");
+  const joinAsk = await tablet.createKioskMember({ firstName: "Sharc", lastName: `Q${tag}`, email: mail("sharc"), phone: formatPhone(p4) });
+  check("so does signing up with it", joinAsk.ok && joinAsk.status === "pick");
+  const own = await tablet.createPhoneAccount(p4, true);
+  const ownId = own.ok && !("status" in own) ? server.openCheckin(own.request.ref)?.memberId : null;
+  if (ownId) made.push(ownId);
+  check("after 'None of these', 'Just use my phone number' makes their own account on it", own.ok && !("status" in own) && own.made === true && !!ownId && !family.includes(ownId));
+  const join = await tablet.createKioskMember({ firstName: "Sharc", lastName: `Q${tag}`, email: mail("sharc"), phone: formatPhone(p4), notThem: true });
+  const joinId = join.ok && join.status === "created" ? server.openCheckin(join.request.ref)?.memberId : null;
+  if (joinId) made.push(joinId);
+  check("...and so does signing up after 'None of these'", join.ok && join.status === "created" && !!joinId);
+  const now = await server.memberIdsWithPhone(p4);
+  check("the number is on all four now", now.ok && now.ids.length === 4);
 } finally {
   if (made.length) await db.from("members").delete().in("id", made);
   const { data: byId } = await db.from("members").select("id").in("id", made.length ? made : [randomUUID()]);
