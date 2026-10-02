@@ -4,7 +4,8 @@
 // tablet can't find them, and makes a second account.
 //
 // The merge itself is the database function merge_members (migration
-// 20261001150000), one transaction. This file is the same rules in plain
+// 20261001150000; the latest definition is 20261002030000), one
+// transaction. This file is the same rules in plain
 // code, for the preview staff see before they confirm (what moves, what's
 // kept, why it can't be done) and for spotting likely duplicates. No
 // database here, so scripts/check-member-merge.mjs can check it directly.

@@ -4,7 +4,8 @@
 //     usable phones (the old site's "-" isn't one), refusals, what the kept
 //     account takes from the other, the plain-language result, and spotting
 //     an account the door tablet made for someone it couldn't find.
-//  2. The merge itself, by reading migration 20261001150000: merge_members
+//  2. The merge itself, by reading migration 20261001150000 and the latest
+//     migration that redefines merge_members: merge_members
 //     moves every table that points at members (and the list of those is
 //     checked against every "references members" in the migrations, so a
 //     new one can't be missed), decides every members column (the list
@@ -243,12 +244,33 @@ const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MIGRATIONS = join(ROOT, "supabase/migrations");
 const MIGRATION = "20261001150000_member_merge.sql";
 const sql = readFileSync(join(MIGRATIONS, MIGRATION), "utf8");
+// merge_members as the database has it: the last migration (in the order
+// they run) that defines it. A later one replaces the whole function, so
+// the checks below read that one.
+const MERGE_DEF = "create or replace function public.merge_members(";
+const mergeFiles = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .filter((f) => readFileSync(join(MIGRATIONS, f), "utf8").includes(MERGE_DEF));
+const mergeFile = mergeFiles.at(-1) ?? MIGRATION;
+const mergeSql = readFileSync(join(MIGRATIONS, mergeFile), "utf8");
 const body = (() => {
-  const start = sql.indexOf("create or replace function public.merge_members(");
-  const end = sql.indexOf("$$;", start);
-  return start >= 0 && end > start ? sql.slice(start, end) : "";
+  const start = mergeSql.indexOf(MERGE_DEF);
+  const end = mergeSql.indexOf("$$;", start);
+  return start >= 0 && end > start ? mergeSql.slice(start, end) : "";
 })();
-check("merge_members is defined", body.length > 0);
+check("merge_members is defined", body.length > 0, mergeFile);
+check(
+  "every migration that defines merge_members keeps it to the server",
+  mergeFiles.every((f) => {
+    const text = readFileSync(join(MIGRATIONS, f), "utf8");
+    return (
+      text.includes("revoke execute on function public.merge_members(uuid, uuid, uuid) from public, anon, authenticated;") &&
+      text.includes("grant execute on function public.merge_members(uuid, uuid, uuid) to service_role;")
+    );
+  }),
+  mergeFiles.join(", "),
+);
 const flat = body.replace(/\s+/g, " ").toLowerCase();
 
 // Every column that points at members(id) (pg_constraint on 10/1).
@@ -370,6 +392,9 @@ const PREVIEW_SKIP = {
   comped_by: "comes with the free membership",
   comped_at: "comes with the free membership",
   legacy_plus: "either account's, like monthly_member",
+  legacy_onboarded_at: "goes with legacy_plus: the set-up record comes over onto an account with none; nothing to choose",
+  legacy_onboarded_via: "comes with legacy_onboarded_at",
+  legacy_onboarded_by: "comes with legacy_onboarded_at",
   tagline_hidden_by: "comes with tagline_hidden_at",
   profile_hidden_by: "comes with profile_hidden_at",
   link_cards: "a switch the merge decides on its own (off on either stays off); nothing to choose",
@@ -422,7 +447,14 @@ check(
   body.includes("select d.points - coalesce(sum(delta), 0) into v_drift from points_ledger where member_id = p_drop;") &&
     body.includes("values (p_keep, v_drift, v_points, 'merge', 'Merged from a duplicate account', p_staff)"),
 );
-check("gift time left on both adds up", /v_gift := greatest\(k\.plus_gift_until, d\.plus_gift_until\) \+ \(least\(k\.plus_gift_until, d\.plus_gift_until\) - now\(\)\);/.test(body));
+check(
+  "a former unlimited member's set-up record comes over as a set onto an account with none (legacy_plus from either)",
+  /if k\.legacy_onboarded_at is null and d\.legacy_onboarded_at is not null then\s+v_onboarded_at := d\.legacy_onboarded_at;\s+v_onboarded_via := d\.legacy_onboarded_via;\s+v_onboarded_by := d\.legacy_onboarded_by;\s+end if;/.test(body) &&
+    /v_onboarded_at := k\.legacy_onboarded_at;\s+v_onboarded_via := k\.legacy_onboarded_via;\s+v_onboarded_by := k\.legacy_onboarded_by;/.test(body) &&
+    /legacy_onboarded_at = v_onboarded_at,\s+legacy_onboarded_via = v_onboarded_via,\s+legacy_onboarded_by = v_onboarded_by/.test(update) &&
+    /legacy_plus = k\.legacy_plus or d\.legacy_plus/.test(update),
+);
+check("gift time left on both adds up",/v_gift := greatest\(k\.plus_gift_until, d\.plus_gift_until\) \+ \(least\(k\.plus_gift_until, d\.plus_gift_until\) - now\(\)\);/.test(body));
 check(
   "only placeholder-shaped phones are cleared, with counts",
   /update members set phone = null\s+where phone is not null and phone_digits = '' and btrim\(phone\) ~\* '\^\(\[-\.\/x\[:space:\]\]\*\|n\/\?a\|none\)\$';/.test(sql) &&
