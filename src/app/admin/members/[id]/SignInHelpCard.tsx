@@ -32,9 +32,7 @@ export default function SignInHelpCard({ memberId, memberName, info }: { memberI
           ? info.email
             ? "No website login yet. A setup link lets them make one."
             : "No website login yet, and no email on file. Copy a setup link and text it to them."
-          : info.state === "no-phone"
-            ? "Add their phone number first: setup links are only made for accounts with a phone on file."
-            : info.reason;
+          : info.reason;
 
   function send() {
     setResult(null);

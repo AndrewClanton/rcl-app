@@ -903,14 +903,15 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   check("plan: a wave can't go on a Sunday afternoon (Central), can on a weekday evening (it's the next UTC day's 10:30)", !sendPlan.waveCanGoToday(cdt("2026-10-11", "12:00")) && sendPlan.waveCanGoToday(cdt("2026-10-06", "20:30")));
 
   // ---- daily waves: the invite, 10 people, 4 a day ----
-  const inv = Array.from({ length: 10 }, (_, i) => mkMember(600 + i, { legacy_user_id: null }));
+  // The tenth has an email and no phone: invited too (links stopped needing a phone, 10/1).
+  const inv = [...Array.from({ length: 9 }, (_, i) => mkMember(600 + i, { legacy_user_id: null })), mkMember(621, { legacy_user_id: null, phone: null })];
   mkMember(620, { auth_user_id: randomUUID() }); // signed up already: not invited
-  mkMember(621, { phone: null }); // no phone to check: not invited
   const c1 = mkDesign("royale-is-here");
   const tue = cdt("2026-10-06", "11:00");
   let w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, tue);
   eq("waves: the first wave is today's share (4 of the 10 who qualify)", [queuedOf(c1).length, w.more, db.email_campaigns.find((x) => x.id === c1.id).content.pace.remaining], [4, true, 6]);
-  check("waves: the no-login and no-phone rules hold (nobody signed up, nobody without a phone)", queuedOf(c1).every((s) => inv.some((m) => m.id === s.member_id)));
+  check("waves: the no-login rule holds (nobody signed up)", queuedOf(c1).every((s) => inv.some((m) => m.id === s.member_id)));
+  check("waves: the invite no longer asks for a phone on file", !JSON.stringify(designs.DESIGNS["royale-is-here"].audience).includes("has_phone"));
   check("waves: each queued row remembers they had no login", queuedOf(c1).every((s) => s.had_login === false));
   w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, tue);
   eq("waves: while some are still queued, no new wave", queuedOf(c1).length, 4);
@@ -927,6 +928,7 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
   goOut(c1, cdt("2026-10-12", "10:30"));
   w = await sender.prepareWave(await sender.getCampaign(c1.id), empty, cdt("2026-10-13", "08:05"));
   eq("waves: nobody gets it twice (all 10 had it, once each)", [queuedOf(c1).length, w.more, new Set(db.email_sends.filter((s) => s.campaign_id === c1.id).map((s) => s.member_id)).size], [0, false, 10]);
+  check("waves: the member with only an email got it", db.email_sends.some((s) => s.campaign_id === c1.id && s.member_id === inv[9].id));
   eq("waves: a paced email has no 'too late' (it goes over days)", timing.sendByFor({ kind: "invite", content: { pace: {} }, scheduled_for: tue.toISOString() }), null);
 
   // ---- a real run: the invite's own links, re-checked at hand-over ----

@@ -196,7 +196,7 @@ export const HELP_TOPICS = {
     title: "Check-in for points",
     area: "Register: members and the door",
     body:
-      "Regulars check in on the customer screen with their phone number. Their card waits on the register's Customers tab (beside the menu tabs, with a red count that pulses until you answer) with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. Everyone checked in today is listed under it, one tap to put them on the order. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone. Once you confirm, the screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color) with their profile line; it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
+      "Regulars check in on the customer screen with their phone number or email. Their card waits on the register's Customers tab (beside the menu tabs, with a red count that pulses until you answer) with their photo, full name and the last four digits of their phone (or \"by email\"), so you can say \"yes, that's them\" before anything is saved. Found by email with no phone on file, they can add the number they typed: the card says \"Will add phone\", and it's saved when you check them in. Everyone checked in today is listed under it, one tap to put them on the order. That stops anyone checking in as somebody else. New customers sign themselves up on the screen with their name and email (phone optional) and get a link by email to finish their account. Once you confirm, the screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color) with their profile line; it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
   },
   "points-and-badges": {
@@ -228,7 +228,7 @@ export const HELP_TOPICS = {
     title: "Claim-your-account QR codes",
     area: "Register: members and the door",
     body:
-      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, lets them add a login and see their points online. Scanning it takes them straight to signing in (Google, or an email and password), and that login is attached to their account, so the code is the key: hand the receipt only to them. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
+      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, or the setup link in their email, lets them add a login and see their points online. Scanning it takes them straight to signing in (Google, or an email and password), and that login is attached to their account, so the code is the key: hand the receipt only to them. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
   },
   "easter-eggs": {
     title: "Just for fun (the ✨ button)",

@@ -2,14 +2,13 @@ import "server-only";
 import type { User } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { emailIsProven } from "@/lib/member-link";
-import { firstNameOf, last10 } from "@/lib/checkin";
+import { firstNameOf } from "@/lib/checkin";
 import { claimUrl } from "@/lib/claim-link";
 import { CLAIM_LIFETIME_S, emailClaimNonce, openClaimToken, sealClaimToken, type ClaimKind } from "@/lib/member-claim-token";
 
 // "Claim your account": lets someone who has a members row but no website
 // login (imported from the old site, or a regular made at the check-in
-// tablet with just a phone and first name) set one up and see their points,
-// visits and purchases online.
+// tablet) set one up and see their points, visits and purchases online.
 //
 // The register hands them a link: a QR code on the tablet after they check
 // in (good for 30 minutes), on their receipt (good for two weeks), or in a
@@ -22,22 +21,21 @@ import { CLAIM_LIFETIME_S, emailClaimNonce, openClaimToken, sealClaimToken, type
 // for the phone's last four digits; points have little cash value). Their
 // email is only saved on the account if it had none and the login proved it
 // owns the address; otherwise the account keeps the email it has.
+//
+// Any account with no login can have one: links used to need a phone on
+// file (left from the phone-digits check, long gone), which left out most
+// of the members with only an email. Since the tablet's "Phone or email"
+// check-in (Andrew, 10/1) they don't.
 
 export type { ClaimKind } from "@/lib/member-claim-token";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Links are only made for accounts with a real phone on file (at least
-// seven digits), as they always have been.
-export function hasPhoneOnFile(phone: string | null | undefined): boolean {
-  return last10(phone).length >= 7;
-}
-
 // A fresh link for this member, or null if there's nothing to claim: they
-// already have a login, their info was removed, there's no phone on file,
-// or the link couldn't be recorded (for instance before the
-// member_claims migration is applied -- the receipt then just prints
-// without it, and the tablet shows its plain welcome). Never throws.
+// already have a login, their info was removed, or the link couldn't be
+// recorded (for instance before the member_claims migration is applied --
+// the receipt then just prints without it, and the tablet shows its plain
+// welcome). Never throws.
 //
 // kiosk links last 30 minutes, receipt links two weeks, and email links
 // (sign-in help, lib/sign-in-help.ts) 30 days (CLAIM_LIFETIME_S).
@@ -48,8 +46,8 @@ export async function issueClaimLink(memberId: string, kind: ClaimKind, opts: { 
   if (!UUID.test(memberId) || !(kind === "kiosk" || kind === "receipt" || kind === "email")) return null;
   try {
     const admin = createAdminClient();
-    const { data: m, error } = await admin.from("members").select("id, auth_user_id, erased_at, phone").eq("id", memberId).maybeSingle();
-    if (error || !m || m.auth_user_id || m.erased_at || !hasPhoneOnFile(m.phone)) return null;
+    const { data: m, error } = await admin.from("members").select("id, auth_user_id, erased_at").eq("id", memberId).maybeSingle();
+    if (error || !m || m.auth_user_id || m.erased_at) return null;
     if (opts.skipIfIssuedWithinMs) {
       const since = new Date(Date.now() - opts.skipIfIssuedWithinMs).toISOString();
       const { data: recent, error: recentErr } = await admin.from("member_claims").select("id").eq("member_id", memberId).eq("kind", kind).gt("issued_at", since).limit(1);
@@ -138,17 +136,17 @@ export async function describeLogin(user: User): Promise<{ email: string | null;
 // from the send id and the expiry from when the send was queued, so a
 // retried batch renders the same email (Resend's idempotency needs that),
 // and the member_claims row is written once. A member who already has a
-// login, was removed, or has no phone on file gets no link (the email
-// then points them at sign-in instead). Never throws.
+// login or was removed gets no link (the email then points them at their
+// account or sign-in instead). Never throws.
 export async function issueEmailClaimLinks(items: { memberId: string; sendId: string; queuedAt: string }[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   try {
     const ids = items.map((i) => i.memberId).filter((id) => UUID.test(id));
     if (!ids.length) return out;
     const admin = createAdminClient();
-    const { data: members, error } = await admin.from("members").select("id, auth_user_id, erased_at, phone").in("id", ids);
+    const { data: members, error } = await admin.from("members").select("id, auth_user_id, erased_at").in("id", ids);
     if (error) return out;
-    const ok = new Set((members ?? []).filter((m) => !m.auth_user_id && !m.erased_at && hasPhoneOnFile(m.phone)).map((m) => m.id as string));
+    const ok = new Set((members ?? []).filter((m) => !m.auth_user_id && !m.erased_at).map((m) => m.id as string));
     const rows: { nonce: string; member_id: string; kind: ClaimKind; expires_at: string; issued_at: string }[] = [];
     const urls = new Map<string, string>();
     for (const it of items) {

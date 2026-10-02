@@ -2,8 +2,8 @@
 
 import { assertStaff, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { firstNameOf, formatPhone, last10 } from "@/lib/checkin";
-import { memberIdsWithPhone, memberIdWithEmail, openCheckin } from "@/lib/checkin-server";
+import { firstNameOf, formatPhone, isFullPhone, last10 } from "@/lib/checkin";
+import { memberIdsWithPhone, memberIdWithEmail, openCheckin, savePhoneFromCheckin } from "@/lib/checkin-server";
 import { sameEmail } from "@/lib/email-match";
 import { allowAttempt } from "@/lib/rate-limit";
 import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
@@ -19,12 +19,16 @@ import { memberJoined } from "@/lib/email/automations";
 // The register's half of check-in for points (the customer screen's half is
 // in display/customer/actions.ts). Staff-only: this is where a sealed
 // request from the screen turns into a photo, a full name and the last four
-// of the phone, for staff to say "yes, that's them" before anything is
-// attached or created.
+// of the phone (or "by email"), for staff to say "yes, that's them" before
+// anything is attached or created.
 
 export type CheckinCard =
   // fresh: the tablet just made this account for a new customer.
-  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean }
+  // phoneLast4: empty when they checked in with their email (byEmail).
+  // addPhone: "(417) 555-1234", the number they said yes to adding at the
+  // tablet (found by email, no phone on file): shown on the card so staff
+  // know, and saved when staff check them in (confirmVisit).
+  | { kind: "known"; phoneLast4: string; matches: PosMember[]; fresh?: boolean; byEmail?: boolean; addPhone?: string | null }
   | {
       kind: "new";
       firstName: string;
@@ -45,6 +49,18 @@ export async function resolveCheckin(ref: string): Promise<{ ok: true; card: Che
   if (!(await allowAttempt(`checkin-resolve:${staff.employeeId}`, 30, 60))) return { ok: false, error: BUSY };
   const c = openCheckin(ref);
   if (!c) return { ok: false, error: EXPIRED, expired: true };
+
+  if (c.kind === "known" && "memberId" in c) {
+    // One account: found by email at the tablet, or just made there.
+    // Merged into another account since: that one.
+    const m = await getPosMember((await currentMemberId(c.memberId)) ?? c.memberId);
+    if (!m) return { ok: false, error: "That account isn't there anymore. Look them up by name instead." };
+    const addPhone = c.addPhone && !isFullPhone(last10(m.phone)) ? formatPhone(c.addPhone) : null;
+    return {
+      ok: true,
+      card: { kind: "known", phoneLast4: c.phone ? c.phone.slice(-4) : "", matches: [m], fresh: c.fresh === true, byEmail: !c.phone, addPhone },
+    };
+  }
 
   if (c.kind === "known") {
     const found = await memberIdsWithPhone(c.phone);
@@ -152,7 +168,9 @@ export async function createCheckinMember(ref: string, existingId: string | null
 
 // ---------- visits, badges and rewards (lib/visits.ts) ----------
 
-export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null } | { ok: false; error: string };
+// phoneNote: what happened to the phone they asked to add at the tablet
+// ("Added (417) 555-1234 to their account."), or null if there wasn't one.
+export type VisitConfirm = { ok: true; visit: VisitResult; rewards: OpenReward[]; claimUrl: string | null; phoneNote: string | null } | { ok: false; error: string };
 
 // A member confirmed at the door gets one "finish on your phone" link per
 // this long (the tablet already made one if it just created the account).
@@ -174,19 +192,23 @@ async function tabletClaimLink(memberId: string): Promise<string | null> {
   return issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: CLAIM_LINK_EVERY_MS });
 }
 
-export async function confirmVisit(cardMemberId: string): Promise<VisitConfirm> {
+// `ref`: the check-in's sealed request, when it came from the tablet. If
+// they said yes there to adding the number they typed (found by email, no
+// phone on file), it's saved now that staff have said it's them.
+export async function confirmVisit(cardMemberId: string, ref: string | null = null): Promise<VisitConfirm> {
   const staff = await assertStaff();
   // Merged into another account since the card came up: that one.
   const memberId = (await currentMemberId(cardMemberId)) ?? cardMemberId;
   const visit = await recordVisit(memberId, staff.employeeId);
   if (!visit) return { ok: false, error: "Couldn't save the check-in. Try again." };
-  const [rewards, claimUrl] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId)]);
-  return { ok: true, visit, rewards, claimUrl };
+  const [rewards, claimUrl, phoneNote] = await Promise.all([openRewards(memberId), tabletClaimLink(memberId), typeof ref === "string" ? savePhoneFromCheckin(ref, memberId) : null]);
+  return { ok: true, visit, rewards, claimUrl, phoneNote };
 }
 
-// After a check-in: an account the tablet made lately that's probably a
-// second account for an older member with the same name and no usable
-// phone (lib/data/member-merge.ts). The register only shows a line, with a
+// After a check-in: an account the tablet made lately (by phone, or by
+// email with no phone) that's probably a second account for an older
+// member with the same email, or the same name and no usable phone
+// (lib/data/member-merge.ts). The register only shows a line, with a
 // link to review it in Back office for an owner or admin (the merge page
 // is theirs; anyone else gets the line without the link). Nothing is
 // merged from here. Null almost always, and whenever it can't tell.

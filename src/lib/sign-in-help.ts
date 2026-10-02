@@ -8,7 +8,7 @@ import { allowAttempt } from "@/lib/rate-limit";
 import { siteOrigin } from "@/lib/site-origin";
 import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import { exactEmail, sameEmail } from "@/lib/email-match";
-import { hasPhoneOnFile, issueClaimLink } from "@/lib/member-claim";
+import { issueClaimLink } from "@/lib/member-claim";
 import { CLAIM_LIFETIME_S } from "@/lib/member-claim-token";
 import { sendEmail } from "@/lib/email/send";
 import { setupEmail } from "@/lib/email/setup-email";
@@ -25,13 +25,11 @@ import { plainResetError } from "@/lib/auth-email-errors";
 //     createImplicitFlowClient), so the link works on any device. It lands
 //     on /account/reset-password, which sends staff to /admin and members
 //     to /account.
-//   - A member account but no login, with a phone on file: email a setup
-//     link (a claim link, lib/member-claim.ts) to the email on file,
-//     "Finish setting up your Royale account". Opening it goes straight to
-//     making a login for that account.
-//   - A member account, no login, no usable phone: no email. Staff add the
-//     phone first (claim links are only made for accounts with one); the
-//     person is asked to come see us at the bar.
+//   - A member account but no login: email a setup link (a claim link,
+//     lib/member-claim.ts) to the email on file, "Finish setting up your
+//     Royale account". Opening it goes straight to making a login for that
+//     account. (It used to need a phone on file too; since the tablet's
+//     "Phone or email" check-in it doesn't, Andrew 10/1.)
 //   - Nothing under that email: the sign-in page says only "if that email
 //     has an account, we've sent you a link" (staff can't reach this case).
 //
@@ -54,7 +52,6 @@ const LIMIT = {
 const allow = (key: string, [max, windowSeconds]: readonly [number, number]) => allowAttempt(key, max, windowSeconds);
 const now = () => new Date().toISOString();
 
-const NO_PHONE = "Add their phone number first: setup links are only made for accounts with a phone on file.";
 const SEND_FAILED = "Couldn't send the email just now. Try again in a minute.";
 
 // ---------- who they are ----------
@@ -96,7 +93,6 @@ async function lookUpLogin(authUserId: string): Promise<LoginLookup> {
 type Case =
   | { kind: "reset"; authUserId: string; email: string; socialOnly: string | null }
   | { kind: "setup"; email: string | null }
-  | { kind: "no_phone" }
   | { kind: "unavailable"; error: string };
 
 async function caseFor(m: MemberForHelp): Promise<Case> {
@@ -104,7 +100,6 @@ async function caseFor(m: MemberForHelp): Promise<Case> {
     const login = await lookUpLogin(m.auth_user_id);
     return login.ok ? { kind: "reset", authUserId: m.auth_user_id, email: login.email, socialOnly: login.socialOnly } : { kind: "unavailable", error: login.error };
   }
-  if (!hasPhoneOnFile(m.phone)) return { kind: "no_phone" };
   return { kind: "setup", email: m.email?.trim() || null };
 }
 
@@ -146,6 +141,27 @@ async function sendSetup(m: MemberForHelp, to: string, about: string): Promise<{
   return { ok: true };
 }
 
+// ---------- the door tablet ----------
+
+// A new account just made at the door tablet with their email
+// (display/customer/actions.ts createKioskMember): the same setup email,
+// sent right away, so they can finish on their own phone later (the tablet
+// also shows the QR code). Only while the account has no login and has an
+// email on file. Transactional, like every sign-in help email: it doesn't
+// go through EMAIL_SENDING_ENABLED, which only holds back list email.
+// Never throws.
+export async function emailSetupLinkToNewMember(memberId: string): Promise<boolean> {
+  try {
+    const m = await loadMember(memberId);
+    const to = m?.email?.trim();
+    if (!m || m.auth_user_id || !to) return false;
+    return (await sendSetup(m, to, "made at the door tablet")).ok;
+  } catch (e) {
+    console.error(`sign-in help: setup email for new member ${memberId} failed: ${scrubAddresses(e instanceof Error ? e.message : String(e))}`);
+    return false;
+  }
+}
+
 // ---------- Back office ----------
 
 // What the member page's sign-in help card shows. A cashier's page never
@@ -154,7 +170,6 @@ export type SignInHelpCard =
   | { state: "managers-only" }
   | { state: "reset"; email: string; socialOnly: string | null; canCopy: boolean }
   | { state: "setup"; email: string | null; days: number }
-  | { state: "no-phone" }
   | { state: "unavailable"; reason: string };
 
 export async function signInHelpCard(member: MemberForHelp, role: EmployeeRole | null): Promise<SignInHelpCard> {
@@ -166,8 +181,6 @@ export async function signInHelpCard(member: MemberForHelp, role: EmployeeRole |
       return { state: "reset", email: shown(c.email), socialOnly: c.socialOnly, canCopy: role === "owner" };
     case "setup":
       return { state: "setup", email: c.email ? shown(c.email) : null, days: SETUP_DAYS };
-    case "no_phone":
-      return { state: "no-phone" };
     case "unavailable":
       return { state: "unavailable", reason: c.error };
   }
@@ -203,8 +216,6 @@ export async function emailSignInHelp(memberId: string, sender: StaffSession): P
       const r = await sendSetup(m, c.email, `by employee ${sender.employeeId}`);
       return r.ok ? { ok: true, sent: "setup", socialOnly: null, days: SETUP_DAYS } : { ok: false, error: r.error };
     }
-    case "no_phone":
-      return { ok: false, error: NO_PHONE };
     case "unavailable":
       return { ok: false, error: c.error };
   }
@@ -251,8 +262,6 @@ export async function signInHelpLink(memberId: string, sender: StaffSession): Pr
       console.info(`sign-in help: setup link copied for member ${m.id} by employee ${sender.employeeId} at ${now()}`);
       return { ok: true, kind: "setup", link, email: null, passwordLogin: false, days: SETUP_DAYS };
     }
-    case "no_phone":
-      return { ok: false, error: NO_PHONE };
     case "unavailable":
       return { ok: false, error: c.error };
   }
@@ -278,8 +287,8 @@ export function staffRecoveryLink(authUserId: string, sender: StaffSession, abou
 // "generic" mean the page sends the password reset itself, from the
 // browser, exactly as "Forgot password" always has (Supabase sends it only
 // if a login has that address). "setup" means the setup link was emailed
-// here; "ask_at_bar" means nothing was sent.
-export type PublicHelp = { ok: true; outcome: "reset" | "setup" | "ask_at_bar" | "generic" } | { ok: false; error: string };
+// here.
+export type PublicHelp = { ok: true; outcome: "reset" | "setup" | "generic" } | { ok: false; error: string };
 
 // `connection`: the visitor's hashed IP (lib/public-form-guard.ts). Safe to
 // email the setup link from a public form: it only goes to the address on
@@ -316,8 +325,6 @@ export async function signInHelpForEmail(rawEmail: string, connection: string): 
       if (r.ok) return { ok: true, outcome: "setup" };
       return { ok: false, error: r.limited ? "We just emailed you a setup link. Check your inbox (and spam), or try again later." : SEND_FAILED };
     }
-    case "no_phone":
-      return { ok: true, outcome: "ask_at_bar" };
     case "unavailable":
       return { ok: true, outcome: "generic" };
   }

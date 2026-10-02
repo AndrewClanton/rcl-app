@@ -138,9 +138,11 @@ export interface Checkins {
 // many are waiting, so nothing floats over the menu buttons. A new one also
 // pops up over the top of the order for a few seconds (CheckinArrivals).
 //
-// A check-in waits as a card -- photo, full name, last four of the phone --
-// for staff to Check in (that's them) or say Not them. A number we don't
-// know shows as "New regular" with Create. Cards wait up to 15 minutes, and
+// A check-in waits as a card -- photo, full name, last four of the phone
+// (or "By email") -- for staff to Check in (that's them) or say Not them.
+// Found by email with no phone on file, the card can say "Will add phone":
+// the number they typed is saved when staff check them in. A number we
+// don't know shows as "New regular" with Create. Cards wait up to 15 minutes, and
 // if there's no order open yet, "+ order" puts them on the next one. When a
 // sale with a member on it completes, this tells the customer screen to play
 // the points burst.
@@ -235,7 +237,9 @@ export function useRegisterCheckins({
   // a reward), and with addToOrder, onto the order too.
   async function confirm(p: Pending, m: PosMember, isNew: boolean, note: string | null, addToOrder: boolean) {
     patch(p.id, { working: true, error: null });
-    const r = await confirmVisit(m.id).catch(() => null);
+    // The request goes along, so a phone they asked to add at the tablet
+    // is saved now (confirmVisit).
+    const r = await confirmVisit(m.id, p.ref).catch(() => null);
     const visit = r?.ok ? r.visit : null;
     const already = member?.id === m.id;
     if (addToOrder) onAttach(m);
@@ -285,6 +289,7 @@ export function useRegisterCheckins({
     if (visit?.badges.length) bits.push(`New badge${visit.badges.length === 1 ? "" : "s"}: ${badgeList(visit.badges)}.`);
     for (const r of visit?.rewards ?? []) bits.push(`They earned: ${REWARD_LABEL[r]}! Redeem it from their member panel.`);
     if (addToOrder) bits.push(already ? "Already on this order." : hasOrder ? "On this order." : "They'll be on the next order.");
+    if (r?.ok && r.phoneNote) bits.push(r.phoneNote);
     if (note) bits.push(note);
     setNotice(bits.join(" "));
     void refreshHere();
@@ -758,14 +763,14 @@ function TonightTickets({ tonight, printing, onPrint, onDismiss }: { tonight: To
 // Big face and name, so staff can put the two together and greet them by
 // name next time. Their profile line, if they wrote one (and staff haven't
 // hidden it).
-function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
+function Face({ m, phoneLast4, byEmail }: { m: PosMember; phoneLast4?: string; byEmail?: boolean }) {
   return (
     <div className="flex items-center gap-3">
       <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={memberSignal(m) === "plus"} />
       <div className="min-w-0 flex-1">
         <div className="text-2xl font-black leading-tight">{m.name}</div>
         <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
-          {phoneLast4 ? `Phone ending ${phoneLast4} · ` : ""}
+          {phoneLast4 ? `Phone ending ${phoneLast4} · ` : byEmail ? "By email · " : ""}
           {m.tier} · {pts(m.points)}
         </div>
         {m.tagline && <div className="mt-1 text-sm italic leading-snug">“{m.tagline}”</div>}
@@ -840,7 +845,16 @@ function KnownCard({
     const m = card.matches[0];
     return (
       <>
-        <Face m={m} phoneLast4={card.phoneLast4} />
+        <Face m={m} phoneLast4={card.phoneLast4} byEmail={card.byEmail} />
+        {card.addPhone && (
+          <p className="rounded-md border px-2.5 py-1.5 text-sm font-semibold" style={{ borderColor: "var(--border)" }}>
+            📱 Will add phone {card.addPhone}
+            <span className="font-normal" style={{ color: "var(--muted)" }}>
+              {" "}
+              on check-in
+            </span>
+          </p>
+        )}
         {m.legacyUnlimited && <UnlimitedFlag />}
         <OrderNote current={current} target={m} hasOrder={hasOrder} />
         <ConfirmButtons working={working} hasOrder={hasOrder} onConfirm={(add) => onConfirm(m, add)} onNo={onDecline} noLabel="Not them" />

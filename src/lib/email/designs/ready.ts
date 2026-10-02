@@ -4,9 +4,8 @@ import { SITE_URL } from "@/lib/site";
 import { plusPaidFor } from "@/lib/plus-status";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "../campaign";
 import { loadFacts, resolveAudience } from "../audience";
-import { hardFilter } from "../rules";
 import { renderCampaign, type Recipient } from "../render";
-import { EXCLUSION_LABEL, type Exclusion, type MemberFacts } from "../types";
+import { EXCLUSION_LABEL, type Exclusion } from "../types";
 import { sealArtName } from "./art-token";
 import { DESIGNS, type DesignKey } from "./index";
 import { assetUrl } from "./kit";
@@ -37,7 +36,6 @@ export async function designCampaign(key: DesignKey): Promise<CampaignRow | null
 export interface AudienceCount {
   willSend: number;
   excluded: { why: string; n: number }[];
-  noPhone: number; // the invite only: no login, but no phone on file (no claim link can be made)
 }
 
 function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n: number }[] {
@@ -57,13 +55,9 @@ export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow
     const c = rows[key];
     const shape = { id: c?.id ?? UUID_ZERO, kind: d.kind, category: d.category, automation: null, alert: null };
     const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at: now, now, facts });
-    out[key] = { willSend: r.willSend, excluded: topExclusions(r.excluded), noPhone: key === "royale-is-here" ? countNoPhone(facts, shape, now) : 0 };
+    out[key] = { willSend: r.willSend, excluded: topExclusions(r.excluded) };
   }
   return out;
-}
-
-function countNoPhone(facts: MemberFacts[], shape: Parameters<typeof hardFilter>[1], now: Date): number {
-  return facts.filter((f) => !f.hasLogin && !f.hasPhone && !hardFilter(f, shape, now)).length;
 }
 
 // ---------- results ----------

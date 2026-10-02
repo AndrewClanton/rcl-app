@@ -2,11 +2,12 @@
 // claim-link.ts) without touching the database: a token opens to what was
 // sealed, runs out on time for each kind, and refuses any edit -- a flipped
 // bit, a different kind, member or expiry, another key -- and that the
-// phone-digits step is gone for good. Also that the receipt prints a claim
-// QR only for a real claim link.
+// phone-digits step is gone for good, and links don't need a phone on file.
+// Also that the receipt prints a claim QR only for a real claim link.
 //
 // Usage: node scripts/check-member-claim.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
+import { readFileSync } from "node:fs";
 import { config } from "dotenv";
 
 config({ path: ".env.local", quiet: true });
@@ -104,6 +105,12 @@ check(
   "the digits proof and the wrong-tries lockout are gone",
   !("sealDigitsProof" in tok) && !("digitsProofOk" in tok) && !("DIGITS_PROOF_COOKIE" in tok) && !("MAX_WRONG_DIGITS" in tok),
 );
+
+// ---------- no phone on file needed (the tablet's "Phone or email", 10/1) ----------
+const code = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
+check("claim links don't look at the phone (issueClaimLink, the invite's links)", !/hasPhoneOnFile|\.phone\b|[ ,"]phone[,"]/.test(code("lib/member-claim.ts")));
+check("sign-in help has no 'add their phone first' case", !/no_phone|no-phone|NO_PHONE|hasPhoneOnFile/.test(code("lib/sign-in-help.ts")));
+check("the Back office card and the sign-in page have none either", !/no-phone/.test(code("app/admin/members/[id]/SignInHelpCard.tsx")) && !/ask_at_bar/.test(code("app/(site)/account/login/AccountForm.tsx")));
 
 // ---------- links on this site only ----------
 const url = claimUrl(kiosk.token);
