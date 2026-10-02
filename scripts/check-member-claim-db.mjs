@@ -1,15 +1,14 @@
 // "Claim your account" against the live database (src/lib/member-claim.ts
 // and the claim_member_account function), with a throwaway member that is
-// always deleted at the end, along with its links and rate-limit counts.
-// Safe to run anytime.
+// always deleted at the end, along with its links. Safe to run anytime.
 //
 //  - Before the member_claims migration (20260929220000): no link is made,
 //    nothing throws, and the claim page says "try again" -- so the tablet
 //    shows its plain welcome and the receipt prints without a QR code.
 //  - After it: kiosk links last 30 minutes and receipt links two weeks; the
-//    repeat check holds back a second link; the phone digits (wrong, right,
-//    locked after too many); expired, used, invalid and removed links; and
-//    every answer claim_member_account gives. The ones that would attach a
+//    repeat check holds back a second link; a link goes straight to signing
+//    in (no phone digits, no lockout); expired, used, invalid and removed
+//    links; and every answer claim_member_account gives. The ones that would attach a
 //    login run inside a transaction that is rolled back, using an existing
 //    staff login's id, so no login is ever really attached or created.
 //
@@ -56,7 +55,6 @@ console.log(migrated ? "member_claims migration is applied: checking links for r
 const db = createAdminClient();
 const MIN = 60_000;
 const DAY = 86_400_000;
-const CONNECTION = `claimcheck-${randomUUID()}`;
 const nonces = [];
 const tokenOf = (url) => new URL(url).searchParams.get("t");
 const row = async (nonce) => (await c.query("select * from member_claims where nonce = $1", [nonce])).rows[0];
@@ -87,7 +85,7 @@ try {
     const t = tok.sealClaimToken(memberId, "kiosk");
     nonces.push(t.nonce);
     check("claim page says 'try again in a minute'", (await claim.readClaim(t.token)).state === "unavailable");
-    check("digits step refuses without breaking", (await claim.checkClaimDigits(t.token, "4242", CONNECTION)).ok === false);
+    check("finishing refuses without breaking", (await claim.claimMemberForUser(fakeUser(randomUUID()), t.token)).ok === false);
     check("sign-in doesn't hold back a new login for a claim", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: t.token } })) === null);
   } else {
     // ---------- making links ----------
@@ -109,38 +107,25 @@ try {
 
     check("no second kiosk link within the repeat window", (await claim.issueClaimLink(memberId, "kiosk", { skipIfIssuedWithinMs: 10 * MIN })) === null);
     check("no link for someone who isn't a member", (await claim.issueClaimLink(randomUUID(), "kiosk")) === null);
-    check("no link for a junk id or kind", (await claim.issueClaimLink("x", "kiosk")) === null && (await claim.issueClaimLink(memberId, "email")) === null);
+    check("no link for a junk id or kind", (await claim.issueClaimLink("x", "kiosk")) === null && (await claim.issueClaimLink(memberId, "bogus")) === null);
 
-    // ---------- opening a link ----------
+    // ---------- opening a link: straight to signing in ----------
     const ready = await claim.readClaim(tokenOf(kioskUrl));
     check("claim page opens the link to the first name only", ready.state === "ready" && ready.firstName === "Claimcheck" && !("last4" in ready), JSON.stringify({ state: ready.state, firstName: ready.firstName }));
     check("a new login made from the link is held for the claim", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: tokenOf(kioskUrl) } })) === `/account/claim?t=${tokenOf(kioskUrl)}`);
     check("a junk claim on a login is ignored", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: "junk" } })) === null);
+    check("no digits step left to call", !("checkClaimDigits" in claim));
 
-    // ---------- the phone digits ----------
-    const short = await claim.checkClaimDigits(tokenOf(kioskUrl), "42", CONNECTION);
-    check("asks for four digits", !short.ok && /last 4 digits/.test(short.error));
-    const wrong = await claim.checkClaimDigits(tokenOf(kioskUrl), "1234", CONNECTION);
-    check("wrong digits refused", !wrong.ok && !wrong.reload, wrong.ok ? "" : wrong.error);
-    check("wrong guess counted", (await row(kiosk.nonce)).failed_tries === 1);
-    const right = await claim.checkClaimDigits(tokenOf(kioskUrl), "4242", CONNECTION);
-    check("right digits accepted", right.ok === true);
-    check("its proof works for this link only", right.ok && tok.digitsProofOk(right.proof, kiosk.nonce) && !tok.digitsProofOk(right.proof, receipt.nonce));
-    check("right digits don't reset or add to the count", (await row(kiosk.nonce)).failed_tries === 1);
-
-    // Locked: one guess short of the limit, then one more wrong one.
-    await c.query("update member_claims set failed_tries = $2 where nonce = $1", [receipt.nonce, tok.MAX_WRONG_DIGITS - 1]);
-    const lastTry = await claim.checkClaimDigits(tokenOf(receiptUrl), "0000", CONNECTION);
-    check("the last wrong guess locks the link", !lastTry.ok && lastTry.reload === true && /locked/.test(lastTry.error));
-    check("locked link shows as locked", (await claim.readClaim(tokenOf(receiptUrl))).state === "locked");
-    check("even the right digits don't open a locked link", !(await claim.checkClaimDigits(tokenOf(receiptUrl), "4242", CONNECTION)).ok);
-    check("a locked link no longer holds back a new login", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: tokenOf(receiptUrl) } })) === null);
+    // Old wrong tries from the digits step no longer lock anything.
+    await c.query("update member_claims set failed_tries = 10 where nonce = $1", [receipt.nonce]);
+    check("a link with old wrong tries still opens", (await claim.readClaim(tokenOf(receiptUrl))).state === "ready");
+    check("and still holds back a new login for the claim", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: tokenOf(receiptUrl) } })) === `/account/claim?t=${tokenOf(receiptUrl)}`);
 
     // ---------- links that don't work ----------
     const old = await recordLink(memberId, "kiosk", Date.now() - 31 * MIN);
     const expired = await claim.readClaim(old.token);
     check("an expired link says so, and which kind", expired.state === "expired" && expired.kind === "kiosk");
-    check("an expired link won't take digits", !(await claim.checkClaimDigits(old.token, "4242", CONNECTION)).ok);
+    check("an expired link no longer holds back a new login", (await tok.pendingClaimFor({ user_metadata: { rcl_claim: old.token } })) === null);
     const unrecorded = tok.sealClaimToken(memberId, "receipt");
     check("a link that was never recorded is invalid", (await claim.readClaim(unrecorded.token)).state === "invalid");
     const stranger = tok.sealClaimToken(randomUUID(), "kiosk");
@@ -159,16 +144,14 @@ try {
         (select e.auth_user_id from employees e where e.auth_user_id is not null and e.role <> 'display'
            and not exists (select 1 from members m where m.auth_user_id = e.auth_user_id) limit 1) as free`);
     const { screen, linked, free } = ids[0];
-    const kProof = tok.sealDigitsProof(kiosk.nonce, kiosk.exp).value;
-    const finish = (user, token, proof) => claim.claimMemberForUser(user, token, proof);
-    check("finishing needs the digits first", (await finish(fakeUser(randomUUID()), tokenOf(kioskUrl), null)).reason === "digits");
-    check("another link's digits proof doesn't count", (await finish(fakeUser(randomUUID()), tokenOf(kioskUrl), tok.sealDigitsProof(receipt.nonce, receipt.exp).value)).reason === "digits");
-    check("a login with no email is refused", (await finish(fakeUser(randomUUID(), null), tokenOf(kioskUrl), kProof)).reason === "no_email");
-    check("an expired link is refused", (await finish(fakeUser(randomUUID()), old.token, tok.sealDigitsProof(old.nonce, Date.now() + MIN).value)).reason === "expired");
-    check("junk is refused", (await finish(fakeUser(randomUUID()), "junk", kProof)).reason === "invalid");
-    if (screen) check("a screen login is refused (screen)", (await finish(fakeUser(screen), tokenOf(kioskUrl), kProof)).reason === "screen");
-    if (linked) check("a login that has its own account is refused (user_linked)", (await finish(fakeUser(linked), tokenOf(kioskUrl), kProof)).reason === "user_linked");
-    check("a used link is refused (used)", (await finish(fakeUser(free ?? randomUUID()), used.token, tok.sealDigitsProof(used.nonce, used.exp).value)).reason === "used");
+    const finish = (user, token) => claim.claimMemberForUser(user, token);
+    // No digits first: the link alone reaches the checks below.
+    check("a login with no email is refused", (await finish(fakeUser(randomUUID(), null), tokenOf(kioskUrl))).reason === "no_email");
+    check("an expired link is refused", (await finish(fakeUser(randomUUID()), old.token)).reason === "expired");
+    check("junk is refused", (await finish(fakeUser(randomUUID()), "junk")).reason === "invalid");
+    if (screen) check("a screen login is refused (screen)", (await finish(fakeUser(screen), tokenOf(kioskUrl))).reason === "screen");
+    if (linked) check("a login that has its own account is refused (user_linked)", (await finish(fakeUser(linked), tokenOf(kioskUrl))).reason === "user_linked");
+    check("a used link is refused (used)", (await finish(fakeUser(free ?? randomUUID()), used.token)).reason === "used");
 
     // ---------- claim_member_account itself, rolled back ----------
     const fn = async (nonce, member, user, email = null) => (await c.query("select public.claim_member_account($1, $2, $3, $4) as r", [nonce, member, user, email])).rows[0].r;
@@ -229,27 +212,23 @@ try {
 
     // ---------- an account that can't be claimed ----------
     await c.query("update members set phone = null where id = $1", [memberId]);
-    check("no link for an account with no phone to check", (await claim.issueClaimLink(memberId, "receipt")) === null);
-    check("an open link on an account with no phone says 'gone'", (await claim.readClaim(tokenOf(kioskUrl))).state === "gone");
+    check("no new link for an account with no phone on file", (await claim.issueClaimLink(memberId, "receipt")) === null);
+    check("a link already made still opens once the phone is gone", (await claim.readClaim(tokenOf(kioskUrl))).state === "ready");
     await c.query("update members set phone = '(555) 010-4242', erased_at = now() where id = $1", [memberId]);
     check("a removed account says 'gone'", (await claim.readClaim(tokenOf(kioskUrl))).state === "gone");
-    check("gone: finishing on a removed account", (await finish(fakeUser(free ?? randomUUID()), tokenOf(kioskUrl), kProof)).reason === "gone");
+    check("gone: finishing on a removed account", (await finish(fakeUser(free ?? randomUUID()), tokenOf(kioskUrl))).reason === "gone");
   }
 } finally {
-  // Everything this made: the member (its links go with it), and the
-  // rate-limit counts for its links and this run's made-up connection.
+  // Everything this made: the member (its links go with it).
   if (memberId) await db.from("members").delete().eq("id", memberId);
-  const keys = [`claim-digits-ip:${CONNECTION}`, ...nonces.map((n) => `claim-digits:${n}`)];
-  await c.query("delete from rate_limit_hits where key = any($1)", [keys]);
   const left = (
     await c.query(
-      `select (select count(*)::int from members where id = $1) as members,
-              (select count(*)::int from rate_limit_hits where key = any($2)) as hits
-              ${migrated ? ", (select count(*)::int from member_claims where member_id = $1 or nonce = any($3)) as claims" : ""}`,
-      migrated ? [memberId, keys, nonces] : [memberId, keys],
+      `select (select count(*)::int from members where id = $1) as members
+              ${migrated ? ", (select count(*)::int from member_claims where member_id = $1 or nonce = any($2)) as claims" : ""}`,
+      migrated ? [memberId, nonces] : [memberId],
     )
   ).rows[0];
-  check("cleaned up: no test member, links or rate-limit rows left", left.members === 0 && left.hits === 0 && (left.claims ?? 0) === 0, JSON.stringify(left));
+  check("cleaned up: no test member or links left", left.members === 0 && (left.claims ?? 0) === 0, JSON.stringify(left));
   await c.end();
 }
 
