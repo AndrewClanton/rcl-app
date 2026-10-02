@@ -6,6 +6,9 @@ import { useEffect } from "react";
 // Astley's "Never Gonna Give You Up" from his official video on YouTube
 // (the dance and all), then closes itself. Embedding the official upload
 // means we never keep a copy of the song or the video ourselves.
+// It's up for as long as this is on the screen: taking it off removes the
+// player, which is what stops the song. CustomerDisplay tells the register
+// each time it goes up or comes down ("rickroll-state", lib/registerChannel.ts).
 //
 // Browsers only autoplay with sound once someone has tapped the screen
 // since it loaded. The check-in tablet is tapped all night, so it usually
@@ -13,7 +16,7 @@ import { useEffect } from "react";
 const VIDEO = "dQw4w9WgXcQ";
 const START = 43; // "Never gonna give you up…"
 const END = 60;
-export const RICKROLL_SHOW_MS = 26_000; // the clip, plus a moment if someone had to tap play
+const RICKROLL_SHOW_MS = 26_000; // the clip, plus a moment if someone had to tap play
 
 export default function Rickroll({ onDone }: { onDone: () => void }) {
   useEffect(() => {

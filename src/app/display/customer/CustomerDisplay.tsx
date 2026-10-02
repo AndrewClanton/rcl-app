@@ -13,7 +13,7 @@ import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
 import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
-import type { MemberOff, StaffSetup } from "@/lib/registerChannel";
+import type { MemberOff, RickrollState, StaffSetup } from "@/lib/registerChannel";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
@@ -141,7 +141,17 @@ export default function CustomerDisplay({
     [toRegister],
   );
   const [burst, setBurst] = useState<{ id: number; pieces: StreamerPiece[]; banner?: string | null } | null>(null);
+  // The Rickroll (Rickroll.tsx), while it's up. The register's button
+  // changes only on what this screen tells it: whenever it goes up or comes
+  // down (it ended by itself, or someone tapped ✕), and in answer to every
+  // "rickroll" or "rickroll-stop", even one that changes nothing.
   const [rickroll, setRickroll] = useState<number | null>(null);
+  const [rickrollAsked, setRickrollAsked] = useState(0);
+  const rickrollOn = rickroll !== null;
+  useEffect(() => {
+    const state: RickrollState = { playing: rickrollOn };
+    toRegister("rickroll-state", state);
+  }, [rickrollOn, rickrollAsked, toRegister]);
   // Online tickets for whoever just checked in, beside the order for a bit.
   const [tickets, setTickets] = useState<TicketsShown | null>(previewTickets ?? null);
   useEffect(() => {
@@ -225,8 +235,17 @@ export default function CustomerDisplay({
         .on("broadcast", { event: "staff-setup" }, (msg) => onSetup(msg.payload))
         .on("broadcast", { event: "staff-setup-end" }, (msg) => onSetupEnd(msg.payload?.id))
         .on("broadcast", { event: "celebrate" }, () => setBurst({ id: Date.now(), pieces: makeStreamers() }))
-        .on("broadcast", { event: "rickroll" }, () => setRickroll((on) => (on ? null : Date.now())))
-        .on("broadcast", { event: "rickroll-stop" }, () => setRickroll(null))
+        // { play: true }: up (already up, it stays). A register from before
+        // the answers sent it bare, to turn it on or off.
+        .on("broadcast", { event: "rickroll" }, (msg) => {
+          const play = msg.payload?.play === true;
+          setRickroll((on) => (play ? (on ?? Date.now()) : on ? null : Date.now()));
+          setRickrollAsked((n) => n + 1);
+        })
+        .on("broadcast", { event: "rickroll-stop" }, () => {
+          setRickroll(null);
+          setRickrollAsked((n) => n + 1);
+        })
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.

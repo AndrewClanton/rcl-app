@@ -96,6 +96,16 @@ export interface MemberOff {
   why: "done" | "not-me";
 }
 
+// Register → ✨ → Rickroll (pos/EasterEggs.tsx, display/customer/Rickroll.tsx):
+// "rickroll" ({ play: true }) puts it on the customer screen and
+// "rickroll-stop" takes it off. The screen answers every one with
+// "rickroll-state" (this), and says so again when the clip ends by itself or
+// someone taps ✕. The register's button changes only on this answer, from
+// any screen that's listening.
+export interface RickrollState {
+  playing: boolean;
+}
+
 // Mail providers shown whole; any other domain is masked like the name.
 const COMMON_MAIL = new Set([
   "gmail.com",
