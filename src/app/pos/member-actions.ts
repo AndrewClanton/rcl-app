@@ -6,8 +6,10 @@ import { assertStaff } from "@/lib/auth";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { flairKeys, parseFlair, type FlairKeys } from "@/lib/flair";
-import { visibleLine } from "@/lib/member-profile";
-import { birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
+import { displayNameFor, visibleLine, type ProfileMemberRow } from "@/lib/member-profile";
+import { BADGES, birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
+import { sealTabletPhoto } from "@/lib/tablet-photo";
+import type { TabletProfile } from "@/lib/registerChannel";
 import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { currentMemberId } from "@/lib/member-forward";
 import type { DailyCoffeeState } from "@/lib/daily-perk";
@@ -132,6 +134,35 @@ export async function getDailyCoffee(memberId: string): Promise<DailyCoffeeState
   // The account a merged-away member became, as the sale will be saved.
   const id = await currentMemberId(memberId);
   return id ? dailyCoffeeToday(id) : null;
+}
+
+// The member's card for the customer screen while nothing's rung up yet
+// (lib/registerChannel.ts TabletProfile): their display name, photo (by a
+// sealed reference, lib/tablet-photo.ts), profile line, color and entrance,
+// badges, and what's still missing on their Profile tab. Shown to them, in
+// front of them, so it doesn't wait for their page to be shared; never an
+// email, phone, full name or member id. Null if it couldn't be read.
+export async function getTabletProfile(memberId: string): Promise<TabletProfile | null> {
+  await assertStaff();
+  if (typeof memberId !== "string" || !UUID.test(memberId)) return null;
+  const supabase = createAdminClient();
+  const [{ data, error }, earned] = await Promise.all([
+    supabase.from("members").select("*").eq("id", memberId).is("erased_at", null).maybeSingle(),
+    supabase.from("member_badges").select("badge").eq("member_id", memberId),
+  ]);
+  if (error || !data) return null;
+  const row = data as unknown as ProfileMemberRow & { id: string };
+  const flair = parseFlair(row);
+  const have = new Set((earned.data ?? []).map((r) => r.badge as string));
+  return {
+    name: displayNameFor(row),
+    photo: row.avatar_url ? sealTabletPhoto(row.id) : null,
+    line: visibleLine(row),
+    color: flair.color?.key ?? null,
+    entrance: flair.effect === "classic" ? null : flair.effect,
+    badges: BADGES.filter((b) => have.has(b.key)).map((b) => b.key),
+    todo: { photo: !row.avatar_url, line: !row.tagline?.trim(), flair: !flair.color && flair.effect === "classic" },
+  };
 }
 
 // Several members at once (the register's "here today" list), in the order asked.

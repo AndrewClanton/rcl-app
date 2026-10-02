@@ -16,6 +16,8 @@ import { printDoorTickets } from "./door-print";
 import { usePrintTarget } from "./printing";
 import { tabletTickets, type CheckinTickets, type DoorTicket } from "@/lib/door-tickets";
 import { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
+import { memberSignal } from "./member-signal";
+import { shortName } from "@/lib/card-match";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -58,8 +60,52 @@ function phoneEnding(m: PosMember) {
   return d ? `phone ••${d.slice(-4)}` : "no phone on file";
 }
 
+// A check-in that just came in from the customer screen, popped up over the
+// top of the order (CheckinArrivals): their face and name, big, so staff
+// put the two together, and a tap to confirm them on the Customers tab.
+export interface Arrival {
+  id: string; // the check-in's
+  name: string; // "Sarah M."
+  photo: string | null;
+  plus: boolean; // Insiders+ that's paid for: the gold ring
+  color: string | null; // their favorite color (lib/flair.ts), a stripe down the side
+  note: string;
+}
+
+// Up this long, at most this many at once (the newest), and gone as soon
+// as the check-in is answered.
+const ARRIVAL_MS = 8_000;
+const ARRIVALS_MAX = 2;
+
+function arrivalFor(id: string, card: CheckinCard): Arrival {
+  if (card.kind === "new") return { id, name: card.firstName, photo: null, plus: false, color: null, note: "New regular · just signed up" };
+  if (card.matches.length === 1) {
+    const m = card.matches[0];
+    return {
+      id,
+      name: shortName(m.name),
+      photo: m.avatar_url,
+      plus: memberSignal(m) === "plus",
+      color: flairColor(m.flair?.color)?.hex ?? null,
+      note: card.fresh ? "New regular · just signed up" : "Just checked in",
+    };
+  }
+  const names = card.matches.map((m) => shortName(m.name));
+  return {
+    id,
+    name: names.length === 2 ? names.join(" or ") : `${names.length} accounts`,
+    photo: null,
+    plus: false,
+    color: null,
+    note: `Phone ••${card.phoneLast4}: which one?`,
+  };
+}
+
 export interface Checkins {
   pending: Pending[];
+  // The latest check-ins still waiting, popped up over the order.
+  arrivals: Arrival[];
+  dismissArrival: (id: string) => void;
   now: number;
   here: HereToday[];
   notice: string | null;
@@ -89,7 +135,8 @@ export interface Checkins {
 // on screen: it listens for check-ins, keeps them until staff answer, and
 // tells the customer screen what happened. What staff see lives on the
 // register's Customers tab (CustomersTab.tsx), and the tab's count shows how
-// many are waiting, so nothing floats over the menu buttons.
+// many are waiting, so nothing floats over the menu buttons. A new one also
+// pops up over the top of the order for a few seconds (CheckinArrivals).
 //
 // A check-in waits as a card -- photo, full name, last four of the phone --
 // for staff to Check in (that's them) or say Not them. A number we don't
@@ -129,6 +176,9 @@ export function useRegisterCheckins({
   const [dupHint, setDupHint] = useState<DupHint | null>(null);
   const [unlimited, setUnlimited] = useState<PosMember | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [arrivals, setArrivals] = useState<Arrival[]>([]);
+  // Each check-in pops up once, even if its lookup is tried again.
+  const arrived = useRef(new Set<string>());
   const printTarget = usePrintTarget();
   const channelRef = useRef<Channel | null>(null);
   // Requests answered here, so a screen that missed the answer can get it
@@ -166,6 +216,19 @@ export function useRegisterCheckins({
     }
     patch(id, { working: false, card: r.card });
     send("checkin-seen", { id });
+    arrive(arrivalFor(id, r.card));
+  }
+
+  function arrive(a: Arrival) {
+    if (arrived.current.has(a.id)) return;
+    arrived.current.add(a.id);
+    if (arrived.current.size > 50) arrived.current.delete(arrived.current.values().next().value as string);
+    setArrivals((as) => [...as, a].slice(-ARRIVALS_MAX));
+    setTimeout(() => dismissArrival(a.id), ARRIVAL_MS);
+  }
+
+  function dismissArrival(id: string) {
+    setArrivals((as) => as.filter((a) => a.id !== id));
   }
 
   // Staff said "that's them": today's visit (its points, maybe badges and
@@ -385,6 +448,10 @@ export function useRegisterCheckins({
 
   return {
     pending,
+    // Only while the check-in is still waiting: answered here, on the other
+    // register, or backed out of on the screen, it's gone.
+    arrivals: arrivals.filter((a) => pending.some((p) => p.id === a.id)),
+    dismissArrival,
     now,
     here,
     notice,
@@ -406,6 +473,43 @@ export function useRegisterCheckins({
     dismissUnlimited: () => setUnlimited(null),
     toTablet: (event, payload) => send(event, payload),
   };
+}
+
+// "Sarah M. · Just checked in", popped up over the top of the order (the
+// cashier and tab rows) for 8 seconds: never over the menu buttons or the
+// order's total, and nothing to answer. The face and name are big so staff
+// learn names; a tap opens the Customers tab to confirm them. Two at most,
+// newest last.
+export function CheckinArrivals({ arrivals, onOpen, onDismiss }: { arrivals: Arrival[]; onOpen: (id: string) => void; onDismiss: (id: string) => void }) {
+  if (!arrivals.length) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-2 top-2 z-30 grid gap-2" role="status" aria-live="polite">
+      {arrivals.map((a) => (
+        <div
+          key={a.id}
+          className="pointer-events-auto flex items-center gap-1 rounded-xl border-2 py-2 pl-3 pr-1 motion-safe:animate-arrive-in"
+          style={{
+            background: "var(--surface)",
+            borderColor: "var(--foreground)",
+            // Their favorite color down the side, as on Checked in today.
+            boxShadow: `${a.color ? `inset 6px 0 0 ${a.color}, ` : ""}0 12px 28px rgb(0 0 0 / 0.3)`,
+          }}
+        >
+          <button className="flex min-h-16 min-w-0 flex-1 items-center gap-3 text-left" onClick={() => onOpen(a.id)}>
+            <MemberAvatar name={a.name} url={a.photo} size={60} plus={a.plus} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xl font-black leading-tight">{a.name}</span>
+              <span className="block truncate text-sm">{a.note}</span>
+              <span className="block text-xs font-bold" style={{ color: "var(--accent)" }}>
+                Tap to confirm on Customers
+              </span>
+            </span>
+          </button>
+          <DismissButton label="Dismiss" onClick={() => onDismiss(a.id)} />
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // What just happened: the confirmation, tickets to print, and the "possibly
@@ -579,7 +683,7 @@ export function CheckedInToday({ here, current, onAttach }: { here: HereToday[];
                     disabled={on}
                     onClick={() => onAttach(h.member)}
                   >
-                    <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={48} plus={h.member.tier === "Insiders+"} />
+                    <MemberAvatar name={h.member.name} url={h.member.avatar_url} size={48} plus={memberSignal(h.member) === "plus"} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-bold leading-tight">{h.member.name}</span>
                       <span className="block text-xs" style={{ color: "var(--muted)" }}>
@@ -657,7 +761,7 @@ function TonightTickets({ tonight, printing, onPrint, onDismiss }: { tonight: To
 function Face({ m, phoneLast4 }: { m: PosMember; phoneLast4?: string }) {
   return (
     <div className="flex items-center gap-3">
-      <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={m.tier === "Insiders+" && !m.legacyUnlimited} />
+      <MemberAvatar name={m.name} url={m.avatar_url} size={96} plus={memberSignal(m) === "plus"} />
       <div className="min-w-0 flex-1">
         <div className="text-2xl font-black leading-tight">{m.name}</div>
         <div className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>
@@ -752,7 +856,7 @@ function KnownCard({
       </div>
       {card.matches.map((m) => (
         <div key={m.id} className="flex items-center gap-2">
-          <MemberAvatar name={m.name} url={m.avatar_url} size={44} plus={m.tier === "Insiders+" && !m.legacyUnlimited} />
+          <MemberAvatar name={m.name} url={m.avatar_url} size={44} plus={memberSignal(m) === "plus"} />
           <div className="min-w-0 flex-1">
             <div className="truncate font-bold">{m.name}</div>
             <div className="text-xs" style={{ color: "var(--muted)" }}>
@@ -828,7 +932,7 @@ function NewCard({
               That email is already on an account. If this is them, attach it (and their number goes on it):
             </div>
             <div className="flex items-center gap-2">
-              <MemberAvatar name={match.name} url={match.avatar_url} size={40} plus={match.tier === "Insiders+"} />
+              <MemberAvatar name={match.name} url={match.avatar_url} size={40} plus={memberSignal(match) === "plus"} />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-bold">{match.name}</div>
                 <div className="text-xs" style={{ color: "var(--muted)" }}>

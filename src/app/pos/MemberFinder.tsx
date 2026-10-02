@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import { getRegulars, searchPosMembers, type PosMember, type Regular } from "./member-actions";
+import { memberSignal } from "./member-signal";
 
 // "Find by face", the bottom of the register's Customers tab. Opens on the
 // regulars (most visits in the last 90 days first), and searching turns the
@@ -97,7 +98,7 @@ export default function MemberFinder({
                 style={{ borderColor: on ? "var(--success-border)" : "var(--border)" }}
                 onClick={() => onPick(member)}
               >
-                <MemberAvatar name={member.name} url={member.avatar_url} size={72} plus={member.tier === "Insiders+"} />
+                <MemberAvatar name={member.name} url={member.avatar_url} size={72} plus={memberSignal(member) === "plus"} />
                 <span className="line-clamp-2 text-sm font-bold leading-tight">{member.name}</span>
                 <span className="text-[11px]" style={{ color: on ? "var(--success-text)" : "var(--muted)" }}>
                   {on ? "✓ On order" : note}

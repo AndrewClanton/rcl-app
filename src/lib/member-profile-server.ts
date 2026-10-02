@@ -135,7 +135,19 @@ const AVATAR_MARKER = "/storage/v1/object/public/member-avatars/";
 // initial. Null if the page isn't shared.
 export async function getProfilePhoto(handle: string, size = 480): Promise<Buffer | null> {
   const m = await sharedMember(handle);
-  const url = m?.avatar_url;
+  return avatarJpeg(m?.avatar_url, size);
+}
+
+// The member's photo for the customer screen in front of them (their card,
+// reached by a sealed reference: lib/tablet-photo.ts), re-encoded the same
+// way. Whether their page is shared doesn't matter: it's their own photo,
+// shown to them. Null with no photo.
+export async function getMemberPhoto(memberId: string, size = 360): Promise<Buffer | null> {
+  const { data } = await createAdminClient().from("members").select("avatar_url").eq("id", memberId).is("erased_at", null).maybeSingle();
+  return avatarJpeg((data?.avatar_url as string | null | undefined) ?? null, size);
+}
+
+async function avatarJpeg(url: string | null | undefined, size: number): Promise<Buffer | null> {
   const at = url?.indexOf(AVATAR_MARKER) ?? -1;
   if (!url || at < 0) return null;
   const path = decodeURIComponent(url.slice(at + AVATAR_MARKER.length).split("?")[0]);

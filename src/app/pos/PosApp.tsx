@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
+import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot, type TabletProfile } from "@/lib/registerChannel";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -24,8 +24,9 @@ import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import { UnlimitedBanner } from "./LegacyPlusCard";
 import { PlusRibbon, SignalFrame } from "./MemberSignal";
-import { memberSignal, publishMemberSignal } from "./member-signal";
-import { useRegisterCheckins } from "./RegisterCheckins";
+import { memberSignal, memberStanding, publishMemberSignal } from "./member-signal";
+import { shortName } from "@/lib/card-match";
+import { CheckinArrivals, useRegisterCheckins } from "./RegisterCheckins";
 import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
 import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
@@ -60,7 +61,7 @@ import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
 import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, memberDiscountRate, pointsEarned, registerTotals } from "@/lib/register-totals";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
-import { getDailyCoffee } from "./member-actions";
+import { getDailyCoffee, getTabletProfile } from "./member-actions";
 import {
   checkBeforePayment,
   completeOrder,
@@ -213,6 +214,9 @@ export default function PosApp({
   // who isn't paying (member-signal.ts): the frame, the strip over the
   // order, and the mark beside the title on a phone.
   const signal = memberSignal(member);
+  // The same, telling plain Insiders from Insiders+ with no card on file
+  // (the customer screen's account panel).
+  const standing = member ? memberStanding(member) : null;
   useEffect(() => {
     publishMemberSignal(signal);
   }, [signal]);
@@ -237,6 +241,26 @@ export default function PosApp({
     };
   }, [memberId, isPlus, coffeeTry]);
   const coffeeToday = isPlus && memberId && coffee?.memberId === memberId ? coffee.state : undefined;
+  // Their card on the customer screen (photo, profile line, badges), looked
+  // up when they're put on the order, like the coffee. Null until then, or
+  // if it couldn't be: the screen shows their account panel without it.
+  const [tabletCard, setTabletCard] = useState<{ memberId: string; profile: TabletProfile | null } | null>(null);
+  useEffect(() => {
+    if (!memberId) return;
+    let live = true;
+    getTabletProfile(memberId).then(
+      (profile) => {
+        if (live) setTabletCard({ memberId, profile });
+      },
+      () => {
+        if (live) setTabletCard({ memberId, profile: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId]);
+  const tabletProfile = memberId && tabletCard?.memberId === memberId ? tabletCard.profile : null;
   // On this order unless it's used, unknown, or staff took it off. Only one
   // member is on an order, so only their coffee can be.
   const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
@@ -380,6 +404,13 @@ export default function PosApp({
   const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
   const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
+  // Anything on the order at all, rung up or not: Clear takes it all off.
+  const onOrder = cart.length > 0 || !!member || !!orderName.trim() || taxFree || monthlyMember || pointsRedeemed;
+  // "New tab" with a member on a walk-up order is named for them ("Buddy
+  // F."): one tap on Open tab. Anyone else's tab, or a new tab while
+  // another is open (it starts empty), is named by hand as before.
+  const tabNameSuggestion = !activeTabId && member ? shortName(member.name) : "";
+  const tabNameTaken = !!tabNameSuggestion && openTabs.some((t) => (t.order_name ?? "").trim().toLowerCase() === tabNameSuggestion.toLowerCase());
 
   function currentFields(): DraftFields {
     return {
@@ -533,14 +564,19 @@ export default function PosApp({
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
       { label: "Points reward", amount: totals.redemptionDiscount },
     ].filter((d) => d.amount > 0),
-    // Only what the screen shows: a first name, points, and which of the two
-    // membership cards to show (unlimited wins: never "Insiders+" for them).
+    // Only what the screen shows: a first name, points, where they stand
+    // (gold only for Insiders+ that's paid for; red for unlimited or no
+    // card), and their Insiders+ perks today. Never an email or phone.
     member: member
       ? {
           firstName: member.name.trim().split(/\s+/)[0] || member.name,
           points: Math.round(member.points),
-          plus: member.tier === "Insiders+" && !member.legacyUnlimited,
-          unlimited: member.legacyUnlimited,
+          plus: standing === "plus",
+          unlimited: standing === "unlimited",
+          noCard: standing === "nocard",
+          coffee: !coffeeToday ? null : coffeeToday.usedAt ? "used" : totals.dailyPerkDiscount > 0 ? "on-order" : "ready",
+          discountPct: Math.round(memberDiscountRate(member) * 100),
+          profile: tabletProfile,
         }
       : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
@@ -562,12 +598,15 @@ export default function PosApp({
     };
   }, [registerTopic]);
 
+  // Sent again whenever the order changes, and when the member's card or
+  // their Insiders+ coffee today comes back (both are looked up after
+  // they're put on the order; the customer screen shows them).
   useEffect(() => {
     const timer = setTimeout(() => {
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile]);
 
   function resetOrder() {
     setCart([]);
@@ -1110,9 +1149,21 @@ export default function PosApp({
           itself) scrolls -- so the header and footer are kept to two rows each. */}
       <SignalFrame signal={signal} />
       <div
-        className="card flex flex-col !p-3 md:min-h-0"
+        className="card relative flex flex-col !p-3 md:min-h-0"
         style={signal ? { boxShadow: `0 0 0 3px ${signal === "plus" ? "var(--gold)" : "var(--accent)"}` } : undefined}
       >
+        {/* Someone just checked in on the customer screen: over the top of
+            the order for a few seconds, never over the menu or the total. */}
+        <CheckinArrivals
+          arrivals={checkins.arrivals}
+          onDismiss={checkins.dismissArrival}
+          onOpen={(id) => {
+            checkins.dismissArrival(id);
+            pickTab(CUSTOMERS_TAB);
+            // A phone stacks the menu under the order: bring the tab up.
+            if (!window.matchMedia("(min-width: 768px)").matches) menuScrollRef.current?.parentElement?.scrollIntoView({ block: "start" });
+          }}
+        />
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
             <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
@@ -1460,14 +1511,20 @@ export default function PosApp({
             <button
               className="btn-secondary whitespace-nowrap py-2 text-sm"
               style={activeTabId ? undefined : { color: "var(--danger-text)" }}
-              disabled={(cart.length === 0 && !activeTabId) || busy}
+              disabled={(!onOrder && !activeTabId) || busy}
               onClick={() => {
                 // Leaving a tab is a routine, non-destructive action (it saves
                 // first) -- only skip the confirm step for that case. Clearing
                 // a walk-up order with items actually discards them, so that
-                // one still asks first.
+                // one still asks first. With nothing rung up (just a member,
+                // a name or a tick box), there's nothing to lose: it clears
+                // straight away.
                 if (activeTabId) {
                   void putAwayTab();
+                  return;
+                }
+                if (cart.length === 0) {
+                  resetOrder();
                   return;
                 }
                 setConfirmState({
@@ -1715,6 +1772,8 @@ export default function PosApp({
           title="Name this tab"
           placeholder="Customer name, seat, etc."
           confirmLabel="Open tab"
+          initialValue={tabNameSuggestion}
+          note={tabNameTaken ? `A tab named ${tabNameSuggestion} is already open.` : null}
           onCancel={() => setOpenTabPromptOpen(false)}
           onSubmit={handleOpenTab}
         />
