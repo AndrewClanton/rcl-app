@@ -88,7 +88,7 @@ export default function CustomersTab({
       <WaitingToConfirm checkins={checkins} current={current} hasOrder={hasOrder} />
       <CheckedInToday here={checkins.here} current={current} onAttach={onAttach} />
       <div ref={findRef} className="scroll-mt-2 border-t pt-4" style={{ borderColor: "var(--border)" }}>
-        <MemberFinder current={current} onPick={onAttach} />
+        <MemberFinder current={current} onPick={onAttach} allowNew />
       </div>
     </div>
   );

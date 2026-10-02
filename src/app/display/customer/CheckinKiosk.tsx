@@ -17,7 +17,7 @@ import {
 } from "@/lib/checkin";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { finishShown, type FinishShown } from "./FinishCard";
-import { createKioskMember, startCheckin, startEmailCheckin, type CheckinFound } from "./actions";
+import { createKioskMember, createPhoneAccount, nameCheckin, startCheckin, startEmailCheckin, type CheckinFound } from "./actions";
 import LetterKeys, { type LetterKey } from "./LetterKeys";
 import PointsCelebration from "./PointsCelebration";
 import { badgeCheer, badgeFor, type Badge } from "@/lib/visits";
@@ -28,6 +28,7 @@ import ClaimQr from "./ClaimQr";
 import FlairEffect from "@/components/flair/FlairEffect";
 import { flairColor, flairHex, parseFlair, type EntranceKey, type StickerKey } from "@/lib/flair";
 import { lineFromChannel } from "@/lib/member-profile";
+import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
@@ -38,6 +39,14 @@ export type CheckinStep =
   // up). notFound: the number they typed that we don't know, formatted
   // ("Try your email?").
   | { name: "phone"; letters?: boolean; notFound?: string }
+  // A number we don't know (formatted): "Just use my phone number" first,
+  // then "Try my email" or the sign-up form.
+  | { name: "notFound"; phone: string }
+  // A phone account, made: "That's it — your phone number is your account."
+  | { name: "phoneMade"; phone: string }
+  // A phone account with no name, back for its second visit: "Add your
+  // name?" once (skippable). digits: the number they typed.
+  | { name: "askName"; request: CheckinRequest; digits: string }
   // Someone new: name and email, phone optional. missed: we looked up the
   // email they typed and didn't find it.
   | { name: "new"; missed?: boolean }
@@ -96,7 +105,17 @@ const OFFLINE = "We couldn't reach the register. Ask a staff member for help.";
 // "no card on file" note for a former unlimited member stays long enough
 // to read, and so does a "Welcome back" with their name. Walking away from
 // "Add this phone?" checks them in without it (it was optional).
-const TIMEOUT_MS: Record<CheckinStep["name"], number> = { phone: 0, new: 90_000, found: 20_000, sent: 2_800, created: 25_000 };
+// Walking away from "Add your name?" checks them in without it too.
+const TIMEOUT_MS: Record<CheckinStep["name"], number> = {
+  phone: 0,
+  notFound: 60_000,
+  phoneMade: 15_000,
+  askName: 60_000,
+  new: 90_000,
+  found: 20_000,
+  sent: 2_800,
+  created: 25_000,
+};
 const UNLIMITED_NOTE_MS = 12_000;
 const WELCOME_BACK_MS = 4_000;
 const timeoutFor = (step: CheckinStep) =>
@@ -264,7 +283,8 @@ export default function CheckinKiosk({
     onFinish?.(null);
     const name = p.firstName.slice(0, 40);
     if (onPlusWelcomeShown?.(name)) return;
-    toast({ title: `🎉 ${name}, you're Insiders+!`, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
+    const title = isGuestName(name) ? "🎉 You're Insiders+!" : `🎉 ${name}, you're Insiders+!`;
+    toast({ title, detail: "Unlimited movies are on. Enjoy the show.", tone: "ok", emoji: null, claimUrl: null }, 10_000);
   });
 
   const onSeen = useEffectEvent((id: unknown) => {
@@ -296,9 +316,13 @@ export default function CheckinKiosk({
     const party = f?.entrance === "party";
     const flair = parseFlair({ color: f?.color, effect: party ? "classic" : f?.entrance, sticker: f?.sticker });
     const show: EntranceKey = party ? "party" : flair.effect;
+    // A phone account with no name (lib/member-name.ts) comes as "Guest ··
+    // 0199": greeted without it, the last four in the detail so they know
+    // it's theirs.
+    const guest = isGuestName(name);
     toast({
-      title: p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
-      detail,
+      title: guest ? (p.isNew ? "Welcome to the Royale!" : "✓ You're checked in") : p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
+      detail: guest ? `Phone ${name.replace(/^Guest /, "")} · ${detail}` : detail,
       tone: "ok",
       emoji: null,
       claimUrl: isClaimUrl(p.claimUrl) ? p.claimUrl : null,
@@ -307,7 +331,7 @@ export default function CheckinKiosk({
     });
     if (show !== "classic") playEntrance({ entrance: show, color: flairHex(flair), sticker: flair.sticker });
     badges.forEach((b, i) => {
-      const c = badgeCheer(b, name);
+      const c = badgeCheer(b, guest ? "friend" : name);
       setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
     });
   });
@@ -340,7 +364,8 @@ export default function CheckinKiosk({
     const balance = Math.round(Number(p?.balance));
     if (!p || typeof p.firstName !== "string" || !(earned > 0) || !Number.isFinite(balance)) return;
     setCelebration({
-      firstName: p.firstName.slice(0, 40),
+      // "Nice one, friend!" for a phone account with no name.
+      firstName: isGuestName(p.firstName) ? "friend" : p.firstName.slice(0, 40),
       earned,
       balance: Math.max(0, balance),
       key: Date.now(),
@@ -379,8 +404,9 @@ export default function CheckinKiosk({
     }
   });
 
-  // Walked away from "Add this phone?": checked in without it.
-  const timeUp = useEffectEvent(() => (step.name === "found" ? choosePhone(false) : reset()));
+  // Walked away from "Add this phone?" or "Add your name?": checked in
+  // without it.
+  const timeUp = useEffectEvent(() => (step.name === "found" ? choosePhone(false) : step.name === "askName" ? skipName() : reset()));
 
   useEffect(() => {
     const supabase = createClient();
@@ -531,15 +557,62 @@ export default function CheckinKiosk({
     if (!r) return setError(OFFLINE);
     if (!r.ok) return setError(r.error);
     if (r.status === "new") {
-      // No account yet: their email first (most members without a phone on
-      // file have one), or "I'm new here".
+      // No account yet: "Just use my phone number" (a phone account), their
+      // email (most members without a phone on file have one), or the
+      // sign-up form.
       setTried(digits);
       setEntry("");
-      return setStep({ name: "phone", letters: true, notFound: formatPhone(digits) });
+      return setStep({ name: "notFound", phone: formatPhone(digits) });
+    }
+    if (r.askName) {
+      setEntry("");
+      return setStep({ name: "askName", request: r.request, digits });
     }
     queue(r.request);
     resetForm();
     setStep(r.unlimited ? { name: "sent", unlimited: true } : { name: "sent" });
+  }
+
+  // "Just use my phone number": the number they typed is their account.
+  async function usePhone() {
+    if (busy || !tried) return;
+    const ticket = session.current;
+    const phone = formatPhone(tried);
+    setBusy(true);
+    setError(null);
+    const r = await createPhoneAccount(tried).catch(() => null);
+    setBusy(false);
+    if (ticket !== session.current) return;
+    if (!r) return setError(OFFLINE);
+    if (!r.ok) return setError(r.error);
+    queue(r.request);
+    resetForm();
+    // Someone made an account with this number a moment ago: checked in.
+    setStep(r.made ? { name: "phoneMade", phone } : { name: "sent" });
+  }
+
+  // "Add your name?": saved when staff confirm the check-in.
+  async function saveName() {
+    if (busy || step.name !== "askName") return;
+    if (!firstName.trim()) return setError("Type your first name.");
+    const ticket = session.current;
+    setBusy(true);
+    setError(null);
+    const r = await nameCheckin({ phone: step.digits, firstName, lastInitial: lastName }).catch(() => null);
+    setBusy(false);
+    if (ticket !== session.current) return;
+    if (!r) return setError(OFFLINE);
+    if (!r.ok) return setError(r.error);
+    queue(r.request);
+    resetForm();
+    setStep({ name: "sent", who: r.firstName });
+  }
+
+  function skipName() {
+    if (step.name !== "askName") return;
+    queue(step.request);
+    resetForm();
+    setStep({ name: "sent" });
   }
 
   async function signUp() {
@@ -685,6 +758,107 @@ export default function CheckinKiosk({
           </button>
           <LetterKeys disabled={busy} onKey={pressLetter} onDomain={domain} />
         </div>
+      )}
+
+      {step.name === "notFound" && (
+        <>
+          <div>
+            <div className={k.eyebrow}>Check in · earn points</div>
+            <h1 className={k.title}>Welcome! Are you new?</h1>
+            <p className={k.sub} style={{ marginTop: 8, fontSize: 18 }}>
+              We don&apos;t have <strong style={{ color: "var(--cream)" }}>{step.phone}</strong> yet.
+            </p>
+          </div>
+          <button className={`${k.cta} ${k.choice}`} disabled={busy} onClick={usePhone}>
+            <span>{busy ? "One moment…" : "Just use my phone number"}</span>
+            {!busy && <span className={k.choiceSub}>No email, no password. Start earning points today.</span>}
+          </button>
+          {error && <p className={k.error}>{error}</p>}
+          <div className={k.choiceRow}>
+            <button className={k.ghost} disabled={busy} onClick={() => setStep({ name: "phone", letters: true, notFound: step.phone })}>
+              Try my email
+            </button>
+            <button className={k.ghost} disabled={busy} onClick={() => startNew()}>
+              Sign up with name &amp; email
+            </button>
+          </div>
+          <button type="button" className={`${k.ghost} ${k.ghostShort}`} disabled={busy} onClick={reset}>
+            Start over
+          </button>
+        </>
+      )}
+
+      {step.name === "phoneMade" && (
+        <div className={k.done}>
+          <div className={k.check} aria-hidden="true">
+            ✓
+          </div>
+          <h1 className={k.title}>That&apos;s it!</h1>
+          <p className={k.big}>Your phone number is your account.</p>
+          <div className={k.phoneBig}>{step.phone}</div>
+          <p className={k.big}>Just type it each time you come in, and your points add up.</p>
+          <p className={k.sub}>The box office will confirm you in a moment.</p>
+          <button className={k.cta} style={{ alignSelf: "stretch" }} onClick={reset}>
+            Done
+          </button>
+        </div>
+      )}
+
+      {step.name === "askName" && (
+        <form
+          style={{ display: "contents" }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void saveName();
+          }}
+        >
+          <div>
+            <div className={k.eyebrow}>Welcome back</div>
+            <h1 className={k.title}>Add your name?</h1>
+            <p className={k.sub} style={{ marginTop: 8, fontSize: 18 }}>
+              So we can say hello. It&apos;s fine to skip.
+            </p>
+          </div>
+          <div className={k.fieldRow}>
+            <label className={k.field}>
+              <span className={k.fieldLabel}>First name</span>
+              <input
+                className={`${k.input} ${k.inputCompact}`}
+                autoComplete="given-name"
+                autoCapitalize="words"
+                enterKeyHint="next"
+                maxLength={40}
+                value={firstName}
+                onChange={(e) => {
+                  setError(null);
+                  setFirstName(e.target.value);
+                }}
+              />
+            </label>
+            <label className={k.field} style={{ maxWidth: 150 }}>
+              <span className={k.fieldLabel}>Last initial</span>
+              <input
+                className={`${k.input} ${k.inputCompact}`}
+                autoComplete="off"
+                autoCapitalize="characters"
+                enterKeyHint="done"
+                maxLength={2}
+                value={lastName}
+                onChange={(e) => {
+                  setError(null);
+                  setLastName(e.target.value);
+                }}
+              />
+            </label>
+          </div>
+          {error && <p className={k.error}>{error}</p>}
+          <button type="submit" className={k.cta} disabled={busy || !firstName.trim()}>
+            {busy ? "One moment…" : "Save & check in →"}
+          </button>
+          <button type="button" className={k.ghost} disabled={busy} onClick={skipName}>
+            Skip · just check me in
+          </button>
+        </form>
       )}
 
       {step.name === "new" && (

@@ -11,6 +11,8 @@ import { legacyNeedsSetup } from "@/lib/legacy-plus";
 import { shortName } from "@/lib/card-match";
 import { emailConfigured } from "@/lib/email/send";
 import { emailSetupLinkToNewMember } from "@/lib/sign-in-help";
+import { hasName } from "@/lib/member-name";
+import { visitBusinessDate } from "@/lib/visits";
 
 // Check-in for points, from the customer screen. The screen page is gated by
 // requireDisplayScreen() (a physical device, signed in with its display-only
@@ -30,7 +32,13 @@ import { emailSetupLinkToNewMember } from "@/lib/sign-in-help";
 // unlimited: the account is a former unlimited member's with nothing paying
 // for it here (lib/legacy-plus.ts): the screen tells them their card goes
 // on at the register. Nothing else about them comes back.
-export type CheckinStart = { ok: true; status: "known"; request: CheckinRequest; unlimited?: true } | { ok: true; status: "new" } | { ok: false; error: string };
+// askName: a phone account with no name yet, back for its second visit:
+// the screen asks once, gently, "Add your name?" (nameCheckin), and skipping
+// sends `request` as it is. Nothing else about them comes back.
+export type CheckinStart =
+  | { ok: true; status: "known"; request: CheckinRequest; unlimited?: true; askName?: true }
+  | { ok: true; status: "new" }
+  | { ok: false; error: string };
 
 // Found by email. name: "Sarah M.". withPhone: the same check-in, also
 // adding the number they typed earlier (their account has none, and no
@@ -51,6 +59,9 @@ export type EmailStart = CheckinFound | { ok: true; status: "new" } | { ok: fals
 const NOT_A_NUMBER = "That doesn't look like a full phone number. Try again?";
 const NOT_AN_EMAIL = "That email doesn't look right. Check it and try again?";
 const LOOKUP_FAILED = "We couldn't look that up just now. Ask a staff member for help.";
+// One letter, any alphabet (the RegExp constructor: \p{} needs a newer
+// target than this project compiles to).
+const ONE_LETTER = new RegExp("^\\p{L}$", "u");
 
 // Anyone at the tablet can type, so lookups are capped per signed-in screen,
 // on top of the screen's own lockout. Roomy enough for a group checking in
@@ -70,7 +81,47 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
   // opens the account. Theirs comes after staff confirm it's them
   // (confirmVisit in pos/checkin-actions.ts), or on their receipt.
   const request = sealCheckin({ kind: "known", phone: digits });
-  return (await unlimitedWithoutCard(found.ids)) ? { ok: true, status: "known", request, unlimited: true } : { ok: true, status: "known", request };
+  if (await unlimitedWithoutCard(found.ids)) return { ok: true, status: "known", request, unlimited: true };
+  return found.ids.length === 1 && (await namelessToAsk(found.ids[0])) ? { ok: true, status: "known", request, askName: true } : { ok: true, status: "known", request };
+}
+
+// A phone account (lib/member-name.ts) with no name, on its second visit:
+// one earlier day checked in, and none today. So it's asked once: after
+// this visit there are two, and a skip never asks again. False whenever it
+// can't tell.
+async function namelessToAsk(memberId: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data: m, error } = await admin.from("members").select("name").eq("id", memberId).is("erased_at", null).maybeSingle();
+  if (error || !m || hasName(m.name as string | null)) return false;
+  const { data: visits, error: vErr } = await admin.from("member_visits").select("business_date").eq("member_id", memberId).limit(2);
+  if (vErr || visits?.length !== 1) return false;
+  return visits[0].business_date !== visitBusinessDate(new Date());
+}
+
+// "Add your name?" answered: the number they typed (again, so nothing about
+// the account rides on the screen) and a first name and last initial. The
+// name goes on only when staff confirm the check-in, only onto that
+// account, and only while it still has none (savePhoneFromCheckin's twin,
+// lib/checkin-server.ts saveNameFromCheckin). An account that isn't a
+// nameless one any more just checks in as it is.
+export async function nameCheckin(fields: { phone: string; firstName: string; lastInitial?: string | null }): Promise<{ ok: true; request: CheckinRequest; firstName: string } | { ok: false; error: string }> {
+  const screen = await assertDisplayScreen();
+  const digits = phoneDigits(String(fields?.phone ?? ""));
+  if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
+  const firstName = cleanFirstName(String(fields?.firstName ?? ""));
+  if (!firstName) return { ok: false, error: "Type your first name (letters only)." };
+  const initial = String(fields?.lastInitial ?? "")
+    .trim()
+    .replace(/\.$/, "");
+  if (initial && !ONE_LETTER.test(initial)) return { ok: false, error: "Just the first letter of your last name, or leave it blank." };
+  if (!(await lookupAllowed(screen.employeeId))) return { ok: false, error: TOO_MANY_TRIES };
+
+  const found = await memberIdsWithPhone(digits);
+  if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
+  if (found.ids.length === 0) return { ok: false, error: "We couldn't find that number just now. Ask a staff member for help." };
+  if (found.ids.length > 1) return { ok: true, request: sealCheckin({ kind: "known", phone: digits }), firstName };
+  const name = initial ? `${firstName} ${initial.toLocaleUpperCase()}.` : firstName;
+  return { ok: true, request: sealCheckin({ kind: "known", memberId: found.ids[0], phone: digits, addName: name }), firstName };
 }
 
 // The email they typed. `phone`: a number they tried first that we didn't
@@ -221,4 +272,29 @@ export async function createKioskMember(fields: { firstName: string; lastName: s
     claimUrl,
     emailed,
   };
+}
+
+// "Just use my phone number" (Andrew, 10/2): a number we don't know becomes
+// a phone account (lib/member-name.ts), nothing but the number. No name, no
+// email, email marketing off, no setup link, no QR code: they just type
+// the number each time. Staff still confirm the visit at the register,
+// which pays its points (the Welcome badge's included), as for anyone new.
+// A number that's on an account by now checks that account in instead.
+export async function createPhoneAccount(phone: string): Promise<{ ok: true; request: CheckinRequest; made: boolean } | { ok: false; error: string }> {
+  const screen = await assertDisplayScreen();
+  const digits = phoneDigits(String(phone ?? ""));
+  if (!isFullPhone(digits)) return { ok: false, error: NOT_A_NUMBER };
+  if (!(await allowAttempt(`checkin-create:${screen.employeeId}`, 8, 60))) return { ok: false, error: TOO_MANY_TRIES };
+
+  const found = await memberIdsWithPhone(digits);
+  if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
+  if (found.ids.length > 0) return { ok: true, request: sealCheckin({ kind: "known", phone: digits }), made: false };
+
+  const { data, error } = await createAdminClient()
+    .from("members")
+    .insert({ name: "", phone: formatPhone(digits), email: null, email_opt_in: false, points: 0, tier: "Insiders" })
+    .select("id")
+    .single();
+  if (error || !data) return { ok: false, error: "We couldn't set that up just now. Ask the box office to add you." };
+  return { ok: true, request: sealCheckin({ kind: "known", memberId: data.id as string, phone: digits, fresh: true }), made: true };
 }

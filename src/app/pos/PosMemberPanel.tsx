@@ -6,7 +6,9 @@ import MemberAvatar from "@/components/MemberAvatar";
 import InfoTip from "@/components/help/InfoTip";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
-import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
+import { addPosMemberEmail, addPosMemberName, searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
+import { firstNameOf } from "@/lib/checkin";
+import { PhoneOnlyTag } from "./RegisterCheckins";
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
 import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
@@ -158,7 +160,8 @@ export default function PosMemberPanel({
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-semibold">{member.name}</span>
-                <span className="shrink-0 text-xs" style={{ color: "var(--muted)" }}>
+                <span className="flex shrink-0 items-center gap-1 text-xs" style={{ color: "var(--muted)" }}>
+                  {member.phoneOnly && <PhoneOnlyTag />}
                   {member.tier}
                 </span>
               </div>
@@ -192,10 +195,21 @@ export default function PosMemberPanel({
                 toTablet={toTablet}
                 onDone={(m) => {
                   onChange(m);
-                  setMessage(`${m.name.split(" ")[0]} is Insiders+ now.`);
+                  setMessage(`${firstNameOf(m.name)} is Insiders+ now.`);
                 }}
               />
             )
+          )}
+          {(member.named === false || !member.email) && (
+            <AddDetails
+              key={`add-${member.id}`}
+              member={member}
+              onSaved={(m, msg) => {
+                onChange(m);
+                setMessage(msg);
+                setError(null);
+              }}
+            />
           )}
           {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
           {coffee && <CoffeeToday coffee={coffee} />}
@@ -326,7 +340,7 @@ export default function PosMemberPanel({
 
       {member && confirmTier && (
         <ConfirmModal
-          title={`Switch ${member.name.split(" ")[0]} to ${RATE_LABEL[confirmTier]}?`}
+          title={`Switch ${firstNameOf(member.name)} to ${RATE_LABEL[confirmTier]}?`}
           description={confirmCopy(member, confirmTier)}
           confirmLabel={confirmTier === "adult" ? "Switch to Adult" : "ID checked, switch"}
           onConfirm={() => applyRate(confirmTier)}
@@ -334,6 +348,111 @@ export default function PosMemberPanel({
         />
       )}
     </div>
+  );
+}
+
+// "Add name" / "Add email" for an account missing one: a phone account
+// (lib/member-name.ts) whose guest wants their name on it, or an email to
+// sign in on the website. Adding only: changing what's there is Back
+// office's job.
+function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMember, message: string) => void }) {
+  const [open, setOpen] = useState<"name" | "email" | null>(null);
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+  const [email, setEmail] = useState("");
+  const [optIn, setOptIn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    const r =
+      open === "name"
+        ? await addPosMemberName(member.id, { firstName: first, lastName: last }).catch(() => null)
+        : await addPosMemberEmail(member.id, { email, optIn }).catch(() => null);
+    setBusy(false);
+    if (!r) return setError(SIGNED_OUT);
+    if (!r.ok) return setError(r.error);
+    setOpen(null);
+    onSaved(r.member, r.message);
+  }
+
+  if (!open) {
+    return (
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {member.named === false && (
+          <button className="btn-secondary min-h-9 !px-2.5 !py-1 text-xs" onClick={() => setOpen("name")}>
+            + Add name
+          </button>
+        )}
+        {!member.email && (
+          <button className="btn-secondary min-h-9 !px-2.5 !py-1 text-xs" onClick={() => setOpen("email")}>
+            + Add email
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="mt-2 space-y-1.5 rounded-md border p-2"
+      style={{ borderColor: "var(--border)" }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      {open === "name" ? (
+        <div className="grid grid-cols-[3fr_2fr] gap-1.5">
+          <input className="input !py-1.5 text-sm" placeholder="First name" aria-label="First name" autoFocus maxLength={40} value={first} onChange={(e) => setFirst(e.target.value)} />
+          <input className="input !py-1.5 text-sm" placeholder="Last (optional)" aria-label="Last name or initial (optional)" maxLength={40} value={last} onChange={(e) => setLast(e.target.value)} />
+        </div>
+      ) : (
+        <>
+          <input
+            className="input !py-1.5 text-sm"
+            type="email"
+            inputMode="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="their@email.com"
+            aria-label="Their email"
+            autoFocus
+            maxLength={254}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <label className="flex items-center gap-1.5 text-xs">
+            <input type="checkbox" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} />
+            They want our emails (news and showtimes)
+          </label>
+        </>
+      )}
+      {error && (
+        <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+          {error}
+        </div>
+      )}
+      <div className="flex gap-1.5">
+        <button type="submit" className="btn-primary min-h-9 flex-1 !py-1 text-xs" disabled={busy || (open === "name" ? !first.trim() : !email.trim())}>
+          {busy ? "Saving…" : open === "name" ? "Save name" : "Save email"}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary min-h-9 !px-3 !py-1 text-xs"
+          disabled={busy}
+          onClick={() => {
+            setOpen(null);
+            setError(null);
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

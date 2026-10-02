@@ -9,6 +9,8 @@
 // 4242". A phone or watch (Apple Pay and the like) is its own card: Stripe
 // fingerprints the phone's number, not the card behind it.
 
+import { isGuestName } from "@/lib/member-name";
+
 // A register sale's Undo (and the other buttons on its card notice) works
 // this long after the sale, on the register that rang it. After that, a
 // manager can undo a card match from the member's page in Back office.
@@ -122,13 +124,17 @@ export function bookingCreditNote(quantity: number): string {
   return `${quantity} ticket${quantity === 1 ? "" : "s"} bought online, paid with a card linked to your account`;
 }
 
+// A phone account's "Guest ·· 0199" (lib/member-name.ts) comes back whole
+// from both of these.
 export function firstName(name: string | null | undefined): string {
   const n = (name ?? "").trim();
+  if (isGuestName(n)) return n;
   return n.split(/\s+/)[0] || "Member";
 }
 
 // "Sarah R.": enough to tell two people apart at the register.
 export function shortName(name: string | null | undefined): string {
+  if (isGuestName(name)) return (name ?? "").trim();
   const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "Member";
   return parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1].charAt(0).toUpperCase()}.` : parts[0];

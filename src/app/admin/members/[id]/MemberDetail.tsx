@@ -22,6 +22,7 @@ import StaffBadge from "../StaffBadge";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import { firstName } from "@/lib/card-match";
+import { isPhoneAccount, memberLabel } from "@/lib/member-name";
 import { approvalText } from "@/lib/pin-rules";
 import { refundBooking, refundOrder } from "@/app/admin/reports/actions";
 import { ANNUAL_PRICE, RATE_LABEL, RATE_ORDER, RATE_PRICE, dollars } from "@/lib/membership-rates";
@@ -220,7 +221,12 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
             <Image src={member.avatar_url} alt={member.name} fill sizes="40px" className="object-cover" />
           </div>
         )}
-        <h1 className="text-xl font-semibold">{member.name}</h1>
+        <h1 className="text-xl font-semibold">{memberLabel(member.name, member.phone)}</h1>
+        {isPhoneAccount(member) && (
+          <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs text-[var(--muted)]" title="Just a phone number: no email or website login">
+            📞 Phone account
+          </span>
+        )}
         <StaffBadge info={staffInfo} />
         {member.avatar_url && (
           <button

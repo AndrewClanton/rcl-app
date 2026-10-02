@@ -13,6 +13,7 @@ import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
 import { AccountPanel, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
 import AutoUpdate from "../AutoUpdate";
+import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
 
 export interface PromoMovie {
@@ -298,7 +299,7 @@ export function OrderReceipt({ cart }: { cart: RegisterCartSnapshot }) {
     <div className={k.receipt}>
       <div className={k.receiptHead}>
         <span className={k.receiptWho}>
-          <span className={k.receiptName}>{who ? `${who.firstName}'s order` : cart.orderName || "Your order"}</span>
+          <span className={k.receiptName}>{who && !isGuestName(who.firstName) ? `${who.firstName}'s order` : cart.orderName || "Your order"}</span>
         </span>
         <span className={`${k.eyebrow} ${k.receiptCount}`} style={{ color: "var(--gold)" }}>
           {count} item{count === 1 ? "" : "s"}

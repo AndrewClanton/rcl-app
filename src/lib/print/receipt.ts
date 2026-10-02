@@ -51,6 +51,8 @@ function plain(s: string) {
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, "-")
     .replace(/…/g, "...")
+    // A phone account's "Guest ·· 0199" (lib/member-name.ts).
+    .replace(/··/g, "..")
     .normalize("NFKD")
     .replace(/[^\x20-\x7E]/g, "");
 }
@@ -202,6 +204,45 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
     d.feed(1);
     for (const l of opts.flourish) d.line(l);
   }
+  d.cut();
+  return d.toString();
+}
+
+// An Insiders+ membership set up at the register with their card on the
+// reader (pos/legacy-plus-actions.ts): Stripe only emails a receipt to a
+// customer with an email, and a phone account (lib/member-name.ts) has
+// none, so the register prints this one. Amounts in dollars.
+export interface MembershipReceipt {
+  member: string;
+  plan: string; // "Insiders+ Standard, monthly"
+  subtotal: number;
+  tax: number;
+  total: number;
+  card: string | null; // "Visa ·· 4242"
+  at: string; // ISO, when it was charged
+  invoice: string | null; // Stripe's invoice number
+  next: string | null; // ISO, the next charge
+}
+
+export function membershipReceiptXml(r: MembershipReceipt): string {
+  const d = new Doc();
+  header(d);
+  d.lines(columns("Insiders+ membership", when(r.at)));
+  if (r.invoice) d.line(`Invoice ${r.invoice}`);
+  d.line(`Insider: ${r.member}`);
+  d.line(rule());
+  d.lines(columns(r.plan, money(r.subtotal)));
+  d.line(rule());
+  d.lines(columns("Subtotal", money(r.subtotal)));
+  d.lines(columns("Tax", money(r.tax)));
+  d.bold(true).lines(columns("TOTAL", money(r.total))).bold(false);
+  d.line();
+  if (r.card) d.lines(columns(r.card, money(r.total)));
+  if (r.next) {
+    const next = new Date(r.next).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+    d.line(`Renews ${next}: charged to the same card.`);
+  }
+  d.line().align("center").line("Welcome to Insiders+!").line("To change or cancel, ask at the box office.").line("royalecinemajoplin.com");
   d.cut();
   return d.toString();
 }
