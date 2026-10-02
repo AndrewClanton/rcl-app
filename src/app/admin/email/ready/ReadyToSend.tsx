@@ -31,6 +31,8 @@ export interface CardData {
   overMonth: boolean;
   status: string | null;
   note: string | null;
+  brake: string | null; // the automatic brake stopped it: why ("Paused: 7 of 100 in wave 2 bounced. ...")
+  atResend: number; // handed to Resend to arrive later (Pause calls these back)
   campaignId: string | null;
   results: DesignResults | null;
   outcomeLabel: string;
@@ -56,6 +58,23 @@ export interface PlanData {
 const n = (x: number) => x.toLocaleString("en-US");
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
 const people = (x: number) => `${n(x)} ${x === 1 ? "person" : "people"}`;
+
+// Why sending can't happen right now, who can fix it, and where.
+export interface Blocker {
+  text: string;
+  href?: string;
+  label?: string;
+}
+
+function BlockerLink({ b }: { b: Blocker }) {
+  return b.href ? (
+    <Link href={b.href} className="btn-secondary !px-3 !py-1 text-xs">
+      {b.label ?? "Go there"}
+    </Link>
+  ) : null;
+}
+
+const SPACED_DAYS = 3;
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
@@ -162,19 +181,41 @@ function Preview({ card }: { card: CardData }) {
   );
 }
 
-function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: CardData; plan: PlanData; canSend: boolean; canTest: boolean; blockedWhy: string | null; myEmail: string }) {
+function Card({
+  card,
+  plan,
+  blocker,
+  canTest,
+  testBlocker,
+  myEmail,
+  isAdmin,
+}: {
+  card: CardData;
+  plan: PlanData;
+  blocker: Blocker | null;
+  canTest: boolean;
+  testBlocker: Blocker | null;
+  myEmail: string;
+  isAdmin: boolean;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<"first" | "next" | null>(null);
+  const [checked, setChecked] = useState("");
+  const canSend = !blocker;
+  const blockedWhy = blocker?.text ?? null;
   const count = card.count?.willSend ?? 0;
   const next = card.count?.next ?? { n: 0, mix: [] };
+  const spaced = card.count?.spaced ?? [];
+  const spacedTotal = spaced.reduce((a, s) => a + s.n, 0);
   const going = card.status === "scheduled" || card.status === "sending";
   const paused = card.status === "paused";
   const r = card.results;
   const lastWave = r?.waves.at(-1) ?? null;
   const waiting = r?.waiting ?? 0;
   const left = count + waiting;
+  const allSpaced = count > 0 && next.n === 0 && spacedTotal > 0 ? `Everyone left had another ready-made email in the last ${SPACED_DAYS} days. They can get this one in a later wave.` : null;
   // Manual waves: why "Send the next wave" can't be pressed right now.
   const nextWhy = !canSend
     ? blockedWhy
@@ -184,14 +225,24 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
         ? "The last wave is still going out."
         : plan.todayLeft <= 0
           ? `Today's share has gone. The next wave can go ${plan.nextWave}.`
-          : null;
-  const firstWhy = !canSend ? blockedWhy : !plan.auto && plan.todayLeft <= 0 ? `Today's share has gone. The first wave can go ${plan.nextWave}.` : null;
+          : allSpaced;
+  const firstWhy = !canSend ? blockedWhy : !plan.auto && plan.todayLeft <= 0 ? `Today's share has gone. The first wave can go ${plan.nextWave}.` : allSpaced;
   const run = (what: string, fn: () => Promise<{ ok: boolean; text: string }>) =>
     start(async () => {
       setMsg({ ok: true, text: `${what}…` });
       const out = await fn().catch(() => ({ ok: false, text: "Couldn't reach the server. Check the connection and try again." }));
       setMsg(out);
       router.refresh();
+    });
+  const resume = () =>
+    run("Carrying on", async () => {
+      const out = await resumeDesign(card.key, checked);
+      return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
+    });
+  const pause = (what: string) =>
+    run(what, async () => {
+      const out = await pauseDesign(card.key);
+      return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
     });
   const firstLabel = count === 0 ? "Nobody to send it to" : plan.auto || count <= next.n ? `Send to ${people(count)}` : `Send the first ${n(next.n)} (of ${n(count)})`;
   const nextLabel = `Send the next ${n(Math.min(next.n, count) || plan.perDay)}`;
@@ -225,6 +276,11 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
               <>
                 <div className="mt-2 text-2xl font-semibold tabular-nums">{people(count)}</div>
                 <div className="text-xs text-[var(--muted)]">{card.campaignId ? "haven't had it yet and would get it" : "would get it"}</div>
+                {spaced.map((s) => (
+                  <p key={s.title} className="mt-1 text-xs">
+                    {n(s.n)} of them got <em>{s.title}</em> in the last {SPACED_DAYS} days, so they&apos;ll get this one in a later wave.
+                  </p>
+                ))}
                 {card.count.excluded.length > 0 && (
                   <details className="mt-2 text-xs">
                     <summary className="cursor-pointer text-[var(--muted)]">Who&apos;s left out, and why</summary>
@@ -243,6 +299,33 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
               <p className="mt-2 text-xs text-[var(--danger-text)]">Couldn&apos;t count them just now. Reload the page.</p>
             )}
           </div>
+
+          {paused && card.brake && (
+            <div className="space-y-2 rounded-lg border-2 border-[var(--danger-text)] bg-[var(--background)] p-3 text-sm" role="alert">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--danger-text)]">Stopped by the automatic brake</div>
+              <p className="font-semibold text-[var(--danger-text)]">{card.brake}</p>
+              <p className="text-xs text-[var(--muted)]">
+                Nothing more of this email goes until someone carries on. Look at who bounced or complained (More detail, below): old or mistyped addresses, or
+                people who never asked for email. Bounced addresses are already on the never-mail list, so they won&apos;t be sent to again.
+              </p>
+              {isAdmin ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    className="input !w-auto min-w-56 flex-1 text-sm"
+                    placeholder="What you checked (required)"
+                    value={checked}
+                    onChange={(e) => setChecked(e.target.value)}
+                    aria-label="What you checked"
+                  />
+                  <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !canSend || checked.trim().length < 5} title={blockedWhy ?? undefined} onClick={resume}>
+                    I&apos;ve checked: carry on
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs">An admin or owner can carry on here once they&apos;ve checked the list.</p>
+              )}
+            </div>
+          )}
 
           {(going || paused || card.status === "sent") && r && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
@@ -272,7 +355,7 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
               type="button"
               className="btn-secondary !px-4 !py-2 text-sm"
               disabled={pending || !canTest}
-              title={canTest ? `Sends this email to ${myEmail}` : "Sending is switched off. Ask Andrew."}
+              title={canTest ? `Sends this email to ${myEmail}` : (testBlocker?.text ?? undefined)}
               onClick={() =>
                 run("Sending your test", async () => {
                   const out = await sendDesignTest(card.key);
@@ -288,30 +371,25 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
               </button>
             )}
             {paused ? (
-              <button
-                type="button"
-                className="btn-primary !px-4 !py-2 text-sm"
-                disabled={pending || !canSend}
-                onClick={() =>
-                  run("Carrying on", async () => {
-                    const out = await resumeDesign(card.key);
-                    return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
-                  })
-                }
-              >
-                Carry on sending
-              </button>
+              <>
+                {!card.brake && (
+                  <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !canSend} title={blockedWhy ?? undefined} onClick={resume}>
+                    Carry on sending
+                  </button>
+                )}
+                {card.atResend > 0 && (
+                  <button type="button" className="btn-secondary !px-4 !py-2 text-sm" disabled={pending} onClick={() => pause("Calling back")}>
+                    Call back the {n(card.atResend)} still waiting at Resend
+                  </button>
+                )}
+              </>
             ) : going ? (
               <button
                 type="button"
                 className="btn-secondary !px-4 !py-2 text-sm"
                 disabled={pending}
-                onClick={() =>
-                  run("Pausing", async () => {
-                    const out = await pauseDesign(card.key);
-                    return out.ok ? { ok: true, text: "Paused. Nothing more goes until you press Carry on sending." } : { ok: false, text: out.error };
-                  })
-                }
+                title={card.atResend > 0 ? `Also calls back the ${n(card.atResend)} handed to Resend that haven't arrived yet` : undefined}
+                onClick={() => pause("Pausing")}
               >
                 Pause
               </button>
@@ -374,6 +452,18 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
                   </ul>
                 </dd>
               </div>
+              {spaced.length > 0 && (
+                <div>
+                  <dt className="text-xs text-[var(--muted)]">Kept apart (at least {SPACED_DAYS} days between these emails)</dt>
+                  <dd className="space-y-0.5">
+                    {spaced.map((s) => (
+                      <p key={s.title}>
+                        {n(s.n)} of these got <em>{s.title}</em> in the last {SPACED_DAYS} days. They&apos;ll get this one later.
+                      </p>
+                    ))}
+                  </dd>
+                </div>
+              )}
               {confirm === "next" && lastWave && (
                 <div>
                   <dt className="text-xs text-[var(--muted)]">
@@ -403,7 +493,9 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
               )}
             </dl>
             <p className="mt-3 text-xs text-[var(--muted)]">
-              A wave can&apos;t be taken back once it goes. Anyone who no longer fits by then (signed up meanwhile, turned email off) is skipped. You can pause at any time.
+              A wave can&apos;t be taken back once it arrives. Anyone who no longer fits by then (signed up meanwhile, turned email off) is skipped. You can pause at any
+              time, and Pause also calls back any of the wave still waiting to arrive. If too many bounce or anyone marks it as spam, the next wave won&apos;t go until an
+              admin or owner has checked.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="btn-secondary" onClick={() => setConfirm(null)}>
@@ -548,6 +640,7 @@ export default function ReadyToSend({
   cards,
   sendingOn,
   offReason,
+  offKind,
   stopped,
   picturesReady,
   countsFailed,
@@ -558,6 +651,7 @@ export default function ReadyToSend({
   cards: CardData[];
   sendingOn: boolean;
   offReason: string | null;
+  offKind: "master" | "switch" | "setup" | null;
   stopped: string | null;
   picturesReady: boolean;
   countsFailed: boolean;
@@ -565,27 +659,53 @@ export default function ReadyToSend({
   isAdmin: boolean;
   myEmail: string;
 }) {
-  const blockedWhy = !sendingOn ? "Sending is switched off. Ask Andrew." : stopped ? "Sending is stopped. Ask Andrew." : !picturesReady ? "The pictures aren't on our server yet. Ask Andrew." : null;
+  // Who can fix each thing, and where (no dead ends).
+  const toSwitch = { href: "/admin/email#sending", label: "Go to Sending on/off" };
+  const offBlocker: Blocker | null = sendingOn
+    ? null
+    : offKind === "switch"
+      ? { text: "Sending is switched off. An owner can turn it on from the Email page.", ...toSwitch }
+      : offKind === "master"
+        ? { text: "Sending is switched off at the top level (Vercel). An owner turns that on once, then uses the switch on the Email page.", ...toSwitch }
+        : { text: `Sending isn't set up yet: ${offReason ?? "see the go-live checklist on the Email page."}`, href: "/admin/email", label: "See the go-live checklist" };
+  const blocker: Blocker | null =
+    offBlocker ??
+    (stopped
+      ? { text: "Sending is stopped. An admin or owner can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
+      : !picturesReady
+        ? { text: "The pictures for these emails aren't on our picture server yet.", href: "/admin/email", label: "See the go-live checklist" }
+        : null);
+  const testBlocker = offBlocker ?? (stopped ? blocker : null);
   return (
     <div className="space-y-6">
-      {!sendingOn && (
-        <div className="notice notice-warn text-sm">
+      {offBlocker && (
+        <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            <strong>Sending is switched off — ask Andrew.</strong> Nothing goes out while it&apos;s off: not these emails, not tests. You can still look at each one and see
-            who it would go to.
+            <strong>{offBlocker.text}</strong> Nothing goes out while it&apos;s off: not these emails, not tests. You can still look at each one and see who it would go to.
           </p>
-          {isAdmin && offReason ? <p className="mt-1 text-xs">For Andrew: {offReason}</p> : null}
+          {isAdmin && offReason && offKind === "setup" ? <p className="text-xs">Why: {offReason}</p> : null}
+          <BlockerLink b={offBlocker} />
         </div>
       )}
       {stopped && (
-        <div className="notice notice-warn text-sm">
-          <strong>Sending is stopped right now.</strong> {stopped} Ask Andrew before sending anything.
+        <div className="notice notice-warn space-y-2 text-sm">
+          <p>
+            <strong>Sending is stopped right now.</strong> {stopped} An admin or owner can resume it on the Email page once they&apos;ve checked what happened.
+          </p>
+          <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
+            Go to the Email page
+          </Link>
         </div>
       )}
       {!picturesReady && (
-        <div className="notice notice-warn text-sm">
-          <strong>The pictures for these emails aren&apos;t on our server yet,</strong> so they can&apos;t go out (the previews below may show broken pictures). Ask Andrew: it&apos;s a
-          one-time upload.
+        <div className="notice notice-warn space-y-2 text-sm">
+          <p>
+            <strong>The pictures for these emails aren&apos;t on our picture server yet,</strong> so they can&apos;t go out (the previews below may show broken pictures). The
+            go-live checklist on the Email page shows which are missing.
+          </p>
+          <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
+            See the go-live checklist
+          </Link>
         </div>
       )}
       {countsFailed && <p className="notice notice-warn text-sm">Couldn&apos;t count who each email would go to just now. Reload the page.</p>}
@@ -614,9 +734,13 @@ export default function ReadyToSend({
             <strong>Read the results, wave by wave.</strong> <em>Delivered</em> reached their inbox. <em>Opened</em> is rough (some phones open every email by
             themselves). <em>Clicked</em> tapped something. The number that matters is the last one: who <em>signed in</em> (the first two emails) or{" "}
             <em>set up Insiders+</em> (the third) since it went. If a wave has trouble (unsubscribes, bounces, or nobody clicking), don&apos;t send the next one: press
-            Pause and ask Andrew.
+            Pause. The automatic brake also stops an email by itself if more than 5 in 100 of a wave bounce or anyone marks it as spam; an admin or owner carries on
+            after checking.
           </li>
         </ol>
+        <p className="mt-2 text-xs text-[var(--muted)]">
+          These three are kept at least {SPACED_DAYS} days apart for each person: anyone who just got one of the others waits for a later wave.
+        </p>
         <p className="mt-2 text-xs text-[var(--muted)]">
           Nobody who turned email off, unsubscribed, or whose address bounced ever gets these. Every email has an unsubscribe link and our street address at the bottom.
         </p>
@@ -655,7 +779,7 @@ export default function ReadyToSend({
       </section>
 
       {cards.map((c) => (
-        <Card key={c.key} card={c} plan={plan} canSend={!blockedWhy} canTest={sendingOn && !stopped} blockedWhy={blockedWhy} myEmail={myEmail} />
+        <Card key={c.key} card={c} plan={plan} blocker={blocker} canTest={!testBlocker} testBlocker={testBlocker} myEmail={myEmail} isAdmin={isAdmin} />
       ))}
     </div>
   );

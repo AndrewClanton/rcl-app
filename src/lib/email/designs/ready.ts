@@ -9,8 +9,10 @@ import { renderCampaign, type Recipient } from "../render";
 import { EXCLUSION_LABEL, type Exclusion } from "../types";
 import { sealArtName } from "./art-token";
 import { DESIGNS, type DesignKey } from "./index";
-import { assetUrl } from "./kit";
-import { PIECES } from "./assets";
+import { DESIGN_GAP_DAYS, designCampaignIds, otherDesigns } from "../campaign-send";
+import { nextSendSlot } from "../timing";
+import { ASSET_BUCKET, assetUrl } from "./kit";
+import { ART, PIECES } from "./assets";
 import { DESIGN_KEYS } from "./types";
 
 // Back office -> Email -> Ready to send, the server side: each ready-made
@@ -40,11 +42,14 @@ export interface AudienceCount {
   // The next wave if it went now: how many, and how engaged they are (in
   // the order they're picked; rules.ts ENGAGEMENT_GROUPS).
   next: { n: number; mix: { label: string; n: number }[] };
+  // Of those it's for, how many had one of the other ready-made emails in
+  // the last 3 days (by that email's name): they wait for a later wave.
+  spaced: { title: string; n: number }[];
 }
 
 function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n: number }[] {
   return (Object.entries(ex) as [Exclusion, number][])
-    .filter(([k, n]) => n > 0 && k !== "segment" && k !== "wave_limit")
+    .filter(([k, n]) => n > 0 && k !== "segment" && k !== "wave_limit" && k !== "design_gap")
     .sort((a, b) => b[1] - a[1])
     .map(([k, n]) => ({ why: k === "already_sent" ? "Already got it" : EXCLUSION_LABEL[k], n }));
 }
@@ -53,19 +58,24 @@ function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n
 // the next wave of `waveSize` would be. One read of the member list (and
 // of the engagement extras) for all three.
 export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date(), waveSize = 100): Promise<Record<DesignKey, AudienceCount>> {
-  const [facts, extras] = await Promise.all([loadFacts(), orderExtras()]);
+  const [facts, extras, designIds] = await Promise.all([loadFacts(), orderExtras(), designCampaignIds()]);
   const out = {} as Record<DesignKey, AudienceCount>;
+  // The next wave would arrive at the next send slot (the 3-day gap is
+  // measured from then, as the wave itself does).
+  const at = nextSendSlot(now);
   for (const key of DESIGN_KEYS) {
     const d = DESIGNS[key];
     const c = rows[key];
     const shape = { id: c?.id ?? UUID_ZERO, kind: d.kind, category: d.category, automation: null, alert: null };
-    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at: now, now, facts, extras, limit: Math.max(1, waveSize), withRank: true });
+    const spacing = { others: otherDesigns(designIds, key), days: DESIGN_GAP_DAYS };
+    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at, now, facts, extras, limit: Math.max(1, waveSize), withRank: true, spacing });
     const groups = ENGAGEMENT_GROUPS.map(() => 0);
     for (const s of r.send) groups[engagementGroup(r.rank?.get(s.facts.memberId) ?? [4, 3])]++;
     out[key] = {
-      willSend: r.willSend + (r.excluded.wave_limit ?? 0),
+      willSend: r.willSend + (r.excluded.wave_limit ?? 0) + (r.excluded.design_gap ?? 0),
       excluded: topExclusions(r.excluded),
       next: { n: r.willSend, mix: ENGAGEMENT_GROUPS.map((label, i) => ({ label, n: groups[i] })).filter((g) => g.n > 0) },
+      spaced: [...(r.spaced ?? new Map<string, number>())].map(([title, n]) => ({ title, n })).sort((a, b) => b.n - a.n),
     };
   }
   return out;
@@ -180,6 +190,34 @@ export function previewHtml(key: DesignKey, as: PreviewAs = "claim"): { subject:
 }
 
 // ---------- the pictures ----------
+// Every picture the three designs use (assets.ts): desktop and phone, and
+// the no-name version of each per-person picture.
+export function referencedPictures(): string[] {
+  const files = new Set<string>();
+  for (const p of Object.values(PIECES)) for (const f of [p.d, p.m]) if (f) files.add(f.file);
+  for (const a of Object.values(ART)) for (const v of [a.d, a.m]) if (v) files.add(v.generic);
+  return [...files].sort();
+}
+
+// The go-live checklist: which of those are missing from the email-assets
+// bucket (one listing per folder). Null if the bucket couldn't be read.
+export async function picturesCheck(): Promise<{ expected: number; missing: string[] } | null> {
+  const want = referencedPictures();
+  const folders = [...new Set(want.map((f) => f.slice(0, f.lastIndexOf("/"))))];
+  const storage = createAdminClient().storage.from(ASSET_BUCKET);
+  const have = new Set<string>();
+  try {
+    for (const folder of folders) {
+      const { data, error } = await storage.list(folder, { limit: 1000 });
+      if (error) return null;
+      for (const o of data ?? []) have.add(`${folder}/${o.name}`);
+    }
+  } catch {
+    return null;
+  }
+  return { expected: want.length, missing: want.filter((f) => !have.has(f)) };
+}
+
 // Whether the pictures are in the email-assets bucket yet (one is asked
 // for; they all go up together). Nothing is sent without them.
 export async function picturesReady(): Promise<boolean> {

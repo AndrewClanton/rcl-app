@@ -10,7 +10,7 @@ import { firstNameOf, scrubAddresses } from "./format";
 import { hashEmail } from "./hash";
 import { lintCampaign, type LintResult } from "./lint";
 import { designOf, renderCampaign, type CampaignInput, type RenderData, type Recipient, type RenderLinks } from "./render";
-import { DESIGNS } from "./designs";
+import { DESIGNS, type DesignKey } from "./designs";
 import { sealArtName } from "./designs/art-token";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
@@ -105,12 +105,43 @@ export function senderStatus(): SenderStatus {
   return { from, ready: true, problem: null };
 }
 
-// The kill switch and everything else that must be true before a list send.
-export function sendingGate(): { ok: true } | { ok: false; reason: string } {
-  if (process.env.EMAIL_SENDING_ENABLED !== "true") return { ok: false, reason: "Sending to lists is switched off (EMAIL_SENDING_ENABLED isn't \"true\" in Vercel). Turn it on once the go-live checklist passes." };
+// ---------- the two switches ----------
+// Email to a list goes only when BOTH are on:
+//   1. EMAIL_SENDING_ENABLED in Vercel: the master setting, the ceiling.
+//      An owner sets it once; it only changes with a redeploy.
+//   2. "Sending on/off" in Back office -> Email (email_settings
+//      'sending_switch'): owners only, and it takes effect at once. Off
+//      until an owner turns it on; if it can't be read, it counts as off.
+// Neither touches one-to-one email (receipts, password resets, claim links:
+// send.ts), which never comes through here.
+export const SENDING_SWITCH = "sending_switch";
+
+export function masterSettingOn(): boolean {
+  return process.env.EMAIL_SENDING_ENABLED === "true";
+}
+
+export interface SendingSwitch {
+  on: boolean;
+  at: string | null;
+}
+
+export async function getSendingSwitch(): Promise<SendingSwitch> {
+  const { data, error } = await createAdminClient().from("email_settings").select("value").eq("key", SENDING_SWITCH).maybeSingle();
+  if (error) return { on: false, at: null };
+  const v = data?.value as { on?: unknown; at?: unknown } | undefined;
+  return { on: v?.on === true, at: typeof v?.at === "string" ? v.at : null };
+}
+
+export const SWITCH_OFF = "Sending is switched off in Back office (Email page, Sending on/off). An owner can turn it on there.";
+export const MASTER_OFF = "The master setting for email in our hosting (Vercel) is off. An owner turns it on once there and redeploys; after that, the Back office switch does the rest.";
+
+// The kill switches and everything else that must be true before a list send.
+export async function sendingGate(): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (!masterSettingOn()) return { ok: false, reason: MASTER_OFF };
   const s = senderStatus();
   if (!s.ready) return { ok: false, reason: s.problem ?? "The sender isn't set up." };
   if (!emailTokensReady()) return { ok: false, reason: "EMAIL_TOKEN_SECRET isn't set, so emails can't carry a working unsubscribe link." };
+  if (!(await getSendingSwitch().catch(() => ({ on: false }))).on) return { ok: false, reason: SWITCH_OFF };
   return { ok: true };
 }
 
@@ -254,7 +285,7 @@ export async function waitingAtResend(campaignId?: string): Promise<number> {
 // Why email waiting at Resend should come back right now, if it should:
 // sending is stopped (an admin or a guardrail) or switched off.
 export async function recallReason(): Promise<string | null> {
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) return `Sending is switched off: ${gate.reason}`;
   const p = await guardrailPause();
   return p ? `${p.by}: ${p.reason}` : null;
@@ -317,21 +348,20 @@ async function startReconfirmClock(list: { memberId: string; arrives: string }[]
 // one-off emails it touched are paused, whatever stopped sending, so an
 // admin decides whether the rest still go. One Resend says has already gone
 // is marked so, and not tried again.
-export async function recallScheduledSends(reason: string, opts: { deadline?: number; stillStopped?: () => Promise<boolean> } = {}): Promise<RecallResult> {
+// `campaignId`: only that one email's (Pause on Ready to send, the brake).
+export async function recallScheduledSends(reason: string, opts: { deadline?: number; stillStopped?: () => Promise<boolean>; campaignId?: string } = {}): Promise<RecallResult> {
   const admin = createAdminClient();
   const deadline = opts.deadline ?? Date.now() + 200_000;
   const lease = await takeRecallLease(deadline + 60_000);
-  if (!lease) return { recalled: 0, failed: 0, left: await waitingAtResend().catch(() => 0), busy: true };
+  if (!lease) return { recalled: 0, failed: 0, left: await waitingAtResend(opts.campaignId).catch(() => 0), busy: true };
   try {
     const out: RecallResult = { recalled: 0, failed: 0, left: 0 };
     const soon = new Date(Date.now() + 60_000).toISOString();
     const rows: { id: string; campaign_id: string; member_id: string | null; resend_email_id: string | null }[] = [];
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await admin
-        .from("email_sends")
-        .select("id, campaign_id, member_id, resend_email_id, deliver_at")
-        .eq("status", "scheduled")
-        .gt("deliver_at", soon)
+      let q = admin.from("email_sends").select("id, campaign_id, member_id, resend_email_id, deliver_at").eq("status", "scheduled").gt("deliver_at", soon);
+      if (opts.campaignId) q = q.eq("campaign_id", opts.campaignId);
+      const { data, error } = await q
         .order("deliver_at")
         .order("id")
         .range(from, from + 999);
@@ -466,6 +496,114 @@ export async function stopCampaignSends(campaignId: string, why: string, deadlin
     return out;
   } finally {
     await dropRecallLease(lease);
+  }
+}
+
+// ---------- one ready-made email: pause, and the automatic brake ----------
+// Pausing one email (Pause on Ready to send, or the brake below) also calls
+// back its sends already handed to Resend for later and puts them back in
+// its queue, the way "Stop all sending" does for everything, so "Paused"
+// means nothing more arrives. Carry on sending hands them over again (if
+// they still fit). Stops early if the email is carried on meanwhile.
+export async function recallCampaign(campaignId: string, reason: string, deadline = Date.now() + 200_000): Promise<RecallResult> {
+  const stillPaused = async () => {
+    const { data } = await createAdminClient().from("email_campaigns").select("status").eq("id", campaignId).maybeSingle();
+    return data?.status === "paused";
+  };
+  return recallScheduledSends(reason, { deadline, campaignId, stillStopped: stillPaused });
+}
+
+// The brake: if more than 5% of a wave bounced (hard bounces) or more than
+// 0.3% marked it as spam (with waves of 100, any complaint at all), that
+// email stops before its next wave. The account-wide guardrail above only
+// looks once 300 have been delivered in a day, which waves of 100 never
+// reach; this looks at each wave. Carrying on is a deliberate press by an
+// admin or owner, who says what they checked (pace.brakeOk then clears that
+// wave, so the same numbers don't stop it again).
+export const WAVE_BRAKE = { bounceRate: 0.05, complaintRate: 0.003 };
+export const BRAKE_PREFIX = "Brake: ";
+const HANDED_OVER = new Set(["submitted", "scheduled", "delivered", "bounced", "complained"]);
+const centralDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+
+export interface WaveTally {
+  n: number; // wave 1, 2, ...
+  day: string; // the day it was chosen (Central), as Ready to send's wave table counts them
+  sent: number;
+  bounced: number;
+  complained: number;
+}
+
+export async function lastWave(campaignId: string): Promise<WaveTally | null> {
+  const admin = createAdminClient();
+  const rows: { status: string; created_at: string; bounce_type: string | null; complained_at: string | null }[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await admin.from("email_sends").select("status, created_at, bounce_type, complained_at").eq("campaign_id", campaignId).order("id").range(from, from + 999);
+    if (error) throw new Error("Couldn't read how the last wave did.");
+    rows.push(...((data ?? []) as typeof rows));
+    if ((data ?? []).length < 1000) break;
+  }
+  const byDay = new Map<string, typeof rows>();
+  for (const r of rows) {
+    if (r.status === "held_out") continue;
+    const d = centralDay(r.created_at);
+    const list = byDay.get(d);
+    if (list) list.push(r);
+    else byDay.set(d, [r]);
+  }
+  if (!byDay.size) return null;
+  const days = [...byDay.keys()].sort();
+  const day = days[days.length - 1];
+  const list = byDay.get(day) ?? [];
+  return {
+    n: days.length,
+    day,
+    sent: list.filter((r) => HANDED_OVER.has(r.status)).length,
+    bounced: list.filter((r) => r.status === "bounced" || r.bounce_type === "Permanent").length,
+    complained: list.filter((r) => r.status === "complained" || !!r.complained_at).length,
+  };
+}
+
+export function brakeVerdict(w: WaveTally | null): string | null {
+  if (!w || w.sent <= 0) return null;
+  const of = `of ${w.sent.toLocaleString("en-US")} in wave ${w.n}`;
+  if (w.complained / w.sent > WAVE_BRAKE.complaintRate) return `Paused: ${w.complained} ${of} marked it as spam. Check the list before sending more.`;
+  if (w.bounced / w.sent > WAVE_BRAKE.bounceRate) return `Paused: ${w.bounced} ${of} bounced. Check the list before sending more.`;
+  return null;
+}
+
+// Checked after every hard bounce or spam complaint (the webhook) and before
+// every new wave (Send the next wave, the morning run). Returns why it
+// stopped, if it did. `recall`: "now" waits for the call-back (an action
+// that reports it), "background" doesn't (the webhook, a run).
+export async function enforceWaveBrake(c: Pick<CampaignRow, "id" | "status" | "content" | "kind" | "automation">, opts: { recall?: "now" | "background"; now?: Date } = {}): Promise<{ reason: string; recall: RecallResult | null } | null> {
+  if (!isPaced(c) || isAutomation(c) || !["scheduled", "sending"].includes(c.status)) return null;
+  const w = await lastWave(c.id);
+  const pace = ((c.content as { pace?: Pace } | null)?.pace ?? {}) as Pace;
+  if (!w || pace.brakeOk === w.day) return null;
+  const reason = brakeVerdict(w);
+  if (!reason) return null;
+  const { data } = await createAdminClient()
+    .from("email_campaigns")
+    .update({ status: "paused", error: `${BRAKE_PREFIX}${reason}`, updated_at: (opts.now ?? new Date()).toISOString() })
+    .eq("id", c.id)
+    .in("status", ["scheduled", "sending"])
+    .select("id");
+  if (!data?.length) return null;
+  const why = `Automatic brake: ${reason}`;
+  if (opts.recall === "now") return { reason, recall: await recallCampaign(c.id, why) };
+  inBackground("wave brake call-back", () => recallCampaign(c.id, why));
+  return { reason, recall: null };
+}
+
+// The brake for whichever email this send belongs to (the webhook, after a
+// hard bounce or a complaint). Never throws: the next press checks again.
+export async function brakeForSend(campaignId: string | null | undefined, now = new Date()): Promise<void> {
+  if (!campaignId) return;
+  try {
+    const c = await getCampaign(campaignId);
+    if (c) await enforceWaveBrake(c, { recall: "background", now });
+  } catch (e) {
+    console.error("wave brake:", e instanceof Error ? e.message : e);
   }
 }
 
@@ -608,6 +746,31 @@ export interface Pace {
   note?: string | null;
   go?: string | null; // when staff pressed for the next wave (manual waves)
   goKey?: string | null; // that press's page key, so a double click sends one wave
+  brakeOk?: string | null; // the wave (its day) an admin checked after the brake stopped it
+  brakeCheck?: { what: string; by: string; at: string } | null; // what they said they checked
+}
+
+// Ready-made emails stay at least this far apart for each person: someone
+// who had one of the others lately waits for a later wave of this one.
+export const DESIGN_GAP_DAYS = 3;
+
+// Every ready-made email's campaign: id -> which design.
+export async function designCampaignIds(): Promise<Map<string, DesignKey>> {
+  const out = new Map<string, DesignKey>();
+  const { data, error } = await createAdminClient().from("email_campaigns").select("id, content").not("content->>design", "is", null);
+  if (error) throw new Error("Couldn't read the other ready-made emails.");
+  for (const r of (data ?? []) as { id: string; content: CampaignInput["content"] | null }[]) {
+    const key = designOf(r.content);
+    if (key) out.set(r.id, key);
+  }
+  return out;
+}
+
+// The other designs' campaigns (id -> what staff call it), for the gap.
+export function otherDesigns(all: Map<string, DesignKey>, key: DesignKey): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [id, k] of all) if (k !== key) out.set(id, DESIGNS[k].title);
+  return out;
 }
 
 export const WAVE_WAITING = "Waiting for staff: the next wave goes only when someone presses Send the next wave on Ready to send.";
@@ -656,6 +819,13 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
     return { c: { ...c, ...patch }, more, note };
   }
 
+  // The brake: the last wave bounced or drew complaints over the line.
+  const brake = await enforceWaveBrake(c, { recall: "background", now });
+  if (brake) {
+    await save();
+    return { c: { ...c, ...patch, status: "paused" }, more: true, note: brake.reason };
+  }
+
   const room = await roomToday(now);
   const later = (why: string) => ({ more: true, note: why });
   let verdict: { more: boolean; note: string | null } | null = null;
@@ -668,8 +838,19 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   }
 
   const at = nextSendSlot(now);
-  const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit: room });
-  const left = resolved.excluded.wave_limit ?? 0;
+  // Anyone who had one of the other ready-made emails lately waits.
+  const key = designOf(c.content);
+  const spacing = key ? { others: otherDesigns(await designCampaignIds(), key), days: DESIGN_GAP_DAYS } : undefined;
+  const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit: room, spacing });
+  const spaced = resolved.excluded.design_gap ?? 0;
+  const left = (resolved.excluded.wave_limit ?? 0) + spaced;
+  if (!resolved.send.length && spaced > 0) {
+    // Everyone left had another of these lately: a later wave.
+    const note = `${spaced.toLocaleString("en-US")} still to go had another ready-made email in the last ${DESIGN_GAP_DAYS} days, so they get this one in a later wave.`;
+    patch.content = { ...c.content, pace: { ...pace, remaining: spaced, note, go: null } } as CampaignRow["content"];
+    await save();
+    return { c: { ...c, ...patch }, more: true, note };
+  }
   if (!resolved.send.length) {
     patch.content = { ...c.content, pace: { ...pace, remaining: 0, note: null, go: null } } as CampaignRow["content"];
     if (c.recipients === null) {
@@ -828,7 +1009,7 @@ async function recentSends(memberIds: string[], skip: Set<string>, shapes: Map<s
 
 // Is this run still wanted? Checked before every batch.
 async function stopReason(c: CampaignRow): Promise<string | null> {
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) return gate.reason;
   if (await guardrailPause()) return "Paused by a guardrail.";
   const { data, error } = await createAdminClient().from("email_campaigns").select("status").eq("id", c.id).maybeSingle();
@@ -1365,7 +1546,7 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
   const admin = createAdminClient();
   const first = await getCampaign(id);
   if (!first) return { id, name: "?", ran: false, submitted: 0, cancelled: 0, status: "missing", note: "No such campaign." };
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) {
     if (!isAutomation(first) && first.error !== gate.reason) await admin.from("email_campaigns").update({ error: gate.reason }).eq("id", id).eq("status", "scheduled");
     return { id, name: first.name, ran: false, submitted: 0, cancelled: 0, status: first.status, note: gate.reason };

@@ -79,7 +79,7 @@ export interface Overview {
   rates30: { delivered: number; complaints: number; hardBounces: number };
   lastWebhookAt: string | null;
   sender: ReturnType<typeof senderStatus>;
-  gate: ReturnType<typeof sendingGate>;
+  gate: Awaited<ReturnType<typeof sendingGate>>;
 }
 
 export async function getOverview(): Promise<Overview> {
@@ -148,7 +148,7 @@ export async function getOverview(): Promise<Overview> {
     rates30: { delivered: delivered.count ?? 0, complaints: complaints.count ?? 0, hardBounces: hardBounces.count ?? 0 },
     lastWebhookAt: (lastHook.data?.[0]?.received_at as string | undefined) ?? null,
     sender: senderStatus(),
-    gate: sendingGate(),
+    gate: await sendingGate(),
   };
 }
 

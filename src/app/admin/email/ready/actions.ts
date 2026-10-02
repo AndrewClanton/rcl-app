@@ -1,11 +1,24 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assertAdmin, assertManager } from "@/lib/auth";
+import { assertAdmin, assertManager, hasAdminAccess } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { allowAttempt } from "@/lib/rate-limit";
-import { asInput, guardrailPause, lintStored, replyTo, runCampaign, sendingGate, type Pace } from "@/lib/email/campaign-send";
+import {
+  asInput,
+  BRAKE_PREFIX,
+  enforceWaveBrake,
+  guardrailPause,
+  lastWave,
+  lintStored,
+  recallCampaign,
+  replyTo,
+  runCampaign,
+  sendingGate,
+  type Pace,
+  type RecallResult,
+} from "@/lib/email/campaign-send";
 import { sendEmail } from "@/lib/email/send";
 import { firstNameOf } from "@/lib/email/format";
 import { renderCampaign, type Recipient } from "@/lib/email/render";
@@ -20,12 +33,27 @@ import { getWaveMode, roomToday, saveSendPlan, saveWaveMode, saveWaveSize, waveC
 // inbox, the send itself (in daily waves that fit Resend's limit), and
 // pause or carry on. Unlike a typed email, these can't be edited here, and
 // each goes only to its fixed audience, so managers may send them. Nothing
-// here goes around EMAIL_SENDING_ENABLED, tests included.
+// here goes around the two sending switches (sendingGate), tests included.
+// Carrying on after the automatic brake stopped an email is for admins and
+// owners, who say what they checked.
 
 type Result<T = object> = ({ ok: true } & T) | { ok: false; error: string };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const OFF = "Sending is switched off, so nothing goes out (tests included). Ask Andrew to turn it on.";
+const off = (reason: string) => `Nothing goes out while sending is off, tests included. ${reason}`;
+const STOPPED =
+  "Sending is stopped right now (someone pressed Emergency stop, or too many emails bounced or were marked as spam). An admin or owner can resume it on the Email page.";
+const NO_PICTURES = "The pictures for these emails aren't on our picture server yet. The go-live checklist on the Email page shows what's missing.";
+
+// "Paused. 78 called back from Resend; 2 had already gone."
+function recallNote(r: RecallResult | null): string {
+  if (!r) return " Couldn't call back what was waiting at Resend just now: press Pause again in a minute.";
+  if (r.busy) return ` Another call-back was already running, so ${r.left.toLocaleString()} still waiting at Resend may arrive: press Pause again in a minute.`;
+  const bits: string[] = [];
+  if (r.recalled || r.failed) bits.push(`${r.recalled.toLocaleString()} called back from Resend; ${r.failed.toLocaleString()} had already gone`);
+  if (r.left) bits.push(`${r.left.toLocaleString()} still waiting there (press Pause again to call them back)`);
+  return bits.length ? ` ${bits.join(". ")}.` : " Nothing was waiting at Resend.";
+}
 
 function revalidate() {
   revalidatePath("/admin/email/ready");
@@ -36,7 +64,8 @@ function revalidate() {
 export async function sendDesignTest(key: string): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
   if (!isDesignKey(key)) return { ok: false, error: "Pick one of the three emails." };
-  if (!sendingGate().ok) return { ok: false, error: OFF };
+  const gate = await sendingGate();
+  if (!gate.ok) return { ok: false, error: off(gate.reason) };
   if (!staff.email) return { ok: false, error: "Your login has no email address to send the test to." };
   if (!(await allowAttempt(`design-test:${staff.employeeId}`, 10, 3600))) return { ok: false, error: "That's a lot of tests this hour. Try again later." };
   const d = DESIGNS[key];
@@ -96,10 +125,10 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
 export async function sendDesign(key: string, sendKey: string): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
   if (!isDesignKey(key) || !UUID.test(sendKey ?? "")) return { ok: false, error: "Reload the page and try again." };
-  const gate = sendingGate();
-  if (!gate.ok) return { ok: false, error: OFF };
-  if (await guardrailPause()) return { ok: false, error: "Sending is stopped right now (by an admin, or because too many emails bounced or were marked as spam). Ask Andrew." };
-  if (!(await picturesReady())) return { ok: false, error: "The pictures for these emails aren't on our server yet. Ask Andrew (they go up once, with scripts/email-designs/upload.mjs)." };
+  const gate = await sendingGate();
+  if (!gate.ok) return { ok: false, error: off(gate.reason) };
+  if (await guardrailPause()) return { ok: false, error: STOPPED };
+  if (!(await picturesReady())) return { ok: false, error: NO_PICTURES };
   const d = DESIGNS[key];
   const admin = createAdminClient();
   const now = new Date().toISOString();
@@ -135,10 +164,12 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
     id = data.id as string;
   } else {
     // Sent before: the same email again, to the people who qualify now
-    // and haven't had it.
+    // and haven't had it. (A wave an admin already checked after the brake
+    // stays checked.)
+    const brakeOk = ((c.content as { pace?: Pace }).pace ?? {}).brakeOk ?? null;
     const { data, error } = await admin
       .from("email_campaigns")
-      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey } } })
+      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, brakeOk } } })
       .eq("id", c.id)
       .in("status", ["sent", "failed"])
       .select("id");
@@ -154,9 +185,23 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
   }
   const r = await runCampaign(id, Date.now() + 240_000);
   revalidate();
-  if (r.status === "paused" && r.note) return { ok: false, error: r.note };
+  if (r.status === "paused") return { ok: false, error: (await pausedWhy(id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody new to send it to: everyone it's for has had it." };
+  if (!r.submitted) return { ok: true, message: (await paceNote(id)) ?? `Nothing handed over just now.${await restNote(r)}` };
   return { ok: true, message: `${r.submitted} handed to Resend now.${await restNote(r)}` };
+}
+
+// Why it's paused (its error), without the brake's label.
+async function pausedWhy(id: string): Promise<string | null> {
+  const { data } = await createAdminClient().from("email_campaigns").select("error").eq("id", id).maybeSingle();
+  const e = (data?.error as string | null | undefined) ?? null;
+  return e ? e.replace(BRAKE_PREFIX, "") : null;
+}
+
+// The wave's own note (e.g. everyone left had another of these lately).
+async function paceNote(id: string): Promise<string | null> {
+  const { data } = await createAdminClient().from("email_campaigns").select("content").eq("id", id).maybeSingle();
+  return ((data?.content as { pace?: Pace } | null)?.pace?.note as string | null | undefined) ?? null;
 }
 
 async function restNote(r: { status: string; note: string | null }): Promise<string> {
@@ -172,13 +217,20 @@ async function restNote(r: { status: string; note: string | null }): Promise<str
 export async function sendNextWave(key: string, pageKey: string): Promise<Result<{ message: string }>> {
   await assertManager();
   if (!isDesignKey(key) || !UUID.test(pageKey ?? "")) return { ok: false, error: "Reload the page and try again." };
-  if (!sendingGate().ok) return { ok: false, error: OFF };
-  if (await guardrailPause()) return { ok: false, error: "Sending is stopped right now. Ask Andrew." };
-  if (!(await picturesReady())) return { ok: false, error: "The pictures for these emails aren't on our server yet. Ask Andrew." };
+  const gate = await sendingGate();
+  if (!gate.ok) return { ok: false, error: off(gate.reason) };
+  if (await guardrailPause()) return { ok: false, error: STOPPED };
+  if (!(await picturesReady())) return { ok: false, error: NO_PICTURES };
   const c = await designCampaign(key);
   if (!c || !["scheduled", "sending"].includes(c.status)) return { ok: false, error: c?.status === "paused" ? "It's paused. Press Carry on sending first." : "It isn't going out right now." };
   const pace = ((c.content as { pace?: Pace }).pace ?? {}) as Pace;
   if (pace.goKey === pageKey) return { ok: true, message: "Already sent." };
+  // The brake: how the last wave did, before another goes.
+  const brake = await enforceWaveBrake(c, { recall: "now" });
+  if (brake) {
+    revalidate();
+    return { ok: false, error: `${brake.reason}${brake.recall && (brake.recall.recalled || brake.recall.left) ? recallNote(brake.recall) : ""}` };
+  }
   const admin = createAdminClient();
   const { count: waiting } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).eq("status", "queued");
   if (waiting) return { ok: false, error: "The last wave is still going out. Try again in a few minutes." };
@@ -194,47 +246,66 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
   if (error || !data?.length) return { ok: false, error: "Couldn't start the next wave. Reload the page and try again." };
   const r = await runCampaign(c.id, Date.now() + 240_000);
   revalidate();
-  if (r.status === "paused" && r.note) return { ok: false, error: r.note };
+  if (r.status === "paused") return { ok: false, error: (await pausedWhy(c.id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.ran) return { ok: false, error: r.note ?? "Couldn't send it just now. Try again in a minute." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody left to send it to: everyone it's for has had it." };
+  if (!r.submitted) return { ok: true, message: (await paceNote(c.id)) ?? `Nothing handed over just now.${await restNote(r)}` };
   return { ok: true, message: `${r.submitted} handed to Resend now.${await restNote(r)}` };
 }
 
 // ---------- pause and carry on ----------
-export async function pauseDesign(key: string): Promise<Result> {
+// Pause also calls back this email's sends already handed to Resend to
+// arrive later (back into its queue, so Carry on sends them). Pressed again
+// while paused, it calls back whatever is still waiting there.
+export async function pauseDesign(key: string): Promise<Result<{ message: string }>> {
   await assertManager();
   if (!isDesignKey(key)) return { ok: false, error: "Pick one of the three emails." };
   const c = await designCampaign(key);
-  if (!c || !["scheduled", "sending"].includes(c.status)) return { ok: false, error: "It isn't going out right now." };
-  const { error } = await createAdminClient()
-    .from("email_campaigns")
-    .update({ status: "paused", error: "Paused from Ready to send. Press Carry on to send the rest.", updated_at: new Date().toISOString() })
-    .eq("id", c.id)
-    .in("status", ["scheduled", "sending"]);
-  if (error) return { ok: false, error: "Couldn't pause it." };
+  if (!c || !["scheduled", "sending", "paused"].includes(c.status)) return { ok: false, error: "It isn't going out right now." };
+  if (c.status !== "paused") {
+    const { error } = await createAdminClient()
+      .from("email_campaigns")
+      .update({ status: "paused", error: "Paused from Ready to send. Press Carry on sending to send the rest.", updated_at: new Date().toISOString() })
+      .eq("id", c.id)
+      .in("status", ["scheduled", "sending"]);
+    if (error) return { ok: false, error: "Couldn't pause it." };
+  }
+  const r = await recallCampaign(c.id, "Paused from Ready to send.").catch(() => null);
   revalidate();
-  return { ok: true };
+  return { ok: true, message: `Paused. Nothing more goes until someone presses Carry on sending.${recallNote(r)}` };
 }
 
-export async function resumeDesign(key: string): Promise<Result<{ message: string }>> {
-  await assertManager();
+// Carry on. After the automatic brake, only an admin or owner, saying what
+// they checked (at least a few words); that clears the wave that tripped it.
+export async function resumeDesign(key: string, checked?: string): Promise<Result<{ message: string }>> {
+  const staff = await assertManager();
   if (!isDesignKey(key)) return { ok: false, error: "Pick one of the three emails." };
-  if (!sendingGate().ok) return { ok: false, error: OFF };
-  if (await guardrailPause()) return { ok: false, error: "Sending is stopped right now. Ask Andrew." };
+  const gate = await sendingGate();
+  if (!gate.ok) return { ok: false, error: off(gate.reason) };
+  if (await guardrailPause()) return { ok: false, error: STOPPED };
   const c = await designCampaign(key);
   if (!c || c.status !== "paused") return { ok: false, error: "It isn't paused." };
+  let content = c.content;
+  if ((c.error ?? "").startsWith(BRAKE_PREFIX)) {
+    if (!hasAdminAccess(staff.role)) return { ok: false, error: "The automatic brake stopped this one. An admin or owner can carry on after checking the list." };
+    const what = String(checked ?? "").trim();
+    if (what.length < 5) return { ok: false, error: "Say what you checked (a few words)." };
+    const w = await lastWave(c.id);
+    const pace = ((c.content as { pace?: Pace }).pace ?? {}) as Pace;
+    content = { ...c.content, pace: { ...pace, brakeOk: w?.day ?? null, brakeCheck: { what: what.slice(0, 300), by: staff.employeeId, at: new Date().toISOString() } } } as typeof c.content;
+  }
   // Same people as before; one started before the engagement order picks
   // its next waves by it too.
   const audience = { ...(c.audience ?? DESIGNS[key].audience), order: DESIGNS[key].audience.order };
   const { error } = await createAdminClient()
     .from("email_campaigns")
-    .update({ status: "scheduled", error: null, audience, scheduled_for: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({ status: "scheduled", error: null, audience, content, scheduled_for: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", c.id)
     .eq("status", "paused");
   if (error) return { ok: false, error: "Couldn't carry on." };
   const r = await runCampaign(c.id, Date.now() + 240_000);
   revalidate();
-  if (r.status === "paused" && r.note) return { ok: false, error: r.note };
+  if (r.status === "paused") return { ok: false, error: (await pausedWhy(c.id)) ?? r.note ?? "It paused again. Reload the page to see why." };
   if ((await getWaveMode()) === "manual" && r.status !== "sent") {
     return { ok: true, message: `Carrying on.${r.submitted ? ` ${r.submitted} left from the last wave handed to Resend.` : ""} Press Send the next wave when you're ready for more.` };
   }

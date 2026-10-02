@@ -161,7 +161,7 @@ export function memberJoined(memberId: string): void {
 export async function queueWelcome(memberId: string, now = new Date()): Promise<boolean> {
   // Sending off (the kill switch, no sender): nothing queues, so turning it
   // back on can never fire a pile of days-old welcomes.
-  if (!sendingGate().ok) return false;
+  if (!(await sendingGate()).ok) return false;
   const row = await getAutomation("welcome_1");
   if (!row || row.status !== "active") return false;
   const facts = await loadFacts({ memberId });

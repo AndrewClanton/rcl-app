@@ -1,6 +1,6 @@
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
-import { guardrailPause, sendingGate, WAVE_WAITING } from "@/lib/email/campaign-send";
+import { BRAKE_PREFIX, guardrailPause, masterSettingOn, sendingGate, SWITCH_OFF, waitingAtResend, WAVE_WAITING } from "@/lib/email/campaign-send";
 import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
@@ -30,16 +30,20 @@ export default async function ReadyToSendPage() {
     picturesReady(),
     getWaveMode(),
   ]);
-  const gate = sendingGate();
+  const gate = await sendingGate();
   const daily = perDay(plan);
   const monthLeft = Math.max(0, perMonth(plan) - usage.month);
   const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
   // The next wave is as many as today's share allows (a full wave once
   // today's has gone).
-  const [counts, results] = await Promise.all([
+  const [counts, results, atResend] = await Promise.all([
     countAudiences(rows, now, todayLeft > 0 ? todayLeft : daily).catch(() => null),
     Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
       (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
+    ),
+    // Handed to Resend to arrive later (Pause calls these back).
+    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await waitingAtResend((rows[k] as CampaignRow).id).catch(() => 0) : 0] as const)).then(
+      (x) => Object.fromEntries(x) as Record<DesignKey, number>,
     ),
   ]);
   const slot = nextSendSlot(now);
@@ -66,8 +70,11 @@ export default async function ReadyToSendPage() {
       finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, todayLeft > 0)) : null,
       overMonth: n > monthLeft,
       status: c?.status ?? null,
-      // "Waiting for staff" is what the wave line says already.
-      note: c?.error && !c.error.includes(WAVE_WAITING) ? c.error : null,
+      // "Waiting for staff" is what the wave line says already, and the
+      // brake has its own panel.
+      note: c?.error && !c.error.includes(WAVE_WAITING) && !c.error.startsWith(BRAKE_PREFIX) ? c.error : null,
+      brake: c?.status === "paused" && c.error?.startsWith(BRAKE_PREFIX) ? c.error.slice(BRAKE_PREFIX.length) : null,
+      atResend: atResend[key] ?? 0,
       campaignId: c?.id ?? null,
       results: results[key],
       outcomeLabel: d.outcome.label,
@@ -88,6 +95,7 @@ export default async function ReadyToSendPage() {
         cards={cards}
         sendingOn={gate.ok}
         offReason={gate.ok ? null : gate.reason}
+        offKind={gate.ok ? null : !masterSettingOn() ? "master" : gate.reason === SWITCH_OFF ? "switch" : "setup"}
         stopped={pause ? pause.reason : null}
         picturesReady={pictures}
         countsFailed={!counts}

@@ -55,30 +55,10 @@ export function lineupStarter(start: string, days = 7): Starter {
   };
 }
 
+// "The invite" and "Insiders+ come-back" were retired (v1.10): they went to
+// the same people as the ready-made "The new Royale is here" and "Press
+// play" (Ready to send), so anyone could have had two invites.
 export const STARTERS: Starter[] = [
-  {
-    key: "invite",
-    label: "The invite: \"You're already an Insider\"",
-    about: "Old-site members, in warm-up waves. Doubles as the permission check.",
-    kind: "invite",
-    category: "account",
-    name: "Invite: you're already an Insider",
-    subject: "You're already an Insider at the new Royale",
-    subjectB: "Your Royale account moved in. It just needs a password.",
-    preheader: "Pick a password and your welcome points are yours. About 30 seconds.",
-    content: {
-      blocks: [
-        { t: "hero", eyebrow: "Our new website is open", headline: "{first name}, you're already an Insider.", sub: "We rebuilt the website from the ground up and brought your membership along." },
-        { t: "paragraph", text: "All that's left is a password. Once it's set, your points, visits and member card are on your phone." },
-        { t: "claim" },
-        { t: "perks", kind: "insiders" },
-        { t: "perks", kind: "plus" },
-        SIGNOFF,
-      ],
-    },
-    audience: { include: [{ r: "has_login", v: false }], order: "trust", limit: 150 },
-    holdoutPct: 0,
-  },
   {
     key: "event_horror_trivia",
     label: "Halloween horror trivia",
@@ -100,28 +80,6 @@ export const STARTERS: Starter[] = [
     },
     audience: { include: [{ r: "all" }] },
     holdoutPct: 0,
-  },
-  {
-    key: "plus_comeback",
-    label: "Insiders+ come-back (former paying members)",
-    about: "Paid or Plus on the old site, free today. 7+ days after their invite.",
-    kind: "offer",
-    category: "offers",
-    name: "Insiders+ come-back",
-    subject: "Walk in free again",
-    subjectB: "Your old Insiders+ perks, one tap away",
-    preheader: "Every screening free, 2 booth nights a month, bar discounts. $15 a month or $153 a year.",
-    content: {
-      blocks: [
-        { t: "hero", eyebrow: "Insiders+ is back", headline: "Walk in free again.", sub: "You were with us on the old site. Your seat's waiting." },
-        { t: "paragraph", text: "Hi {first name},\n\nPlain math: tickets are $8, so two movies a month and Insiders+ has paid for itself. Everything after that is free, plus two booth nights a month and money off at the bar." },
-        { t: "button", label: "Restart Insiders+", link: "/membership#join", primary: true },
-        { t: "perks", kind: "plus" },
-        SIGNOFF,
-      ],
-    },
-    audience: { include: [{ r: "legacy_plus" }, { r: "tier", v: "Insiders" }] },
-    holdoutPct: 10,
   },
   {
     key: "tonight",

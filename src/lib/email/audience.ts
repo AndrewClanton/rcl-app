@@ -4,7 +4,7 @@ import { businessDay } from "@/lib/ops/time";
 import { addDays, capCheck, compareEngagement, engagementKey, genreKey, hardFilter, matchesAudience, trustRank, type CampaignShape, type OrderExtras, type RuleContext } from "./rules";
 import { legacyNeedsSetup } from "@/lib/legacy-plus";
 import { holdoutBucket, shuffleKey } from "./hash";
-import type { Audience, Exclusion, MemberFacts, Rule } from "./types";
+import { SENT_STATUSES, type Audience, type Exclusion, type MemberFacts, type Rule } from "./types";
 
 // Who a campaign goes to. The audience only ever reads `members` (through
 // member_email_facts): never the old-site holding table, never Resend.
@@ -199,6 +199,7 @@ export interface Resolved {
   excluded: Partial<Record<Exclusion, number>>;
   considered: number;
   rank?: Map<string, number[]>; // order 'engaged': member id -> engagementKey
+  spaced?: Map<string, number>; // `spacing`: how many each other email held back (by its name)
 }
 
 // Who already has this campaign (or, for an automation, this dedupe key).
@@ -230,6 +231,10 @@ export async function resolveAudience(
     now?: Date;
     extras?: Map<string, OrderExtras>; // orderExtras(), read once for several
     withRank?: boolean; // order 'engaged': return each one's engagement key
+    // The ready-made emails: anyone who had (or has waiting) one of these
+    // other campaigns (id -> name) within `days` of `at` waits for a later
+    // wave ("design_gap": they get no row, so a later wave picks them up).
+    spacing?: { others: Map<string, string>; days: number };
   },
 ): Promise<Resolved> {
   const now = opts.now ?? new Date();
@@ -242,6 +247,19 @@ export async function resolveAudience(
   };
 
   const ok: { facts: MemberFacts; dedupeKey: string | null }[] = [];
+  const spaced = new Map<string, number>();
+  const others = opts.spacing?.others;
+  const gapMs = (opts.spacing?.days ?? 0) * 86_400_000;
+  const tooClose = (f: MemberFacts): string | null => {
+    if (!others?.size) return null;
+    for (const s of f.sends) {
+      const name = others.get(s.c);
+      if (!name || !SENT_STATUSES.has(s.s)) continue;
+      const t = Date.parse(s.t);
+      if (Number.isFinite(t) && Math.abs(t - opts.at.getTime()) < gapMs) return name;
+    }
+    return null;
+  };
   for (const f of facts) {
     const hard = hardFilter(f, c, now);
     if (hard) {
@@ -272,6 +290,12 @@ export async function resolveAudience(
       skip(cap);
       continue;
     }
+    const close = tooClose(f);
+    if (close) {
+      skip("design_gap");
+      spaced.set(close, (spaced.get(close) ?? 0) + 1);
+      continue;
+    }
     ok.push({ facts: f, dedupeKey: key });
   }
 
@@ -300,7 +324,7 @@ export async function resolveAudience(
 
   const send = chosen.map((x) => ({ ...x, heldOut: c.holdoutPct > 0 && holdoutBucket(x.facts.memberId, c.id) < c.holdoutPct }));
   const heldOut = send.filter((s) => s.heldOut).length;
-  return { send, willSend: send.length - heldOut, heldOut, excluded, considered: facts.length, rank };
+  return { send, willSend: send.length - heldOut, heldOut, excluded, considered: facts.length, rank, spaced };
 }
 
 // Writes the chosen people as email_sends rows ('queued' or 'held_out').

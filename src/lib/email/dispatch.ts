@@ -58,7 +58,7 @@ export async function runEmailCron(deadline: number, now = new Date()): Promise<
     if (isMonday(now)) summary.daily.lineupDraft = await draftWeeklyLineup(now).catch(() => null);
   }
 
-  const gate = sendingGate();
+  const gate = await sendingGate();
   if (!gate.ok) {
     summary.blocked = gate.reason;
     // Say why on anything that's waiting, so the Back office shows it.
