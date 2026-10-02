@@ -266,6 +266,8 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
       return <p className="text-xs text-[var(--muted)]">Their own paid tickets and spend in the last 30 days (for the Insiders+ upsell).</p>;
     case "divider":
       return null;
+    case "design":
+      return <p className="text-xs text-[var(--muted)]">One of the ready-made emails. Send it from Email &rarr; Ready to send.</p>;
   }
 }
 

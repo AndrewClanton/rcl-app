@@ -75,6 +75,9 @@ export default async function EmailPage() {
         purpose="The weekly lineup, event emails, automations and how they're doing. Every email goes only to members who want it, at most two a week."
         actions={
           <>
+            <Link href="/admin/email/ready" className="btn-primary !px-4 !py-2 text-sm">
+              Ready to send
+            </Link>
             <Link href="/admin/email/automations" className="btn-secondary !px-4 !py-2 text-sm">
               Automations
             </Link>

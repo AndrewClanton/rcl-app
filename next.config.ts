@@ -71,6 +71,9 @@ const nextConfig: NextConfig = {
     // Each showtime's link-preview card (showtimes/[id]/opengraph-image.tsx,
     // drawn per request) uses the same fonts and wordmark (lib/seo/share-card.tsx).
     "/showtimes/**": ["src/app/admin/schedule-graphic/fonts/ArchivoBlack-Regular.ttf", "src/app/admin/schedule-graphic/fonts/SpaceMono-Bold.ttf", "src/app/admin/schedule-graphic/assets/logo.png"],
+    // The ready-made emails' pictures with a first name in them
+    // (api/email/art): the bases and the font, read at request time.
+    "/api/email/art/**": ["src/lib/email/designs/art/**/*", "src/app/admin/schedule-graphic/fonts/ArchivoBlack-Regular.ttf"],
   },
   // Keep search engines off the *.vercel.app addresses. Until switch-over the
   // real domain still serves the old site, and Stripe here is in test mode --

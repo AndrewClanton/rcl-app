@@ -9,7 +9,13 @@ import { loadFacts, queueSends, resolveAudience } from "./audience";
 import { firstNameOf, scrubAddresses } from "./format";
 import { hashEmail } from "./hash";
 import { lintCampaign, type LintResult } from "./lint";
-import { renderCampaign, type CampaignInput, type RenderData, type Recipient, type RenderLinks } from "./render";
+import { designOf, renderCampaign, type CampaignInput, type RenderData, type Recipient, type RenderLinks } from "./render";
+import { DESIGNS } from "./designs";
+import { sealArtName } from "./designs/art-token";
+import { sealFinishToken } from "@/lib/plus-finish-token";
+import { plusFinishUrl } from "@/lib/plus-finish-link";
+import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE, legacyNeedsSetup } from "@/lib/legacy-plus";
+import { getSendPlan, roomToday, waveCanGoToday, nextWaveDay } from "./send-plan";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
 import { cancelEmail, deliver, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
@@ -491,6 +497,18 @@ export async function getCampaign(id: string): Promise<CampaignRow | null> {
 // ---------- links ----------
 const SAMPLE: Recipient = { firstName: "Sam", consentSource: "unknown", tier: "Insiders", hasLogin: false, email: null, claimUrl: null };
 
+// A ready-made email's links differ with who it's for (no login yet,
+// already signed up, their own link): every version is listed, so each
+// link is tracked whoever gets it.
+function linkSamples(c: CampaignInput): Recipient[] {
+  if (!designOf(c.content)) return [SAMPLE];
+  return [
+    SAMPLE,
+    { ...SAMPLE, hasLogin: true },
+    { ...SAMPLE, claimUrl: `${SITE_URL}/account/claim?t=sample`, finishUrl: `${SITE_URL}/membership/finish?t=sample` },
+  ];
+}
+
 // Every link in the email gets an index for first-party click tracking
 // (/e/<send>/<i>). The list only ever grows, so a link in an email that
 // already went out keeps pointing where it did.
@@ -508,7 +526,7 @@ export function freezeLinks(c: CampaignInput, data: RenderData, existing: Frozen
       return url;
     },
   };
-  renderCampaign(c, data, SAMPLE, collect);
+  for (const r of linkSamples(c)) renderCampaign(c, data, r, collect);
   return out;
 }
 
@@ -570,6 +588,82 @@ export async function prepareCampaign(c: CampaignRow, data: RenderData, now = ne
     if (error) throw new Error("Couldn't save who it's going to.");
   }
   return { ...c, ...patch };
+}
+
+// ---------- daily waves (the ready-made emails) ----------
+// A campaign with content.pace goes out in daily waves that fit Resend's
+// daily limit (send-plan.ts): each run, if nothing is still queued, the
+// next wave is chosen from whoever qualifies right then (anyone who's had
+// it is skipped, so nobody gets it twice) and queued for today, as many
+// as today's share allows. The run after the last wave marks it sent.
+export interface Pace {
+  remaining?: number; // people left after the last wave
+  note?: string | null;
+}
+
+export function isPaced(c: { content?: CampaignInput["content"] | null }): boolean {
+  return !!(c.content as { pace?: Pace } | null | undefined)?.pace;
+}
+
+export const DAILY_LIMIT = "Today's share of Resend's daily limit is used up. The rest go on the next morning's run.";
+
+const dayName = (d: Date) => d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "America/Chicago" });
+
+export async function prepareWave(c: CampaignRow, data: RenderData, now = new Date()): Promise<{ c: CampaignRow; more: boolean; note: string | null }> {
+  const admin = createAdminClient();
+  const patch: Partial<CampaignRow> = {};
+  const links = freezeLinks(asInput(c), data, c.links ?? []);
+  if (links.length !== (c.links ?? []).length) patch.links = links;
+  const save = async () => {
+    if (!Object.keys(patch).length) return;
+    const { error } = await admin
+      .from("email_campaigns")
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq("id", c.id);
+    if (error) throw new Error("Couldn't save who it's going to.");
+  };
+  const pace: Pace = { ...((c.content as { pace?: Pace }).pace ?? {}) };
+
+  // Still some queued from an earlier wave: those go first.
+  const { count: queued, error: qErr } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).eq("status", "queued");
+  if (qErr) throw new Error("Couldn't read the queue.");
+  if (queued) {
+    await save();
+    return { c: { ...c, ...patch }, more: (pace.remaining ?? 0) > 0, note: null };
+  }
+
+  const room = await roomToday(now);
+  const later = (why: string) => ({ more: true, note: why });
+  let verdict: { more: boolean; note: string | null } | null = null;
+  if (!waveCanGoToday(now)) verdict = later(`The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
+  else if (room <= 0) verdict = later(DAILY_LIMIT);
+  if (verdict) {
+    patch.content = { ...c.content, pace: { ...pace, note: verdict.note } } as CampaignRow["content"];
+    await save();
+    return { c: { ...c, ...patch }, ...verdict };
+  }
+
+  const at = nextSendSlot(now);
+  const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit: room });
+  const left = resolved.excluded.wave_limit ?? 0;
+  if (!resolved.send.length) {
+    patch.content = { ...c.content, pace: { ...pace, remaining: 0, note: null } } as CampaignRow["content"];
+    if (c.recipients === null) {
+      patch.recipients = 0;
+      patch.held_out = 0;
+      patch.excluded = resolved.excluded;
+    }
+    await save();
+    return { c: { ...c, ...patch }, more: false, note: null };
+  }
+  const n = await queueSends(c.id, resolved, at);
+  const waves = [...(((c.content as { waves?: { at: string; n: number }[] }).waves ?? []) as { at: string; n: number }[]), { at: now.toISOString(), n }];
+  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note: null } } as CampaignRow["content"];
+  patch.recipients = (c.recipients ?? 0) + resolved.willSend;
+  patch.held_out = (c.held_out ?? 0) + resolved.heldOut;
+  patch.excluded = resolved.excluded;
+  await save();
+  return { c: { ...c, ...patch }, more: left > 0, note: null };
 }
 
 // ---------- one batch ----------
@@ -751,6 +845,28 @@ export function lateNote(by: SendBy): string {
   return `Paused: ${by.why}. Resume to send the rest anyway, or Stop the rest.`;
 }
 
+// "Restart my unlimited" in the "Press play" email: their own Insiders+
+// link (kind 'campaign', 30 days) at the standard plan the email quotes
+// ($15 a month; senior and student rates are set at the register). Dated
+// from the batch, so a retried batch renders the very same email.
+function finishLink(memberId: string, r: { batch_at: string | null; created_at: string }): string | null {
+  const at = Date.parse(r.batch_at ?? r.created_at);
+  const token = sealFinishToken({ memberId, kind: "campaign", tier: LEGACY_DEFAULT_RATE, interval: LEGACY_DEFAULT_INTERVAL }, Number.isFinite(at) ? at : Date.now());
+  return token ? plusFinishUrl(token) : null;
+}
+
+// Of these members, the former unlimited ones with nothing paying for
+// their Insiders+ yet (checked again at hand-over for "Press play").
+async function legacyStillNeedsSetup(ids: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await createAdminClient().from("members").select("*").in("id", ids.slice(i, i + 150));
+    if (error) throw new Error("Couldn't check who still needs their Insiders+ set up.");
+    for (const m of (data ?? []) as Parameters<typeof legacyNeedsSetup>[0][]) if (legacyNeedsSetup(m)) out.add((m as unknown as { id: string }).id);
+  }
+  return out;
+}
+
 // Hands this campaign's queued sends to Resend, 100 at a time, until none
 // are due, the deadline comes, the campaign stops, or Resend refuses.
 export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: number, now = new Date()): Promise<DeliverResult> {
@@ -762,9 +878,15 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
   const shape: CampaignShape = shapeOf(c);
   const shapes = new Map<string, CampaignBits>([[c.id, { kind: c.kind, automation: c.automation, category: c.category, alert: c.content?.alert ?? null }]]);
   const needsSpend = (c.content?.blocks ?? []).some((b) => b.t === "ticketSpend");
-  const needsClaim = (c.content?.blocks ?? []).some((b) => b.t === "claim");
+  // A ready-made email (lib/email/designs) says what it needs per person.
+  const design = designOf(c.content);
+  const needs = design ? DESIGNS[design].needs : null;
+  const needsClaim = (c.content?.blocks ?? []).some((b) => b.t === "claim") || !!needs?.claim;
+  const paced = isPaced(c);
+  const plan = paced ? await getSendPlan() : null;
   // The latest a one-off may arrive (automations: the 2-day rule below).
-  const sendBy = isAutomation(c) ? null : sendByFor(c);
+  // Daily waves have none: each wave goes the day it's chosen.
+  const sendBy = isAutomation(c) || paced ? null : sendByFor(c);
   const tooLate = (r: QueuedRow, t: Date) => !!sendBy && effectiveDeliverAt(r.deliver_at, t).getTime() > sendBy.at.getTime();
   let failures = 0;
 
@@ -847,6 +969,21 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         continue;
       }
     } else {
+      // Daily waves stay inside today's share of Resend's limit, whatever
+      // else went out today.
+      let room = BATCH_SIZE;
+      if (paced) {
+        try {
+          room = Math.min(BATCH_SIZE, await roomToday(now.getTime() > t.getTime() ? now : t, plan ?? undefined));
+        } catch (e) {
+          result.error = e instanceof Error ? e.message : "Couldn't count today's email.";
+          break;
+        }
+        if (room <= 0) {
+          result.stopped = DAILY_LIMIT;
+          break;
+        }
+      }
       const { data: fresh, error } = await admin
         .from("email_sends")
         .select(ROW_COLUMNS)
@@ -855,7 +992,7 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         .is("batch_key", null)
         .or(`deliver_at.is.null,deliver_at.lte."${new Date(horizon).toISOString()}"`)
         .order("id")
-        .limit(BATCH_SIZE);
+        .limit(room);
       if (error) {
         result.error = "Couldn't read the queue.";
         break;
@@ -954,9 +1091,10 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       result.error = e instanceof Error ? e.message : "Couldn't check the caps.";
       return result;
     }
-    const [spend, claims] = await Promise.all([
+    const [spend, claims, stillLegacy] = await Promise.all([
       needsSpend ? ticketSpend(ids, t) : Promise.resolve(new Map<string, { n: number; spend: number }>()),
       needsClaim ? issueEmailClaimLinks(rows.filter((r) => r.member_id).map((r) => ({ memberId: r.member_id as string, sendId: r.id, queuedAt: r.created_at }))) : Promise.resolve(new Map<string, string>()),
+      needs?.finish ? legacyStillNeedsSetup(ids) : Promise.resolve(null),
     ]);
 
     const items: OutgoingEmail[] = [];
@@ -964,7 +1102,12 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     for (const r of rows) {
       const m = r.member_id ? byId.get(r.member_id) : undefined;
       const p = r.member_id ? prefById.get(r.member_id) : undefined;
-      const verdict = stillWanted(c, m, p, !!m?.email && suppressed.has(hashEmail(m.email)), t);
+      let verdict = stillWanted(c, m, p, !!m?.email && suppressed.has(hashEmail(m.email)), t);
+      // A ready-made email that's no longer true for them since they were
+      // chosen: the invite once they've set up a login, "Press play" once
+      // their Insiders+ is paid for.
+      if (verdict.ok && design === "royale-is-here" && m?.auth_user_id) verdict = { ok: false, status: "cancelled", why: "Set up a website login before it went" };
+      if (verdict.ok && stillLegacy && m && !stillLegacy.has(m.id)) verdict = { ok: false, status: "cancelled", why: "Their Insiders+ was set up before it went" };
       if (!verdict.ok) {
         await admin.from("email_sends").update({ status: verdict.status, error: verdict.why }).eq("id", r.id).eq("status", "queued");
         result.cancelled++;
@@ -999,6 +1142,16 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
         claimUrl: claims.get(member.id) ?? null,
         ticketSpend30: s?.spend ?? 0,
         paidTickets30: s?.n ?? 0,
+        ...(design
+          ? {
+              // Their own "Restart my unlimited" link, made now: 30 days
+              // from this batch (the same on a retry of the batch).
+              finishUrl: needs?.finish ? finishLink(member.id, r) : null,
+              artToken: needs?.art.length ? sealArtName(firstNameOf(member.name)) : null,
+              fromOldSite: (member.legacy_user_id ?? null) !== null,
+              sendId: r.id,
+            }
+          : {}),
       };
       const track = href(r.id);
       const rendered = renderCampaign(input, data, recipient, {
@@ -1133,6 +1286,12 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
     if (kind === "later") {
       // Nothing was taken: these go again on a later run, under a new key.
       await unnumber(itemRows.map((r) => r.id));
+      // A daily wave that met Resend's daily limit anyway (other email used
+      // it up): the rest go tomorrow, nothing to fix.
+      if (paced && sent.name === "daily_quota_exceeded") {
+        result.stopped = DAILY_LIMIT;
+        return result;
+      }
       if (sent.status === 429 && sent.name !== "daily_quota_exceeded" && sent.name !== "monthly_quota_exceeded") {
         // Only busy: the rest go on the next run (nothing to fix).
         result.stopped = "Resend asked us to slow down. The rest go on the next run.";
@@ -1200,12 +1359,25 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
       return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: (await getCampaign(id))?.status ?? "paused", note };
     }
     const data = await loadRenderData(c.content ?? { blocks: [] });
-    c = await prepareCampaign(c, data, now);
+    // Daily waves: today's wave is chosen now, if there's room.
+    let wave: { more: boolean; note: string | null } | null = null;
+    if (isPaced(c) && !isAutomation(c)) {
+      const w = await prepareWave(c, data, now);
+      c = w.c;
+      wave = { more: w.more, note: w.note };
+    } else c = await prepareCampaign(c, data, now);
     const r = await deliverQueued(c, data, deadline, now);
     const iso = new Date().toISOString();
     const note = runNote(r);
     let status: string = c.status;
-    if (isAutomation(c)) {
+    if (wave && !r.error && !r.late && (r.stopped === DAILY_LIMIT || (r.done && wave.more) || (!r.stopped && !r.done))) {
+      // More to go: the next wave on a later run (the morning email run).
+      status = "scheduled";
+      const next = r.stopped === DAILY_LIMIT || r.done ? (wave.note ?? DAILY_LIMIT) : note;
+      await admin.from("email_campaigns").update({ status, locked_until: null, error: next, updated_at: iso }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
+      status = (await getCampaign(id))?.status ?? status;
+    } else if (isAutomation(c)) {
       await admin.from("email_campaigns").update({ locked_until: null, error: note, updated_at: iso }).eq("id", id);
     } else if (r.late) {
       // The rest would now arrive over a day late: an admin decides.

@@ -14,14 +14,18 @@ import type { BillingInterval } from "@/lib/membership-rates";
 // the claim links). Not one-time: opening it again only opens Stripe's page
 // again, and someone already paying is sent to their billing page instead.
 
-export type FinishKind = "tablet" | "email";
+// "campaign": the "Restart my unlimited" button in the "Press play" email
+// (lib/email/designs), made per person at send time.
+export type FinishKind = "tablet" | "email" | "campaign";
 
-// On the customer screen it's scanned on the spot; an emailed one waits in
-// their inbox for a week.
-export const FINISH_LIFETIME_S: Record<FinishKind, number> = { tablet: 30 * 60, email: 7 * 86_400 };
+// On the customer screen it's scanned on the spot; one staff email from
+// the register waits in their inbox for a week; the campaign email's (a
+// list sent in daily waves, read whenever) for 30 days.
+export const FINISH_LIFETIME_S: Record<FinishKind, number> = { tablet: 30 * 60, email: 7 * 86_400, campaign: 30 * 86_400 };
 
 const VERSION = 1;
-const KINDS: FinishKind[] = ["tablet", "email"];
+// New kinds go on the end: a token stores its kind by position.
+const KINDS: FinishKind[] = ["tablet", "email", "campaign"];
 const RATES: MemberPriceTier[] = ["adult", "senior", "student"];
 const INTERVALS: BillingInterval[] = ["month", "year"];
 const BODY_BYTES = 24;

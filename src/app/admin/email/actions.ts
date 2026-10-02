@@ -34,7 +34,7 @@ import { lineupStarter, STARTERS } from "@/lib/email/templates";
 import { looksDeliverable } from "@/lib/email/rules";
 import { centralDateTime, centralParts, nextLineupSlot, nextSendSlot, sendByFor } from "@/lib/email/timing";
 import { AUTOMATIONS, KIND_CATEGORY, PREF_CATEGORIES, type Audience, type Automation, type Category, type Exclusion } from "@/lib/email/types";
-import type { CampaignContent, RenderData } from "@/lib/email/render";
+import { designOf, type CampaignContent, type RenderData } from "@/lib/email/render";
 import type { LintResult } from "@/lib/email/lint";
 
 // Back office -> Email. Managers and up draft, preview and send tests;
@@ -527,6 +527,7 @@ export async function duplicateCampaign(id: string): Promise<Result<{ id: string
   const { data: c } = await createAdminClient().from("email_campaigns").select(CAMPAIGN_COLUMNS).eq("id", id).maybeSingle();
   const src = c as CampaignRow | null;
   if (!src || isAutomation(src)) return { ok: false, error: "No such email." };
+  if (designOf(src.content)) return { ok: false, error: "The ready-made emails can't be copied. Send them again from Ready to send." };
   const content = { ...src.content, waves: undefined, autopilot: false } as CampaignContent;
   const { data, error } = await createAdminClient()
     .from("email_campaigns")
