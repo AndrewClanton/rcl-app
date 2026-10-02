@@ -2,7 +2,9 @@
 // send), designed on the Design canvas (page "The invites") and translated
 // to email here: who each is for, its subject and preview text, and how it
 // draws for one person. They go out through the ordinary email system
-// (campaign-send.ts) as campaigns whose only block is { t: "design" }.
+// (campaign-send.ts) as campaigns whose only block is { t: "design" }, in
+// daily waves, the most engaged members first (order "engaged", rules.ts
+// engagementKey), so staff can judge wave 1 before wave 2 goes.
 //
 // Andrew's rules for these: half the words, picture-led, only live
 // features, never a staff or owner name, signed "The Royale crew".
@@ -49,7 +51,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     preheader: "Your account, points and badges are already set up. It takes about 30 seconds.",
     // Everyone with no login: "Set my password" links no longer need a
     // phone on file (lib/member-claim.ts, Andrew 10/1).
-    audience: { include: [{ r: "has_login", v: false }], order: "trust" },
+    audience: { include: [{ r: "has_login", v: false }], order: "engaged" },
     who: "Members with an email who haven't set up a website login yet.",
     outcome: { key: "signed_in", label: "Signed in", about: "Set up their website login since the email" },
     needs: { claim: true, finish: false, art: ["door", "profile"] },
@@ -64,7 +66,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     category: "offers",
     subject: "{first name}, your next night at the Royale",
     preheader: "Insiders+ is $15 a month: every movie free, 10% off, a free coffee or tea every day and 2 free booths.",
-    audience: { include: [{ r: "all" }], order: "trust" },
+    audience: { include: [{ r: "all" }], order: "engaged" },
     who: "Everyone with an email who gets offers and Insiders+ news from us (anyone who turned those off, or all email off, is left out).",
     outcome: { key: "signed_in", label: "Signed in", about: "Had no website login when it went, and have one now" },
     needs: { claim: true, finish: false, art: [] },
@@ -85,7 +87,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     // (the old system's recurring billing). The ones it still charged in
     // September are left out (legacy_billing_payers).
     preheader: "Our old system isn't charging you. Nothing's owed. Restart online or at the register.",
-    audience: { include: [{ r: "legacy_needs_setup" }], order: "trust" },
+    audience: { include: [{ r: "legacy_needs_setup" }], order: "engaged" },
     who: "Former unlimited members (they paid for unlimited on the old website) with nothing paying for their Insiders+ now, here or on the old system.",
     outcome: { key: "plus", label: "Set up Insiders+", about: "Paying for Insiders+ now" },
     needs: { claim: false, finish: true, art: ["tape"] },

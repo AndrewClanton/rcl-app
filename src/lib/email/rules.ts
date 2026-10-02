@@ -277,6 +277,97 @@ export function trustRank(f: Pick<MemberFacts, "consentSource" | "legacyPlus" | 
   }
 }
 
+// ---------- engagement order (the ready-made emails' waves) ----------
+// "engaged": the people most used to hearing from us go in the first
+// waves, so a problem (or an email that falls flat) shows up while it's
+// small, before it reaches people who aren't used to our email. Compared
+// in turn, lowest first:
+//   1. how lately they did anything: came in, bought, booked, earned
+//      points (members.last_activity_at), clicked an email, signed in or
+//      changed their email settings. Within 30 days, 90 days, a year,
+//      longer ago, never;
+//   2. their yes to email: said yes themselves (join form, checkout,
+//      kiosk, their account, staff, claiming, or "yes" on Indy), then
+//      old-site members who paid, other old-site members, unknown, the
+//      old site's flagged-for-review imports;
+//   3. when they said yes (member_email_prefs.consent_at), latest day first;
+//   4. member since (created_at, their real start), longest first;
+//   5. then a fixed shuffle per email (audience.ts), so a tie always
+//      breaks the same way and a wave picked twice picks the same people.
+// So whoever has no activity and no yes on record goes last.
+export interface OrderExtras {
+  activityAt?: string | null; // members.last_activity_at
+  consentAt?: string | null; // member_email_prefs.consent_at
+}
+
+type EngagementFacts = Pick<MemberFacts, "consentSource" | "legacyPlus" | "importGroup" | "createdAt" | "lastEngagedAt" | "lastClickAt" | "lastVisitOn" | "orders" | "tickets">;
+
+const ms = (s: string | null | undefined) => {
+  const t = s ? Date.parse(s.length === 10 ? `${s}T12:00:00Z` : s) : NaN;
+  return Number.isFinite(t) ? t : null;
+};
+
+// Their latest activity of any kind, or null.
+export function lastActiveAt(f: EngagementFacts, x: OrderExtras = {}): number | null {
+  let best: number | null = null;
+  for (const t of [x.activityAt, f.lastEngagedAt, f.lastClickAt, f.lastVisitOn, ...f.orders.map((o) => o.d), ...f.tickets.map((t) => t.d)]) {
+    const v = ms(t);
+    if (v !== null && (best === null || v > best)) best = v;
+  }
+  return best;
+}
+
+function consentGroup(f: EngagementFacts): number {
+  switch (f.consentSource) {
+    case "join_form":
+    case "checkout":
+    case "kiosk":
+    case "account":
+    case "staff":
+    case "claim":
+    case "indy_yes":
+      return 0;
+    case "old_site_import":
+      if (f.legacyPlus || f.importGroup === "paying") return 1;
+      return f.importGroup === "review" ? 4 : 2;
+    case "unknown":
+      return 3;
+    case "indy_no":
+      return 5;
+  }
+}
+
+// The sort key: compare with compareEngagement, lowest first.
+export function engagementKey(f: EngagementFacts, x: OrderExtras, now: Date): number[] {
+  const active = lastActiveAt(f, x);
+  const ago = active === null ? Infinity : (now.getTime() - active) / DAY;
+  const tier = ago <= 30 ? 0 : ago <= 90 ? 1 : ago <= 365 ? 2 : Number.isFinite(ago) ? 3 : 4;
+  const said = ms(x.consentAt);
+  const since = ms(f.createdAt);
+  return [tier, consentGroup(f), said === null ? 0 : -Math.floor(said / DAY), since === null ? Number.MAX_SAFE_INTEGER : Math.floor(since / DAY)];
+}
+
+// The key in plain words, for "who's next" on Ready to send, in order.
+export const ENGAGEMENT_GROUPS = [
+  "Came in, bought or tapped an email in the last 30 days",
+  "Last active 1 to 3 months ago",
+  "Last active 3 to 12 months ago",
+  "Last active over a year ago",
+  "Nothing on record yet, but said yes to email",
+  "Nothing on record yet; came over from the old website",
+  "Nothing on record and no yes on record",
+] as const;
+
+export function engagementGroup(key: number[]): number {
+  if (key[0] < 4) return key[0];
+  return key[1] === 0 ? 4 : key[1] === 1 || key[1] === 2 || key[1] === 4 ? 5 : 6;
+}
+
+export function compareEngagement(a: number[], b: number[]): number {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  return 0;
+}
+
 // ---------- in plain words ----------
 export const RULE_CHOICES: { key: RuleKey; label: string }[] = [
   { key: "all", label: "Everyone" },

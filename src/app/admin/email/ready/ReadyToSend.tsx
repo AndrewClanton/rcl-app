@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { AudienceCount, DesignResults } from "@/lib/email/designs/ready";
+import type { AudienceCount, DesignResults, WaveResult } from "@/lib/email/designs/ready";
 import type { DesignKey } from "@/lib/email/designs/types";
-import { pauseDesign, resumeDesign, saveResendPlan, sendDesign, sendDesignTest } from "./actions";
+import { pauseDesign, resumeDesign, saveResendPlan, saveWaveModeAction, saveWaveSizeAction, sendDesign, sendDesignTest, sendNextWave } from "./actions";
 
 // The Ready to send screen: the three ready-made emails as cards. Each has
 // its preview (desktop, phone, plain text), who it would go to right now,
 // "Send me a test", "Send to N people" (with a confirm step), and how it
-// did. The words on the screen are for staff who've never sent an email
-// campaign: plain, and nothing to configure.
+// did, overall and wave by wave (daily waves, most engaged first, so wave 1
+// can be judged before wave 2). The words on the screen are for staff
+// who've never sent an email campaign: plain, and nothing to configure
+// (admins get the wave size and the plan's numbers).
 
 export interface CardData {
   key: DesignKey;
@@ -46,6 +48,9 @@ export interface PlanData {
   usedMonth: number;
   todayLeft: number;
   monthLeft: number;
+  nextWave: string; // "Sat, Oct 3": automatic, the next morning run's wave; manual, the next day one can go once today's share has gone
+  auto: boolean; // later waves go by themselves (an admin setting); otherwise staff press for each
+  goesAt: string; // "now", or "at 10:30 AM Sat, Oct 3" outside sending hours
 }
 
 const n = (x: number) => x.toLocaleString("en-US");
@@ -58,6 +63,58 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
       <div className="text-xs text-[var(--muted)]">{label}</div>
       <div className="text-xl font-semibold tabular-nums">{value}</div>
       {sub ? <div className="text-xs text-[var(--muted)]">{sub}</div> : null}
+    </div>
+  );
+}
+
+const waveDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+
+// Each wave's results, so wave 1 can be judged before wave 2 goes.
+function Waves({ waves, outcomeLabel }: { waves: WaveResult[]; outcomeLabel: string }) {
+  const cell = (a: number, b: number) => (
+    <>
+      {n(a)} <span className="text-[var(--muted)]">{pct(a, b)}</span>
+    </>
+  );
+  return (
+    <div className="mt-4 space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Wave by wave</div>
+      <div className="overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--background)]">
+        <table className="w-full min-w-[560px] text-sm tabular-nums">
+          <thead className="text-left text-xs text-[var(--muted)]">
+            <tr>
+              <th className="px-3 py-2 font-normal">Wave</th>
+              <th className="px-3 py-2 font-normal">Sent</th>
+              <th className="px-3 py-2 font-normal">Opened (rough)</th>
+              <th className="px-3 py-2 font-normal">Clicked</th>
+              <th className="px-3 py-2 font-normal">{outcomeLabel}</th>
+              <th className="px-3 py-2 font-normal">Unsubscribed · bounced</th>
+            </tr>
+          </thead>
+          <tbody>
+            {waves.map((w) => (
+              <tr key={w.day} className="border-t border-[var(--border)]">
+                <td className="px-3 py-2">
+                  <strong>{w.n}</strong> <span className="text-[var(--muted)]">{waveDay(w.day)}</span>
+                </td>
+                <td className="px-3 py-2">
+                  {n(w.sent)}
+                  {w.waiting ? <span className="text-[var(--muted)]"> +{n(w.waiting)} waiting</span> : null}
+                </td>
+                <td className="px-3 py-2">{cell(w.opened, w.delivered)}</td>
+                <td className="px-3 py-2">{cell(w.clicked, w.delivered)}</td>
+                <td className="px-3 py-2">{cell(w.outcome, w.outcomeOf)}</td>
+                <td className="px-3 py-2">
+                  {n(w.unsubscribed)} · {n(w.bounced)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-[var(--muted)]">
+        Opened and clicked are out of those delivered; {outcomeLabel.toLowerCase()} is out of those it could apply to. Results keep coming in for a few days after each wave.
+      </p>
     </div>
   );
 }
@@ -109,11 +166,26 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<"first" | "next" | null>(null);
   const count = card.count?.willSend ?? 0;
+  const next = card.count?.next ?? { n: 0, mix: [] };
   const going = card.status === "scheduled" || card.status === "sending";
   const paused = card.status === "paused";
   const r = card.results;
+  const lastWave = r?.waves.at(-1) ?? null;
+  const waiting = r?.waiting ?? 0;
+  const left = count + waiting;
+  // Manual waves: why "Send the next wave" can't be pressed right now.
+  const nextWhy = !canSend
+    ? blockedWhy
+    : count === 0
+      ? "Everyone it's for has had it."
+      : waiting > 0
+        ? "The last wave is still going out."
+        : plan.todayLeft <= 0
+          ? `Today's share has gone. The next wave can go ${plan.nextWave}.`
+          : null;
+  const firstWhy = !canSend ? blockedWhy : !plan.auto && plan.todayLeft <= 0 ? `Today's share has gone. The first wave can go ${plan.nextWave}.` : null;
   const run = (what: string, fn: () => Promise<{ ok: boolean; text: string }>) =>
     start(async () => {
       setMsg({ ok: true, text: `${what}…` });
@@ -121,6 +193,21 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
       setMsg(out);
       router.refresh();
     });
+  const firstLabel = count === 0 ? "Nobody to send it to" : plan.auto || count <= next.n ? `Send to ${people(count)}` : `Send the first ${n(next.n)} (of ${n(count)})`;
+  const nextLabel = `Send the next ${n(Math.min(next.n, count) || plan.perDay)}`;
+  const waveLine = paused
+    ? plan.auto
+      ? "paused: the next wave goes when you press Carry on sending"
+      : "paused: press Carry on sending, then Send the next wave"
+    : left === 0
+      ? "the last wave has gone"
+      : plan.auto
+        ? `next wave ${plan.nextWave}`
+        : waiting > 0
+          ? "this wave is still going out"
+          : plan.todayLeft > 0
+            ? `next wave when you press ${nextLabel}`
+            : `next wave can go ${plan.nextWave}`;
 
   return (
     <section id={card.key} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -137,7 +224,7 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
             {card.count ? (
               <>
                 <div className="mt-2 text-2xl font-semibold tabular-nums">{people(count)}</div>
-                <div className="text-xs text-[var(--muted)]">{card.campaignId ? "haven't had it yet and would get it today" : "would get it today"}</div>
+                <div className="text-xs text-[var(--muted)]">{card.campaignId ? "haven't had it yet and would get it" : "would get it"}</div>
                 {card.count.excluded.length > 0 && (
                   <details className="mt-2 text-xs">
                     <summary className="cursor-pointer text-[var(--muted)]">Who&apos;s left out, and why</summary>
@@ -159,12 +246,25 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
 
           {(going || paused || card.status === "sent") && r && (
             <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{going ? "Going out now, in daily waves" : paused ? "Paused" : "Sent"}</div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{going ? "Going out in waves" : paused ? "Paused" : "Sent"}</div>
               <p className="mt-1">
-                {n(r.sent)} sent so far{going || paused ? `, ${n(count + r.waiting)} to go` : ""}.
+                {n(r.sent)} sent so far{going || paused ? `, ${n(left)} to go` : ""}.
               </p>
+              {(going || paused) && (
+                <p className="mt-1 font-semibold">
+                  Waves of {n(plan.perDay)} · {waveLine}
+                </p>
+              )}
               {card.note && (going || paused) && <p className="mt-1 text-xs text-[var(--muted)]">{card.note}</p>}
             </div>
+          )}
+          {!going && !paused && card.count && count > 0 && (
+            <p className="text-xs text-[var(--muted)]">
+              Goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first.{" "}
+              {plan.auto
+                ? "After the first, one goes each morning (Monday to Saturday); check how wave 1 did, and Pause if something's wrong."
+                : "After the first, each wave goes only when someone presses Send the next wave here, so check how the last one did first."}
+            </p>
           )}
 
           <div className="flex flex-wrap gap-2">
@@ -182,6 +282,11 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
             >
               Send me a test
             </button>
+            {going && !plan.auto && (
+              <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !!nextWhy} title={nextWhy ?? undefined} onClick={() => setConfirm("next")}>
+                {nextLabel}
+              </button>
+            )}
             {paused ? (
               <button
                 type="button"
@@ -211,11 +316,18 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
                 Pause
               </button>
             ) : (
-              <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !canSend || count === 0} title={canSend ? undefined : (blockedWhy ?? undefined)} onClick={() => setConfirm(true)}>
-                {count === 0 ? "Nobody to send it to" : `Send to ${people(count)}`}
+              <button
+                type="button"
+                className="btn-primary !px-4 !py-2 text-sm"
+                disabled={pending || !!firstWhy || count === 0}
+                title={firstWhy ?? undefined}
+                onClick={() => setConfirm("first")}
+              >
+                {firstLabel}
               </button>
             )}
           </div>
+          {going && !plan.auto && nextWhy && <p className="text-xs text-[var(--muted)]">{nextWhy}</p>}
           {msg && <p className={`text-sm ${msg.ok ? "" : "text-[var(--danger-text)]"}`}>{msg.text}</p>}
 
           {r && r.sent > 0 && (
@@ -239,59 +351,153 @@ function Card({ card, plan, canSend, canTest, blockedWhy, myEmail }: { card: Car
         </div>
       </div>
 
+      {r && r.waves.length > 0 && <Waves waves={r.waves} outcomeLabel={card.outcomeLabel} />}
+
       {confirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby={`confirm-${card.key}`}>
-          <div className="card w-full max-w-md shadow-2xl">
+          <div className="card max-h-[90vh] w-full max-w-md overflow-y-auto shadow-2xl">
             <h3 id={`confirm-${card.key}`} className="text-lg font-semibold">
-              Send &ldquo;{card.title}&rdquo; to {people(count)}?
+              {confirm === "next" ? `${nextLabel} of “${card.title}”?` : plan.auto || count <= next.n ? `Send “${card.title}” to ${people(count)}?` : `Send the first ${n(next.n)} of “${card.title}”?`}
             </h3>
             <dl className="mt-3 space-y-2 text-sm">
               <div>
-                <dt className="text-xs text-[var(--muted)]">Who</dt>
-                <dd>{card.who}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-[var(--muted)]">How many</dt>
+                <dt className="text-xs text-[var(--muted)]">Who&apos;s {confirm === "next" ? "next" : "first"}</dt>
                 <dd>
-                  {people(count)} right now. Anyone who joins the list before their wave goes gets it too; anyone who no longer fits (signed up meanwhile, turned email off) is skipped.
+                  {n(Math.min(next.n, count))} of the {people(count)} {card.campaignId ? "left" : "it's for"}, the most engaged first:
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {next.mix.map((g) => (
+                      <li key={g.label} className="flex justify-between gap-3">
+                        <span>{g.label}</span>
+                        <span className="tabular-nums">{n(g.n)}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </dd>
               </div>
+              {confirm === "next" && lastWave && (
+                <div>
+                  <dt className="text-xs text-[var(--muted)]">
+                    How wave {lastWave.n} did ({waveDay(lastWave.day)})
+                  </dt>
+                  <dd>
+                    {n(lastWave.sent)} sent · {n(lastWave.delivered)} delivered · {n(lastWave.opened)} opened (rough) · {n(lastWave.clicked)} clicked · {n(lastWave.outcome)}{" "}
+                    {card.outcomeLabel.toLowerCase()} · {n(lastWave.unsubscribed)} unsubscribed · {n(lastWave.bounced)} bounced
+                  </dd>
+                </div>
+              )}
               <div>
-                <dt className="text-xs text-[var(--muted)]">How it goes out</dt>
+                <dt className="text-xs text-[var(--muted)]">When</dt>
                 <dd>
-                  Up to {n(plan.perDay)} a day ({n(plan.todayLeft)} left today), so about {card.days ?? "?"} sending {card.days === 1 ? "day" : "days"}
-                  {card.finish ? `, finishing around ${card.finish}` : ""}. Never on Sundays, only 9 AM to 7 PM.
-                  {card.overMonth ? ` That's more than this month's ${n(plan.monthLeft)} left on our email plan, so the rest wait for next month.` : ""}
+                  {plan.goesAt === "now" ? "Now." : `It goes ${plan.goesAt} (email only goes out 9 AM to 7 PM, Monday to Saturday).`}{" "}
+                  {confirm === "next" || !plan.auto
+                    ? `After this wave, nothing more goes until someone presses Send the next wave here (at most ${n(plan.perDay)} a day).`
+                    : `Then one wave of up to ${n(plan.perDay)} each morning, so about ${card.days ?? "?"} sending ${card.days === 1 ? "day" : "days"}${card.finish ? `, finishing around ${card.finish}` : ""}.`}
+                  {card.overMonth ? ` That's more than this month's ${n(plan.monthLeft)} left on our email plan, so some wait for next month.` : ""}
                 </dd>
               </div>
-              <div>
-                <dt className="text-xs text-[var(--muted)]">Subject</dt>
-                <dd>{card.subject}</dd>
-              </div>
+              {confirm === "first" && (
+                <div>
+                  <dt className="text-xs text-[var(--muted)]">Subject</dt>
+                  <dd>{card.subject}</dd>
+                </div>
+              )}
             </dl>
-            <p className="mt-3 text-xs text-[var(--muted)]">The first wave goes now and can&apos;t be taken back. You can pause the rest at any time.</p>
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              A wave can&apos;t be taken back once it goes. Anyone who no longer fits by then (signed up meanwhile, turned email off) is skipped. You can pause at any time.
+            </p>
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setConfirm(false)}>
+              <button type="button" className="btn-secondary" onClick={() => setConfirm(null)}>
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn-primary"
                 onClick={() => {
-                  setConfirm(false);
-                  run("Sending the first wave", async () => {
-                    const out = await sendDesign(card.key, card.sendKey);
-                    return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
-                  });
+                  const which = confirm;
+                  setConfirm(null);
+                  if (which === "next") {
+                    run("Sending the next wave", async () => {
+                      const out = await sendNextWave(card.key, card.sendKey);
+                      return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
+                    });
+                  } else {
+                    run("Sending the first wave", async () => {
+                      const out = await sendDesign(card.key, card.sendKey);
+                      return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
+                    });
+                  }
                 }}
               >
-                Send to {people(count)}
+                {confirm === "next" ? nextLabel : firstLabel}
               </button>
             </div>
           </div>
         </div>
       )}
     </section>
+  );
+}
+
+// Admins: how many each day's wave goes to (Resend's daily figure becomes
+// this plus what's kept back for receipts).
+function WaveSize({ plan }: { plan: PlanData }) {
+  const router = useRouter();
+  const [size, setSize] = useState(String(plan.perDay));
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <div className="mt-2 flex flex-wrap items-end gap-3">
+      <label className="text-xs">
+        Wave size (admins)
+        <input className="input mt-1 !w-28" inputMode="numeric" value={size} onChange={(e) => setSize(e.target.value)} />
+      </label>
+      <button
+        type="button"
+        className="btn-secondary !px-4 !py-2 text-sm"
+        disabled={pending || Number(size) === plan.perDay}
+        onClick={() =>
+          start(async () => {
+            const out = await saveWaveSizeAction(Number(size)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+            setMsg(out.ok ? `Saved: waves of ${n(out.size)} from the next wave.` : out.error);
+            router.refresh();
+          })
+        }
+      >
+        Save
+      </button>
+      {msg && <span className="text-xs">{msg}</span>}
+    </div>
+  );
+}
+
+// Admins: whether waves after the first wait for staff to press "Send the
+// next wave" (the default) or go by themselves each morning.
+function WaveMode({ plan }: { plan: PlanData }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  const pick = (auto: boolean) => {
+    if (auto === plan.auto) return;
+    if (auto && !window.confirm("Waves would then go out by themselves each morning, with nobody pressing anything. Switch?")) return;
+    start(async () => {
+      const out = await saveWaveModeAction(auto).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+      setMsg(out.ok ? "Saved." : out.error);
+      router.refresh();
+    });
+  };
+  return (
+    <div className="mt-2 text-xs">
+      <div className="text-[var(--muted)]">Waves after the first (admins)</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <button type="button" className={`chip !px-3 !py-1 !text-xs ${!plan.auto ? "chip-selected" : ""}`} disabled={pending} onClick={() => pick(false)}>
+          Only when staff press Send the next wave
+        </button>
+        <button type="button" className={`chip !px-3 !py-1 !text-xs ${plan.auto ? "chip-selected" : ""}`} disabled={pending} onClick={() => pick(true)}>
+          By themselves each morning
+        </button>
+        {msg && <span>{msg}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -396,14 +602,19 @@ export default function ReadyToSend({
             around. In a test, the main button opens the ordinary sign-in or membership page, not anyone&apos;s own link.
           </li>
           <li>
-            <strong>Send.</strong> &ldquo;Send to N people&rdquo; shows exactly who and how many, and asks you to confirm. Each person gets it once, with their own
-            first name and their own button. Our email plan only allows {plan.daily} emails a day, so it goes out in daily waves of up to {plan.perDay}, every morning
-            (Monday to Saturday) until everyone has it. You can pause it any time.
+            <strong>Send, a wave at a time.</strong> The send button shows exactly who&apos;s first and how many, and asks you to confirm. Each person gets it once,
+            with their own first name and their own button. It goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first (whoever came in,
+            bought or tapped an email most lately, then whoever said yes to email most recently, then our longest-standing members), so if something&apos;s wrong, few
+            people see it.{" "}
+            {plan.auto
+              ? "After the first wave, one goes each morning (Monday to Saturday) until everyone has it. You can pause it any time."
+              : "After the first wave, nothing more goes until someone presses Send the next wave (at most one wave a day). You can pause it any time."}
           </li>
           <li>
-            <strong>Read the results.</strong> <em>Delivered</em> reached their inbox. <em>Opened</em> is rough (some phones open every email by themselves).{" "}
-            <em>Clicked</em> tapped something. The number that matters is the last one: who <em>signed in</em> (the first two emails) or <em>set up Insiders+</em> (the
-            third) since it went.
+            <strong>Read the results, wave by wave.</strong> <em>Delivered</em> reached their inbox. <em>Opened</em> is rough (some phones open every email by
+            themselves). <em>Clicked</em> tapped something. The number that matters is the last one: who <em>signed in</em> (the first two emails) or{" "}
+            <em>set up Insiders+</em> (the third) since it went. If a wave has trouble (unsubscribes, bounces, or nobody clicking), don&apos;t send the next one: press
+            Pause and ask Andrew.
           </li>
         </ol>
         <p className="mt-2 text-xs text-[var(--muted)]">
@@ -412,14 +623,34 @@ export default function ReadyToSend({
       </section>
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-        <h2 className="font-semibold">Our email plan</h2>
+        <h2 className="font-semibold">
+          Waves of {n(plan.perDay)} ·{" "}
+          {!cards.some((c) => c.status === "scheduled" || c.status === "sending")
+            ? "the first goes when you press Send"
+            : plan.auto
+              ? `next wave ${plan.nextWave}`
+              : plan.todayLeft > 0
+                ? "next wave when you press Send the next wave"
+                : `next wave can go ${plan.nextWave}`}
+        </h2>
         <p className="mt-1">
-          Resend (our email service) allows {n(plan.daily)} emails a day and {n(plan.monthly)} a month on our plan. {n(plan.reserve)} a day are kept for receipts, tickets and
-          the daily report, so these go out up to <strong>{n(plan.perDay)} a day</strong>.
+          {plan.auto ? (
+            <>
+              After the first, a wave goes <strong>by itself each morning</strong> (Monday to Saturday).
+            </>
+          ) : (
+            <>
+              Each wave goes <strong>only when someone presses the button</strong> on its email below; nothing goes out by itself.
+            </>
+          )}{" "}
+          Never more than {n(plan.perDay)} a day in all (shared if more than one is going), so trouble shows up while it&apos;s small. Resend (our email service) is set to{" "}
+          {n(plan.daily)} a day and {n(plan.monthly)} a month; {n(plan.reserve)} a day are kept for receipts, tickets and the daily report.
         </p>
         <p className="mt-1 text-[var(--muted)]">
           Today: {n(plan.usedToday)} of {n(plan.perDay)} used ({n(plan.todayLeft)} left). This month: {n(plan.usedMonth)} of {n(plan.perMonth)}.
         </p>
+        {isAdmin && <WaveMode plan={plan} />}
+        {isAdmin && <WaveSize plan={plan} />}
         {isAdmin && <PlanEditor plan={plan} />}
       </section>
 

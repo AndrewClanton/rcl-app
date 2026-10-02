@@ -1,10 +1,11 @@
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
-import { guardrailPause, sendingGate } from "@/lib/email/campaign-send";
+import { guardrailPause, sendingGate, WAVE_WAITING } from "@/lib/email/campaign-send";
+import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
-import { finishDate, getSendPlan, listUsage, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
+import { finishDate, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
 import type { CampaignRow } from "@/lib/email/campaign";
 import ReadyToSend, { type CardData } from "./ReadyToSend";
 
@@ -22,20 +23,26 @@ export default async function ReadyToSendPage() {
   const staff = await requireManager();
   const now = new Date();
   const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
-  const [counts, plan, usage, pause, pictures] = await Promise.all([
-    countAudiences(rows, now).catch(() => null),
+  const [plan, usage, pause, pictures, mode] = await Promise.all([
     getSendPlan(),
     listUsage(now).catch(() => ({ today: 0, month: 0 })),
     guardrailPause().catch(() => null),
     picturesReady(),
+    getWaveMode(),
   ]);
-  const results = Object.fromEntries(
-    await Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)),
-  ) as Record<DesignKey, DesignResults | null>;
   const gate = sendingGate();
   const daily = perDay(plan);
   const monthLeft = Math.max(0, perMonth(plan) - usage.month);
   const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
+  // The next wave is as many as today's share allows (a full wave once
+  // today's has gone).
+  const [counts, results] = await Promise.all([
+    countAudiences(rows, now, todayLeft > 0 ? todayLeft : daily).catch(() => null),
+    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
+      (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
+    ),
+  ]);
+  const slot = nextSendSlot(now);
 
   const cards: CardData[] = DESIGN_KEYS.map((key) => {
     const d = DESIGNS[key];
@@ -59,7 +66,8 @@ export default async function ReadyToSendPage() {
       finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, todayLeft > 0)) : null,
       overMonth: n > monthLeft,
       status: c?.status ?? null,
-      note: c?.error ?? null,
+      // "Waiting for staff" is what the wave line says already.
+      note: c?.error && !c.error.includes(WAVE_WAITING) ? c.error : null,
       campaignId: c?.id ?? null,
       results: results[key],
       outcomeLabel: d.outcome.label,
@@ -74,7 +82,7 @@ export default async function ReadyToSendPage() {
         area="guests"
         back={{ href: "/admin/email", label: "Email" }}
         title="Ready to send"
-        purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. They go out a little each day so we stay inside our email plan."
+        purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. They go out in waves, the members most used to hearing from us first, so each wave can be checked before the next."
       />
       <ReadyToSend
         cards={cards}
@@ -83,7 +91,20 @@ export default async function ReadyToSendPage() {
         stopped={pause ? pause.reason : null}
         picturesReady={pictures}
         countsFailed={!counts}
-        plan={{ ...plan, perDay: daily, perMonth: perMonth(plan), usedToday: usage.today, usedMonth: usage.month, todayLeft, monthLeft }}
+        plan={{
+          ...plan,
+          perDay: daily,
+          perMonth: perMonth(plan),
+          usedToday: usage.today,
+          usedMonth: usage.month,
+          todayLeft,
+          monthLeft,
+          auto: mode === "auto",
+          // Automatic: the next morning run's wave. Manual: the next day a
+          // wave can go once today's share has gone.
+          nextWave: dayLabel(nextMorningWave(now, mode === "auto" && todayLeft > 0)),
+          goesAt: slot.getTime() === now.getTime() ? "now" : `at ${slot.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} ${dayLabel(slot)}`,
+        }}
         isAdmin={hasAdminAccess(staff.role)}
         myEmail={staff.email}
       />
