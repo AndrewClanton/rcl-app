@@ -1,7 +1,7 @@
 // Email 1: "The new Royale is here" (the invite). From the canvas design
 // RoyaleIsHere-Desktop / -Phone. One job: "Set my password".
 import { esc } from "../format";
-import { C, DEV, band, bleed, blk, button, card, cols, footer, h1, h2, label, mono, pic, picWidth, red, textLink, txt, type Dev } from "./kit";
+import { C, DEV, band, bleed, blk, button, card, cols, footer, h1, h2, label, mono, pic, picWidth, red, txt, type Dev } from "./kit";
 import { artPic, claimButton, claimCard, nameOr, signoff, siteLink, whyOldSite, type Ctx, type DesignOut } from "./shared";
 
 function hero(ctx: Ctx, out: DesignOut): string {
@@ -95,15 +95,7 @@ function online(ctx: Ctx, out: DesignOut): string {
   const m = dev === "m";
   const tickets = siteLink(ctx, "/showtimes", "tickets", "Tickets");
   const booths = siteLink(ctx, "/booths", "booths", "Booths");
-  const whatsNew = siteLink(ctx, "/whats-new", "whats-new", "What's new");
-  if (dev === "d") out.text.push(`BOOK ONLINE\nTickets, from $5: ${tickets}\nBooths (8 of them): ${booths}\nWHAT'S NEW: suggest, vote, build, ship. Coming soon: order from your booth.\nSee it: ${whatsNew}`);
-  const stamp = pic("royale-is-here/coming-soon", dev);
-  const stampW = picWidth("royale-is-here/coming-soon", dev);
-  const soon = `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td width="${stampW}" style="width:${stampW}px;">${stamp}</td><td style="padding-left:6px;">${txt("Order from your booth", 15, 20, C.cream, "white-space:nowrap;")}</td></tr></table>`;
-  const bottom = m
-    ? `<div style="margin-top:12px;">${soon}</div><div style="margin-top:8px;">${textLink(whatsNew, "See it", C.cream, 15)}</div>`
-    : `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:14px;"><tr><td valign="middle">${soon}</td><td valign="middle" align="right">${textLink(whatsNew, "See it", C.cream, 15)}</td></tr></table>`;
-  const box = card(`${label("WHAT'S NEW", C.gold, dev)}<div style="margin-top:12px;">${pic("royale-is-here/whatsnew-stops", dev)}</div>${bottom}`, m ? "14px 16px" : "16px 20px", { bg: C.ink, border: "#4a463d" });
+  if (dev === "d") out.text.push(`BOOK ONLINE\nTickets, from $5: ${tickets}\nBooths (8 of them): ${booths}`);
   const cw = m ? 165 : 254;
   return band(
     C.ink,
@@ -112,8 +104,7 @@ function online(ctx: Ctx, out: DesignOut): string {
 <td width="${cw}" valign="top" style="width:${cw}px;">${photoCard(ctx, tickets, "royale-is-here/online-tickets", "Tickets", "FROM $5")}</td>
 <td width="12" style="width:12px;font-size:0;">&nbsp;</td>
 <td width="${cw}" valign="top" style="width:${cw}px;">${photoCard(ctx, booths, "royale-is-here/online-booths", "Booths", "8 BOOTHS")}</td>
-</tr></table>
-<div style="margin-top:${m ? 16 : 20}px;">${box}</div>`,
+</tr></table>`,
     `${d.pt}px ${d.G}px`,
   );
 }

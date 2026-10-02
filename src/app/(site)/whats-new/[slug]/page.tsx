@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SpecFoot } from "@/components/print";
 import { pageMeta } from "@/lib/seo/page-meta";
+import { getStaffSession } from "@/lib/auth";
 import { getSignedInMember } from "@/lib/member-auth";
 import { getMemberRoadmapState, getPublicRoadmapItem } from "@/lib/data/roadmap";
 import { STATUS_BLURB, STATUS_LABEL, canVote, longDate, shortDate, timeAgo, timelineFor } from "@/lib/roadmap";
@@ -24,6 +25,8 @@ function headline(status: string, position: number | null): string {
 }
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+  // Staff only, like /whats-new.
+  if (!(await getStaffSession())) notFound();
   const { slug } = await params;
   const item = await getPublicRoadmapItem(slug).catch(() => null);
   if (!item) return { title: "What's new", robots: { index: false, follow: false } };

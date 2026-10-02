@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { getStaffSession } from "@/lib/auth";
 import { PageMasthead, SpecFoot, Sprockets, Starburst } from "@/components/print";
 import { pageMeta } from "@/lib/seo/page-meta";
 import { getSignedInMember } from "@/lib/member-auth";
@@ -86,6 +88,8 @@ function MySuggestions({ mine }: { mine: MemberRoadmapState }) {
 }
 
 export default async function WhatsNewPage() {
+  // Staff only (Andrew, 10/2: customers don't need to see the roadmap).
+  if (!(await getStaffSession())) notFound();
   const [roadmap, member] = await Promise.all([getPublicRoadmap(), getSignedInMember()]);
   const mine = member ? await getMemberRoadmapState(member.id).catch(() => null) : null;
   const viewer: Viewer = { signedIn: !!member, voted: new Set(mine?.voted ?? []) };
