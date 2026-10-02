@@ -164,10 +164,10 @@ const CLAIM_LINK_EVERY_MS = 10 * 60_000;
 // A member with no website login also gets a claim link (lib/member-claim.ts)
 // for the tablet to show as a QR code: only here, once staff have said it's
 // them, never from the number typed at the screen alone. Not for anyone with
-// billing on file (Insiders+, a Stripe customer): they just typed their whole
-// number in front of the line, so someone behind them knows the last four
-// the claim page asks for, and the account holds a billing portal. Theirs
-// comes on their receipt, which is handed to them.
+// billing on file (Insiders+, a Stripe customer): the code is up on a screen
+// in front of the line, the link alone opens the account, and that account
+// holds a billing portal. Theirs comes on their receipt, which is handed to
+// them.
 async function tabletClaimLink(memberId: string): Promise<string | null> {
   const { data: m } = await createAdminClient().from("members").select("tier, stripe_customer_id, stripe_subscription_id").eq("id", memberId).maybeSingle();
   if (!m || m.tier === "Insiders+" || m.stripe_customer_id || m.stripe_subscription_id) return null;

@@ -36,11 +36,11 @@ export async function startCheckin(phone: string): Promise<CheckinStart> {
   const found = await memberIdsWithPhone(digits);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (found.ids.length === 0) return { ok: true, status: "new" };
-  // No claim link here, even for a member with no login: whoever is at the
-  // screen just typed the whole number, so the claim page's "last four of
-  // your phone" check would prove nothing and anyone who knows a regular's
-  // number could take their account. Theirs comes after staff confirm it's
-  // them (confirmVisit in pos/checkin-actions.ts), or on their receipt.
+  // No claim link here, even for a member with no login: typing a number at
+  // the screen proves nothing, and the link alone opens the account, so
+  // anyone who knows a regular's number could take it. Theirs comes after
+  // staff confirm it's them (confirmVisit in pos/checkin-actions.ts), or on
+  // their receipt.
   const request = sealCheckin({ kind: "known", phone: digits });
   return (await unlimitedWithoutCard(found.ids)) ? { ok: true, status: "known", request, unlimited: true } : { ok: true, status: "known", request };
 }

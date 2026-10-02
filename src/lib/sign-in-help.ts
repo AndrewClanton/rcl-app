@@ -8,7 +8,7 @@ import { allowAttempt } from "@/lib/rate-limit";
 import { siteOrigin } from "@/lib/site-origin";
 import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import { exactEmail, sameEmail } from "@/lib/email-match";
-import { hasCheckablePhone, issueClaimLink } from "@/lib/member-claim";
+import { hasPhoneOnFile, issueClaimLink } from "@/lib/member-claim";
 import { CLAIM_LIFETIME_S } from "@/lib/member-claim-token";
 import { sendEmail } from "@/lib/email/send";
 import { setupEmail } from "@/lib/email/setup-email";
@@ -25,12 +25,13 @@ import { plainResetError } from "@/lib/auth-email-errors";
 //     createImplicitFlowClient), so the link works on any device. It lands
 //     on /account/reset-password, which sends staff to /admin and members
 //     to /account.
-//   - A member account but no login, with a phone we can check: email a
-//     setup link (a claim link, lib/member-claim.ts) to the email on file,
-//     "Finish setting up your Royale account". The setup page still asks
-//     for the last 4 digits of that phone.
+//   - A member account but no login, with a phone on file: email a setup
+//     link (a claim link, lib/member-claim.ts) to the email on file,
+//     "Finish setting up your Royale account". Opening it goes straight to
+//     making a login for that account.
 //   - A member account, no login, no usable phone: no email. Staff add the
-//     phone first; the person is asked to come see us at the bar.
+//     phone first (claim links are only made for accounts with one); the
+//     person is asked to come see us at the bar.
 //   - Nothing under that email: the sign-in page says only "if that email
 //     has an account, we've sent you a link" (staff can't reach this case).
 //
@@ -53,7 +54,7 @@ const LIMIT = {
 const allow = (key: string, [max, windowSeconds]: readonly [number, number]) => allowAttempt(key, max, windowSeconds);
 const now = () => new Date().toISOString();
 
-const NO_PHONE = "Add their phone number first: the setup page checks the last 4 digits.";
+const NO_PHONE = "Add their phone number first: setup links are only made for accounts with a phone on file.";
 const SEND_FAILED = "Couldn't send the email just now. Try again in a minute.";
 
 // ---------- who they are ----------
@@ -103,7 +104,7 @@ async function caseFor(m: MemberForHelp): Promise<Case> {
     const login = await lookUpLogin(m.auth_user_id);
     return login.ok ? { kind: "reset", authUserId: m.auth_user_id, email: login.email, socialOnly: login.socialOnly } : { kind: "unavailable", error: login.error };
   }
-  if (!hasCheckablePhone(m.phone)) return { kind: "no_phone" };
+  if (!hasPhoneOnFile(m.phone)) return { kind: "no_phone" };
   return { kind: "setup", email: m.email?.trim() || null };
 }
 
@@ -282,7 +283,7 @@ export type PublicHelp = { ok: true; outcome: "reset" | "setup" | "ask_at_bar" |
 
 // `connection`: the visitor's hashed IP (lib/public-form-guard.ts). Safe to
 // email the setup link from a public form: it only goes to the address on
-// file, and the link still asks for the last 4 digits of their phone.
+// file, so only someone who can read that inbox gets it.
 export async function signInHelpForEmail(rawEmail: string, connection: string): Promise<PublicHelp> {
   const email = String(rawEmail ?? "").trim();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "Enter your email address above first." };

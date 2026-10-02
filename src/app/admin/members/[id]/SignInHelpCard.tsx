@@ -30,10 +30,10 @@ export default function SignInHelpCard({ memberId, memberName, info }: { memberI
         ? null
         : info.state === "setup"
           ? info.email
-            ? "No website login yet. A setup link lets them make one; it asks for the last 4 digits of their phone."
-            : "No website login yet, and no email on file. Copy a setup link and text it to them; it asks for the last 4 digits of their phone."
+            ? "No website login yet. A setup link lets them make one."
+            : "No website login yet, and no email on file. Copy a setup link and text it to them."
           : info.state === "no-phone"
-            ? "Add their phone number first: the setup page checks the last 4 digits."
+            ? "Add their phone number first: setup links are only made for accounts with a phone on file."
             : info.reason;
 
   function send() {
@@ -65,7 +65,7 @@ export default function SignInHelpCard({ memberId, memberName, info }: { memberI
         note:
           r.kind === "reset"
             ? `Give this only to ${first}: anyone who has it can get into ${first}'s login. It works once and runs out after about an hour. It isn't shown again after you close this.`
-            : `Text it to ${first}. It's just for them, asks for the last 4 digits of their phone, and works for ${r.days} days. It isn't shown again after you close this.`,
+            : `Text it to ${first}, and only to ${first}: whoever opens it first can set up the login for this account. It works once, for ${r.days} days. It isn't shown again after you close this.`,
       });
       navigator.clipboard?.writeText(r.link).then(
         () => setCopied(true),
