@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type TabletProfile } from "@/lib/registerChannel";
+import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type RickrollState, type TabletProfile } from "@/lib/registerChannel";
 import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
@@ -40,7 +40,7 @@ import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
 import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
-import EasterEggs from "./EasterEggs";
+import EasterEggs, { useRickroll } from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
@@ -651,6 +651,14 @@ export default function PosApp({
     }),
     [],
   );
+  // ✨ → Rickroll: the button changes only when the customer screen says
+  // it's started or stopped (EasterEggs.tsx useRickroll).
+  const sendRickroll = useCallback(
+    (event: "rickroll" | "rickroll-stop", payload: object) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
+    [],
+  );
+  const rickroll = useRickroll(sendRickroll);
+  const onRickrollState = useEffectEvent((p: Partial<RickrollState> | null) => rickroll.onState(p));
   const onSetupOk = useEffectEvent((id: unknown) => {
     if (typeof id === "string") setupForms.current.get(id)?.();
   });
@@ -680,6 +688,7 @@ export default function PosApp({
       })
       .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
       .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
+      .on("broadcast", { event: "rickroll-state" }, (msg) => onRickrollState(msg.payload))
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -1666,7 +1675,7 @@ export default function PosApp({
               onPick={setFlourish}
               canPrint={!!printTarget && devices.autoPrint}
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
-              onRickroll={(stop) => registerChannelRef.current?.send({ type: "broadcast", event: stop ? "rickroll-stop" : "rickroll", payload: {} })}
+              rickroll={rickroll}
             />
             {/* Admins only. Docked here, in the row's spare cells, rather than
                 floating over the menu buttons the way it used to. */}
