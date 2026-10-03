@@ -9,6 +9,7 @@ import { hasPlusPerks } from "@/lib/plus-status";
 import { exactEmail, sameEmail } from "@/lib/email-match";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { closedDayError } from "@/lib/closed-days-server";
 
 export async function getAvailabilityForDate(date: string): Promise<BoothBusy[]> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
@@ -71,6 +72,9 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
   if (fields.reservationDate <= todayCentral()) {
     return { ok: false, error: "Booths can be reserved starting tomorrow, not for today." };
   }
+  // Nor on a day we're closed (lib/closed-days.ts), free or paid.
+  const closed = closedDayError(fields.reservationDate, fields.startTime);
+  if (closed) return { ok: false, error: closed };
   // A cap per connection: each pending checkout holds the booth for 30
   // minutes, so a script mustn't be able to hold them all.
   if (!(await allowFromConnection("booths"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };

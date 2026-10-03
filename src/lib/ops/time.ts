@@ -4,7 +4,7 @@ const TZ = "America/Chicago";
 
 // The business day rolls over at 4 a.m. Central, not midnight, so a closing
 // shift that runs past 12 still ticks off *tonight's* closing tasks.
-const DAY_STARTS_AT_HOUR = 4;
+export const DAY_STARTS_AT_HOUR = 4;
 
 function parts(d: Date) {
   const p = Object.fromEntries(

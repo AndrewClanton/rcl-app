@@ -372,13 +372,13 @@ export const HELP_TOPICS = {
     title: "Private event bookings",
     area: "Showtimes, events and booths",
     body:
-      "Private events booked on the website land here with their total, what's been paid and the balance. \"Mark paid manually\" is for a balance paid another way, like cash or a check at the box office. Private-event clients' names never go on public posts, signs or pages.",
+      "Private events booked on the website land here with their total, what's been paid and the balance. The website doesn't take requests for a Sunday, since we're closed; a Sunday event is arranged with staff directly. \"Mark paid manually\" is for a balance paid another way, like cash or a check at the box office. Private-event clients' names never go on public posts, signs or pages.",
   },
   booths: {
     title: "Booth reservations",
     area: "Showtimes, events and booths",
     body:
-      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee.",
+      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee.",
   },
 
   // ---------- reports and money ----------
