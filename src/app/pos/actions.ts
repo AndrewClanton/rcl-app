@@ -20,9 +20,9 @@ import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type Co
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
-import { openApproval } from "@/lib/approval-token";
-import { ownerRateScope, ownerSaleProblems, type OwnerPricing } from "@/lib/register-totals";
-import { firstName as firstNameOf, ownerRatePeople, priceOwnerSale } from "@/lib/owner-rate-server";
+import { readApproval } from "@/lib/approval-token";
+import { ownerSaleProblems, parseOwnerRateScope, sameOwnerLines, type OwnerPricing } from "@/lib/register-totals";
+import { firstName as firstNameOf, ownerOrderHash, ownerRatePeople, priceOwnerSale } from "@/lib/owner-rate-server";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -636,26 +636,66 @@ export async function logAbandonedSale(order: CompleteOrderInput, tries: number)
 // the order is saved as finished, with no money taken, on the owner's
 // monthly tab (payment_method 'owner_tab'). Only with the owner's own PIN
 // approval (approveOwnerRate in ./owner-rate-actions.ts): signed, for that
-// owner and this one order, and still in time. The server prices the order
-// itself from the menu and recipes, and refuses it if the register's
-// figures differ: nothing has been paid, so refusing costs nothing. No
-// member, so no points, no member discount, no daily coffee and no reward.
+// owner, for this one order (a nonce) and exactly the order and total the
+// owner saw (its hash), and still in time. The server prices the order
+// itself from today's menu and recipes and refuses it if anything differs:
+// nothing has been paid, so refusing costs nothing. No member, so no
+// points, no member discount, no daily coffee and no reward.
+//
+// In this order: the signature; whether the approval was already used (a
+// repeat of the same sale, whose answer got lost, gets the order it made,
+// with its own lines and totals, even after the 10 minutes; a different
+// order is refused); then the clock; then the prices and the order's hash.
 
 export type OwnerTabOrderInput = DraftFields & {
-  // The owner prices the register shows: checked, never saved as sent.
+  // The lines as rung (menu prices), and the owner totals the register
+  // shows (the approval's): checked, never saved as sent.
   totals: { subtotal: number; tax: number; total: number };
   ownerRate: { ownerId: string; token: string; nonce: string };
   ageVerified: boolean;
   draftOrderId?: string | null;
 };
 
-// again: the approval can't be used (run out, used, or the prices moved),
-// so the register drops the owner rate and the owner enters their PIN again.
+// again: the approval can't be used (run out, used for another order, or
+// the order changed after it), so the register drops the owner rate and the
+// owner enters their PIN again. already: this approval's order was saved
+// earlier (a repeat), and these are its own lines and totals.
 export type OwnerTabOrderResult =
-  | { ok: true; orderNumber: number; owner: string; lines: CheckoutLine[]; totals: { subtotal: number; tax: number; total: number }; menuValue: number }
+  | { ok: true; orderNumber: number; owner: string; lines: CheckoutLine[]; totals: { subtotal: number; tax: number; total: number }; menuValue: number; already?: boolean }
   | { ok: false; error: string; again?: boolean };
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type SavedOwnerOrder = {
+  id: string;
+  orderNumber: number;
+  status: string;
+  lines: CheckoutLine[];
+  totals: { subtotal: number; tax: number; total: number };
+  menuValue: number;
+};
+
+// The order an approval already made, with its saved lines. Null: none.
+async function savedOwnerOrder(supabase: ReturnType<typeof createAdminClient>, nonce: string): Promise<SavedOwnerOrder | null> {
+  const { data } = await supabase.from("orders").select("id, order_number, status, subtotal, tax, total, owner_menu_value").eq("owner_rate_nonce", nonce).limit(1);
+  const o = data?.[0];
+  if (!o) return null;
+  const { data: items } = await supabase
+    .from("order_items")
+    .select("menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id, menu_unit_price, owner_pricing")
+    .eq("order_id", o.id);
+  return {
+    id: o.id as string,
+    orderNumber: Number(o.order_number),
+    status: o.status as string,
+    lines: ((items ?? []) as (CheckoutLine & { menu_unit_price: number | null })[]).map((i) => ({
+      ...i,
+      unit_price: Number(i.unit_price),
+      menu_unit_price: Number(i.menu_unit_price ?? i.unit_price),
+      modifiers: i.modifiers ?? [],
+    })),
+    totals: { subtotal: Number(o.subtotal), tax: Number(o.tax), total: Number(o.total) },
+    menuValue: Number(o.owner_menu_value ?? o.subtotal),
+  };
+}
 
 export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise<OwnerTabOrderResult> {
   const staff = await assertStaff();
@@ -663,36 +703,48 @@ export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise
   if (lines.length === 0) return { ok: false, error: "There's nothing on the order." };
   const rate = params.ownerRate ?? { ownerId: "", token: "", nonce: "" };
   const again = "Tap Owner rate and have them enter their PIN again.";
-  if (typeof rate.ownerId !== "string" || !UUID_RE.test(rate.ownerId) || typeof rate.nonce !== "string" || !UUID_RE.test(rate.nonce)) {
-    return { ok: false, again: true, error: `The owner rate wasn't approved. ${again}` };
+
+  // 1. Signed by us, for this sign-in, for this owner and nonce.
+  const read = readApproval(rate.token, staff.employeeId);
+  const scope = read ? parseOwnerRateScope(read.scope) : null;
+  if (!read || !scope || scope.ownerId !== rate.ownerId || scope.nonce !== rate.nonce || read.approverId !== rate.ownerId) {
+    return { ok: false, again: true, error: `The owner rate wasn't approved for this order. ${again}` };
   }
-  const approval = openApproval(rate.token, ownerRateScope(rate.ownerId, rate.nonce), staff.employeeId);
-  if (!approval || approval.approverId !== rate.ownerId) {
-    return { ok: false, again: true, error: `The owner's PIN approval has run out (it lasts 10 minutes) or isn't for this order. ${again}` };
-  }
+  const supabase = createAdminClient();
   const people = await ownerRatePeople();
-  const owner = people?.find((p) => p.id === rate.ownerId);
+  const ownerRow = (await supabase.from("employees").select("id, name").eq("id", scope.ownerId).maybeSingle()).data;
+  const ownerName = firstNameOf(String(ownerRow?.name ?? "the owner"));
+
+  // 2. Used already? Before the clock, so a repeat after the 10 minutes
+  // still finds its order.
+  const fromSaved = async (): Promise<OwnerTabOrderResult | null> => {
+    const saved = await savedOwnerOrder(supabase, scope.nonce);
+    if (!saved) return null;
+    if (saved.status !== "completed") return { ok: false, again: true, error: `${ownerName}'s approval made order #${saved.orderNumber}, and it's been taken off the tab since. ${again}` };
+    if (!sameOwnerLines(lines, saved.lines.map((l) => ({ ...l, menu_unit_price: l.menu_unit_price ?? l.unit_price })))) {
+      return { ok: false, again: true, error: `${ownerName}'s approval already put order #${saved.orderNumber} on the tab, and this order is different. ${again}` };
+    }
+    return { ok: true, orderNumber: saved.orderNumber, owner: ownerName, lines: saved.lines, totals: saved.totals, menuValue: saved.menuValue, already: true };
+  };
+  const earlier = await fromSaved();
+  if (earlier) return earlier;
+
+  // 3. The clock.
+  if (read.expires < Date.now()) return { ok: false, again: true, error: `The owner's PIN approval has run out (it lasts 10 minutes). ${again}` };
+  const owner = people?.find((p) => p.id === scope.ownerId);
   if (!owner) return { ok: false, again: true, error: "That person doesn't get the owner rate anymore. Ring it up as a normal sale." };
 
+  // 4. Today's prices. A line rung before a price changed is named, to take
+  // off and ring again; then the order has to be the one the owner approved.
   const priced = await priceOwnerSale(lines);
   if (!priced.ok) return { ok: false, error: `This can't go on the owner tab: ${priced.problems[0]}` };
-  const problems = ownerSaleProblems({ lines, totals: params.totals ?? { subtotal: NaN, tax: NaN, total: NaN } }, { lines: priced.lines, totals: priced.totals });
-  if (problems.length) {
-    return { ok: false, again: true, error: `The owner prices on the register don't match the menu, so nothing was saved: ${problems[0]} ${again}` };
+  const stale = ownerSaleProblems({ lines }, priced);
+  if (stale.length) return { ok: false, error: stale[0] };
+  if (ownerOrderHash(priced.lines, priced.totals.total) !== scope.orderHash || ownerSaleProblems({ lines, totals: params.totals }, priced).length) {
+    return { ok: false, again: true, error: `This isn't the order ${ownerName} approved: it or its prices changed after the PIN. ${again}` };
   }
 
-  const supabase = createAdminClient();
-  const ownerName = firstNameOf(owner.name);
   const done = (orderNumber: number): OwnerTabOrderResult => ({ ok: true, orderNumber, owner: ownerName, lines: priced.lines, totals: priced.totals, menuValue: priced.menuValue });
-  // One approval, one order: a repeat of this same sale (its answer never
-  // reached the register) finds the order it already made.
-  const savedFor = async () => {
-    const { data } = await supabase.from("orders").select("order_number").eq("owner_rate_nonce", rate.nonce).limit(1);
-    return data?.[0] ? Number(data[0].order_number) : null;
-  };
-  const before = await savedFor();
-  if (before !== null) return done(before);
-
   const saleFields = {
     source: "pos" as const,
     status: "completed" as const,
@@ -719,12 +771,13 @@ export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise
     completed_at: new Date().toISOString(),
     owner_tab_employee_id: owner.id,
     owner_menu_value: priced.menuValue,
-    owner_rate_nonce: rate.nonce,
+    owner_rate_nonce: scope.nonce,
   };
   const failed = async (e: { code?: string; message?: string }): Promise<OwnerTabOrderResult> => {
+    // The same approval saved by a repeat a moment ago.
     if (e.code === "23505" && (e.message ?? "").includes("owner_rate_nonce")) {
-      const saved = await savedFor();
-      if (saved !== null) return done(saved);
+      const saved = await fromSaved();
+      if (saved) return saved;
     }
     if (schemaMissing(e) || e.code === "23514") return { ok: false, error: "The owner tab needs its database update first (20261003060000_owner_tab.sql). Nothing was saved." };
     console.error("owner tab order not saved", e.message);
@@ -739,8 +792,8 @@ export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise
     const { data: closed, error } = await supabase.from("orders").update(saleFields).eq("id", params.draftOrderId).in("status", ["draft", "held", "tab"]).select("id");
     if (error) return failed(error);
     if (!closed?.length || !existing) {
-      const saved = await savedFor();
-      if (saved !== null) return done(saved);
+      const saved = await fromSaved();
+      if (saved) return saved;
       return { ok: false, error: "This tab was already closed on another register, so nothing went on the owner tab. Check Recent orders." };
     }
     orderId = params.draftOrderId;
@@ -1091,9 +1144,11 @@ type CardParts = { brand: string | null; last4: string | null; wallet: string | 
 // Refund from the register (manager PIN). Card money goes back to the card
 // through Stripe; for cash, staff hand it back. Returns the reason on failure
 // (a wrong PIN, say), since a thrown message is hidden in production.
-export async function refundRegisterOrder(orderId: string, pin: string): Promise<ApprovalResult> {
+// reason: required for an owner-tab order, which only another owner's PIN
+// takes off the tab (refundOrder).
+export async function refundRegisterOrder(orderId: string, pin: string, reason?: string): Promise<ApprovalResult> {
   try {
-    return await refundOrder(orderId, pin);
+    return await refundOrder(orderId, pin, reason);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't refund that order." };
   }

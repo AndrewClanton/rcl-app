@@ -4,11 +4,16 @@ import { useState } from "react";
 import InfoTip from "@/components/help/InfoTip";
 import type { Ingredient, MenuItem, ParItemRef, Recipe } from "@/lib/types";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
-import { removeRecipeIngredient, updateRecipeIngredientQuantity, updateRecipeMeta } from "./actions";
+import { recipeCost } from "@/lib/register-totals";
+import { removeRecipeIngredient, setRecipeCostComplete, updateRecipeIngredientQuantity, updateRecipeMeta } from "./actions";
 import IngredientPicker from "./IngredientPicker";
 
 function unitLabel(unit: string) {
   return unit === "count" ? "ct" : unit;
+}
+
+function money(n: number) {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
 // Cashiers (bartenders) see the recipe as plain text; managers edit it.
@@ -129,6 +134,56 @@ function RecipeEditor({ item, recipe, ingredients, parItems }: { item: MenuItem;
       )}
 
       <IngredientPicker menuItemId={item.id} ingredients={ingredients} parItems={parItems} usedIngredientIds={usedIds} />
+
+      <RecipeCost item={item} recipe={recipe} ingredients={ingredients} />
+    </div>
+  );
+}
+
+// What the recipe costs from the ingredient costs, against the menu price,
+// and the manager's tick that the recipe is all there. The owner rate
+// charges an item at cost only with the tick and a cost for every
+// ingredient; otherwise it's half the menu price.
+function RecipeCost({ item, recipe, ingredients }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[] }) {
+  const [pending, run] = useRefreshingAction();
+  const lines = recipe?.ingredients ?? [];
+  const costOf = new Map(ingredients.map((i) => [i.id, i.unit_cost]));
+  const missing = lines.filter((l) => costOf.get(l.ingredient_id) === null || costOf.get(l.ingredient_id) === undefined).map((l) => l.ingredient_name);
+  const cost = recipeCost(lines.map((l) => ({ ingredientId: l.ingredient_id, quantity: l.quantity, unitCost: costOf.get(l.ingredient_id) })));
+  const ticked = recipe?.cost_complete === true;
+  const canTick = lines.length > 0 && missing.length === 0;
+
+  return (
+    <div className="mt-3 border-t border-[var(--border)] pt-2 text-sm">
+      <div className="text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+        Cost
+        <InfoTip topic="owner-rate" />
+      </div>
+      {lines.length === 0 ? (
+        <p className="text-[var(--muted)]">No ingredients, so no cost. The owner rate is half the menu price ({money(Number(item.price) / 2)}).</p>
+      ) : cost === null ? (
+        <p className="text-[var(--muted)]">No cost on file for {missing.join(", ")}. Add it on the Ingredients page.</p>
+      ) : (
+        <p>
+          Recipe cost {money(cost)} <span className="text-[var(--muted)]">· menu price {money(Number(item.price))}</span>
+        </p>
+      )}
+      <label className={`mt-1 flex items-start gap-2 ${canTick || ticked ? "" : "opacity-60"}`}>
+        <input
+          type="checkbox"
+          className="mt-0.5 h-4 w-4"
+          checked={ticked}
+          disabled={pending || (!ticked && !canTick)}
+          onChange={(e) => run(() => setRecipeCostComplete(item.id, e.target.checked))}
+        />
+        <span>
+          Recipe cost is complete
+          <span className="block text-xs text-[var(--muted)]">
+            Every ingredient is on the recipe. Ticked, the owner rate charges this at cost; not ticked, half the menu price. Adding or taking off an ingredient
+            unticks it.
+          </span>
+        </span>
+      </label>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { requireOwner } from "@/lib/auth";
 import { getOwnerStatement } from "@/lib/data/owner-tab";
 import { OWNER_PRICING_LABEL } from "@/lib/register-totals";
 import { SITE_NAME, THEATER_ADDRESS } from "@/lib/site";
-import { StatusPill, day, money, plainDate, time } from "../ui";
+import { RemovedNote, StatusPill, day, money, plainDate, time } from "../ui";
 import PrintButton from "./PrintButton";
 
 export const dynamic = "force-dynamic";
@@ -79,8 +79,8 @@ export default async function OwnerStatementPage({ searchParams }: { searchParam
                         {day(o.at)}
                         <span className="block text-xs text-[var(--muted)]">
                           #{o.orderNumber} · {time(o.at)}
-                          {o.refunded ? " · refunded, not counted" : ""}
                         </span>
+                        {o.refunded && <RemovedNote order={o} suffix=" (not counted)" />}
                       </>
                     )}
                   </td>
@@ -115,8 +115,8 @@ export default async function OwnerStatementPage({ searchParams }: { searchParam
         ))}
         <Row label={m.balance < 0 ? "Paid more than owed" : m.status === "running" ? "Owed so far" : "Left to pay"} value={money(Math.abs(m.balance))} strong />
         <p className="mt-2 text-xs text-[var(--muted)]">
-          The owner rate saved {money(Math.max(0, m.menuValue - m.sales))} against menu prices this month. Menu items are at cost from their recipes, or half price where
-          no cost is on file; tickets and custom items at their normal price.
+          The owner rate saved {money(Math.max(0, m.menuValue - m.sales))} against menu prices this month. Menu items are at cost from their recipes where the recipe
+          cost is marked complete, otherwise half price; tickets and custom items at their normal price.
         </p>
       </section>
 

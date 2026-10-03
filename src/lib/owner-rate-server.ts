@@ -1,14 +1,15 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cents, isRewardLine, ownerLinePrice, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
+import { cents, isRewardLine, ownerLinePrice, ownerOrderKey, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
 import { modifierPrice, type Group } from "@/lib/register-sale-checks";
 
 // The owner rate on the server (the math is in lib/register-totals.ts, with
 // what it is and why): who gets it, what each menu item cost, and an owner
-// order priced from the database alone. The register shows the owner
-// prices from the same math, but the server never takes its word for them:
-// completeOwnerTabOrder (pos/actions.ts) prices the order here again and
-// refuses it if the two differ.
+// order priced from the database alone. The register shows the server's
+// prices (the PIN box asks the owner about exactly that order), and putting
+// it on the tab (completeOwnerTabOrder in pos/actions.ts) prices it here
+// again: the register's word is never taken for a price.
 
 export interface OwnerPerson {
   id: string;
@@ -26,29 +27,50 @@ export async function ownerRatePeople(): Promise<OwnerPerson[] | null> {
   return (data as { id: string; name: string; role: string }[]).filter((e) => e.role !== "display").map((e) => ({ id: e.id, name: e.name }));
 }
 
-type RecipeRow = { menu_item_id: string; lines: { ingredient_id: string; quantity: number }[] | null };
+// "*": cost_complete comes with the owner tab's migration; without it,
+// nothing is at cost.
+type RecipeRow = { menu_item_id: string; cost_complete?: boolean | null; lines: { ingredient_id: string; quantity: number }[] | null };
 
-// Every menu item's price and what its recipe cost (null: no recipe, or an
-// ingredient in it with no cost). The menu is a few hundred items at most.
+async function recipesAndCosts(itemIds?: string[]) {
+  const db = createAdminClient();
+  const recipes = itemIds
+    ? db.from("recipes").select("*, lines:recipe_ingredients(ingredient_id, quantity)").in("menu_item_id", itemIds)
+    : db.from("recipes").select("*, lines:recipe_ingredients(ingredient_id, quantity)");
+  const [recipeRes, ingredientRes] = await Promise.all([recipes, db.from("ingredients").select("id, name, unit_cost")]);
+  for (const r of [recipeRes, ingredientRes]) if (r.error) throw new Error(r.error.message);
+  const ingredients = new Map(((ingredientRes.data ?? []) as { id: string; name: string; unit_cost: number | null }[]).map((i) => [i.id, i]));
+  return { recipes: (recipeRes.data ?? []) as unknown as RecipeRow[], ingredients };
+}
+
+// What a recipe cost, whether a manager has said its cost is complete, and
+// which ingredients have no cost.
+function recipeFacts(r: RecipeRow | undefined, ingredients: Map<string, { name: string; unit_cost: number | null }>) {
+  const lines = r?.lines ?? [];
+  const cost = recipeCost(lines.map((l) => ({ ingredientId: l.ingredient_id, quantity: Number(l.quantity), unitCost: ingredients.get(l.ingredient_id)?.unit_cost ?? null })));
+  const missing = lines.filter((l) => ingredients.get(l.ingredient_id)?.unit_cost === null || ingredients.get(l.ingredient_id)?.unit_cost === undefined).map((l) => ingredients.get(l.ingredient_id)?.name ?? "an ingredient");
+  return { cost, complete: r?.cost_complete === true, lines: lines.length, missing };
+}
+
+// Every menu item's price and what it cost: the recipe's cost only when a
+// manager ticked "Recipe cost is complete" on Menu -> Recipe and every
+// ingredient has a cost; otherwise null (half price). Nothing is ticked to
+// start with, so the owners pay more, never less, until someone checks.
 export async function ownerCostBook(itemIds?: string[]): Promise<OwnerBook> {
   const db = createAdminClient();
   const items = itemIds ? db.from("menu_items").select("id, price").in("id", itemIds) : db.from("menu_items").select("id, price");
-  const recipes = itemIds
-    ? db.from("recipes").select("menu_item_id, lines:recipe_ingredients(ingredient_id, quantity)").in("menu_item_id", itemIds)
-    : db.from("recipes").select("menu_item_id, lines:recipe_ingredients(ingredient_id, quantity)");
-  const [itemRes, recipeRes, ingredientRes] = await Promise.all([items, recipes, db.from("ingredients").select("id, unit_cost")]);
-  for (const r of [itemRes, recipeRes, ingredientRes]) if (r.error) throw new Error(r.error.message);
-  const unitCost = new Map(((ingredientRes.data ?? []) as { id: string; unit_cost: number | null }[]).map((i) => [i.id, i.unit_cost === null ? null : Number(i.unit_cost)]));
-  const costByItem = new Map<string, number | null>();
-  for (const r of (recipeRes.data ?? []) as unknown as RecipeRow[]) {
-    costByItem.set(r.menu_item_id, recipeCost((r.lines ?? []).map((l) => ({ ingredientId: l.ingredient_id, quantity: Number(l.quantity), unitCost: unitCost.get(l.ingredient_id) }))));
-  }
+  const [itemRes, { recipes, ingredients }] = await Promise.all([items, recipesAndCosts(itemIds)]);
+  if (itemRes.error) throw new Error(itemRes.error.message);
+  const byItem = new Map(recipes.map((r) => [r.menu_item_id, r]));
   const book: OwnerBook = {};
-  for (const i of (itemRes.data ?? []) as { id: string; price: number }[]) book[i.id] = { price: Number(i.price), cost: costByItem.get(i.id) ?? null };
+  for (const i of (itemRes.data ?? []) as { id: string; price: number }[]) {
+    const f = recipeFacts(byItem.get(i.id), ingredients);
+    book[i.id] = { price: Number(i.price), cost: f.complete ? f.cost : null };
+  }
   return book;
 }
 
-// A line as the register sends it (pos/actions.ts CheckoutLine).
+// A line as the register sends it (pos/actions.ts CheckoutLine): unit_price
+// is its menu price each, as it was rung.
 export interface OwnerSaleLine {
   menu_item_id: string | null;
   name: string;
@@ -59,8 +81,8 @@ export interface OwnerSaleLine {
   screening_id?: string | null;
 }
 
-// A line as it's saved: the owner price, the menu price it replaced, and
-// how it was priced.
+// A line as it's saved: unit_price is the owner price; menu_unit_price the
+// menu price it replaced (today's); and how it was priced.
 export interface OwnerPricedLine extends OwnerSaleLine {
   menu_unit_price: number;
   owner_pricing: OwnerPricing;
@@ -72,12 +94,13 @@ export type OwnerPriced =
 
 type ItemRow = { id: string; name: string; price: number; is_alcohol: boolean };
 
-// An owner order, priced from the database: each line's menu price (the
-// item's price and its options, or the showing's ticket price), then the
-// owner price from that and the recipe. Anything that can't be priced from
-// the database is a problem, and the order isn't saved: a custom item is
-// the only price taken as rung (there's nothing to check it against), and
-// it's charged in full.
+// An owner order, priced from the database: each line's menu price today
+// (the item's price and its options, or the showing's ticket price), then
+// the owner price from that and the recipe. Anything that can't be priced
+// from the database is a problem, and nothing goes on the tab: a custom item
+// is the only price taken as rung (there's nothing to check it against),
+// and it's charged in full. Whether the line was rung at today's price is
+// for the caller to check (ownerSaleProblems).
 export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPriced> {
   const db = createAdminClient();
   const problems: string[] = [];
@@ -106,6 +129,8 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
   for (const l of lines) {
     const qty = Number(l.quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty > 999) problems.push(`"${l.name}" has a quantity of ${l.quantity}.`);
+    // Each option once: the register never sends one twice.
+    const mods = [...new Set((Array.isArray(l.modifiers) ? l.modifiers : []).map(String))];
     let menu: number;
     let isAlcohol = !!l.is_alcohol;
     if (l.screening_id) {
@@ -128,21 +153,28 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
         continue;
       }
       const itemGroups = groupsByItem.get(item.id) ?? [];
-      const mods = modifierPrice(itemGroups, l.modifiers ?? []);
-      if ("unknown" in mods) {
-        problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore. Ring it again.`);
+      // A "pick one" question takes one answer.
+      const twice = itemGroups.find((g) => (g.type ?? "single") === "single" && g.options.filter((o) => mods.includes(o.name)).length > 1);
+      if (twice) {
+        problems.push(`"${l.name}": "${twice.label ?? "a pick-one question"}" takes one answer. Take it off the order and ring it again.`);
         continue;
       }
-      if ("ambiguous" in mods) {
-        problems.push(`"${l.name}": two of its options are called "${mods.ambiguous}", so its price can't be worked out. Fix the names on the Menu page.`);
+      const extra = modifierPrice(itemGroups, mods);
+      if ("unknown" in extra) {
+        problems.push(`"${l.name}": the option "${extra.unknown}" isn't on the menu anymore. Take it off the order and ring it again.`);
+        continue;
+      }
+      if ("ambiguous" in extra) {
+        problems.push(`"${l.name}": two of its options are called "${extra.ambiguous}", so its price can't be worked out. Fix the names on the Menu page.`);
         continue;
       }
       for (const g of itemGroups) {
-        if (g.must_choose && (g.type ?? "single") === "single" && !g.options.some((o) => (l.modifiers ?? []).includes(o.name))) {
+        if (g.must_choose && (g.type ?? "single") === "single" && !g.options.some((o) => mods.includes(o.name))) {
           problems.push(`"${l.name}": nothing was picked for "${g.label ?? "a pick-one question"}".`);
         }
       }
-      menu = Number(item.price) + mods.extra;
+      // Never below nothing, however the options add up.
+      menu = Math.max(0, Number(item.price) + extra.extra);
       // What the menu says, whatever the register sent (it decides the
       // report's Alcohol line and the bar's usage).
       isAlcohol = !!item.is_alcohol;
@@ -165,7 +197,7 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
       name: String(l.name ?? "").slice(0, 200),
       unit_price: owner.unit,
       quantity: qty,
-      modifiers: Array.isArray(l.modifiers) ? l.modifiers.map(String) : [],
+      modifiers: mods,
       is_alcohol: isAlcohol,
       screening_id: l.screening_id ?? null,
       menu_unit_price: cents(menu),
@@ -176,4 +208,63 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
   const t = ownerOrderTotals(priced.map((l) => ({ unit: l.unit_price, qty: l.quantity })));
   const menuValue = cents(priced.reduce((s, l) => s + l.menu_unit_price * l.quantity, 0));
   return { ok: true, lines: priced, totals: { subtotal: t.subtotal, tax: t.tax, total: t.total }, menuValue };
+}
+
+// The hash of a priced order (ownerOrderKey): what the owner's approval is
+// tied to.
+export function ownerOrderHash(lines: OwnerPricedLine[], total: number): string {
+  return createHash("sha256").update(ownerOrderKey(lines, total)).digest("base64url");
+}
+
+// Back office -> Owner tab's "Prices": every item on the menu, its price,
+// what its recipe costs, whether that cost is confirmed complete, and what
+// an owner pays for it, so "at cost" can be seen.
+export interface OwnerPriceRow {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  cost: number | null; // the recipe's cost (null: no recipe, or an ingredient with no cost)
+  complete: boolean; // "Recipe cost is complete" ticked
+  missing: string[]; // ingredients with no cost
+  hasRecipe: boolean;
+  owner: number; // what an owner pays, before options
+  how: OwnerPricing;
+}
+
+export async function ownerPriceList(): Promise<OwnerPriceRow[] | null> {
+  const db = createAdminClient();
+  try {
+    const [items, cats, { recipes, ingredients }] = await Promise.all([
+      db.from("menu_items").select("id, name, price, category_id, active").eq("active", true).order("sort_order"),
+      db.from("menu_categories").select("id, label, sort_order").order("sort_order"),
+      recipesAndCosts(),
+    ]);
+    if (items.error || cats.error) return null;
+    const catLabel = new Map(((cats.data ?? []) as { id: string; label: string }[]).map((c) => [c.id, c.label]));
+    const catOrder = new Map(((cats.data ?? []) as { id: string; sort_order: number }[]).map((c, i) => [c.id, i]));
+    const byItem = new Map(recipes.map((r) => [r.menu_item_id, r]));
+    const rows = ((items.data ?? []) as { id: string; name: string; price: number; category_id: string }[])
+      .sort((a, b) => (catOrder.get(a.category_id) ?? 999) - (catOrder.get(b.category_id) ?? 999))
+      .map((i): OwnerPriceRow => {
+        const r = byItem.get(i.id);
+        const f = recipeFacts(r, ingredients);
+        const owner = ownerLinePrice({ menuItemId: i.id, unit: Number(i.price) }, { price: Number(i.price), cost: f.complete ? f.cost : null });
+        return {
+          id: i.id,
+          name: i.name,
+          category: catLabel.get(i.category_id) ?? "",
+          price: Number(i.price),
+          cost: f.cost,
+          complete: f.complete && f.cost !== null,
+          missing: f.missing,
+          hasRecipe: f.lines > 0,
+          owner: owner.unit,
+          how: owner.how,
+        };
+      });
+    return rows;
+  } catch {
+    return null;
+  }
 }

@@ -4,9 +4,10 @@ import PageHeader from "@/components/admin/PageHeader";
 import { businessDay } from "@/lib/ops/time";
 import { getOwnerTabOverview, monthLabel, type OwnerMonth, type OwnerTabOrder, type OwnerTabPerson } from "@/lib/data/owner-tab";
 import { OWNER_PRICING_LABEL } from "@/lib/register-totals";
+import { ownerPriceList, type OwnerPriceRow } from "@/lib/owner-rate-server";
 import OwnerRatePeople from "./OwnerRatePeople";
 import RecordPayment from "./RecordPayment";
-import { StatusPill, day, money, plainDate, statementHref, time } from "./ui";
+import { RemovedNote, StatusPill, day, money, plainDate, statementHref, time } from "./ui";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 export default async function OwnerTabPage() {
   await requireOwner();
-  const o = await getOwnerTabOverview();
+  const [o, prices] = await Promise.all([getOwnerTabOverview(), ownerPriceList()]);
   const today = businessDay().date;
   const shown = o.people.filter((p) => p.ticked || (o.current[p.id]?.length ?? 0) > 0);
   const earlier = o.people.flatMap((p) => p.months.filter((m) => m.month < o.thisMonth && (m.orders > 0 || m.paid > 0)).map((m) => ({ p, m })));
@@ -60,7 +61,7 @@ export default async function OwnerTabPage() {
         <h2 id="earlier-heading" className="text-base font-semibold">
           Earlier months
         </h2>
-        <p className="mt-1 text-xs text-[var(--muted)]">Each month&apos;s statement: at cost, with tax. Refunded orders aren&apos;t on it.</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">Each month&apos;s statement: at cost, with tax. Orders taken off the tab aren&apos;t on it.</p>
         {earlier.length === 0 ? (
           <p className="mt-3 text-sm text-[var(--muted)]">No earlier months yet.</p>
         ) : (
@@ -130,21 +131,46 @@ export default async function OwnerTabPage() {
 
       {o.ready && <OwnerRatePeople candidates={o.candidates} />}
 
+      {o.ready && o.rateChanges.length > 0 && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+          <h2 className="text-base font-semibold">Changes to who gets it</h2>
+          <ul className="mt-2 divide-y divide-[var(--border)]">
+            {o.rateChanges.map((c) => (
+              <li key={c.id} className="flex flex-wrap items-baseline gap-x-2 py-1.5">
+                <span>
+                  <span className="font-medium">{c.person}</span> {c.on ? "gets the owner rate" : "no longer gets the owner rate"}
+                </span>
+                <span className="text-xs text-[var(--muted)]">
+                  {day(c.at)} {time(c.at)}
+                  {c.by ? ` · by ${c.by}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {prices && <Prices rows={prices} />}
+
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
         <h2 className="text-base font-semibold">How the owner rate is priced</h2>
         <ul className="mt-2 list-disc space-y-1.5 pl-5 text-[var(--muted)]">
           <li>
-            A menu item is at cost: its recipe on the Menu page, each ingredient&apos;s amount times its cost on Ingredients &amp; counts. Never more than the menu
-            price.
+            A menu item is at cost when a manager has ticked &ldquo;Recipe cost is complete&rdquo; on its recipe (Menu, the item, Recipe) and every ingredient in it has a
+            cost on Ingredients &amp; counts: each ingredient&apos;s amount times its cost. Never more than the menu price.
           </li>
           <li>
-            No recipe, or an ingredient in it with no cost: half the menu price, marked &ldquo;{OWNER_PRICING_LABEL.half}&rdquo;. Add the recipe or the cost and the
-            next one is at cost.
+            Anything else (no recipe, the tick not on, an ingredient with no cost): half the menu price, marked &ldquo;{OWNER_PRICING_LABEL.half}&rdquo;. Nothing is
+            ticked to start with, and adding or taking off an ingredient unticks it, so a recipe missing something is never &ldquo;at cost&rdquo;.
           </li>
           <li>Options and add-ons have no recipes of their own, so what they add to the price is charged at half.</li>
           <li>Movie tickets and custom items are their normal price. Sales tax is charged as on any sale and owed with the tab.</li>
           <li>No member discount, daily coffee, reward or points with it. Reports show it on its own line, and it&apos;s money in when it&apos;s paid.</li>
-          <li>A wrong one is refunded like any order (Reports, the order, Refund): it comes off the tab.</li>
+          <li>
+            A wrong one comes off the tab in Reports (the order, Take off tab) with another owner&apos;s PIN, not the tab owner&apos;s, and a reason. The statement shows who
+            took it off and why.
+          </li>
+          <li>Staff who aren&apos;t owners see only a total for the owner tab in Reports: no names, statements or payments.</li>
         </ul>
       </section>
     </div>
@@ -197,8 +223,8 @@ function MonthCard({ person, orders, month }: { person: OwnerTabPerson; orders: 
                           {day(order.at)}
                           <span className="block text-xs text-[var(--muted)]">
                             #{order.orderNumber} · {time(order.at)}
-                            {order.refunded ? " · refunded" : ""}
                           </span>
+                          {order.refunded && <RemovedNote order={order} />}
                         </>
                       )}
                     </td>
@@ -222,5 +248,62 @@ function MonthCard({ person, orders, month }: { person: OwnerTabPerson; orders: 
         </div>
       )}
     </div>
+  );
+}
+
+// Every item on the menu: its price, what its recipe costs, and what an
+// owner pays, so "at cost" can be checked. At cost only with the recipe
+// marked complete and every ingredient costed.
+function Prices({ rows }: { rows: OwnerPriceRow[] }) {
+  const atCost = rows.filter((r) => r.how === "cost").length;
+  const why = (r: OwnerPriceRow) =>
+    r.how === "cost"
+      ? "at cost"
+      : !r.hasRecipe
+        ? "half: no recipe"
+        : r.missing.length
+          ? `half: no cost for ${r.missing.join(", ")}`
+          : "half: recipe cost not marked complete";
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+      <details>
+        <summary className="min-h-11 cursor-pointer text-base font-semibold">
+          Prices: cost against menu price
+          <span className="ml-2 text-xs font-normal text-[var(--muted)]">
+            {atCost} of {rows.length} items at cost, the rest half price
+          </span>
+        </summary>
+        <p className="mt-1 text-xs text-[var(--muted)]">
+          What an owner pays for each item, before options. To put an item at cost, finish its recipe and tick &ldquo;Recipe cost is complete&rdquo; on the Menu page.
+        </p>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[560px] text-sm tabular-nums">
+            <thead>
+              <tr className="text-left text-xs text-[var(--muted)]">
+                <th className="pb-1.5 pr-2 font-medium">Item</th>
+                <th className="pb-1.5 pr-2 text-right font-medium">Menu price</th>
+                <th className="pb-1.5 pr-2 text-right font-medium">Recipe cost</th>
+                <th className="pb-1.5 pr-2 text-right font-medium">Owner pays</th>
+                <th className="pb-1.5 font-medium" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-[var(--border)] align-top">
+                  <td className="py-1.5 pr-2">
+                    {r.name}
+                    {r.category && <span className="block text-xs text-[var(--muted)]">{r.category}</span>}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right text-[var(--muted)]">{money(r.price)}</td>
+                  <td className="py-1.5 pr-2 text-right">{r.cost === null ? "—" : money(r.cost)}</td>
+                  <td className="py-1.5 pr-2 text-right font-semibold">{money(r.owner)}</td>
+                  <td className={`py-1.5 text-xs ${r.how === "cost" ? "text-[var(--muted)]" : "text-[var(--danger-text)]"}`}>{why(r)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
   );
 }

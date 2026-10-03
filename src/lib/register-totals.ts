@@ -200,32 +200,77 @@ export function ownerOrderTotals(lines: { unit: number; qty: number }[]) {
   return registerTotals(lines, null, false, false, false, false);
 }
 
-// What the register sent for an owner order against what the server
-// figured from the recipes. One plain sentence per difference of more than
-// a cent, so the sale is refused rather than saved at the register's word.
+// Over a cent, or not a number at all (a missing figure is a difference).
+const offByMore = (a: number, b: number) => !(Math.abs(Number(a) - Number(b)) <= 0.0101);
+
+// A line as it was rung (unit_price: its menu price each, as rung) against
+// the same line priced by the server from today's menu (menu_unit_price).
+// A held order or tab rung before a price changed is caught here, naming
+// the line: it's taken off and rung again at today's price. Then, when the
+// register sent totals, those against the server's. One plain sentence per
+// difference of more than a cent; the order isn't saved on the register's
+// word.
 export function ownerSaleProblems(
-  sent: { lines: { name: string; unit_price: number; quantity: number }[]; totals: { subtotal: number; tax: number; total: number } },
-  figured: { lines: { name: string; unit_price: number; quantity: number }[]; totals: { subtotal: number; tax: number; total: number } },
+  sent: { lines: { name: string; unit_price: number }[]; totals?: { subtotal: number; tax: number; total: number } },
+  priced: { lines: { menu_unit_price: number }[]; totals: { subtotal: number; tax: number; total: number } },
 ): string[] {
   const problems: string[] = [];
-  // Over a cent, or not a number at all (a missing figure is a difference).
-  const off = (a: number, b: number) => !(Math.abs(Number(a) - Number(b)) <= 0.0101);
-  if (sent.lines.length !== figured.lines.length) problems.push(`The register sent ${sent.lines.length} lines; the order has ${figured.lines.length}.`);
+  if (sent.lines.length !== priced.lines.length) return ["The order changed while it was being priced. Try again."];
   sent.lines.forEach((l, i) => {
-    const f = figured.lines[i];
-    if (!f) return;
-    if (l.quantity !== f.quantity) problems.push(`"${l.name}": the register sent ${l.quantity}, the order has ${f.quantity}.`);
-    if (off(l.unit_price, f.unit_price)) problems.push(`"${l.name}" was sent at $${Number(l.unit_price).toFixed(2)} each; the owner rate is $${Number(f.unit_price).toFixed(2)}.`);
+    const menu = priced.lines[i].menu_unit_price;
+    if (offByMore(l.unit_price, menu)) {
+      problems.push(`"${l.name}" was rung at $${Number(l.unit_price).toFixed(2)}, and it's $${Number(menu).toFixed(2)} on the menu now. Take it off the order and ring it again.`);
+    }
   });
-  for (const key of ["subtotal", "tax", "total"] as const) {
-    if (off(sent.totals[key], figured.totals[key])) problems.push(`${key[0].toUpperCase()}${key.slice(1)}: the register sent $${Number(sent.totals[key]).toFixed(2)}, the server figures $${Number(figured.totals[key]).toFixed(2)}.`);
+  if (sent.totals && (["subtotal", "tax", "total"] as const).some((k) => offByMore(sent.totals![k], priced.totals[k]))) {
+    problems.push(`The owner tab total on the register ($${Number(sent.totals.total).toFixed(2)}) isn't what the order comes to now ($${Number(priced.totals.total).toFixed(2)}).`);
   }
   return problems;
 }
 
+// A priced owner order, written out the same way every time: every line
+// (what it is, how many, its menu and owner price, how priced) and the
+// total. The owner's PIN approval is tied to it (hashed on the server), so
+// it covers exactly the order the owner saw in the PIN box and nothing else.
+export function ownerOrderKey(
+  lines: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[]; quantity: number; menu_unit_price: number; unit_price: number; owner_pricing: OwnerPricing }[],
+  total: number,
+): string {
+  return JSON.stringify([
+    lines.map((l) => [l.menu_item_id ?? "", l.screening_id ?? "", String(l.name), (l.modifiers ?? []).map(String), Number(l.quantity), cents(l.menu_unit_price), cents(l.unit_price), l.owner_pricing]),
+    cents(total),
+  ]);
+}
+
+// Whether a register's order (as rung) is the order an owner-tab sale
+// saved (menu_unit_price: the price it was rung at), in any order: a repeat
+// of the same sale finds its order; a different order is refused.
+export function sameOwnerLines(
+  rung: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[]; quantity: number; unit_price: number }[],
+  saved: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[] | null; quantity: number; menu_unit_price: number | null; unit_price: number }[],
+): boolean {
+  const key = (l: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[] | null; quantity: number }, price: number) =>
+    JSON.stringify([l.menu_item_id ?? "", l.screening_id ?? "", String(l.name), (l.modifiers ?? []).map(String), Number(l.quantity), Math.round(Number(price) * 100)]);
+  const a = rung.map((l) => key(l, l.unit_price)).sort();
+  const b = saved.map((l) => key(l, l.menu_unit_price ?? l.unit_price)).sort();
+  return a.length === b.length && a.every((k, i) => k === b[i]);
+}
+
 // The signed approval an owner's PIN gives the register (lib/approval-token.ts):
-// for that owner, for one order (the nonce), for a few minutes.
-export function ownerRateScope(ownerId: string, nonce: string) {
-  return `owner-rate:${ownerId}:${nonce}`;
+// for that owner, for one order (the nonce), for exactly the order they saw
+// (its key's hash), for a few minutes.
+export function ownerRateScope(ownerId: string, nonce: string, orderHash: string) {
+  return `owner-rate:${ownerId}:${nonce}:${orderHash}`;
+}
+export function parseOwnerRateScope(scope: string): { ownerId: string; nonce: string; orderHash: string } | null {
+  const m = /^owner-rate:([0-9a-f-]{36}):([0-9a-f-]{36}):([A-Za-z0-9_-]{8,64})$/i.exec(scope);
+  return m ? { ownerId: m[1], nonce: m[2], orderHash: m[3] } : null;
 }
 export const OWNER_RATE_APPROVAL_MS = 10 * 60_000;
+
+// What the register keeps of the order the owner approved, to tell when it
+// changes (a line added, taken off or changed): the owner rate goes off and
+// needs the PIN again.
+export function ownerCartKey(lines: { menuItemId: string | null; screeningId?: string | null; name: string; unit: number; qty: number; mods: string[] }[]): string {
+  return JSON.stringify(lines.map((l) => [l.menuItemId ?? "", l.screeningId ?? "", l.name, cents(l.unit), l.qty, l.mods]));
+}

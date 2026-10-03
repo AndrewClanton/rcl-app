@@ -37,6 +37,17 @@ export function sealApproval(scope: string, requestedBy: string, approverId: str
 // The approval, or null if it's not one of ours, for something else, for
 // another sign-in, or out of time.
 export function openApproval(token: unknown, scope: string, requestedBy: string, now = Date.now()): Approved | null {
+  const read = readApproval(token, requestedBy);
+  if (!read || read.scope !== scope || read.expires < now) return null;
+  return { approverId: read.approverId };
+}
+
+// A signed approval for this sign-in, whatever it's for and whether or not
+// it has run out: for a caller that has to know what an approval was for
+// before it looks at the clock (the owner tab: a used approval finds the
+// order it made, even after its 10 minutes). Null if it isn't one of ours
+// or it's for another sign-in.
+export function readApproval(token: unknown, requestedBy: string): (Approved & { scope: string; expires: number }) | null {
   const k = key();
   if (!k || typeof token !== "string" || token.length > 600) return null;
   const [body, sig] = token.split(".");
@@ -50,6 +61,6 @@ export function openApproval(token: unknown, scope: string, requestedBy: string,
   } catch {
     return null;
   }
-  if (parsed.s !== scope || parsed.r !== requestedBy || typeof parsed.e !== "number" || parsed.e < now) return null;
-  return { approverId: typeof parsed.a === "string" ? parsed.a : null };
+  if (typeof parsed.s !== "string" || parsed.r !== requestedBy || typeof parsed.e !== "number") return null;
+  return { scope: parsed.s, expires: parsed.e, approverId: typeof parsed.a === "string" ? parsed.a : null };
 }

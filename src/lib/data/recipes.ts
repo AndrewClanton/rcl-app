@@ -7,6 +7,7 @@ interface RecipeRow {
   instructions: string | null;
   glassware: string | null;
   garnish: string | null;
+  cost_complete?: boolean | null; // missing before the owner tab migration
   ingredients: {
     id: string;
     ingredient_id: string;
@@ -25,7 +26,8 @@ export async function getRecipesByItem(): Promise<Record<string, Recipe>> {
   const { data, error } = await supabase
     .from("recipes")
     .select(
-      "id, menu_item_id, instructions, glassware, garnish, ingredients:recipe_ingredients(id, ingredient_id, quantity, sort_order, ingredient:ingredients(name, unit))"
+      // "*": cost_complete only exists once the owner tab migration is in.
+      "*, ingredients:recipe_ingredients(id, ingredient_id, quantity, sort_order, ingredient:ingredients(name, unit))"
     )
     .order("sort_order", { referencedTable: "recipe_ingredients" });
   if (error) throw error;
@@ -38,6 +40,7 @@ export async function getRecipesByItem(): Promise<Record<string, Recipe>> {
       instructions: r.instructions,
       glassware: r.glassware,
       garnish: r.garnish,
+      cost_complete: r.cost_complete === true,
       ingredients: r.ingredients
         .filter((ri) => ri.ingredient)
         .map((ri) => ({

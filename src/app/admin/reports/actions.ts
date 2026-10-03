@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { checkManagerPin, recordApprover } from "@/lib/manager-pin";
+import { checkManagerPin, checkOtherOwnerPin, recordApprover } from "@/lib/manager-pin";
 import type { Approval, ApprovalResult } from "@/lib/pin-rules";
 import { getStripe } from "@/lib/stripe";
 import { applyPoints, reversePurchasePoints } from "@/lib/points";
@@ -63,8 +63,13 @@ async function reverseOrderPoints(orderId: string, by: string) {
   }
 }
 
-export async function refundOrder(orderId: string, pin: string): Promise<ApprovalResult> {
+// reason: why, for an order on an owner's tab (required there; see
+// takeOffOwnerTab).
+export async function refundOrder(orderId: string, pin: string, reason?: string): Promise<ApprovalResult> {
   const staff = await assertStaff();
+  // "*": the owner tab's columns come with its migration.
+  const { data: kind } = await createAdminClient().from("orders").select("*").eq("id", orderId).maybeSingle();
+  if (kind?.payment_method === "owner_tab") return takeOffOwnerTab(orderId, kind.owner_tab_employee_id ?? null, pin, reason, staff.employeeId);
   const approval = await checkManagerPin(pin, "refund-order", staff.employeeId, orderId);
   if (!approval.ok) return approval;
   const supabase = createAdminClient();
@@ -89,6 +94,33 @@ export async function refundOrder(orderId: string, pin: string): Promise<Approva
   revalidatePath("/admin/reports");
   revalidatePath("/admin/members");
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
+}
+
+// An order on an owner's monthly tab (the owner rate: lib/register-totals.ts)
+// took no money, so "refunding" it takes it off the tab: off that month's
+// statement and out of Reports, with no money going anywhere. Only another
+// owner's PIN does it (checkOtherOwnerPin), never the tab's own owner's or a
+// manager's, and only with a reason, which the statement shows ("taken off
+// by Nathan: rang the wrong tab").
+async function takeOffOwnerTab(orderId: string, tabOwnerId: string | null, pin: string, reasonIn: string | undefined, requestedBy: string): Promise<ApprovalResult> {
+  const reason = String(reasonIn ?? "").trim().slice(0, 200);
+  if (reason.length < 3) return { ok: false, error: "Say why it's coming off the owner tab." };
+  const approval = await checkOtherOwnerPin(pin, tabOwnerId, "owner-tab-off", requestedBy, orderId);
+  if (!approval.ok) return approval;
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("orders")
+    .update({ status: "refunded", refund_approved_by: approval.approverId, owner_tab_removed_by: approval.approverId, owner_tab_removed_reason: reason, owner_tab_removed_at: new Date().toISOString() })
+    .eq("id", orderId)
+    .eq("status", "completed")
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't take it off the tab. Try again." };
+  if (!data?.length) return { ok: false, error: "That order isn't on the tab anymore (it may have been taken off already)." };
+  // Movie tickets on it give their seats back. No points: an owner-tab order earns none.
+  await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
+  revalidatePath("/admin/reports");
+  revalidatePath("/admin/owner-tab");
+  return { ok: true, approvedBy: approval.approvedBy, defaultPin: false };
 }
 
 // ---------- partial refunds (code review B2) ----------
@@ -123,6 +155,8 @@ export async function refundOrderPart(orderId: string, amountIn: number, reasonI
   if (!order) return { ok: false, error: "Order not found." };
   if (order.status === "refunded") return { ok: false, error: "This order was already refunded in full." };
   if (order.status !== "completed") return { ok: false, error: "Only a paid, completed order can be refunded." };
+  const { data: tab } = await supabase.from("orders").select("payment_method").eq("id", orderId).maybeSingle();
+  if (tab?.payment_method === "owner_tab") return { ok: false, error: "An owner-tab order comes off the tab whole: use Refund all of it, with another owner's PIN." };
 
   const { data: prior, error: priorErr } = await supabase.from("order_partial_refunds").select("amount, tax_amount, card_amount, cash_amount").eq("order_id", orderId);
   if (priorErr) {

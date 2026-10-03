@@ -9,8 +9,8 @@ import { fetchAll } from "./reports";
 // what they've paid against each month's statement. A month is a business
 // month (4 a.m. Central on the 1st to 4 a.m. on the next 1st), like Reports.
 //
-// A month's statement is its owner-tab orders (refunded ones left out),
-// tax included. Payments against it add up, so it can be paid in parts.
+// A month's statement is its owner-tab orders (ones taken off the tab left
+// out), tax included. Payments against it add up, so it can be paid in parts.
 
 export const OWNER_PAYMENT_METHODS = ["card", "cash", "check", "transfer"] as const;
 export type OwnerPaymentMethod = (typeof OWNER_PAYMENT_METHODS)[number];
@@ -30,6 +30,9 @@ export interface OwnerTabOrder {
   at: string;
   date: string; // business date
   refunded: boolean; // taken off the tab
+  // Taken off the tab: by which other owner, and why.
+  removedBy: string | null;
+  removedReason: string | null;
   cashier: string | null;
   lines: OwnerTabLine[];
   subtotal: number; // at the owner rate, before tax
@@ -42,6 +45,7 @@ export interface OwnerTabPayment {
   id: string;
   month: string;
   amount: number;
+  tax: number; // the sales tax inside it
   method: string;
   paidOn: string;
   note: string | null;
@@ -82,6 +86,16 @@ export interface OwnerTabOverview {
   current: Record<string, OwnerTabOrder[]>;
   // Everyone who can be ticked: active staff (not a TV login).
   candidates: { id: string; name: string; role: string; ticked: boolean }[];
+  // Every change to who gets the owner rate, newest first.
+  rateChanges: OwnerRateChange[];
+}
+
+export interface OwnerRateChange {
+  id: string;
+  at: string;
+  person: string;
+  on: boolean;
+  by: string | null;
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -103,6 +117,8 @@ type OrderRow = {
   total: number;
   owner_menu_value: number | null;
   owner_tab_employee_id: string;
+  owner_tab_removed_by: string | null;
+  owner_tab_removed_reason: string | null;
   employee: { name: string } | null;
 };
 type ItemRow = {
@@ -114,7 +130,18 @@ type ItemRow = {
   menu_unit_price: number | null;
   owner_pricing: OwnerPricing | null;
 };
-type PaymentRow = { id: string; owner_id: string; month: string; amount: number; method: string; paid_on: string; note: string | null; recorded_by: string | null; created_at: string };
+type PaymentRow = {
+  id: string;
+  owner_id: string;
+  month: string;
+  amount: number;
+  tax_amount?: number | null;
+  method: string;
+  paid_on: string;
+  note: string | null;
+  recorded_by: string | null;
+  created_at: string;
+};
 
 // The status of a month's statement. This month is still running.
 export function monthStatus(month: string, thisMonth: string, owed: number, paid: number): MonthStatus {
@@ -131,7 +158,9 @@ async function ownerOrders(ownerId?: string): Promise<OrderRow[]> {
   return fetchAll<OrderRow>((from, to) => {
     let q = db
       .from("orders")
-      .select("id, order_number, status, completed_at, subtotal, tax, total, owner_menu_value, owner_tab_employee_id, employee:employees!orders_employee_id_fkey(name)")
+      .select(
+        "id, order_number, status, completed_at, subtotal, tax, total, owner_menu_value, owner_tab_employee_id, owner_tab_removed_by, owner_tab_removed_reason, employee:employees!orders_employee_id_fkey(name)",
+      )
       .eq("payment_method", "owner_tab")
       .in("status", ["completed", "refunded"]);
     if (ownerId) q = q.eq("owner_tab_employee_id", ownerId);
@@ -162,13 +191,15 @@ async function linesFor(orderIds: string[]): Promise<Map<string, OwnerTabLine[]>
   return out;
 }
 
-function toOrder(o: OrderRow, lines: OwnerTabLine[]): OwnerTabOrder {
+function toOrder(o: OrderRow, lines: OwnerTabLine[], names: Map<string, string>): OwnerTabOrder {
   return {
     id: o.id,
     orderNumber: Number(o.order_number),
     at: o.completed_at,
     date: businessDay(new Date(o.completed_at)).date,
     refunded: o.status !== "completed",
+    removedBy: o.owner_tab_removed_by ? (names.get(o.owner_tab_removed_by) ?? null) : null,
+    removedReason: o.owner_tab_removed_reason ?? null,
     cashier: o.employee?.name ?? null,
     lines,
     subtotal: Number(o.subtotal),
@@ -183,6 +214,7 @@ function toPayment(p: PaymentRow, names: Map<string, string>): OwnerTabPayment {
     id: p.id,
     month: p.month,
     amount: Number(p.amount),
+    tax: Number(p.tax_amount ?? 0),
     method: p.method,
     paidOn: p.paid_on,
     note: p.note,
@@ -233,7 +265,7 @@ function monthsFor(orders: OrderRow[], payments: PaymentRow[], thisMonth: string
 export async function getOwnerTabOverview(now = new Date()): Promise<OwnerTabOverview> {
   const db = createAdminClient();
   const thisMonth = businessDay(now).date.slice(0, 7);
-  const emptyOverview: OwnerTabOverview = { ready: false, thisMonth, people: [], current: {}, candidates: [] };
+  const emptyOverview: OwnerTabOverview = { ready: false, thisMonth, people: [], current: {}, candidates: [], rateChanges: [] };
   const { data: staffRows, error: staffErr } = await db.from("employees").select("id, name, role, active, owner_rate").order("name");
   if (staffErr) return emptyOverview;
   const staff = (staffRows ?? []) as EmployeeRow[];
@@ -270,7 +302,16 @@ export async function getOwnerTabOverview(now = new Date()): Promise<OwnerTabOve
   const currentOrders = orders.filter((o) => businessMonth(o.completed_at) === thisMonth);
   const lines = await linesFor(currentOrders.map((o) => o.id)).catch(() => new Map<string, OwnerTabLine[]>());
   const current: Record<string, OwnerTabOrder[]> = {};
-  for (const o of currentOrders) (current[o.owner_tab_employee_id] ??= []).push(toOrder(o, lines.get(o.id) ?? []));
+  for (const o of currentOrders) (current[o.owner_tab_employee_id] ??= []).push(toOrder(o, lines.get(o.id) ?? [], names));
+
+  const { data: changeRows } = await db.from("owner_rate_changes").select("*").order("created_at", { ascending: false }).limit(50);
+  const rateChanges = ((changeRows ?? []) as { id: string; employee_id: string; turned_on: boolean; changed_by: string | null; created_at: string }[]).map((c) => ({
+    id: c.id,
+    at: c.created_at,
+    person: names.get(c.employee_id) ?? "Someone",
+    on: !!c.turned_on,
+    by: c.changed_by ? (names.get(c.changed_by) ?? null) : null,
+  }));
 
   return {
     ready: true,
@@ -278,6 +319,7 @@ export async function getOwnerTabOverview(now = new Date()): Promise<OwnerTabOve
     people,
     current,
     candidates: staff.filter((e) => e.active && e.role !== "display").map((e) => ({ id: e.id, name: e.name, role: e.role, ticked: !!e.owner_rate })),
+    rateChanges,
   };
 }
 
@@ -309,7 +351,7 @@ export async function getOwnerStatement(ownerId: string, month: string, now = ne
     return null;
   }
   const lines = await linesFor(orders.map((o) => o.id));
-  const recorders = [...new Set(payments.map((p) => p.recorded_by).filter((x): x is string => !!x))];
+  const recorders = [...new Set([...payments.map((p) => p.recorded_by), ...orders.map((o) => o.owner_tab_removed_by)].filter((x): x is string => !!x))];
   const { data: people } = recorders.length ? await db.from("employees").select("id, name").in("id", recorders) : { data: [] };
   const names = new Map((people ?? []).map((e) => [e.id as string, firstName(e.name as string)]));
   const month1 = monthsFor(orders, payments, thisMonth).find((m) => m.month === month) ?? {
@@ -327,25 +369,9 @@ export async function getOwnerStatement(ownerId: string, month: string, now = ne
   return {
     person: { id: person.id as string, name: person.name as string, firstName: firstName(person.name as string) },
     month: month1,
-    orders: orders.map((o) => toOrder(o, lines.get(o.id) ?? [])),
+    orders: orders.map((o) => toOrder(o, lines.get(o.id) ?? [], names)),
     payments: payments.map((p) => toPayment(p, names)),
   };
-}
-
-// What's still owed on one owner's month, for recording a payment.
-export async function ownerMonthBalance(ownerId: string, month: string): Promise<{ owed: number; paid: number; balance: number } | null> {
-  const db = createAdminClient();
-  try {
-    const [orders, payments] = await Promise.all([
-      ownerOrders(ownerId),
-      fetchAll<PaymentRow>((from, to) => db.from("owner_tab_payments").select("*").eq("owner_id", ownerId).eq("month", month).order("id").range(from, to)),
-    ]);
-    const owed = cents(orders.filter((o) => o.status === "completed" && businessMonth(o.completed_at) === month).reduce((s, o) => s + Number(o.total), 0));
-    const paid = cents(payments.reduce((s, p) => s + Number(p.amount), 0));
-    return { owed, paid, balance: cents(owed - paid) };
-  } catch {
-    return null;
-  }
 }
 
 // The Today page's line for owners: this month so far, all owners together.

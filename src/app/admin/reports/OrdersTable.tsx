@@ -33,13 +33,15 @@ export default function OrdersTable({ orders, emptyText = "No orders this day." 
         className={`rounded-full border border-[var(--border)] hover:border-[var(--foreground)] ${big ? "px-3 py-1.5 text-sm" : "px-2.5 py-0.5 text-xs"}`}
         onClick={() => {
           setDone(null);
-          setChoosing(o);
+          // An owner-tab order comes off the tab whole: no part refunds.
+          if (o.ownerTab) setFull(o);
+          else setChoosing(o);
         }}
       >
-        Refund
+        {o.ownerTab ? "Take off tab" : "Refund"}
       </button>
     ) : (
-      <span className="text-xs capitalize">{o.status}</span>
+      <span className="text-xs capitalize">{o.ownerTab && o.status === "refunded" ? "taken off tab" : o.status}</span>
     );
 
   return (
@@ -131,7 +133,24 @@ export default function OrdersTable({ orders, emptyText = "No orders this day." 
         />
       )}
 
-      {full && (
+      {full && full.ownerTab && (
+        // Off an owner's tab: another owner's PIN, and why. No money moves.
+        <ManagerPinModal
+          title="Another owner's PIN"
+          description={`Take order #${full.orderNumber} (${money(full.total)}) off ${full.ownerTab}'s owner tab? An owner other than ${full.ownerTab} approves it, and the statement shows who and why.`}
+          reasonLabel="Why it's coming off the tab"
+          onCancel={() => setFull(null)}
+          onSubmit={async (pin, reason) => {
+            const r = await refundOrder(full.id, pin, reason);
+            if (!r.ok) throw new Error(r.error); // shown in the PIN box
+            setDone(`Order #${full.orderNumber} is off ${full.ownerTab}'s owner tab. ${approvalText(r)}`);
+            setFull(null);
+            router.refresh();
+          }}
+        />
+      )}
+
+      {full && !full.ownerTab && (
         <ManagerPinModal
           description={`Manager approval is required to refund all of order #${full.orderNumber} (${money(full.total)}${full.refunded > 0 ? `, less the ${money(full.refunded)} already refunded` : ""}).`}
           onCancel={() => setFull(null)}
@@ -174,17 +193,10 @@ function RefundChooser({ order, onCancel, onFull, onPart }: { order: DayOrder; o
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="card w-full max-w-sm shadow-2xl">
         <h3 className="text-lg font-semibold">Refund order #{order.orderNumber}</h3>
-        {order.ownerTab ? (
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {money(order.total)} on {order.ownerTab}&apos;s owner tab. Refunding it takes it off the tab (and the statement, if it&apos;s already paid, shows the
-            credit). No money changes hands.
-          </p>
-        ) : (
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
-            {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
-          </p>
-        )}
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
+          {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
+        </p>
 
         <button className="btn-secondary mt-4 w-full" onClick={onFull}>
           Refund all of it{order.refunded > 0 ? " (the rest)" : ""}

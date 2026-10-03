@@ -135,7 +135,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                           <span className={`font-semibold tabular-nums ${o.status !== "completed" ? "line-through opacity-60" : ""}`}>{money(o.total)}</span>
                           {o.status !== "completed" && (
                             <span className="block text-[10px] font-bold uppercase" style={{ color: "var(--danger-text)" }}>
-                              {o.status}
+                              {o.ownerTab && o.status === "refunded" ? "off the tab" : o.status}
                             </span>
                           )}
                         </span>
@@ -169,7 +169,9 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       </p>
                     )}
                     {selected.status !== "completed" && (
-                      <p className="notice notice-warn mt-2 !p-2 text-sm">This order was {selected.status}.</p>
+                      <p className="notice notice-warn mt-2 !p-2 text-sm">
+                        {selected.ownerTab && selected.status === "refunded" ? `This order was taken off ${selected.ownerTab}'s owner tab.` : `This order was ${selected.status}.`}
+                      </p>
                     )}
 
                     <table className="mt-4 w-full text-sm tabular-nums">
@@ -226,7 +228,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       {selected.status === "completed" && (
                         <span className="inline-flex items-center">
                           <button className="btn-secondary !px-4" style={{ color: "var(--danger-text)" }} disabled={!!busy} onClick={() => setRefunding(true)}>
-                            Refund…
+                            {selected.ownerTab ? "Take off the tab…" : "Refund…"}
                           </button>
                           <InfoTip topic="refunds" />
                         </span>
@@ -259,9 +261,25 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
         </div>
       )}
 
-      {refunding && selected && (
+      {refunding && selected && selected.ownerTab && (
+        // On an owner's tab: another owner's PIN, and why. No money moves.
         <ManagerPinModal
-          description={`Refund order #${selected.orderNumber} (${money(selected.total)})? ${selected.ownerTab ? `It comes off ${selected.ownerTab}'s owner tab; no money changes hands.` : ""}${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
+          title="Another owner's PIN"
+          description={`Take order #${selected.orderNumber} (${money(selected.total)}) off ${selected.ownerTab}'s owner tab? An owner other than ${selected.ownerTab} approves it. No money changes hands.`}
+          reasonLabel="Why it's coming off the tab"
+          onCancel={() => setRefunding(false)}
+          onSubmit={async (pin, reason) => {
+            const r = await refundRegisterOrder(selected.id, pin, reason);
+            if (!r.ok) throw new Error(r.error);
+            setRefunding(false);
+            setNote({ tone: "ok", text: `Order #${selected.orderNumber} is off ${selected.ownerTab}'s owner tab. ${approvalText(r)}` });
+            await load(selected.id);
+          }}
+        />
+      )}
+      {refunding && selected && !selected.ownerTab && (
+        <ManagerPinModal
+          description={`Refund order #${selected.orderNumber} (${money(selected.total)})? ${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
           onCancel={() => setRefunding(false)}
           onSubmit={async (pin) => {
             const r = await refundRegisterOrder(selected.id, pin);

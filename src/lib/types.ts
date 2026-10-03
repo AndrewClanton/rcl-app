@@ -149,6 +149,10 @@ export interface Recipe {
   glassware: string | null;
   garnish: string | null;
   ingredients: RecipeIngredientLine[];
+  // A manager ticked "Recipe cost is complete" (Menu, Recipe): every
+  // ingredient is on it, so the owner rate can charge it at cost. False
+  // until then, and again when an ingredient is added or taken off.
+  cost_complete?: boolean;
 }
 
 export interface RoomAddon {

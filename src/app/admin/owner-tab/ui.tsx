@@ -1,4 +1,4 @@
-import type { MonthStatus, OwnerMonth } from "@/lib/data/owner-tab";
+import type { MonthStatus, OwnerMonth, OwnerTabOrder } from "@/lib/data/owner-tab";
 
 // Small pieces the Owner tab page and its statements share.
 
@@ -26,4 +26,16 @@ export function StatusPill({ m }: { m: Pick<OwnerMonth, "status" | "balance"> })
         ? "border-[var(--danger-text)] text-[var(--danger-text)]"
         : "border-[var(--border)] text-[var(--muted)]";
   return <span className={`inline-block whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-semibold ${tone}`}>{text[m.status]}</span>;
+}
+
+// An order taken off the tab: by which owner, and why. An inline block, so
+// the struck-out row's line doesn't run through it.
+export function RemovedNote({ order, suffix = "" }: { order: Pick<OwnerTabOrder, "removedBy" | "removedReason">; suffix?: string }) {
+  return (
+    <span className="inline-block whitespace-normal text-xs text-[var(--danger-text)]">
+      Taken off{order.removedBy ? ` by ${order.removedBy}` : ""}
+      {order.removedReason ? `: ${order.removedReason}` : ""}
+      {suffix}
+    </span>
+  );
 }
