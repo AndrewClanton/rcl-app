@@ -359,7 +359,7 @@ export const HELP_TOPICS = {
     title: "Scheduling a screening",
     area: "Showtimes, events and booths",
     body:
-      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
+      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Duplicate on a showing copies it here for another date. Repeat adds the same showing at several start times on the days you pick across a date range, listed first so you can check them. Adding, moving or removing a showing takes a manager. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
     trainingSlug: "what-we-can-post",
   },
   "house-events": {
