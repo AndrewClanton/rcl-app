@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type Ref, type RefObject, type SetStateAction } from "react";
+import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Movie, Room, Screening } from "@/lib/types";
@@ -8,6 +9,7 @@ import type { ScreeningTicket, TicketCount } from "@/lib/data/screenings";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import type { PosterOption } from "@/lib/tmdb-posters";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import ConfirmModal from "@/components/ConfirmModal";
 import InfoTip from "@/components/help/InfoTip";
 import { approvalText } from "@/lib/pin-rules";
 import { refundBooking } from "../reports/actions";
@@ -18,6 +20,7 @@ import {
   setMoviePoster,
   addMovieManually,
   addScreening,
+  addScreenings,
   updateScreening,
   deleteScreening,
   listScreeningTickets,
@@ -49,23 +52,55 @@ function centralParts(iso: string): { date: string; time: string } {
 
 const NO_TICKETS: TicketCount = { sold: 0, bookings: 0, paying: 0 };
 
+// `canEdit`: a manager or up. Anyone else gets the movies, the schedule and
+// the ticket lists, without the scheduler or Duplicate, Edit and Remove.
 export default function ScreeningManager({
   movies,
   rooms,
   screenings,
   tickets,
+  canEdit,
 }: {
   movies: Movie[];
   rooms: Room[];
   screenings: Screening[];
   tickets: Record<string, TicketCount>;
+  canEdit: boolean;
 }) {
+  const [draft, setDraft] = useState<Draft>(() => blankDraft(rooms));
+  const schedulerRef = useRef<HTMLElement>(null);
+  const dateRef = useRef<HTMLInputElement>(null);
+
+  // Duplicate on a showing: its movie, room, time, price and capacity go
+  // into the scheduler, and the date is left for the person to pick.
+  function duplicate(s: Screening) {
+    flushSync(() =>
+      setDraft({
+        form: { movieId: s.movie_id, roomId: s.room_id, date: "", time: centralParts(s.starts_at).time, price: String(s.ticket_price), capacity: String(s.capacity) },
+        repeat: null,
+        note: { tone: "info", text: `Copied from ${s.movie.title} (${when(s.starts_at)}). Pick a date for the new showing, or use Repeat to add several.` },
+      }),
+    );
+    schedulerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    dateRef.current?.focus({ preventScroll: true });
+  }
+
   return (
     <div className="space-y-8">
       <MovieImporter movies={movies} />
       <MovieLibrary movies={movies} />
-      <ScreeningScheduler movies={movies} rooms={rooms} />
-      <UpcomingScreenings screenings={screenings} tickets={tickets} movies={movies} rooms={rooms} />
+      {canEdit && (
+        <ScreeningScheduler
+          movies={movies}
+          rooms={rooms}
+          screenings={screenings}
+          draft={draft}
+          setDraft={setDraft}
+          sectionRef={schedulerRef}
+          dateRef={dateRef}
+        />
+      )}
+      <UpcomingScreenings screenings={screenings} tickets={tickets} movies={movies} rooms={rooms} canEdit={canEdit} onDuplicate={duplicate} />
     </div>
   );
 }
@@ -318,8 +353,11 @@ function isOutdoorRoom(room: Room | undefined) {
   return !!room?.name.toLowerCase().includes("outdoor");
 }
 
-const INPUT = "rounded border border-[var(--border)] px-2 py-1 text-sm";
+const INPUT = "min-h-11 rounded-lg border border-[var(--border)] px-3 text-base";
 const LABEL = "mb-1 block text-xs text-[var(--muted)]";
+const BUTTON = "min-h-11 rounded-lg border border-[var(--border)] px-3 text-base hover:border-[var(--foreground)] disabled:opacity-40";
+const ROW_BUTTON = "min-h-10 rounded-lg border border-[var(--border)] px-3 text-base hover:border-[var(--foreground)] disabled:opacity-40";
+const CHIP = "chip inline-flex min-h-10 items-center gap-1.5 !px-4 !text-base";
 
 interface FormState {
   movieId: string;
@@ -337,19 +375,89 @@ function toFields(f: FormState): ScreeningFields | null {
   return { movie_id: f.movieId, room_id: f.roomId, date: f.date, time: f.time, ticket_price: price, capacity };
 }
 
+// Repeat: the same showing at each start time, on each chosen weekday, from
+// the first date to the last. Dates and times are Central wall-clock, as
+// typed; the server turns each one into an instant.
+interface RepeatState {
+  from: string; // YYYY-MM-DD
+  to: string;
+  days: number[]; // 0 = Sunday
+  times: string[]; // HH:MM, earliest first
+  leftOut: string[]; // "YYYY-MM-DD HH:MM" taken off the list by hand
+}
+
+// What's in the scheduler. Kept up here so Duplicate (on a row further
+// down) can fill it in.
+interface Draft {
+  form: FormState;
+  repeat: RepeatState | null; // null: one showing
+  note: { tone: "info" | "success"; text: string } | null;
+}
+
+function blankDraft(rooms: Room[]): Draft {
+  const room = rooms.find((r) => r.is_screening_room);
+  return {
+    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? "") },
+    repeat: null,
+    note: null,
+  };
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// addScreenings refuses more than this in one save too.
+const MOST_AT_ONCE = 200;
+
+// "2026-10-03" -> "Sat, Oct 3". A calendar date, so no time zone applies.
+function dayLabel(date: string) {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
+}
+
+// "19:00" -> "7:00 PM".
+function timeLabel(time: string) {
+  const [h, m] = time.split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// The dates from `from` to `to` that fall on one of `days`. Null when the
+// range is over a year (a mistyped year, most likely).
+function repeatDates(from: string, to: string, days: number[]): string[] | null {
+  const start = Date.parse(`${from}T12:00:00Z`);
+  const end = Date.parse(`${to}T12:00:00Z`);
+  if (!(end >= start)) return [];
+  if (end - start > 366 * 86_400_000) return null;
+  const out: string[] = [];
+  for (let t = start; t <= end; t += 86_400_000) {
+    const d = new Date(t);
+    if (days.includes(d.getUTCDay())) out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
 // The movie/room/date/time/price/capacity boxes, shared by "Schedule a
 // screening" and Edit. Picking a room fills in its capacity (and $0 for the
-// outdoor screen, which is free).
+// outdoor screen, which is free). Repeat has its own dates and times, so it
+// leaves out the date and time boxes (`withDateTime` false).
 function ScreeningFieldsForm({
   movies,
   screeningRooms,
   value,
   onChange,
+  withDateTime = true,
+  dateRef,
 }: {
   movies: Movie[];
   screeningRooms: Room[];
   value: FormState;
   onChange: (next: FormState) => void;
+  withDateTime?: boolean;
+  dateRef?: Ref<HTMLInputElement>;
 }) {
   const outdoor = isOutdoorRoom(screeningRooms.find((r) => r.id === value.roomId));
   const set = (patch: Partial<FormState>) => onChange({ ...value, ...patch });
@@ -383,14 +491,18 @@ function ScreeningFieldsForm({
           ))}
         </select>
       </div>
-      <div>
-        <label className={LABEL}>Date</label>
-        <input type="date" className={INPUT} value={value.date} onChange={(e) => set({ date: e.target.value })} />
-      </div>
-      <div>
-        <label className={LABEL}>Time (Central)</label>
-        <input type="time" className={INPUT} value={value.time} onChange={(e) => set({ time: e.target.value })} />
-      </div>
+      {withDateTime && (
+        <>
+          <div>
+            <label className={LABEL}>Date</label>
+            <input ref={dateRef} type="date" className={INPUT} value={value.date} onChange={(e) => set({ date: e.target.value })} />
+          </div>
+          <div>
+            <label className={LABEL}>Time (Central)</label>
+            <input type="time" className={INPUT} value={value.time} onChange={(e) => set({ time: e.target.value })} />
+          </div>
+        </>
+      )}
       <div>
         <label className={LABEL}>Ticket price</label>
         <input
@@ -398,7 +510,7 @@ function ScreeningFieldsForm({
           step="0.01"
           min="0"
           disabled={outdoor}
-          className={`w-24 ${INPUT} disabled:opacity-50`}
+          className={`w-28 ${INPUT} disabled:opacity-50`}
           value={value.price}
           onChange={(e) => set({ price: e.target.value })}
         />
@@ -406,68 +518,275 @@ function ScreeningFieldsForm({
       </div>
       <div>
         <label className={LABEL}>Capacity</label>
-        <input type="number" min="1" className={`w-24 ${INPUT}`} value={value.capacity} onChange={(e) => set({ capacity: e.target.value })} />
+        <input type="number" min="1" className={`w-28 ${INPUT}`} value={value.capacity} onChange={(e) => set({ capacity: e.target.value })} />
       </div>
     </>
   );
 }
 
-function ScreeningScheduler({ movies, rooms }: { movies: Movie[]; rooms: Room[] }) {
-  const [pending, run] = useRefreshingAction();
-  const screeningRooms = rooms.filter((r) => r.is_screening_room);
-  const initialRoom = screeningRooms[0];
-  const [form, setForm] = useState<FormState>({
-    movieId: "",
-    roomId: initialRoom?.id ?? "",
-    date: "",
-    time: "",
-    price: isOutdoorRoom(initialRoom) ? "0" : "8",
-    capacity: String(initialRoom?.capacity ?? ""),
-  });
+function ScreeningScheduler({
+  movies,
+  rooms,
+  screenings,
+  draft,
+  setDraft,
+  sectionRef,
+  dateRef,
+}: {
+  movies: Movie[];
+  rooms: Room[];
+  screenings: Screening[];
+  draft: Draft;
+  setDraft: Dispatch<SetStateAction<Draft>>;
+  sectionRef: RefObject<HTMLElement | null>;
+  dateRef: RefObject<HTMLInputElement | null>;
+}) {
+  const [pending, run, error, clearError] = useRefreshingAction();
+  const [newTime, setNewTime] = useState("");
+  const { form, repeat, note } = draft;
+  const screeningRooms = rooms.filter((r) => r.is_screening_room || r.id === form.roomId);
+  const movieTitle = movies.find((m) => m.id === form.movieId)?.title ?? "the movie";
   const fields = toFields(form);
 
+  const setForm = (next: FormState) => setDraft((d) => ({ ...d, form: next }));
+  const setRepeat = (patch: Partial<RepeatState>) => setDraft((d) => (d.repeat ? { ...d, repeat: { ...d.repeat, ...patch } } : d));
+
+  function startRepeat() {
+    setDraft((d) =>
+      d.repeat
+        ? d
+        : {
+            ...d,
+            repeat: { from: d.form.date, to: d.form.date ? addDays(d.form.date, 6) : "", days: [0, 1, 2, 3, 4, 5, 6], times: d.form.time ? [d.form.time] : [], leftOut: [] },
+          },
+    );
+  }
+
+  function addTime() {
+    const t = newTime.slice(0, 5);
+    setNewTime("");
+    if (!repeat || !/^\d{2}:\d{2}$/.test(t) || repeat.times.includes(t)) return;
+    setRepeat({ times: [...repeat.times, t].sort() });
+  }
+
+  // The showings Repeat would add. One the room already has at that time
+  // is listed but left out (the server refuses it too).
+  const taken = new Set(
+    screenings
+      .filter((s) => s.room_id === form.roomId)
+      .map((s) => {
+        const p = centralParts(s.starts_at);
+        return `${p.date} ${p.time}`;
+      }),
+  );
+  const dates = repeat ? repeatDates(repeat.from, repeat.to, repeat.days) : [];
+  const preview = repeat ? (dates ?? []).flatMap((date) => repeat.times.map((time) => ({ date, time, key: `${date} ${time}` }))) : [];
+  const toAdd = preview.filter((r) => !taken.has(r.key) && !repeat?.leftOut.includes(r.key));
+  const list = toAdd.flatMap((r) => toFields({ ...form, date: r.date, time: r.time }) ?? []);
+  const tooMany = toAdd.length > MOST_AT_ONCE;
+  const skipped = preview.length - toAdd.length;
+
+  function saveOne() {
+    if (!fields) return;
+    run(
+      async () => {
+        const r = await addScreening(fields);
+        // Clear the date and time only once it saved, so a failed save can be retried.
+        if (r.ok) {
+          setDraft((d) => ({
+            ...d,
+            form: { ...d.form, date: "", time: "" },
+            note: { tone: "success", text: `Scheduled ${movieTitle} for ${dayLabel(fields.date)} at ${timeLabel(fields.time)}.` },
+          }));
+        }
+        return r;
+      },
+      { quiet: true },
+    );
+  }
+
+  function saveRepeat() {
+    if (list.length === 0 || list.length !== toAdd.length || tooMany) return;
+    run(
+      async () => {
+        const r = await addScreenings(list);
+        if (r.ok) {
+          setDraft((d) => ({
+            ...d,
+            repeat: d.repeat && { ...d.repeat, from: "", to: "", leftOut: [] },
+            note: { tone: "success", text: `Added ${r.added} showing${r.added === 1 ? "" : "s"} of ${movieTitle}.` },
+          }));
+        }
+        return r;
+      },
+      { quiet: true },
+    );
+  }
+
   return (
-    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
+    <section ref={sectionRef} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">
         Schedule a screening
         <InfoTip topic="screenings-schedule" />
       </h2>
-      <div className="flex flex-wrap items-end gap-3">
-        <ScreeningFieldsForm movies={movies} screeningRooms={screeningRooms} value={form} onChange={setForm} />
-        <button
-          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
-          disabled={pending || !fields}
-          onClick={() => {
-            if (!fields) return;
-            run(async () => {
-              const r = await addScreening(fields);
-              // Clear the date and time only once it saved, so a failed save can be retried.
-              if (r.ok) setForm((f) => ({ ...f, date: "", time: "" }));
-              return r;
-            });
-          }}
-        >
-          Schedule screening
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button className={`${CHIP} ${!repeat ? "chip-selected" : ""}`} aria-pressed={!repeat} onClick={() => setDraft((d) => ({ ...d, repeat: null }))}>
+          One showing
+        </button>
+        <button className={`${CHIP} ${repeat ? "chip-selected" : ""}`} aria-pressed={!!repeat} onClick={startRepeat}>
+          Repeat
         </button>
       </div>
+      {note && <p className={note.tone === "success" ? "notice notice-success mb-3 !p-2.5 text-sm" : "mb-3 text-sm text-[var(--muted)]"}>{note.text}</p>}
+
+      <div className="flex flex-wrap items-end gap-3">
+        <ScreeningFieldsForm movies={movies} screeningRooms={screeningRooms} value={form} onChange={setForm} withDateTime={!repeat} dateRef={dateRef} />
+        {!repeat && (
+          <button className="btn-primary min-h-11 text-base" disabled={pending || !fields} onClick={saveOne}>
+            {pending ? "Saving…" : "Schedule screening"}
+          </button>
+        )}
+      </div>
+
+      {repeat && (
+        <div className="mt-4 space-y-4 rounded-lg border border-dashed border-[var(--border)] p-4">
+          <p className="text-sm text-[var(--muted)]">
+            Every start time below, on each chosen day, from the first date to the last. Check the list, leave out any you don&apos;t want, then add them all at once.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className={LABEL}>First date</label>
+              <input type="date" className={INPUT} value={repeat.from} onChange={(e) => setRepeat({ from: e.target.value })} />
+            </div>
+            <div>
+              <label className={LABEL}>Last date</label>
+              <input type="date" className={INPUT} min={repeat.from || undefined} value={repeat.to} onChange={(e) => setRepeat({ to: e.target.value })} />
+            </div>
+          </div>
+          <div>
+            <div className={LABEL}>On these days</div>
+            <div className="flex flex-wrap gap-2">
+              {WEEKDAYS.map((name, i) => {
+                const on = repeat.days.includes(i);
+                return (
+                  <button
+                    key={name}
+                    className={`${CHIP} ${on ? "chip-selected" : ""}`}
+                    aria-pressed={on}
+                    onClick={() => setRepeat({ days: on ? repeat.days.filter((d) => d !== i) : [...repeat.days, i] })}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className={LABEL}>Start times (Central)</div>
+            <div className="flex flex-wrap items-center gap-2">
+              {repeat.times.map((t) => (
+                <button key={t} className={`${CHIP} chip-selected`} title="Take this time off the list" onClick={() => setRepeat({ times: repeat.times.filter((x) => x !== t) })}>
+                  {timeLabel(t)}
+                  <span aria-hidden="true">×</span>
+                  <span className="sr-only">(remove)</span>
+                </button>
+              ))}
+              <input
+                type="time"
+                aria-label="Another start time"
+                className={INPUT}
+                value={newTime}
+                onChange={(e) => setNewTime(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && addTime()}
+              />
+              <button className={BUTTON} disabled={!newTime} onClick={addTime}>
+                Add time
+              </button>
+            </div>
+          </div>
+
+          {dates === null ? (
+            <p className="notice notice-warn !p-2.5 text-sm">That&apos;s more than a year. Check the first and last dates.</p>
+          ) : repeat.from && repeat.to && repeat.to < repeat.from ? (
+            <p className="notice notice-warn !p-2.5 text-sm">The last date is before the first date.</p>
+          ) : preview.length === 0 ? (
+            <p className="text-sm text-[var(--muted)]">Pick the first and last date, at least one day and at least one start time, and the showings to add are listed here.</p>
+          ) : tooMany ? (
+            <p className="notice notice-warn !p-2.5 text-sm">
+              That&apos;s {toAdd.length} showings. Add at most {MOST_AT_ONCE} at a time: pick a shorter date range or fewer times.
+            </p>
+          ) : (
+            <div>
+              <div className="mb-2 text-sm font-medium">
+                {toAdd.length} showing{toAdd.length === 1 ? "" : "s"} of {movieTitle} to add
+                {skipped > 0 && <span className="font-normal text-[var(--muted)]"> ({skipped} left out)</span>}
+              </div>
+              <ul className="max-h-96 divide-y divide-[var(--border)] overflow-y-auto rounded-lg border border-[var(--border)]">
+                {preview.map((r) => {
+                  const isTaken = taken.has(r.key);
+                  const out = repeat.leftOut.includes(r.key);
+                  return (
+                    <li key={r.key} className="flex min-h-12 items-center gap-3 px-3 py-1">
+                      <span className={`min-w-0 flex-1 text-base tabular-nums ${isTaken || out ? "text-[var(--muted)] line-through" : ""}`}>
+                        {dayLabel(r.date)} · {timeLabel(r.time)}
+                      </span>
+                      {isTaken ? (
+                        <span className="text-sm text-[var(--muted)]">Already on the schedule in this room</span>
+                      ) : (
+                        <button
+                          className={ROW_BUTTON}
+                          onClick={() => setRepeat({ leftOut: out ? repeat.leftOut.filter((k) => k !== r.key) : [...repeat.leftOut, r.key] })}
+                        >
+                          {out ? "Put back" : "Leave out"}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          <button className="btn-primary min-h-11 text-base" disabled={pending || list.length === 0 || list.length !== toAdd.length || tooMany} onClick={saveRepeat}>
+            {pending ? "Adding…" : `Add ${toAdd.length} showing${toAdd.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="notice notice-warn mt-3 flex items-start gap-2 !p-2.5 text-sm">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button className="text-xs text-[var(--muted)] underline" onClick={clearError}>
+            Close
+          </button>
+        </div>
+      )}
       {screeningRooms.length === 0 && <div className="mt-2 text-sm text-[var(--warn-text)]">No rooms are marked as screening rooms yet.</div>}
     </section>
   );
 }
 
-const SCREENING_ROW_GRID = "grid grid-cols-[1.6fr_1.3fr_1fr_60px_84px_170px] items-center gap-3";
+// Movie, when, room, price, seats, then the buttons: Tickets, Duplicate,
+// Edit and Remove for a manager, Tickets for anyone else.
+const ROW_GRID_EDIT = "grid grid-cols-[1.6fr_1.3fr_1fr_60px_160px_380px] items-center gap-3";
+const ROW_GRID_VIEW = "grid grid-cols-[1.6fr_1.3fr_1fr_60px_160px_100px] items-center gap-3";
 
 function UpcomingScreenings({
   screenings,
   tickets,
   movies,
   rooms,
+  canEdit,
+  onDuplicate,
 }: {
   screenings: Screening[];
   tickets: Record<string, TicketCount>;
   movies: Movie[];
   rooms: Room[];
+  canEdit: boolean;
+  onDuplicate: (s: Screening) => void;
 }) {
+  const grid = canEdit ? ROW_GRID_EDIT : ROW_GRID_VIEW;
   return (
     <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 ">
       <h2 className="mb-3 text-lg font-semibold">Upcoming screenings</h2>
@@ -475,18 +794,27 @@ function UpcomingScreenings({
         <div className="text-sm text-[var(--muted)]">No screenings scheduled yet.</div>
       ) : (
         <div className="overflow-x-auto">
-          <div className="min-w-[700px] text-sm">
-            <div className={`${SCREENING_ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
+          <div className={`${canEdit ? "min-w-[1080px]" : "min-w-[760px]"} text-sm`}>
+            <div className={`${grid} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
               <span>Movie</span>
               <span>When (Central)</span>
               <span>Room</span>
               <span className="text-right">Price</span>
-              <span className="text-right">Sold / cap</span>
+              <span className="text-right">Seats left · sold/cap</span>
               <span />
             </div>
             <div className="divide-y divide-[var(--border)]">
               {screenings.map((s) => (
-                <ScreeningRow key={s.id} screening={s} count={tickets[s.id] ?? NO_TICKETS} movies={movies} rooms={rooms} />
+                <ScreeningRow
+                  key={s.id}
+                  screening={s}
+                  count={tickets[s.id] ?? NO_TICKETS}
+                  movies={movies}
+                  rooms={rooms}
+                  grid={grid}
+                  canEdit={canEdit}
+                  onDuplicate={onDuplicate}
+                />
               ))}
             </div>
           </div>
@@ -496,15 +824,34 @@ function UpcomingScreenings({
   );
 }
 
-function ScreeningRow({ screening: s, count, movies, rooms }: { screening: Screening; count: TicketCount; movies: Movie[]; rooms: Room[] }) {
+function ScreeningRow({
+  screening: s,
+  count,
+  movies,
+  rooms,
+  grid,
+  canEdit,
+  onDuplicate,
+}: {
+  screening: Screening;
+  count: TicketCount;
+  movies: Movie[];
+  rooms: Room[];
+  grid: string;
+  canEdit: boolean;
+  onDuplicate: (s: Screening) => void;
+}) {
   const [pending, run, error, clearError] = useRefreshingAction();
   const [editing, setEditing] = useState(false);
   const [ticketsOpen, setTicketsOpen] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const full = count.sold >= s.capacity;
+  // Seats someone could still buy: a checkout in progress holds its seats.
+  const left = Math.max(0, s.capacity - count.sold - count.paying);
 
   return (
     <div className="py-2">
-      <div className={SCREENING_ROW_GRID}>
+      <div className={grid}>
         <span className="truncate font-medium" title={s.movie.title}>
           {s.movie.title}
         </span>
@@ -514,36 +861,45 @@ function ScreeningRow({ screening: s, count, movies, rooms }: { screening: Scree
         </span>
         <span className="text-right text-[var(--muted)]">{s.ticket_price === 0 ? "Free" : money(s.ticket_price)}</span>
         <button
-          className={`text-right tabular-nums hover:underline ${count.sold > 0 ? "font-semibold" : "text-[var(--muted)]"} ${full ? "text-[var(--accent)]" : ""}`}
-          title={`${count.sold} sold${count.paying ? `, ${count.paying} being paid for right now` : ""}. Click for the list.`}
+          className="min-h-10 text-right tabular-nums hover:underline"
+          title={`${left} of ${s.capacity} seats left: ${count.sold} sold${count.paying ? `, ${count.paying} being paid for right now` : ""}. Click for the list.`}
           onClick={() => setTicketsOpen((v) => !v)}
         >
-          {count.sold} / {s.capacity}
-          {count.paying > 0 && <span className="text-xs font-normal text-[var(--muted)]"> +{count.paying}</span>}
+          <span className={`font-semibold ${left === 0 ? "text-[var(--accent)]" : ""}`}>{full ? "Sold out" : `${left} left`}</span>
+          <span className="text-[var(--muted)]">
+            {" "}
+            · {count.sold}/{s.capacity}
+          </span>
+          {count.paying > 0 && <span className="text-xs text-[var(--muted)]"> +{count.paying}</span>}
         </button>
-        <span className="flex justify-end gap-1.5">
-          <button className="rounded border border-[var(--border)] px-2 py-1 text-xs" onClick={() => setTicketsOpen((v) => !v)}>
+        <span className="flex flex-wrap justify-end gap-1.5">
+          <button className={ROW_BUTTON} onClick={() => setTicketsOpen((v) => !v)}>
             Tickets
           </button>
-          <button
-            className="rounded border border-[var(--border)] px-2 py-1 text-xs"
-            onClick={() => {
-              clearError();
-              setEditing((v) => !v);
-            }}
-          >
-            Edit
-          </button>
-          <button
-            className="rounded border border-[var(--danger-text)] px-2 py-1 text-xs text-[var(--danger-text)] disabled:opacity-40"
-            disabled={pending}
-            title={count.sold > 0 ? "Tickets are sold for this showing. Refund them first, or use Edit to move it." : undefined}
-            onClick={() => {
-              if (confirm(`Remove this screening of "${s.movie.title}"?`)) run(() => deleteScreening(s.id), { quiet: true });
-            }}
-          >
-            Remove
-          </button>
+          {canEdit && (
+            <>
+              <button className={ROW_BUTTON} title="Put this showing's movie, room, time and price in the scheduler above, to add it on another date" onClick={() => onDuplicate(s)}>
+                Duplicate
+              </button>
+              <button
+                className={ROW_BUTTON}
+                onClick={() => {
+                  clearError();
+                  setEditing((v) => !v);
+                }}
+              >
+                Edit
+              </button>
+              <button
+                className="min-h-10 rounded-lg border border-[var(--danger-text)] px-3 text-base text-[var(--danger-text)] disabled:opacity-40"
+                disabled={pending}
+                title={count.sold > 0 ? "Tickets are sold for this showing. Refund them first, or use Edit to move it." : undefined}
+                onClick={() => setConfirmRemove(true)}
+              >
+                Remove
+              </button>
+            </>
+          )}
         </span>
       </div>
       {error && (
@@ -554,8 +910,21 @@ function ScreeningRow({ screening: s, count, movies, rooms }: { screening: Scree
           </button>
         </div>
       )}
-      {editing && <EditScreening screening={s} count={count} movies={movies} rooms={rooms} onDone={() => setEditing(false)} />}
+      {editing && canEdit && <EditScreening screening={s} count={count} movies={movies} rooms={rooms} onDone={() => setEditing(false)} />}
       {ticketsOpen && <TicketsPanel screening={s} />}
+      {confirmRemove && (
+        <ConfirmModal
+          title="Remove this screening?"
+          description={`${s.movie.title}, ${when(s.starts_at)}, ${s.room.name}.`}
+          confirmLabel="Remove"
+          danger
+          onCancel={() => setConfirmRemove(false)}
+          onConfirm={() => {
+            setConfirmRemove(false);
+            run(() => deleteScreening(s.id), { quiet: true });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -587,10 +956,25 @@ function EditScreening({
     price: String(s.ticket_price),
     capacity: String(s.capacity),
   });
+  // The server's question when tickets are sold (see updateScreening), and
+  // the changes it's about.
+  const [asking, setAsking] = useState<{ question: string; fields: ScreeningFields } | null>(null);
   const fields = toFields(form);
   const held = count.sold + count.paying;
   const timeChanged = form.date !== start.date || form.time !== start.time;
   const priceChanged = fields !== null && fields.ticket_price !== Number(s.ticket_price);
+
+  function save(changes: ScreeningFields, confirmed = false) {
+    run(async () => {
+      const r = await updateScreening(s.id, changes, confirmed);
+      if (!r.ok && "confirm" in r) {
+        setAsking({ question: r.confirm, fields: changes });
+        return;
+      }
+      if (r.ok) onDone();
+      return r;
+    });
+  }
 
   return (
     <div className="mt-2 rounded-lg border border-dashed border-[var(--border)] p-3">
@@ -606,28 +990,26 @@ function EditScreening({
         <p className="mt-2 text-xs text-[var(--muted)]">Tickets already sold keep the price they were bought at. The new price is for tickets sold from now on.</p>
       )}
       <div className="mt-3 flex gap-2">
-        <button
-          className="btn-primary !px-3 !py-1 text-sm"
-          disabled={pending || !fields}
-          onClick={() => {
-            if (!fields) return;
-            run(async () => {
-              let r = await updateScreening(s.id, fields);
-              if (!r.ok && "confirm" in r) {
-                if (!window.confirm(r.confirm)) return;
-                r = await updateScreening(s.id, fields, true);
-              }
-              if (r.ok) onDone();
-              return r;
-            });
-          }}
-        >
+        <button className="btn-primary min-h-11 text-base" disabled={pending || !fields} onClick={() => fields && save(fields)}>
           {pending ? "Saving…" : "Save changes"}
         </button>
-        <button className="text-sm text-[var(--muted)] hover:underline" onClick={onDone}>
+        <button className="min-h-11 px-2 text-base text-[var(--muted)] hover:underline" onClick={onDone}>
           Cancel
         </button>
       </div>
+      {asking && (
+        <ConfirmModal
+          title="Tickets are already sold"
+          description={asking.question}
+          confirmLabel="Save anyway"
+          onCancel={() => setAsking(null)}
+          onConfirm={() => {
+            const changes = asking.fields;
+            setAsking(null);
+            save(changes, true);
+          }}
+        />
+      )}
     </div>
   );
 }

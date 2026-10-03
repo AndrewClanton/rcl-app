@@ -1,4 +1,6 @@
 import { getAllBooths, getUpcomingBoothReservations, getBoothReservationsForMonth } from "@/lib/data/booths";
+import { getStaffSession } from "@/lib/auth";
+import { seesFullContact } from "@/lib/contact-mask";
 import PageHeader from "@/components/admin/PageHeader";
 import BoothsAdminPanel from "./BoothsAdminPanel";
 import InfoTip from "@/components/help/InfoTip";
@@ -15,10 +17,15 @@ export default async function AdminBoothsPage() {
   const [y, m] = calendarMonthStart.split("-").map(Number);
   const calendarMonthEnd = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
 
+  // A cashier gets guests' emails and phones shortened before they reach
+  // the page (lib/contact-mask.ts). No session can't happen under the admin
+  // layout, but would get the cashier view.
+  const session = await getStaffSession();
+  const role = session?.role ?? "cashier";
   const [booths, reservations, calendarReservations] = await Promise.all([
     getAllBooths(),
-    getUpcomingBoothReservations(),
-    getBoothReservationsForMonth(calendarMonthStart, calendarMonthEnd),
+    getUpcomingBoothReservations(role),
+    getBoothReservationsForMonth(calendarMonthStart, calendarMonthEnd, role),
   ]);
   return (
     <div>
@@ -28,7 +35,13 @@ export default async function AdminBoothsPage() {
         title="Booths"
         purpose="Upcoming booth reservations, the booking calendar, and each of the 8 lounge booths: photo, size, fee, and whether it can be booked."
       />
-      <BoothsAdminPanel booths={booths} reservations={reservations} calendarMonthStart={calendarMonthStart} calendarReservations={calendarReservations} />
+      <BoothsAdminPanel
+        booths={booths}
+        reservations={reservations}
+        calendarMonthStart={calendarMonthStart}
+        calendarReservations={calendarReservations}
+        fullContact={seesFullContact(role)}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { CommunityProgram, MemberTier } from "@/lib/types";
@@ -24,12 +24,15 @@ export default function MemberManager({
   staffInfo,
   query,
   compedOnly,
+  canManage,
 }: {
   membersPage: MembersPage;
   communityPrograms: CommunityProgram[];
   staffInfo: Record<string, MemberStaffInfo>;
   query: string;
   compedOnly: boolean;
+  // Managers and up add and switch off community programs.
+  canManage: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState(query);
@@ -150,18 +153,34 @@ export default function MemberManager({
 
       <div className="space-y-6">
         <AddMemberForm />
-        <CommunityProgramsPanel programs={communityPrograms} />
+        <CommunityProgramsPanel programs={communityPrograms} canManage={canManage} />
       </div>
     </div>
   );
 }
 
 function AddMemberForm() {
-  const [pending, run] = useRefreshingAction();
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [tier, setTier] = useState<MemberTier>("Insiders");
+
+  // The form stays open with what was typed if the add fails (say, the
+  // email is already on another member), so it can be fixed.
+  function add() {
+    setError(null);
+    startTransition(async () => {
+      const r = await addMember({ name, email, tier }).catch(() => ({ ok: false as const, error: "Couldn't add the member. Try again." }));
+      if (!r.ok) return setError(r.error);
+      setName("");
+      setEmail("");
+      setOpen(false);
+      router.refresh();
+    });
+  }
 
   if (!open) {
     return (
@@ -201,29 +220,30 @@ function AddMemberForm() {
           <option value="Insiders">Insiders</option>
           <option value="Insiders+">Insiders+</option>
         </select>
+        <button className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 " disabled={pending || !name.trim()} onClick={add}>
+          {pending ? "Adding..." : "Add member"}
+        </button>
         <button
-          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
-          disabled={pending || !name.trim()}
+          className="text-sm text-[var(--muted)] hover:underline"
           onClick={() => {
-            const fields = { name, email, tier };
-            setName("");
-            setEmail("");
             setOpen(false);
-            run(() => addMember(fields));
+            setError(null);
           }}
         >
-          Add member
-        </button>
-        <button className="text-sm text-[var(--muted)] hover:underline" onClick={() => setOpen(false)}>
           Cancel
         </button>
       </div>
+      {error && (
+        <p className="mt-2 text-sm text-[var(--danger-text)]" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
-function CommunityProgramsPanel({ programs }: { programs: CommunityProgram[] }) {
-  const [pending, run] = useRefreshingAction();
+function CommunityProgramsPanel({ programs, canManage }: { programs: CommunityProgram[]; canManage: boolean }) {
+  const [pending, run, error] = useRefreshingAction();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
@@ -242,43 +262,54 @@ function CommunityProgramsPanel({ programs }: { programs: CommunityProgram[] }) 
           <div key={p.id} className="flex items-center gap-2 py-1.5 text-sm">
             <span className={p.active ? "" : "text-[var(--muted)] line-through"}>{p.name}</span>
             {p.description && <span className="text-xs text-[var(--muted)]">— {p.description}</span>}
-            <button
-              className="ml-auto text-xs text-[var(--muted)] hover:underline"
-              disabled={pending}
-              onClick={() => run(() => setCommunityProgramActive(p.id, !p.active))}
-            >
-              {p.active ? "Deactivate" : "Reactivate"}
-            </button>
+            {canManage && (
+              <button
+                className="ml-auto text-xs text-[var(--muted)] hover:underline"
+                disabled={pending}
+                onClick={() => run(() => setCommunityProgramActive(p.id, !p.active), { quiet: true })}
+              >
+                {p.active ? "Deactivate" : "Reactivate"}
+              </button>
+            )}
           </div>
         ))}
         {programs.length === 0 && <div className="py-2 text-sm text-[var(--muted)]">No community programs yet.</div>}
       </div>
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <input
-          className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
-          placeholder="Program name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <input
-          className="min-w-[200px] flex-[2] rounded border border-[var(--border)] px-2 py-1 text-sm "
-          placeholder="Description (optional)"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-        <button
-          className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
-          disabled={pending || !name.trim()}
-          onClick={() => {
-            const fields = { name, description };
-            setName("");
-            setDescription("");
-            run(() => addCommunityProgram(fields));
-          }}
-        >
-          Add program
-        </button>
-      </div>
+      {error && (
+        <p className="mt-2 text-sm text-[var(--danger-text)]" role="alert">
+          {error}
+        </p>
+      )}
+      {!canManage ? (
+        <p className="mt-3 text-xs text-[var(--muted)]">A manager can add a program or switch one off.</p>
+      ) : (
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <input
+            className="min-w-[160px] flex-1 rounded border border-[var(--border)] px-2 py-1 text-sm "
+            placeholder="Program name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <input
+            className="min-w-[200px] flex-[2] rounded border border-[var(--border)] px-2 py-1 text-sm "
+            placeholder="Description (optional)"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+          <button
+            className="rounded bg-[var(--accent)] px-3 py-1.5 text-sm text-white disabled:opacity-50 "
+            disabled={pending || !name.trim()}
+            onClick={() => {
+              const fields = { name, description };
+              setName("");
+              setDescription("");
+              run(() => addCommunityProgram(fields), { quiet: true });
+            }}
+          >
+            Add program
+          </button>
+        </div>
+      )}
     </div>
   );
 }

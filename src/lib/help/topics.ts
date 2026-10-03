@@ -240,7 +240,7 @@ export const HELP_TOPICS = {
     title: "Senior and student rates",
     area: "Register: members and the door",
     body:
-      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them, at the register (Member → Change rate) or on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
+      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them at the register (Member → Change rate), or a manager on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
   },
   "unlimited-no-payment": {
     title: "No payment on file for unlimited membership",
@@ -307,7 +307,7 @@ export const HELP_TOPICS = {
     title: "Changing a member's points",
     area: "Members and memberships",
     body:
-      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, use Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, a manager uses Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "gift-membership": {
@@ -332,7 +332,7 @@ export const HELP_TOPICS = {
     title: "Free (community) memberships",
     area: "Members and memberships",
     body:
-      "Community programs give free Insiders+ to people referred by our outreach partners. Grant it from the member's page and pick the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
+      "Community programs give free Insiders+ to people referred by our outreach partners. A manager grants it from the member's page and picks the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
   },
 
   // ---------- menu and inventory ----------
@@ -359,7 +359,7 @@ export const HELP_TOPICS = {
     title: "Scheduling a screening",
     area: "Showtimes, events and booths",
     body:
-      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
+      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Duplicate on a showing copies it here for another date. Repeat adds the same showing at several start times on the days you pick across a date range, listed first so you can check them. Adding, moving or removing a showing takes a manager. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
     trainingSlug: "what-we-can-post",
   },
   "house-events": {
