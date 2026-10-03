@@ -5,13 +5,13 @@ import { useRouter } from "next/navigation";
 import type { MenuCategory } from "@/lib/types";
 import MenuPicture from "@/components/menu/MenuPicture";
 import PicturePicker from "@/components/menu/PicturePicker";
-import { creditLine, isFound, pictureOf, type PhotoTarget, type PictureState } from "@/lib/menu-pictures/shared";
+import { creditLine, isFound, pictureOf, textIconShown, type PhotoTarget, type PictureState } from "@/lib/menu-pictures/shared";
 import { fillMenuPictures, findMenuPictures, keepMenuPicture, pickMenuPicture, removeMenuPhoto } from "./actions";
 
 // Pictures for the whole register, for managers, above the categories:
 //   - Find pictures for everything: every button with no picture
-//     (and nobody's decision to leave it as its label) gets a free-to-use
-//     one, a few at a time, with progress.
+//     (and nobody's decision to leave it as its label or give it a text
+//     icon) gets a free-to-use one, a few at a time, with progress.
 //   - Photo walk: the pictures found automatically, one at a time, big:
 //     Keep, Find a better one (◀ ▶), Use label tile, or Skip.
 
@@ -88,7 +88,7 @@ export default function MenuPictures({ categories }: { categories: MenuCategory[
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold">Register pictures</div>
           <div className="text-xs text-[var(--muted)]">
-            {covered} of {all.length} buttons have a picture or a chosen label
+            {covered} of {all.length} buttons have a picture, a text icon or a chosen label
             {missing > 0 && `; ${missing} still show just their label`}.
             {unchecked.length > 0 && ` ${unchecked.length} found automatically and not checked yet.`}
           </div>
@@ -189,7 +189,7 @@ function PhotoWalk({ queue, onClose }: { queue: Entry[]; onClose: () => void }) 
         ) : (
           <div className="space-y-3">
             <div className="relative mx-auto aspect-square w-full max-w-72 overflow-hidden rounded-lg border border-[var(--border)]">
-              <MenuPicture url={e.picture.image_url} name={e.name} category={e.category} parent={e.parent} sizes="288px" className="h-full w-full" />
+              <MenuPicture url={e.picture.image_url} text={textIconShown(e.picture)} name={e.name} category={e.category} parent={e.parent} sizes="288px" className="h-full w-full" />
             </div>
             {credit && <p className="text-center text-[11px] leading-snug text-[var(--muted)]">{credit}</p>}
             <div className="grid grid-cols-2 gap-2">

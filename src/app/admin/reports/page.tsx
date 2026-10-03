@@ -3,6 +3,8 @@ import { hasManagerAccess, requireStaff } from "@/lib/auth";
 import { getDayReport, getRevenueTrend, getOrderByNumber } from "@/lib/data/reports";
 import { getDayDrill } from "@/lib/data/day-drill";
 import { businessDay, shiftDate } from "@/lib/ops/time";
+import { ensureMemberPaymentsFresh } from "@/lib/membership-payments/sync";
+import { getPaymentSyncStatus } from "@/lib/membership-payments/read";
 import DayScreen, { DAY_RANGES } from "./DayScreen";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +29,10 @@ export default async function DayReportPage({ searchParams }: { searchParams: Pr
   const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date <= today ? p.date : (found?.businessDate ?? today);
   const days = DAY_RANGES.includes(Number(p.days)) ? Number(p.days) : 30;
 
-  const [r, before, trend] = await Promise.all([getDayReport(date), getDayReport(shiftDate(date, -7)), getRevenueTrend(days)]);
+  // Membership payments are read from Stripe first if it's been a while.
+  await ensureMemberPaymentsFresh();
+  const [r, before, trend, sync] = await Promise.all([getDayReport(date), getDayReport(shiftDate(date, -7)), getRevenueTrend(days), getPaymentSyncStatus()]);
   // What's behind each figure (shifts, refund approvers, showings, the tip payout), for the drill-downs.
   const drill = await getDayDrill(r);
-  return <DayScreen r={r} before={before} trend={trend} date={date} today={today} days={days} orderNumber={orderNumber} found={found} drill={drill} canRecord={hasManagerAccess(staff.role)} />;
+  return <DayScreen r={r} before={before} trend={trend} date={date} today={today} days={days} orderNumber={orderNumber} found={found} drill={drill} canRecord={hasManagerAccess(staff.role)} sync={sync} />;
 }

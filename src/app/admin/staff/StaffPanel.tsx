@@ -6,7 +6,7 @@ import type { EmployeeRole } from "@/lib/types";
 import type { EmployeeWithEmail } from "@/lib/data/employees";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import InfoTip from "@/components/help/InfoTip";
-import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, createRecoveryLink, type AccountMatch } from "./actions";
+import { createEmployee, updateEmployeeRole, setEmployeeActive, findAccounts, makeStaff, resetEmployeePin, createRecoveryLink, emailStaffPasswordReset, type AccountMatch } from "./actions";
 
 const ROLE_LABEL: Record<EmployeeRole, string> = {
   owner: "Owner",
@@ -18,7 +18,7 @@ const ROLE_LABEL: Record<EmployeeRole, string> = {
 
 const ASSIGNABLE = ["cashier", "manager", "admin", "display"] as const;
 
-const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px_90px] items-center gap-3";
+const ROW_GRID = "grid grid-cols-[1.3fr_1.6fr_140px_100px_120px_120px] items-center gap-3";
 
 const MANAGER_ROLES: EmployeeRole[] = ["manager", "admin", "owner"];
 
@@ -48,7 +48,7 @@ export default function StaffPanel({ employees }: { employees: EmployeeWithEmail
           </p>
         ) : null}
         <div className="overflow-x-auto">
-          <div className="min-w-[760px]">
+          <div className="min-w-[790px]">
             <div className={`${ROW_GRID} border-b border-[var(--border)] pb-1.5 text-xs font-medium text-[var(--muted)]`}>
               <span>Name</span>
               <span>Email</span>
@@ -352,23 +352,36 @@ function EmployeeRow({ employee }: { employee: EmployeeWithEmail }) {
   );
 }
 
-// A one-time link to set a new password, for someone locked out of their
-// login while email isn't set up. Shown once, here, for the owner to hand
-// over; anyone with it can get into that login, so the panel says so.
+// Someone locked out of their login. Usually: email them the reset link
+// (it goes only to them). For when email can't reach them: a one-time link
+// shown once, here, for the owner to hand over; anyone with it can get into
+// that login, so the panel says so.
 function PasswordCell({ employee }: { employee: EmployeeWithEmail }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"email" | "link" | null>(null);
   const [result, setResult] = useState<{ link: string; email: string; passwordLogin: boolean } | null>(null);
+  const [sent, setSent] = useState<{ socialOnly: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const firstName = employee.name.split(" ")[0];
 
+  async function email() {
+    if (!confirm(`Email a reset link to ${employee.email}?\n\nIt comes from Royale Cinema Lounge, goes only to ${firstName}, and works once. After picking a new password, ${firstName} lands in the back office.`)) return;
+    setBusy("email");
+    setError(null);
+    setSent(null);
+    const r = await emailStaffPasswordReset(employee.id).catch(() => ({ ok: false as const, error: "Couldn't send the email just now. Try again in a minute." }));
+    setBusy(null);
+    if (!r.ok) return setError(r.error);
+    setSent({ socialOnly: r.socialOnly });
+  }
+
   async function make() {
     if (!confirm(`Make a password reset link for ${employee.name}?\n\nAnyone who opens it can set a new password and sign in as ${firstName}. Give it only to ${firstName}.`)) return;
-    setBusy(true);
+    setBusy("link");
     setError(null);
     setCopied(false);
     const r = await createRecoveryLink(employee.id).catch(() => ({ ok: false as const, error: "Couldn't make a reset link. Try again." }));
-    setBusy(false);
+    setBusy(null);
     if (!r.ok) return setError(r.error);
     setResult({ link: r.link, email: r.email, passwordLogin: r.passwordLogin });
   }
@@ -378,12 +391,24 @@ function PasswordCell({ employee }: { employee: EmployeeWithEmail }) {
   return (
     <>
       {/* Pinned to the first row's last column, so the PIN panel opening below doesn't push it down. */}
-      <span className="col-start-6 row-start-1">
-        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={busy} onClick={make}>
-          {busy ? "Making…" : "Reset link"}
+      <span className="col-start-6 row-start-1 flex flex-col items-start gap-1">
+        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={!!busy} onClick={email}>
+          {busy === "email" ? "Sending…" : "Email a reset link"}
+        </button>
+        <button className="text-xs text-[var(--muted)] underline hover:text-[var(--foreground)] disabled:opacity-50" disabled={!!busy} onClick={make}>
+          {busy === "link" ? "Making…" : "Make a reset link"}
         </button>
       </span>
       {error && <p className="col-span-full text-xs text-[var(--danger-text)]">{error}</p>}
+      {sent && (
+        <div className="notice notice-success col-span-full !p-2.5 text-xs">
+          Sent to {employee.email}. It comes from Royale Cinema Lounge and the link works once.
+          {sent.socialOnly && ` ${firstName} signs in with ${sent.socialOnly}. A reset adds a password alongside it.`}{" "}
+          <button className="underline" onClick={() => setSent(null)}>
+            Done
+          </button>
+        </div>
+      )}
       {result && (
         <div className="notice notice-warn col-span-full !p-3 text-sm">
           <div className="mb-1.5 font-semibold">Password reset link for {employee.name}</div>

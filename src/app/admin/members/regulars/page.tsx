@@ -63,6 +63,9 @@ export default async function TopRegularsPage({ searchParams }: { searchParams: 
         <span className="ml-auto text-sm text-[var(--muted)]">
           {report.visitors.toLocaleString()} member{report.visitors === 1 ? "" : "s"} came in
         </span>
+        <Link href="/admin/members/regulars/most-regular" className="text-sm font-semibold hover:underline">
+          Most regular, all time →
+        </Link>
       </div>
 
       <p className="text-xs text-[var(--muted)]">

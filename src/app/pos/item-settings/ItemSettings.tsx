@@ -6,27 +6,38 @@ import type { MenuCategory, MenuItem } from "@/lib/types";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { approvalText } from "@/lib/pin-rules";
 import ManagerPinModal from "@/components/ManagerPinModal";
-import LabelTile from "@/components/menu/LabelTile";
-import MenuPicture from "@/components/menu/MenuPicture";
+import MenuPicture, { ItemArt } from "@/components/menu/MenuPicture";
 import { usePhotoUpload } from "@/components/menu/usePhotoUpload";
 import PicturePicker from "@/components/menu/PicturePicker";
-import { creditLine, isFound, pictureOf, type PictureState } from "@/lib/menu-pictures/shared";
+import TextIconDesigner from "@/components/menu/TextIconDesigner";
+import { creditLine, isFound, pictureOf, textIconShown, type PictureState } from "@/lib/menu-pictures/shared";
 import { useTouchScreen } from "@/lib/menu-pictures/photo-file";
 import { useOpsApi } from "../shift/api";
 import { dropOut, refreshOuts, useRanOut } from "../shift/ran-out-store";
 import { holdHandlers, type HoldHandlers } from "./press-hold";
-import { findItemPictures, keepItemPicture, pickItemPicture, saveItemDetails, showItemLabelTile, unlockItemSettings, uploadItemPhoto, type ItemDetails } from "./actions";
+import {
+  findItemPictures,
+  keepItemPicture,
+  pickItemPicture,
+  saveItemDetails,
+  saveItemTextIcon,
+  showItemLabelTile,
+  unlockItemSettings,
+  uploadItemPhoto,
+  type ItemDetails,
+} from "./actions";
 
-// Press and hold a register button for that item's settings: its picture,
-// name, price, whether it's on the register, and OUT / back in stock. The
+// Press and hold a register button for that item's settings: its picture
+// (a photo, or a text icon like "$5" glowing red), name, price, whether
+// it's on the register, and OUT / back in stock. The
 // register is signed in with a shared login, so a manager's PIN comes
 // first; one approval covers the next few minutes, so a manager can fix
 // several buttons in a row. Changes save as they're made and the register
 // refreshes behind the sheet without touching the order in progress.
 //
 // Wraps the register (src/app/pos/page.tsx). The register only asks for
-// each button's extras (useMenuTileExtras): its label tile, for when there's
-// no photo, and the press-and-hold.
+// each button's extras (useMenuTileExtras): its text icon or label tile,
+// for when there's no photo, and the press-and-hold.
 
 interface Snapshot {
   id: string;
@@ -42,9 +53,10 @@ interface Snapshot {
 type TileExtras = { art: ReactNode; hold?: HoldHandlers };
 type Extras = (item: MenuItem, category: MenuCategory | null, section: string | null, out: RegisterOut | null) => TileExtras;
 
-// Outside the provider (a preview), buttons still get their label tiles.
-const plainExtras: Extras = (item, category, section) => ({
-  art: <LabelTile name={item.name} category={section ?? category?.label} parent={section ? category?.label : null} />,
+// Outside the provider (a preview), buttons still get their text icons and
+// label tiles.
+const plainExtras: Extras = (item, category, section, out) => ({
+  art: <ItemArt name={item.name} category={section ?? category?.label} parent={section ? category?.label : null} picture={pictureOf(item)} still={!!out} />,
 });
 const ExtrasContext = createContext<Extras>(plainExtras);
 
@@ -91,7 +103,7 @@ export function ItemSettingsProvider({ children }: { children: ReactNode }) {
         out,
       };
       return {
-        art: <LabelTile name={item.name} category={snap.category} parent={snap.parent} />,
+        art: <ItemArt name={item.name} category={snap.category} parent={snap.parent} picture={snap.picture} still={!!out} />,
         hold: holdHandlers(() => ask(snap)),
       };
     },
@@ -142,15 +154,16 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
   const [saved, setSaved] = useState<string | null>(null);
   const [confirmLabel, setConfirmLabel] = useState(false);
   const [picking, setPicking] = useState(false);
+  const [designing, setDesigning] = useState(false);
 
   // OUT as the register sees it now (the shift bar keeps it current).
   const out = useMemo(() => (ranOut.loaded ? (ranOut.outs.find((o) => o.itemId === item.id) ?? null) : item.out), [ranOut, item]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !picking && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !picking && !designing && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, picking]);
+  }, [onClose, picking, designing]);
 
   function done(message: string) {
     setSaved(message);
@@ -205,6 +218,7 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
   const anyBusy = !!busy || photo.busy;
   const credit = creditLine(item.picture.image_source, item.picture.image_credit);
   const unchecked = !!item.picture.image_url && isFound(item.picture.image_source) && !item.picture.image_approved_at;
+  const textIcon = textIconShown(item.picture);
   const row = "flex flex-wrap items-center gap-2";
 
   return (
@@ -238,13 +252,29 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
               onCancel={() => setPicking(false)}
             />
           </section>
+        ) : designing ? (
+          <section className="mx-auto max-w-md">
+            <div className="label-xs">Text icon</div>
+            <TextIconDesigner
+              name={item.name}
+              price={item.price}
+              current={item.picture}
+              save={(icon) => saveItemTextIcon(token, item.id, icon)}
+              onSaved={(p) => {
+                setItem((i) => ({ ...i, picture: p }));
+                setDesigning(false);
+                done("Text icon saved. It's on the button now.");
+              }}
+              onCancel={() => setDesigning(false)}
+            />
+          </section>
         ) : (
         <div className="grid gap-5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
           {/* Picture */}
           <section>
             <div className="label-xs">Picture on the button</div>
             <div className="relative aspect-square w-full max-w-60 overflow-hidden rounded-lg border" style={{ borderColor: "var(--border)" }}>
-              <MenuPicture url={item.picture.image_url} name={item.name} category={item.category} parent={item.parent} sizes="240px" className="h-full w-full" />
+              <MenuPicture url={item.picture.image_url} text={textIcon} name={item.name} category={item.category} parent={item.parent} sizes="240px" className="h-full w-full" />
               {photo.busy && <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm font-bold text-white">Uploading…</div>}
             </div>
             {credit && (
@@ -280,6 +310,9 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
               <button className="btn-primary min-h-12 !text-base" disabled={anyBusy} onClick={() => setPicking(true)}>
                 {item.picture.image_url ? "Find a better picture" : "Find a picture"}
               </button>
+              <button className="btn-secondary min-h-12 !text-base" disabled={anyBusy} onClick={() => setDesigning(true)}>
+                {textIcon ? "Change text icon" : "Make a text icon"}
+              </button>
               {touch && (
                 <button className="btn-secondary min-h-12 !text-base" disabled={anyBusy} onClick={photo.takePhoto}>
                   Take photo
@@ -288,7 +321,7 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
               <button className="btn-secondary min-h-12 !text-base" disabled={anyBusy} onClick={photo.choosePhoto}>
                 Choose photo
               </button>
-              {item.picture.image_url &&
+              {(item.picture.image_url || textIcon) &&
                 (confirmLabel ? (
                   <div className="flex gap-2">
                     <button
@@ -303,11 +336,11 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
                             if (r.ok) setItem((i) => ({ ...i, picture: pictureOf({ image_source: "label" }) }));
                             return r;
                           },
-                          "Picture taken off. The button shows its label.",
+                          textIcon ? "Text icon taken off. The button shows its label." : "Picture taken off. The button shows its label.",
                         );
                       }}
                     >
-                      Take the picture off
+                      {textIcon ? "Take the text icon off" : "Take the picture off"}
                     </button>
                     <button className="min-h-12 px-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => setConfirmLabel(false)}>
                       Keep

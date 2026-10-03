@@ -2,6 +2,7 @@ import "server-only";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { safePath } from "@/lib/safe-path";
 import type { EmployeeRole } from "@/lib/types";
 
 export interface StaffSession {
@@ -69,6 +70,16 @@ export async function requireDisplayScreen(returnTo: string): Promise<StaffSessi
   return session;
 }
 
+// requireDisplayScreen() for the Server Actions a display screen itself
+// calls (the customer screen's check-in). Only for actions safe to hand an
+// unattended screen: nothing that returns member details or touches sales,
+// staff or money -- those stay behind assertStaff().
+export async function assertDisplayScreen(): Promise<StaffSession> {
+  const session = await getEmployeeSession();
+  if (!session) throw new Error("Not authorized");
+  return session;
+}
+
 // For the top of every Server Action. A page/layout check (requireStaff()
 // below) only gates *rendering* -- an action defined under it is still a
 // public POST endpoint anyone holding its action ID can call (see Next's
@@ -92,18 +103,23 @@ export async function assertAdmin(): Promise<StaffSession> {
 // Gates every /admin and /pos page. Distinguishes "not logged in" from
 // "logged in but not staff" so the login page can show the right message
 // (see src/app/login/LoginForm.tsx's `error=not_staff` handling).
-export async function requireStaff(): Promise<StaffSession> {
+//
+// returnTo: the page to come back to after signing in (the register passes
+// "/pos", so a register iPad that has to sign in again lands back on the
+// register, not the back office). Checked by safePath like any redirect.
+export async function requireStaff(returnTo?: string): Promise<StaffSession> {
+  const back = safePath(returnTo);
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  if (!user) redirect(back ? `/login?redirect=${encodeURIComponent(back)}` : "/login");
 
   const session = await getStaffSession();
   if (!session) {
     // A display account that wandered off its screen goes back to it.
     if ((await getEmployeeSession())?.role === "display") redirect(DISPLAY_HOME);
-    redirect("/login?error=not_staff");
+    redirect(back ? `/login?error=not_staff&redirect=${encodeURIComponent(back)}` : "/login?error=not_staff");
   }
   return session;
 }
@@ -148,5 +164,16 @@ export async function requireAdmin(): Promise<StaffSession> {
 export async function requireOwner(): Promise<StaffSession> {
   const session = await requireStaff();
   if (session.role !== "owner") redirect("/admin");
+  return session;
+}
+
+export function isOwner(role: EmployeeRole): boolean {
+  return role === "owner";
+}
+
+// requireOwner() for actions (e.g. the Email page's Sending on/off switch).
+export async function assertOwner(): Promise<StaffSession> {
+  const session = await assertStaff();
+  if (!isOwner(session.role)) throw new Error("Not authorized");
   return session;
 }

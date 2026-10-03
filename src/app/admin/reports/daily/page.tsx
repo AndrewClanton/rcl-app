@@ -6,6 +6,8 @@ import { emailConfigured } from "@/lib/email/send";
 import { reportRecipients } from "@/lib/daily-report";
 import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireStaff } from "@/lib/auth";
+import { ensureMemberPaymentsFresh } from "@/lib/membership-payments/sync";
 import SendNow from "./SendNow";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +18,9 @@ export default async function DailyEmailPage({ searchParams }: { searchParams: P
   const yesterday = shiftDate(businessDay().date, -1);
   const date = param && /^\d{4}-\d{2}-\d{2}$/.test(param) && param <= businessDay().date ? param : yesterday;
   const origin = await siteOrigin();
+  await requireStaff();
+  // Membership payments are read from Stripe first if it's been a while.
+  await ensureMemberPaymentsFresh();
 
   const [digest, recipients, log] = await Promise.all([
     buildDailyDigest(date),

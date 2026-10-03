@@ -3,13 +3,15 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { datesIn, shiftPeriod, type Period } from "@/lib/report-periods";
+import { countSubscriptionEnds } from "@/lib/membership-payments/read";
 import { fetchAll, loadSales, salesByDay, summarizeSales, type Buckets, type SalesRows, type SalesSummary } from "./reports";
 
 // Reports -> Week and Month: a stretch of business days added up with the
 // Day report's own arithmetic (summarizeSales over the same rows), so each
 // day here is exactly what the Day report shows for it, and the total is
-// their sum. Plus when the orders came in, members who joined and check-ins,
-// and the same figures for the period before, to compare.
+// their sum (Insiders+ and gift memberships included, as their own part).
+// Plus when the orders came in, members who joined, Insiders+ that ended,
+// check-ins, and the same figures for the period before, to compare.
 
 export interface PeriodDay {
   date: string;
@@ -30,6 +32,7 @@ export interface MemberActivity {
 export interface PeriodTotals {
   sales: SalesSummary;
   members: MemberActivity | null; // null when the tables can't be read
+  plusEnded: number | null; // Insiders+ subscriptions that ended (null: not tracked yet)
 }
 
 export interface PeriodReport extends PeriodTotals {
@@ -57,13 +60,15 @@ function centralHour(iso: string) {
 }
 
 // Members who joined, and check-ins, between two instants. Best effort:
-// null if a table can't be read, so the sales still show.
+// null if a table can't be read, so the sales still show. Old-site accounts
+// count on the day they moved over (imported_at): their created_at is when
+// they joined the old site, years back for some.
 async function memberActivity(start: string, end: string, firstDate: string, lastDate: string): Promise<MemberActivity | null> {
   const supabase = createAdminClient();
   try {
     const [joined, imported, visits] = await Promise.all([
       supabase.from("members").select("id", { count: "exact", head: true }).is("legacy_user_id", null).gte("created_at", start).lt("created_at", end),
-      supabase.from("members").select("id", { count: "exact", head: true }).not("legacy_user_id", "is", null).gte("created_at", start).lt("created_at", end),
+      supabase.from("members").select("id", { count: "exact", head: true }).not("legacy_user_id", "is", null).gte("imported_at", start).lt("imported_at", end),
       fetchAll<{ member_id: string }>((from, to) =>
         supabase.from("member_visits").select("member_id").gte("business_date", firstDate).lte("business_date", lastDate).lt("checked_in_at", end).order("id").range(from, to),
       ),
@@ -78,8 +83,8 @@ async function memberActivity(start: string, end: string, firstDate: string, las
 }
 
 async function totalsBetween(start: string, end: string, firstDate: string, lastDate: string): Promise<{ rows: SalesRows; totals: PeriodTotals; buckets: Buckets }> {
-  const [{ rows, buckets }, members] = await Promise.all([loadSales(start, end), memberActivity(start, end, firstDate, lastDate)]);
-  return { rows, buckets, totals: { sales: summarizeSales(rows, buckets), members } };
+  const [{ rows, buckets }, members, plusEnded] = await Promise.all([loadSales(start, end), memberActivity(start, end, firstDate, lastDate), countSubscriptionEnds(start, end)]);
+  return { rows, buckets, totals: { sales: summarizeSales(rows, buckets), members, plusEnded } };
 }
 
 export async function getPeriodReport(period: Period, now = new Date()): Promise<PeriodReport> {

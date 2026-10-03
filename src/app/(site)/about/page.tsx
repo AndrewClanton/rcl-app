@@ -1,13 +1,17 @@
 import Link from "next/link";
-import type { Metadata } from "next";
 import Image from "next/image";
 import { PageMasthead, Seal, SpecFoot, Sprockets } from "@/components/print";
+import { pageMeta } from "@/lib/seo/page-meta";
 
-export const metadata: Metadata = {
+// No data and nothing per visitor: built once, served static.
+export const dynamic = "force-static";
+
+export const metadata = pageMeta({
   title: "About",
   description:
-    "Joplin's only independent film center -- a third space for the Joplin community to celebrate the art of cinema, in a historic 1920 building on Route 66.",
-};
+    "Joplin's only independent film center: a third space for the Joplin community to celebrate the art of cinema, in a historic 1920 building on Route 66.",
+  path: "/about",
+});
 
 function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
   return (
@@ -84,7 +88,7 @@ export default function AboutPage() {
         </div>
       </div>
 
-      <section id="faq" className="sheet crop scroll-mt-28">
+      <section id="faq" className="site-anchor sheet crop">
         <h2 className="spec-head rounded-t-[4px]">
           <span>Frequently asked questions</span>
         </h2>

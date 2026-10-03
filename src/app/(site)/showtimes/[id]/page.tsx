@@ -13,6 +13,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { issueFormToken } from "@/lib/public-form-guard";
+import { pageMeta } from "@/lib/seo/page-meta";
 
 export const dynamic = "force-dynamic";
 
@@ -20,42 +21,43 @@ function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
+// Cut at a word, for a description that stops mid-sentence cleanly.
+function clip(text: string, max: number) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), max - 20)).replace(/[\s,;:.-]+$/, "")}…`;
+}
+
+// The title and link preview name the film and when it plays ("The Musical ·
+// Wed 10/1, 7:00 PM"). The preview image is opengraph-image.tsx next to this
+// page: the poster with the day and time.
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
+  const path = `/showtimes/${id}`;
   const screening = await getScreeningById(id);
-  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime" };
+  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime", robots: { index: false, follow: false } };
 
   // An older title (MPLC) can be reached by direct link -- the members'
   // email -- but must not be advertised. Keep it out of search results, and
   // give link previews (a share on Facebook, a text message) nothing that
-  // names the movie.
+  // names the movie. (Its preview image is the plain site card.)
   if (isRestrictedRelease(screening.movie)) {
-    return {
-      title: "Members' screening",
-      robots: { index: false, follow: false },
-      openGraph: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
-      twitter: { title: "A screening at Royale Cinema Lounge", description: "Royale Cinema Lounge, Joplin, MO." },
-    };
+    const generic = "A screening at Royale Cinema Lounge";
+    const meta = pageMeta({ title: "Members' screening", description: "Royale Cinema Lounge, Joplin, MO.", path, image: null, noindex: true });
+    return { ...meta, openGraph: { ...meta.openGraph, title: generic }, twitter: { ...meta.twitter, title: generic } };
   }
 
-  const showtime = new Date(screening.starts_at).toLocaleString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Chicago",
+  const start = new Date(screening.starts_at);
+  const day = start.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: "America/Chicago" }).replace(",", "");
+  const when = `${day}, ${start.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}`;
+  const price = screening.ticket_price === 0 ? "Free" : `${money(screening.ticket_price)} + tax`;
+  const lead = `${screening.movie.title} at Royale Cinema Lounge, Joplin, MO · ${when} · ${price}.`;
+  return pageMeta({
+    title: `${screening.movie.title} · ${when}`,
+    description: screening.movie.synopsis ? `${lead} ${clip(screening.movie.synopsis, Math.max(60, 200 - lead.length))}` : lead,
+    path,
+    image: null,
   });
-  const description = screening.movie.synopsis
-    ? screening.movie.synopsis.slice(0, 155)
-    : `${screening.movie.title} -- ${showtime} at Royale Cinema Lounge, Joplin, MO.`;
-
-  return {
-    title: `${screening.movie.title} -- ${showtime}`,
-    description,
-    alternates: { canonical: `/showtimes/${screening.id}` },
-    openGraph: screening.movie.poster_url ? { images: [{ url: screening.movie.poster_url }] } : undefined,
-  };
 }
 
 export default async function ScreeningDetailPage({
@@ -68,7 +70,15 @@ export default async function ScreeningDetailPage({
   const { id } = await params;
   const { checkout, session_id, booking_id } = await searchParams;
   const screening = await getScreeningById(id);
-  if (!screening || !isWithinPublicWindow(screening.starts_at)) notFound();
+  if (!screening) notFound();
+  // A showtime that has started (or isn't public yet) is a 404 -- except for
+  // the customer coming back from checkout. Stripe's page stays open for 30
+  // minutes, so someone who clicked Buy at 6:59 for a 7:00 show can finish
+  // paying at 7:01; they still get their confirmation and the ticket's QR
+  // code (their only copy). That's checked below; anything else is a 404.
+  const isPublic = isWithinPublicWindow(screening.starts_at);
+  const checkoutReturn = (checkout === "success" && !!session_id) || (checkout === "free" && !!booking_id);
+  if (!isPublic && !checkoutReturn) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
   const member = await getSignedInMember();
@@ -77,7 +87,8 @@ export default async function ScreeningDetailPage({
   const plus = !!member && hasPlusPerks(member);
   const freeSeat = plus && !(await memberHasBookingFor(id, member!.id));
   const me = member?.email ? { name: member.name, email: member.email, plus, freeSeat } : null;
-  const eventJsonLd = screeningEventJsonLd(screening, seatsLeft);
+  // Only a public showtime is described to search engines.
+  const eventJsonLd = isPublic ? screeningEventJsonLd(screening, seatsLeft) : null;
 
   // Never trust the ?checkout=success URL param on its own -- verify the
   // session actually shows as paid with Stripe before showing a
@@ -85,14 +96,16 @@ export default async function ScreeningDetailPage({
   // 'confirmed' in the DB; this is purely about what message to show the
   // customer who just got redirected back here.
   let paymentConfirmed = false;
+  let paidForThisShow = false;
   let paidBookingId: string | null = null;
   if (checkout === "success" && session_id) {
     try {
       const session = await getStripe().checkout.sessions.retrieve(session_id);
       paymentConfirmed = session.payment_status === "paid";
+      paidForThisShow = paymentConfirmed && session.metadata?.screening_id === id;
       // The booking it paid for, for its ticket code below (only if the
       // session was for this showing).
-      if (paymentConfirmed && session.metadata?.screening_id === id) paidBookingId = session.metadata?.booking_id ?? null;
+      if (paidForThisShow) paidBookingId = session.metadata?.booking_id ?? null;
     } catch {
       paymentConfirmed = false;
     }
@@ -111,6 +124,9 @@ export default async function ScreeningDetailPage({
       .maybeSingle();
     freeEntryConfirmed = booking?.status === "confirmed";
   }
+  // Past the start time, only a payment or booking for this very showing
+  // opens the page (a paid session for some other show doesn't).
+  if (!isPublic && !paidForThisShow && !freeEntryConfirmed) notFound();
 
   // The tickets they just got, with the QR code for the door. A paid
   // booking can still read "pending" for a moment until Stripe's webhook
