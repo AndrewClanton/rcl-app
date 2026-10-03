@@ -5,6 +5,7 @@ import { isGuestName } from "@/lib/member-name";
 import type { TabletCheckin } from "@/lib/checkin";
 import { flairColor } from "@/lib/flair";
 import s from "./reward.module.css";
+import { playSound, type SoundName } from "./sounds";
 
 // The instant payoff for checking in at the screen (Andrew, 10/2): the
 // moment they tap "Check in", before the server has answered, the screen
@@ -100,6 +101,17 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
   const points = revealed && r?.kind === "points" ? r : null;
   // Already checked in today (or nothing to pay): "Welcome back!" big, no points.
   const welcomeOnly = !!points && (points.alreadyToday || points.earned <= 0);
+
+  // A pop as the icon comes in, then the payoff's own sound: a coin for
+  // "+5", a little fanfare for someone new, two notes for "Welcome back!"
+  // (sounds.ts). One sent on to the register chimes on the screen after.
+  useEffect(() => {
+    playSound("pop");
+  }, []);
+  const payoff: SoundName | null = !revealed || r?.kind !== "points" ? null : welcomeOnly ? "welcomeBack" : r.isNew ? "fanfare" : "checkin";
+  useEffect(() => {
+    if (payoff) playSound(payoff);
+  }, [payoff]);
   const who = points?.firstName;
   const hello = !points
     ? null

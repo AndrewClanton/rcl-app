@@ -43,6 +43,7 @@ import { flairColor, flairHex, parseFlair, type EntranceKey, type StickerKey } f
 import { lineFromChannel } from "@/lib/member-profile";
 import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
+import { playSound } from "./sounds";
 
 type Channel = ReturnType<ReturnType<typeof createClient>["channel"]>;
 
@@ -516,6 +517,35 @@ export default function CheckinKiosk({
     };
   }, [registerTopic]);
 
+  // The sounds for this side of the screen (sounds.ts): a question or a
+  // card coming up, a gentle "hmm" for a number we don't know, an "uh-oh"
+  // for an error, a chime or a sparkle for each banner, and the bigger
+  // moments (points from a purchase or Rewind, a member's entrance).
+  useEffect(() => {
+    if (error) playSound("error");
+  }, [error]);
+  const stepName = step.name;
+  useEffect(() => {
+    if (stepName === "notFound") playSound("notFound");
+    else if (stepName === "sent") playSound("chime");
+    else if (stepName !== "phone") playSound("card");
+  }, [stepName]);
+  const lastToast = toasts.at(-1);
+  const lastToastKey = lastToast?.key ?? null;
+  const lastToastTone = lastToast?.tone ?? null;
+  useEffect(() => {
+    if (lastToastKey) playSound(lastToastTone === "badge" ? "badge" : lastToastTone === "warn" ? "error" : "chime");
+  }, [lastToastKey, lastToastTone]);
+  const celebrationKey = celebration?.key ?? null;
+  const celebrationLong = !!celebration?.long;
+  useEffect(() => {
+    if (celebrationKey) playSound(celebrationLong ? "fanfare" : "checkin");
+  }, [celebrationKey, celebrationLong]);
+  const entranceKey = entrance?.key ?? null;
+  useEffect(() => {
+    if (entranceKey) playSound("confetti");
+  }, [entranceKey]);
+
   // Until the register says it has a request, keep sending it: a broadcast
   // nobody was listening for is simply gone.
   useEffect(() => {
@@ -624,6 +654,7 @@ export default function CheckinKiosk({
 
   function press(key: string) {
     setError(null);
+    playSound("key");
     if (key === "back") setEntry((e) => e.slice(0, -1));
     else if (key === "clear") setEntry("");
     else if (key === "email") showLetters(true);

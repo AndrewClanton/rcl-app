@@ -99,7 +99,7 @@ export function boothAlertHtml(b: BoothEmailData, adminUrl: string) {
       ])}
     </td></tr>
     <tr><td style="padding:14px 22px 22px">
-      <p style="margin:0 0 14px;font:15px/1.5 Arial,Helvetica,sans-serif;color:${INK}">It's on the register's shift bar the day before and the day of, with a button to print the Reserved card.</p>
+      <p style="margin:0 0 14px;font:15px/1.5 Arial,Helvetica,sans-serif;color:${INK}">It's under Booths on the register (the bottom row of the order) the day before and the day of, with a button to print the Reserved card.</p>
       <a href="${esc(adminUrl)}" style="display:inline-block;background:${INK};color:${GOLD};font:900 13px/1 Arial,Helvetica,sans-serif;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:12px 18px">See all booth bookings</a>
     </td></tr>`);
 }

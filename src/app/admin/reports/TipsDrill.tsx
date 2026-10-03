@@ -294,7 +294,7 @@ export default function TipsDrill({
         </Section>
       )}
 
-      <Section title="Who was on" subtitle="Shifts from the register's shift bar, and the sales each person rang (a dot is a sale with a tip).">
+      <Section title="Who was on" subtitle="Shifts started and ended on the register (its Staff button), and the sales each person rang (a dot is a sale with a tip).">
         <WhoWasOn drill={drill} rows={[...people, ...sharedRows]} nameOf={nameOf} shared={shared} orders={completed} />
       </Section>
 

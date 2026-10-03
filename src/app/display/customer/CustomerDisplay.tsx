@@ -13,7 +13,8 @@ import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
 import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
-import type { MemberOff, RickrollState, StaffSetup } from "@/lib/registerChannel";
+import { parseTabletSound, type MemberOff, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
+import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
@@ -183,6 +184,8 @@ export default function CustomerDisplay({
     return () => clearTimeout(timer);
   }, [welcome]);
   const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
+  // The last cart, so each new one can make its sound (sounds.ts cartSound).
+  const lastCart = useRef<RegisterCartSnapshot | null>(previewCart ?? null);
   const celebrated = useRef<string | null>(null);
   const celebrate = useCallback((firstName: string, renewed: boolean) => {
     celebrated.current = firstName;
@@ -197,6 +200,9 @@ export default function CustomerDisplay({
       const before = lastMember.current ?? null;
       const now = next.member ?? null;
       lastMember.current = now;
+      const sound = cartSound(lastCart.current, next);
+      lastCart.current = next;
+      if (sound) playSound(...sound);
       setCart(next);
       // Someone they said "Done" or "That's not me" for is off the order.
       setOffFor((off) => (off && now?.firstName === off ? off : null));
@@ -246,6 +252,14 @@ export default function CustomerDisplay({
           setRickroll(null);
           setRickrollAsked((n) => n + 1);
         })
+        // Sound on/off and volume from the register's Devices (remembered
+        // here), a sample at that level, and a sale that went through.
+        .on("broadcast", { event: "sound" }, (msg) => {
+          const s = parseTabletSound(msg.payload);
+          if (s) setSoundSettings(s);
+        })
+        .on("broadcast", { event: "sound-test" }, () => playSound("approved"))
+        .on("broadcast", { event: "paid" }, () => playSound("approved"))
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
@@ -260,6 +274,41 @@ export default function CustomerDisplay({
       if (channel) supabase.removeChannel(channel);
     };
   }, [registerTopic, onCart, onSetup, onSetupEnd]);
+
+  // Browsers keep sound off until the page is tapped: the first tap on the
+  // tablet turns it on, and any later one wakes it if the iPad let it sleep.
+  useEffect(() => {
+    const wake = () => unlockSound();
+    const events = ["pointerdown", "pointerup", "touchend", "click", "keydown"] as const;
+    events.forEach((e) => window.addEventListener(e, wake, { capture: true, passive: true }));
+    return () => events.forEach((e) => window.removeEventListener(e, wake, { capture: true }));
+  }, []);
+
+  // The moments on this side of the screen, each with its sound.
+  const setupKey = setup ? `${setup.id}:${setup.stage}` : null;
+  useEffect(() => {
+    if (setupKey) playSound(setupKey.endsWith(":saved") ? "chime" : "card");
+  }, [setupKey]);
+  const burstId = burst?.id ?? null;
+  useEffect(() => {
+    if (burstId) playSound("confetti");
+  }, [burstId]);
+  const rickrollWas = useRef(false);
+  useEffect(() => {
+    // A tape in as it starts (before the video's own sound), and winding
+    // down once it's gone: never over the song.
+    if (rickrollOn !== rickrollWas.current) playSound(rickrollOn ? "tapeIn" : "tapeOut");
+    rickrollWas.current = rickrollOn;
+  }, [rickrollOn]);
+  const welcomeKey = welcome?.key ?? null;
+  useEffect(() => {
+    if (welcomeKey) playSound("fanfare");
+  }, [welcomeKey]);
+  const ticketsKey = tickets?.key ?? null;
+  const finishKey = finish?.key ?? null;
+  useEffect(() => {
+    if (ticketsKey || finishKey) playSound("card");
+  }, [ticketsKey, finishKey]);
 
   const hasOrder = !!cart && cart.items.length > 0;
   const clearBurst = useCallback(() => setBurst(null), []);

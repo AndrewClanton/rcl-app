@@ -24,7 +24,7 @@ export function NoteIcon({ size = 18 }: { size?: number }) {
 
 // "Leave a dev note": a bug, a typo or a change someone wants, saved with
 // the page it's about for Back office → Dev notes. Opened from wherever the
-// screen keeps its button (the back office menu, the register's shift bar,
+// screen keeps its button (the back office menu, the register's bottom row,
 // the staff bar on other pages), never from something floating over the
 // page. Admins only: the buttons show for admins, and submitDevNote checks
 // again on the server.
