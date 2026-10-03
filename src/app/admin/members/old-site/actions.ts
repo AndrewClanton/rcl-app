@@ -39,6 +39,7 @@ interface ApprovedRow {
   membership_duration: string | null;
   membership_is_plus: boolean;
   subscription_billing_status: string | null;
+  joined_at: string | null;
 }
 
 // Copies every approved, not-yet-imported old account into `members` as a
@@ -55,7 +56,7 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("legacy_accounts")
-      .select("legacy_user_id, email, first_name, last_name, phone, membership_type, membership_duration, membership_is_plus, subscription_billing_status")
+      .select("legacy_user_id, email, first_name, last_name, phone, membership_type, membership_duration, membership_is_plus, subscription_billing_status, joined_at")
       .eq("decision", "import")
       .is("imported_member_id", null)
       .not("email", "is", null)
@@ -67,9 +68,9 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   }
   if (approved.length === 0) return { ok: true, added: 0, linked: 0, skipped: [] };
 
-  const existing = new Map<string, { id: string; legacy_user_id: number | null; phone: string | null; price_tier: string | null }>();
+  const existing = new Map<string, { id: string; legacy_user_id: number | null; phone: string | null; price_tier: string | null; created_at: string }>();
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase.from("members").select("id, email, legacy_user_id, phone, price_tier").not("email", "is", null).range(from, from + 999);
+    const { data, error } = await supabase.from("members").select("id, email, legacy_user_id, phone, price_tier, created_at").not("email", "is", null).range(from, from + 999);
     if (error) return { ok: false, error: "Couldn't read existing members." };
     for (const m of data) existing.set(m.email.toLowerCase(), m);
     if (data.length < 1000) break;
@@ -79,6 +80,12 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
   // The old site's plan type was the rate ("Senior ($12.00)"). Carried over
   // with no "set by", which staff screens show as "from old site".
   const oldRate = (r: ApprovedRow) => (/^senior/i.test(r.membership_type ?? "") ? "senior" : /^student/i.test(r.membership_type ?? "") ? "student" : null);
+  // The old site's "-" (or any phone with no digits) is no phone at all:
+  // saved as one, the door tablet could never find them by it.
+  const realPhone = (p: string | null) => (p && /\d/.test(p) ? p : null);
+  // Member since is the day they joined the old site, not the day they moved
+  // over (imported_at keeps that): only ever earlier, never in the future.
+  const joinedBefore = (r: ApprovedRow, than: string) => (r.joined_at && Date.parse(r.joined_at) < Date.parse(than) ? r.joined_at : null);
   const wasPaying = (r: ApprovedRow) => !!r.subscription_billing_status || r.membership_is_plus || r.membership_duration === "monthly" || r.membership_duration === "annual";
   const skipped: string[] = [];
   const seen = new Set<string>();
@@ -104,7 +111,8 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
           legacy_user_id: r.legacy_user_id,
           legacy_plus: wasPaying(r),
           imported_at: now,
-          ...(match.phone ? {} : { phone: r.phone }),
+          ...(joinedBefore(r, match.created_at) ? { created_at: joinedBefore(r, match.created_at) } : {}),
+          ...(match.phone || !realPhone(r.phone) ? {} : { phone: realPhone(r.phone) }),
           ...(match.price_tier || !oldRate(r) ? {} : { price_tier: oldRate(r) }),
         })
         .eq("id", match.id);
@@ -116,13 +124,14 @@ export async function importApprovedLegacyAccounts(): Promise<Result<{ added: nu
     toInsert.push({
       name,
       email: r.email.trim(),
-      phone: r.phone,
+      phone: realPhone(r.phone),
       tier: "Insiders",
       points: 0,
       price_tier: oldRate(r),
       legacy_user_id: r.legacy_user_id,
       legacy_plus: wasPaying(r),
       imported_at: now,
+      ...(joinedBefore(r, now) ? { created_at: joinedBefore(r, now) } : {}),
     });
   }
 

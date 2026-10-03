@@ -5,11 +5,12 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { DayOrder, DayReport } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
-import { BOOTHS_LABEL, FOOD_AND_DRINK, FOOD_AND_DRINK_CATEGORIES, TICKETS_LABEL } from "@/lib/report-categories";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, FOOD_AND_DRINK_CATEGORIES, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import { DRILL_PARAMS, closeDrill, forgetPush, setDrillParams, type DrillParam } from "./drill-nav";
 import DrillLink from "./DrillLink";
 import TipsDrill from "./TipsDrill";
-import { Lines, Section, money, time } from "./drill-ui";
+import { Lines, Section, money, shortDay, time } from "./drill-ui";
 
 // Reports -> Day: what's behind each figure. Tapping a figure opens one of
 // these in a sheet (full screen on a phone, a panel on the right on a wider
@@ -17,8 +18,8 @@ import { Lines, Section, money, time } from "./drill-ui";
 // bookmarked. Every list adds up to the figure it came from: the money is
 // the report's own (getDayReport), only broken down.
 
-export type DrillView = "net" | "collected" | "orders" | "tax" | "tickets" | "refunds" | "tips";
-const VIEWS: DrillView[] = ["net", "collected", "orders", "tax", "tickets", "refunds", "tips"];
+export type DrillView = "net" | "collected" | "orders" | "tax" | "tickets" | "refunds" | "tips" | "memberships";
+const VIEWS: DrillView[] = ["net", "collected", "orders", "tax", "tickets", "refunds", "tips", "memberships"];
 
 const NO_CASHIER = "(none)";
 
@@ -99,21 +100,24 @@ export default function DayDrill({ r, drill, canRecord, dayLabel }: { r: DayRepo
             ? "Sales tax"
             : view === "tickets"
               ? "Tickets"
-              : view === "refunds"
-                ? "Refunds"
-                : filters.item
-                  ? filters.item
-                  : filters.cat
-                    ? filters.cat
-                    : filters.pay
-                      ? PAY_LABEL[filters.pay]
-                      : "Orders";
+              : view === "memberships"
+                ? MEMBERSHIPS_LABEL
+                : view === "refunds"
+                  ? "Refunds"
+                  : filters.item
+                    ? filters.item
+                    : filters.cat
+                      ? filters.cat
+                      : filters.pay
+                        ? PAY_LABEL[filters.pay]
+                        : "Orders";
 
   return (
     <Sheet title={title} subtitle={dayLabel} viewKey={`${view}`}>
       {view === "tips" && <TipsDrill r={r} drill={drill} canRecord={canRecord} orderHref={orderHref} splitParam={sp.get("split")} />}
       {view === "tax" && <TaxView r={r} hrefFor={hrefFor} orderHref={orderHref} />}
       {view === "tickets" && <TicketsView r={r} drill={drill} />}
+      {view === "memberships" && <MembershipsView r={r} />}
       {view === "refunds" && <RefundsView r={r} drill={drill} orderHref={orderHref} />}
       {(view === "net" || view === "collected" || view === "orders") && <OrdersView view={view} r={r} filters={filters} hrefFor={hrefFor} orderHref={orderHref} />}
     </Sheet>
@@ -229,11 +233,13 @@ function OrdersView({
   const boothMoney = round2(r.boothLines.reduce((s, b) => s + b.fee + b.tax, 0));
   const set = (patch: Partial<Record<DrillParam, string | null>>) => setDrillParams(patch);
   const anyFilter = f.status !== "completed" || f.pay || f.who || f.cat || f.item || f.q;
+  // Memberships are in Net sales and Collected, but they're not online orders.
+  const showMembers = (view === "net" || view === "collected") && !f.pay;
 
   return (
     <>
       {view === "net" && (
-        <Section title={money(r.netSales)} subtitle="Net sales: what sold, before tax and tips, after member discounts and partial refunds.">
+        <Section title={money(r.netSales)} subtitle="Net sales: what sold, before tax and tips, after member discounts, Insiders+ daily coffees and partial refunds.">
           <Lines
             rows={[
               ...r.sold.map((s) => ({
@@ -245,9 +251,17 @@ function OrdersView({
                   </>
                 ),
                 value: money(s.amount),
-                href: s.label === TICKETS_LABEL ? hrefFor({ show: "tickets" }) : s.label === BOOTHS_LABEL ? hrefFor({ show: "orders", pay: "online" }) : hrefFor({ show: "orders", cat: s.label }),
+                href:
+                  s.label === TICKETS_LABEL
+                    ? hrefFor({ show: "tickets" })
+                    : s.label === BOOTHS_LABEL
+                      ? hrefFor({ show: "orders", pay: "online" })
+                      : s.label === MEMBERSHIPS_LABEL
+                        ? hrefFor({ show: "memberships" })
+                        : hrefFor({ show: "orders", cat: s.label }),
               })),
               ...(r.discounts > 0 ? [{ key: "disc", label: "Member discounts", value: `−${money(r.discounts)}`, muted: true }] : []),
+              ...(r.dailyCoffee > 0 ? [{ key: "coffee", label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true }] : []),
               ...(r.partialRefunds > 0 ? [{ key: "part", label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
               { key: "net", label: "Net sales", value: money(r.netSales), strong: true },
             ]}
@@ -262,6 +276,7 @@ function OrdersView({
               { key: "card", label: "Card (register)", value: money(r.card), href: hrefFor({ show: "orders", pay: "card" }) },
               { key: "cash", label: "Cash (register)", value: money(r.cash), href: hrefFor({ show: "orders", pay: "cash" }) },
               { key: "online", label: "Online (tickets, booths, web orders)", value: money(r.online), href: hrefFor({ show: "orders", pay: "online" }) },
+              { key: "members", label: "Insiders+ memberships (Stripe billing)", value: money(r.memberships.collected), href: hrefFor({ show: "memberships" }) },
               { key: "total", label: "Collected", value: money(r.collected), strong: true },
               ...(r.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in, not counted)", value: money(r.vouchers), muted: true, href: hrefFor({ show: "orders", pay: "vouchers" }) }] : []),
               { key: "tips", label: "Of it, tips", value: money(r.tips), muted: true, href: hrefFor({ show: "tips" }) },
@@ -345,7 +360,7 @@ function OrdersView({
               Goods (before tax and tip): {money(counted.reduce((s, o) => s + goods(o), 0))}, an average of {money(counted.reduce((s, o) => s + goods(o), 0) / counted.length)} an order.
             </p>
           )}
-          {(view === "net" || view === "collected" || f.pay === "online") && !f.who && !f.cat && !f.item && !f.q && (onlineTickets.length > 0 || r.boothLines.length > 0) && (
+          {(view === "net" || view === "collected" || f.pay === "online") && !f.who && !f.cat && !f.item && !f.q && (onlineTickets.length > 0 || r.boothLines.length > 0 || (showMembers && r.membershipLines.length > 0)) && (
             <div className="mt-2 space-y-1 text-xs text-[var(--muted)]">
               {onlineTickets.length > 0 && (
                 <div className="flex justify-between gap-3">
@@ -362,6 +377,15 @@ function OrdersView({
                     {view === "net" ? ", before tax" : ", with tax"}
                   </span>
                   <span className="tabular-nums">{money(view === "net" ? r.boothLines.reduce((s, b) => s + b.fee, 0) : boothMoney)}</span>
+                </div>
+              )}
+              {showMembers && r.membershipLines.length > 0 && (
+                <div className="flex justify-between gap-3">
+                  <DrillLink replace href={hrefFor({ show: "memberships" })} className="hover:underline">
+                    Plus {r.membershipLines.length} membership payment{r.membershipLines.length === 1 ? "" : "s"}
+                    {view === "net" ? ", before tax" : ", with tax"} ›
+                  </DrillLink>
+                  <span className="tabular-nums">{money(view === "net" ? r.memberships.sales : r.memberships.collected)}</span>
                 </div>
               )}
             </div>
@@ -423,6 +447,8 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
   for (const o of completed) for (const l of o.lines) add(l.category, l.amount, !o.taxFree);
   for (const t of onlineTickets) add("Online tickets", t.revenue, t.tax > 0);
   for (const b of r.boothLines) add("Booths", b.fee, b.tax > 0);
+  // A refund goes with its charge: taxed or not.
+  for (const m of r.membershipLines) add(MEMBERSHIPS_LABEL, m.sales, m.tax !== 0);
   const cats = [...byCat.entries()].sort((a, b) => b[1].taxable + b[1].free - (a[1].taxable + a[1].free));
   const taxFree = completed.filter((o) => o.taxFree);
 
@@ -435,6 +461,7 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
             ...(completed.some((o) => o.source !== "pos") ? [{ key: "web", label: "Website orders", value: money(sumTax(completed.filter((o) => o.source !== "pos"))) }] : []),
             ...(onlineTickets.length ? [{ key: "tix", label: "Online tickets", value: money(onlineTickets.reduce((s, t) => s + t.tax, 0)), href: hrefFor({ show: "tickets" }) }] : []),
             ...(r.boothLines.length ? [{ key: "booth", label: "Booths", value: money(r.boothLines.reduce((s, b) => s + b.tax, 0)) }] : []),
+            ...(r.membershipLines.length ? [{ key: "members", label: MEMBERSHIPS_LABEL, value: money(r.memberships.tax), href: hrefFor({ show: "memberships" }) }] : []),
             ...(refundTax > 0 ? [{ key: "ref", label: "Given back in partial refunds", value: `−${money(refundTax)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
             { key: "total", label: "Sales tax", value: money(r.tax), strong: true },
           ]}
@@ -466,7 +493,10 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
         )}
       </Section>
 
-      <Section title={`Rung up tax-free · ${taxFree.length}`} subtitle="Register orders marked tax-free (a nonprofit, say). Online tickets and booths without tax were sold before tax was added to them.">
+      <Section
+        title={`Rung up tax-free · ${taxFree.length}`}
+        subtitle="Register orders marked tax-free (a nonprofit, say). Online tickets and booths without tax were sold before tax was added to them. Insiders+ subscriptions started before the evening of Sept. 28 are billed without tax, renewals included, until tax is added to them."
+      >
         <OrderList orders={taxFree} of={goods} orderHref={orderHref} />
       </Section>
     </>
@@ -525,6 +555,80 @@ function TicketsView({ r, drill }: { r: DayReport; drill: DayDrillData }) {
   );
 }
 
+// ---------- Insiders+ memberships ----------
+
+function MembershipsView({ r }: { r: DayReport }) {
+  const m = r.memberships;
+  const lines = r.membershipLines;
+  const sum = round2(lines.reduce((s, l) => s + l.amount, 0));
+  return (
+    <>
+      <Section
+        title={money(m.collected)}
+        subtitle="Card charges Stripe made for Insiders+ (new members, renewals, switches to yearly) and gift memberships, with tax. They never go through the register, so they're counted here and nowhere else."
+      >
+        {!m.tracked ? (
+          <p className="text-sm text-[var(--muted)]">Not counted yet: the member payments database update hasn&apos;t been applied.</p>
+        ) : (
+          <Lines
+            rows={[
+              ...m.lines.map((l) => ({ key: l.key, label: `${l.label} · ${l.count}`, value: money(l.collected), muted: l.key === "refund" })),
+              { key: "total", label: "Collected", value: money(m.collected), strong: true },
+              { key: "sales", label: "Of it, before tax (in net sales)", value: money(m.sales), muted: true },
+              { key: "tax", label: "Of it, sales tax", value: money(m.tax), muted: true },
+            ]}
+          />
+        )}
+      </Section>
+
+      <Section title={`Each payment · ${lines.length}`} subtitle="Oldest first. A refund comes off the day of the charge it gives back.">
+        {lines.length === 0 ? (
+          <p className="py-3 text-sm text-[var(--muted)]">No membership payments this day.</p>
+        ) : (
+          <>
+            <ul className="divide-y divide-[var(--border)]">
+              {lines.map((l) => (
+                <li key={l.id} className={`flex items-baseline gap-3 py-2 text-sm ${l.kind === "refund" ? "text-[var(--muted)]" : ""}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs text-[var(--muted)]">
+                      {time(l.countedAt)}
+                      {l.kind === "refund" ? ` · refunded ${shortDay(l.paidAt)}` : ""}
+                      {l.status === "refunded" ? " · refunded" : l.status === "partly_refunded" ? " · partly refunded" : ""}
+                      {l.periodEnd && l.kind !== "refund" ? ` · ${l.kind === "gift" ? "runs to" : "next bill"} ${shortDay(l.periodEnd)}` : ""}
+                    </div>
+                    <div className="truncate">
+                      <span className="font-medium">{l.label}</span>
+                      {" · "}
+                      {l.memberId ? (
+                        <Link href={`/admin/members/${l.memberId}`} className="underline-offset-2 hover:underline">
+                          {l.memberName ?? "Member"}
+                        </Link>
+                      ) : (
+                        <span className="text-[var(--muted)]">not linked to a member</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-[var(--muted)] tabular-nums">
+                      {money(l.sales)} + {money(l.tax)} tax
+                    </div>
+                  </div>
+                  <span className="shrink-0 font-semibold tabular-nums">{money(l.amount)}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-[var(--border)] pt-2 text-sm font-semibold">
+              <span>
+                {m.payments} payment{m.payments === 1 ? "" : "s"}
+                {m.refunds ? `, ${m.refunds} refund${m.refunds === 1 ? "" : "s"}` : ""}
+              </span>
+              <span className="tabular-nums">{money(sum)}</span>
+            </div>
+          </>
+        )}
+      </Section>
+    </>
+  );
+}
+
 // ---------- Refunds ----------
 
 function RefundsView({ r, drill, orderHref }: { r: DayReport; drill: DayDrillData; orderHref: (n: number) => string }) {
@@ -544,6 +648,9 @@ function RefundsView({ r, drill, orderHref }: { r: DayReport; drill: DayDrillDat
             { key: "f", label: `Refunded in full · ${full.length}`, value: money(fullTotal) },
             { key: "fn", label: "Full refunds aren't counted in any figure (the sale is left out altogether).", value: "", muted: true },
             { key: "v", label: `Voided · ${voided.length}`, value: voided.length ? money(voided.reduce((s, o) => s + o.total, 0)) : "—" },
+            ...(r.memberships.refunds > 0
+              ? [{ key: "m", label: `Membership refunds · ${r.memberships.refunds} (taken off memberships; see ${MEMBERSHIPS_LABEL})`, value: money(r.memberships.refunded) }]
+              : []),
           ]}
         />
       </Section>

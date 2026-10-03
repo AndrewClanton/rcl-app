@@ -20,7 +20,9 @@ function asReceipt(o: RecentOrder): ReceiptData {
     orderNumber: o.orderNumber,
     at: o.at,
     cashier: o.cashier,
-    member: o.member,
+    // A member the card found isn't printed: whoever paid takes the
+    // receipt, and it may not be their card.
+    member: o.memberByCard ? null : o.member,
     orderName: o.name,
     lines: o.lines.map((l) => ({ name: l.name, qty: l.qty, unit: l.unit, mods: l.mods })),
     subtotal: o.subtotal,
@@ -38,7 +40,7 @@ function asReceipt(o: RecentOrder): ReceiptData {
 }
 
 function paidWith(o: RecentOrder) {
-  return [o.voucher > 0 && "voucher", o.cash > 0 && "cash", o.card > 0 && "card"].filter(Boolean).join(" + ") || o.method || "—";
+  return [o.voucher > 0 && "voucher", o.cash > 0 && "cash", o.card > 0 && (o.cardLabel ?? "card")].filter(Boolean).join(" + ") || o.method || "—";
 }
 
 // The last 20 sales on the register: what was in them, reprint the receipt
@@ -147,8 +149,21 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       </span>
                     </div>
                     <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-                      {[selected.name && `For ${selected.name}`, selected.cashier && `Rung up by ${selected.cashier}`, selected.member && `Member: ${selected.member}`, `Paid ${paidWith(selected)}`].filter(Boolean).join(" · ")}
+                      {[
+                        selected.name && `For ${selected.name}`,
+                        selected.cashier && `Rung up by ${selected.cashier}`,
+                        selected.member && `Member: ${selected.member}${selected.memberByCard ? " (points by card)" : ""}`,
+                        `Paid ${paidWith(selected)}`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </p>
+                    {selected.memberByCard && (
+                      <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                        Nobody was attached, so the card that paid gave them the points (they see only the points, not what was bought). If
+                        someone else paid, a manager can undo it on their page in Back office.
+                      </p>
+                    )}
                     {selected.status !== "completed" && (
                       <p className="notice notice-warn mt-2 !p-2 text-sm">This order was {selected.status}.</p>
                     )}

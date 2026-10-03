@@ -1,12 +1,13 @@
 // Checks "claim your account" links (src/lib/member-claim-token.ts and
 // claim-link.ts) without touching the database: a token opens to what was
 // sealed, runs out on time for each kind, and refuses any edit -- a flipped
-// bit, a different kind, member or expiry, another key -- and the "phone
-// digits matched" proof only works for its own link and only for a while.
+// bit, a different kind, member or expiry, another key -- and that the
+// phone-digits step is gone for good, and links don't need a phone on file.
 // Also that the receipt prints a claim QR only for a real claim link.
 //
 // Usage: node scripts/check-member-claim.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
+import { readFileSync } from "node:fs";
 import { config } from "dotenv";
 
 config({ path: ".env.local", quiet: true });
@@ -97,33 +98,19 @@ check("opens no token at all with no signing key", tok.openClaimToken(kiosk.toke
 process.env.SUPABASE_SERVICE_ROLE_KEY = realKey;
 
 check("won't seal for a non-UUID member", tok.sealClaimToken("not-a-uuid", "kiosk", NOW) === null);
-check("won't seal an unknown kind", tok.sealClaimToken(MEMBER, "email", NOW) === null);
+check("won't seal an unknown kind", tok.sealClaimToken(MEMBER, "bogus", NOW) === null);
 
-// ---------- "the phone digits matched" proof ----------
-const proof = tok.sealDigitsProof(kiosk.nonce, kiosk.exp, NOW);
-check("seals a digits proof", !!proof?.value);
-check("proof works for its own link", tok.digitsProofOk(proof.value, kiosk.nonce, NOW + MIN));
-check("proof doesn't work for another link", !tok.digitsProofOk(proof.value, receipt.nonce, NOW + MIN));
-check("proof never outlives the link (kiosk: capped at 30 minutes)", proof.maxAge <= 30 * 60 && !tok.digitsProofOk(proof.value, kiosk.nonce, kiosk.exp));
-const rProof = tok.sealDigitsProof(receipt.nonce, receipt.exp, NOW);
-check("proof for a receipt link lasts 30 minutes", rProof.maxAge === 30 * 60, `${rProof.maxAge}s`);
-check("proof expires after 30 minutes", tok.digitsProofOk(rProof.value, receipt.nonce, NOW + 29 * MIN) && !tok.digitsProofOk(rProof.value, receipt.nonce, NOW + 30 * MIN));
-const [pn, pe, ps] = rProof.value.split(".");
-check("refuses a proof with a pushed-out expiry", !tok.digitsProofOk(`${pn}.${Number(pe) + 3600}.${ps}`, receipt.nonce, NOW + MIN));
-const sig = Buffer.from(ps, "base64url");
-sig[0] ^= 1;
-check("refuses a proof with an edited signature", !tok.digitsProofOk(`${pn}.${pe}.${sig.toString("base64url")}`, receipt.nonce, NOW + MIN));
-check("refuses a proof with a missing part or junk", [null, undefined, "", `${pn}.${pe}`, "a.b.c", `${pn}.x.${ps}`].every((v) => !tok.digitsProofOk(v, receipt.nonce, NOW)));
-check("no proof for a link that's already run out", tok.sealDigitsProof(kiosk.nonce, kiosk.exp, kiosk.exp + 1) === null);
+// ---------- no phone-digits step ----------
+check(
+  "the digits proof and the wrong-tries lockout are gone",
+  !("sealDigitsProof" in tok) && !("digitsProofOk" in tok) && !("DIGITS_PROOF_COOKIE" in tok) && !("MAX_WRONG_DIGITS" in tok),
+);
 
-// ---------- the last-four check (member-claim.ts compares with the phone's last 10 digits) ----------
-const last4 = (phone) => {
-  const d = (phone ?? "").replace(/\D/g, "").slice(-10);
-  return d.length >= 7 ? d.slice(-4) : null;
-};
-check("last four of a formatted phone", last4("(417) 555-0142") === "0142");
-check("last four of a +1 phone", last4("+1 417.555.0142") === "0142");
-check("no check possible for a missing or short phone", last4(null) === null && last4("555-12") === null);
+// ---------- no phone on file needed (the tablet's "Phone or email", 10/1) ----------
+const code = (rel) => readFileSync(new URL(`../src/${rel}`, import.meta.url), "utf8").replace(/^\s*\/\/.*$/gm, "");
+check("claim links don't look at the phone (issueClaimLink, the invite's links)", !/hasPhoneOnFile|\.phone\b|[ ,"]phone[,"]/.test(code("lib/member-claim.ts")));
+check("sign-in help has no 'add their phone first' case", !/no_phone|no-phone|NO_PHONE|hasPhoneOnFile/.test(code("lib/sign-in-help.ts")));
+check("the Back office card and the sign-in page have none either", !/no-phone/.test(code("app/admin/members/[id]/SignInHelpCard.tsx")) && !/ask_at_bar/.test(code("app/(site)/account/login/AccountForm.tsx")));
 
 // ---------- links on this site only ----------
 const url = claimUrl(kiosk.token);

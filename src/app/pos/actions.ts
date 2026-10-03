@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkManagerPin } from "@/lib/manager-pin";
 import type { ApprovalResult } from "@/lib/pin-rules";
@@ -11,6 +12,14 @@ import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
+import { readRegisterCard, settleSaleCard } from "@/lib/member-cards";
+import { cardLabel, type CardNotice } from "@/lib/card-match";
+import { schemaMissing } from "@/lib/schema-missing";
+import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
+import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type CoffeeCheck, type TotalsCheck } from "@/lib/register-sale-checks";
+import { currentMemberId } from "@/lib/member-forward";
+import { coffeeDay } from "@/lib/daily-perk-server";
+import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -24,6 +33,9 @@ export interface CheckoutLine {
 
 export interface CheckoutTotals {
   subtotal: number;
+  // The Insiders+ daily coffee (lib/daily-perk.ts). Optional: a sale kept
+  // in a register's browser from before it existed has none.
+  daily_perk_discount?: number;
   tier_discount: number;
   monthly_discount: number;
   redemption_discount: number;
@@ -164,11 +176,20 @@ async function syncTicketBookings(
 }
 
 // A paid sale's items. By now the order row is saved as paid, so a failure
-// here is logged, not thrown: throwing would show a paid sale as failed, and
-// a retry finds the order by its payment and stops before reaching this.
-async function saveSaleItems(supabase: ReturnType<typeof createAdminClient>, orderId: string, lines: CheckoutLine[]) {
-  const r = await replaceOrderItems(supabase, orderId, lines);
-  if (!r.ok) console.error("sale items not saved", orderId, r.error);
+// here is flagged for a manager (Reports -> Register checks), not thrown:
+// throwing would show a paid sale as failed, and a retry finds the order by
+// its payment and stops before reaching this.
+async function saveSaleItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  sale: { orderId: string; orderNumber: number; employeeId: string; paymentIntentId: string | null },
+  lines: CheckoutLine[],
+) {
+  const r = await replaceOrderItems(supabase, sale.orderId, lines);
+  if (r.ok) return;
+  console.error("sale items not saved", sale.orderId, r.error);
+  const items = lines.slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`);
+  const summary = `Order #${sale.orderNumber} saved as paid, but its items didn't. Put them back by hand: ${items.join(", ")}${lines.length > items.length ? ", ..." : ""}.`;
+  after(() => flagSale("items_not_saved", { ...sale, details: { summary, items, error: r.error } }));
 }
 
 export type CompleteOrderInput = DraftFields & {
@@ -179,18 +200,122 @@ export type CompleteOrderInput = DraftFields & {
   draftOrderId?: string | null;
 };
 
-export async function completeOrder(params: CompleteOrderInput): Promise<{ orderNumber: number }> {
+// A card sale's card, once the sale is saved: linked to the member on it,
+// or finding the member for the sale's points (lib/member-cards.ts).
+// Best-effort and quick: the Stripe read starts as soon as the sale comes
+// in (so it's usually back by now), it never fails the sale, and if it's
+// slow the register moves on after 2.5 seconds while the rest finishes in
+// the background (the points still land; the register just doesn't show
+// them).
+const CARD_WAIT_MS = 2500;
+
+async function settleCard(args: Parameters<typeof settleSaleCard>[0]): Promise<CardNotice | null> {
+  const work = settleSaleCard(args).catch((e) => {
+    console.error("card points failed", args.orderId, e);
+    return null;
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), CARD_WAIT_MS);
+  });
+  const first = await Promise.race([work, late]);
+  clearTimeout(timer);
+  if (first !== "late") return first;
+  try {
+    after(() => work.then(() => undefined));
+  } catch {
+    // Not inside a request: the work carries on by itself.
+  }
+  return null;
+}
+
+// A member's points balance: null if there's no such member, undefined if
+// it couldn't be read.
+async function memberPoints(supabase: ReturnType<typeof createAdminClient>, memberId: string): Promise<number | null | undefined> {
+  const { data, error } = await supabase.from("members").select("points").eq("id", memberId).maybeSingle();
+  if (error) return undefined;
+  return data ? Number(data.points) : null;
+}
+
+// Checked right before the payment screen opens, so a problem is caught
+// before anyone pays instead of after. A check that can't run lets the sale
+// through (completeOrder looks again).
+// dropDailyCoffee: the Insiders+ daily coffee has to come off the order,
+// with the member's coffee today when that's why (already used: the
+// register shows when).
+export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null };
+
+export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals): Promise<PaymentCheck> {
   await assertStaff();
+  const supabase = createAdminClient();
+  const coffeeOn = Number(totals.daily_perk_discount ?? 0) > 0;
+  // The account a merged-away member became (lib/member-forward.ts), so the
+  // points and the totals check read the account completeOrder will pay.
+  const needsMember = !!fields.memberId && ((fields.pointsRedeemed && totals.redemption_discount > 0) || coffeeOn || ENFORCE_REGISTER_TOTALS);
+  const memberId = needsMember ? await currentMemberId(fields.memberId) : fields.memberId;
+  // A daily coffee the member has already had today (on the other
+  // register, say), or can't have, comes off before anyone pays. Checked
+  // whether or not totals are enforced. If the check can't run, the sale
+  // goes ahead (completeOrder looks again).
+  let dailyCoffee: CoffeeCheck | undefined;
+  if (coffeeOn) {
+    dailyCoffee = await checkDailyCoffee({ memberId, lines: fields.lines });
+    if (!dailyCoffee.ok) {
+      return {
+        ok: false,
+        error: `${dailyCoffee.reason} The free coffee has been taken off the order. Check the new total, then take payment.`,
+        dropDailyCoffee: dailyCoffee.used ? { usedAt: dailyCoffee.used.usedAt, orderNumber: dailyCoffee.used.orderNumber } : null,
+      };
+    }
+  }
+  if (fields.pointsRedeemed && totals.redemption_discount > 0) {
+    if (!memberId) return { ok: false, error: "A points reward needs a member on the order. Attach the member, or uncheck the reward." };
+    const points = await memberPoints(supabase, memberId);
+    if (points !== undefined && (points ?? 0) < POINTS_PER_REWARD) {
+      return {
+        ok: false,
+        points: points ?? 0,
+        error: `This member has ${Math.floor(points ?? 0)} points now, and a reward takes ${POINTS_PER_REWARD}, so it's been taken off the order. Check the new total, then take payment.`,
+      };
+    }
+  }
+  if (ENFORCE_REGISTER_TOTALS) {
+    const check = await checkSaleTotals({ ...fields, memberId, totals, dailyCoffee });
+    if (check.problems.length) return { ok: false, error: `This order doesn't add up, so it can't be paid yet: ${check.problems[0]} Clear it and ring it up again, or get a manager.` };
+  }
+  return { ok: true };
+}
+
+// cardCharged: the card was charged for this sale even though it wasn't
+// saved, so the register keeps its "card WAS charged" warning up.
+// warning: saved, but staff need to know something (shown with the sale).
+// card: what the card that paid did (linked to the member, or found the
+// member for the points), for the register's card notice; null for nothing
+// to show.
+export type CompleteOrderResult = { ok: true; orderNumber: number; warning?: string; card: CardNotice | null } | { ok: false; error: string; cardCharged: boolean };
+
+export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
+  const staff = await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
 
   const supabase = createAdminClient();
-  const tip = params.tip ?? 0;
+  // To the cent, like everything the card is charged for.
+  const tip = cents(params.tip ?? 0);
+  const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
+  // The card that paid, read from Stripe while the sale is checked and saved
+  // (it's checked against the saved sale before it's used). Never throws.
+  // Only a well-formed payment id: verifyCardPayment refuses anything else.
+  const cardRead = paymentIntentId && /^pi_[A-Za-z0-9]+$/.test(paymentIntentId) ? readRegisterCard(paymentIntentId) : Promise.resolve(null);
+  // The member on the sale, or the account they were merged into while the
+  // sale was open (lib/member-forward.ts): the old id would fail after
+  // they've paid.
+  const memberId = await currentMemberId(params.memberId);
 
   const orderFields = {
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
-    member_id: params.memberId,
+    member_id: memberId,
     order_name: params.orderName || null,
     subtotal: params.totals.subtotal,
     tier_discount: params.totals.tier_discount,
@@ -200,7 +325,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
     monthly_member: params.monthlyMember,
     tax: params.totals.tax,
     tip,
-    total: params.totals.total + tip,
+    total: cents(params.totals.total + tip),
     payment_method: params.payment.method,
     payment_cash_amount: params.payment.cash,
     payment_voucher_amount: params.payment.voucher ?? 0,
@@ -213,71 +338,205 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 
   // One card payment is one sale. If this payment already has its order
   // (the register asked twice), hand back that order instead of a copy.
-  const paymentIntentId = params.payment.stripePaymentIntentId ?? null;
   const orderForPayment = async () => {
     if (!paymentIntentId) return null;
-    const { data } = await supabase.from("orders").select("order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
-    return data?.[0] ? Number(data[0].order_number) : null;
+    const { data } = await supabase.from("orders").select("id, order_number, employee_id").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+    return data?.[0] ? { id: data[0].id as string, orderNumber: Number(data[0].order_number), employeeId: (data[0].employee_id as string | null) ?? null } : null;
   };
+  // The card step, also for a sale saved on an earlier try whose answer
+  // never reached the register: it's safe to repeat (nothing is linked or
+  // paid twice), and shows the register what it missed. mayAct: the
+  // notice's buttons, only for the cashier who rang the sale.
+  const cardFor = (orderId: string, mayAct: boolean) =>
+    paymentIntentId
+      ? settleCard({ orderId, paymentIntentId, cardRead, cashierId: params.employeeId || null, staff: { employeeId: staff.employeeId, email: staff.email || null }, mayAct })
+      : Promise.resolve(null);
+  const sameCashier = (saved: { employeeId: string | null }) => !!saved.employeeId && saved.employeeId === params.employeeId;
   const already = await orderForPayment();
-  if (already !== null) return { orderNumber: already };
+  if (already !== null) return { ok: true, orderNumber: already.orderNumber, card: await cardFor(already.id, sameCashier(already)) };
 
-  let orderId: string;
-  let orderNumber: number;
+  // The card payment, confirmed with Stripe before the sale is saved.
+  const flagBase = { employeeId: params.employeeId, paymentIntentId };
+  const card = await verifyCardPayment(params.payment, params.draftOrderId ?? null);
+  if (!card.ok) {
+    // No order or tab name here: the flags keep no customer details (a tab
+    // is found by its id, a sale by its payment).
+    after(() => flagSale("card_refused", { ...flagBase, details: { reason: card.reason, payment: params.payment, totals: params.totals, tip, tabId: params.draftOrderId ?? null } }));
+    return { ok: false, error: card.error, cardCharged: card.charged };
+  }
+
+  const saleForCheck = { ...params, memberId, tip };
+  let totalsCheck: TotalsCheck | null = null;
+
+  // The Insiders+ daily coffee (lib/daily-perk.ts): checked again here
+  // (Insiders+, a daily coffee item on the order, not had today), then
+  // recorded as today's on the order. The register checked before payment;
+  // one that gets through anyway is still saved (the customer has paid by
+  // now) but doesn't count as today's, and the totals check flags it for a
+  // manager with the reason.
+  const coffeeAmount = cents(Number(params.totals.daily_perk_discount ?? 0));
+  const coffeeDate = coffeeDay();
+  let dailyCoffee: CoffeeCheck | undefined = coffeeAmount > 0 ? await checkDailyCoffee({ memberId, lines: params.lines }, coffeeDate) : undefined;
+  // The coffee's columns go on a sale only when it has one, so the register
+  // keeps saving every other sale before migration
+  // 20261001230000_plus_daily_coffee.sql adds them.
+  let saleFields: typeof orderFields & { daily_perk_discount?: number; daily_perk_date?: string | null } =
+    coffeeAmount > 0 ? { ...orderFields, daily_perk_discount: coffeeAmount, daily_perk_date: dailyCoffee?.ok ? coffeeDate : null } : orderFields;
+  // The database keeps one coffee per member and day: two registers using it
+  // at the same moment get here. The later sale is saved without it counting.
+  const coffeeTaken = (e: { code?: string; message?: string } | null) => !!e && e.code === "23505" && (e.message ?? "").includes("orders_daily_perk_once");
+  const coffeeRace = () => {
+    saleFields = { ...saleFields, daily_perk_date: null };
+    dailyCoffee = { ok: false, reason: "This member's free coffee for today went on another order at the same moment." };
+    totalsCheck = null; // figured with the coffee allowed: look again
+  };
+
+  // The order's math, redone from the menu. Log-only unless enforcing; when
+  // enforcing, a sale whose card is already charged is still saved (and
+  // flagged): the register checked before payment, and losing the record
+  // of a charged card is worse.
+  if (ENFORCE_REGISTER_TOTALS) {
+    totalsCheck = await checkSaleTotals({ ...saleForCheck, dailyCoffee });
+    if (totalsCheck.problems.length && !paymentIntentId) {
+      const refused = totalsCheck;
+      after(() => flagSale("totals_refused", { ...flagBase, details: { problems: refused.problems, sent: params.totals, server: refused.server, lines: refused.lines, member: refused.member, payment: params.payment, tip } }));
+      return { ok: false, error: `This order doesn't add up, so it wasn't saved: ${refused.problems[0]} Clear it and ring it up again, or get a manager.`, cardCharged: false };
+    }
+  }
+
+  let orderId = "";
+  let orderNumber = 0;
   let wasTab = false;
+  // A tab paid by card here after it was closed (paid or cancelled) on
+  // another register: the card is charged, so the sale is kept as a new
+  // walk-up order and flagged, instead of an error Retry saving could never
+  // get past.
+  let closedElsewhere: { tabId: string; orderNumber: number | null; status: string } | null = null;
 
   if (params.draftOrderId) {
-    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).single();
-    if (fetchErr || !existing) throw new Error("Tab no longer exists");
-    orderId = params.draftOrderId;
-    orderNumber = Number(existing.order_number);
-    wasTab = existing.status === "tab";
-    // Only an open tab or held order can be closed, so two closes racing
-    // can't both award points and write items.
-    const { data: closed, error: updateErr } = await supabase.from("orders").update(orderFields).eq("id", orderId).in("status", ["draft", "held", "tab"]).select("id");
-    if (updateErr) throw updateErr;
-    if (!closed?.length) {
-      if ((await orderForPayment()) !== null) return { orderNumber };
-      throw new Error("This tab was already closed. Check Reports before taking payment again.");
+    const { data: existing, error: fetchErr } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).maybeSingle();
+    if (fetchErr) throw fetchErr;
+    let closedNow = false;
+    if (existing) {
+      // Only an open tab or held order can be closed, so two closes racing
+      // can't both award points and write items.
+      const draftId = params.draftOrderId;
+      const close = () => supabase.from("orders").update(saleFields).eq("id", draftId).in("status", ["draft", "held", "tab"]).select("id");
+      let { data: closed, error: updateErr } = await close();
+      if (coffeeTaken(updateErr)) {
+        coffeeRace();
+        ({ data: closed, error: updateErr } = await close());
+      }
+      if (updateErr) throw updateErr;
+      closedNow = !!closed?.length;
     }
-    await saveSaleItems(supabase, orderId, params.lines);
-  } else {
+    if (closedNow && existing) {
+      orderId = params.draftOrderId;
+      orderNumber = Number(existing.order_number);
+      wasTab = existing.status === "tab";
+      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
+    } else {
+      // This payment's own close may have landed a moment ago (a retry).
+      const saved = await orderForPayment();
+      if (saved !== null) return { ok: true, orderNumber: saved.orderNumber, card: await cardFor(saved.id, sameCashier(saved)) };
+      if (!paymentIntentId) {
+        return { ok: false, error: "This tab was already closed on another register, so this sale wasn't saved. Hand back any cash taken for it, and check Recent orders.", cardCharged: false };
+      }
+      closedElsewhere = { tabId: params.draftOrderId, orderNumber: existing ? Number(existing.order_number) : null, status: existing?.status ?? "deleted" };
+    }
+  }
+
+  if (!params.draftOrderId || closedElsewhere) {
     const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
     if (numberErr) throw numberErr;
     orderNumber = Number(newNumber);
-    const { data: order, error: orderErr } = await supabase
-      .from("orders")
-      .insert({ order_number: orderNumber, ...orderFields })
-      .select("id")
-      .single();
-    if (orderErr) {
+    const insert = () =>
+      supabase
+        .from("orders")
+        .insert({ order_number: orderNumber, ...saleFields })
+        .select("id")
+        .single();
+    let { data: order, error: orderErr } = await insert();
+    if (coffeeTaken(orderErr)) {
+      coffeeRace();
+      ({ data: order, error: orderErr } = await insert());
+    }
+    if (orderErr || !order) {
+      if (!orderErr) throw new Error("The order didn't save.");
       // Lost a race with a repeat of this same card payment (the database
       // allows one order per payment): the other call saved it.
       const saved = orderErr.code === "23505" ? await orderForPayment() : null;
-      if (saved !== null) return { orderNumber: saved };
+      if (saved !== null) return { ok: true, orderNumber: saved.orderNumber, card: await cardFor(saved.id, sameCashier(saved)) };
       throw orderErr;
     }
     orderId = order.id;
-    await saveSaleItems(supabase, orderId, params.lines);
+    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
   }
 
-  // 1 point per $1 of the order, and 100 back out when a reward was used.
-  // Each change lands in the member's points history, tied to this order.
-  if (params.memberId) {
-    if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
-      await applyPoints({ memberId: params.memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+  // The member's balance before this sale moves it. A reward's points come
+  // out below only if it covers them, and the log-only totals check (run
+  // after the register has its answer, so after the points have moved)
+  // judges the reward on this, not on what's left once it's used.
+  const balanceBefore = memberId && params.pointsRedeemed ? await memberPoints(supabase, memberId) : undefined;
+
+  // Anything worth a look is flagged after the register has its answer, so
+  // it never slows a sale down.
+  const saved = { ...flagBase, orderId, orderNumber };
+  after(async () => {
+    if (closedElsewhere) {
+      await flagSale("tab_closed_elsewhere", {
+        ...saved,
+        details: {
+          summary: `Possible double charge: a tab${closedElsewhere.orderNumber ? ` (#${closedElsewhere.orderNumber})` : ""} was ${closedElsewhere.status === "deleted" ? "cancelled" : "closed"} on another register before this card payment saved, so it was saved as new order #${orderNumber}. Check both and refund one. Until one is refunded in full, the member's points (and any reward used) and any movie seats count twice.`,
+          tabId: closedElsewhere.tabId,
+          tabOrderNumber: closedElsewhere.orderNumber,
+          tabStatus: closedElsewhere.status,
+          amount: params.payment.card,
+          payment: params.payment,
+          tip,
+        },
+      });
     }
-    await applyPoints({ memberId: params.memberId, delta: params.totals.subtotal, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
+    if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
+    // The coffee as judged before this sale saved (once saved, its own
+    // coffee would look like today's already used).
+    const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore }));
+    if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
+    if (check.problems.length) {
+      await flagSale("totals_mismatch", { ...saved, details: { problems: check.problems, sent: params.totals, server: check.server, lines: check.lines, member: check.member, payment: params.payment, tip, draft: !!params.draftOrderId } });
+    }
+  });
+
+  // 1 point per $1 of the order after discounts, and 100 back out when a
+  // reward was used. Each change lands in the member's points history, tied
+  // to this order.
+  if (memberId) {
+    if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
+      // The register checked the balance before payment; this catches a
+      // reward used meanwhile (or a register that skipped the check). The
+      // customer has paid by now, so the sale stands, but the balance never
+      // goes below zero: the points aren't taken, and a manager is told.
+      const balance = balanceBefore;
+      if (balance === undefined || (balance ?? 0) >= POINTS_PER_REWARD) {
+        await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+      } else {
+        after(() => flagSale("points_short", { ...saved, details: { memberId, points: balance, reward: params.totals.redemption_discount } }));
+      }
+    }
+    const earned = pointsEarned(params.totals);
+    if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
 
-  await syncTicketBookings(supabase, { id: orderId, memberId: params.memberId, name: params.orderName || null }, params.lines);
+  await syncTicketBookings(supabase, { id: orderId, memberId, name: params.orderName || null }, params.lines);
 
   // A closed tab's card on file comes off file, however the tab was paid.
-  if (params.draftOrderId) await releaseTabCard(orderId);
+  // (A tab closed elsewhere had its card released there.)
+  if (params.draftOrderId && !closedElsewhere) await releaseTabCard(orderId);
 
   // A custom item usually means the menu couldn't describe the sale, so each
-  // one becomes a dev note to review. Best-effort: never blocks the sale.
-  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id);
+  // one becomes a dev note to review. Best-effort: never blocks the sale. A
+  // badge reward's $0 line isn't one.
+  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l));
   if (customLines.length) {
     const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
     await supabase
@@ -293,14 +552,62 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 
   // The kitchen's order ticket: the whole order, or for a tab whatever
   // hadn't gone to the kitchen yet. Never throws; nothing happens without a
-  // kitchen printer.
-  await sendKitchenTicket(
-    { orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: params.lines },
-    "now",
-  );
+  // kitchen printer. A tab closed elsewhere already went to the kitchen as
+  // that tab, so its new order doesn't print again.
+  if (!closedElsewhere) {
+    await sendKitchenTicket(
+      { orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: params.lines },
+      "now",
+    );
+  }
+
+  // Last, so nothing above waits on it.
+  const cardNotice = await cardFor(orderId, true);
 
   revalidate();
-  return { orderNumber };
+  const warnings: string[] = [];
+  if (closedElsewhere) {
+    warnings.push(`That tab was already closed on another register, so this card payment was saved as new order #${orderNumber}. The customer may have paid twice: get a manager to check Recent orders and refund one.`);
+  }
+  // Saved with the free coffee, but it didn't count as today's.
+  const coffee = dailyCoffee as CoffeeCheck | undefined;
+  if (coffee && !coffee.ok) warnings.push(`${coffee.reason} The sale was saved with the free coffee anyway, and a manager will see it in Register checks.`);
+  return warnings.length ? { ok: true, orderNumber, warning: warnings.join(" "), card: cardNotice } : { ok: true, orderNumber, card: cardNotice };
+}
+
+// The order a card payment already saved as, if any: a reader payment found
+// after a reload may have saved just before the page went (its sale landed,
+// but the register never heard). Undefined if it couldn't be looked up.
+export async function savedOrderForPayment(paymentIntentId: string): Promise<number | null | undefined> {
+  await assertStaff();
+  if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) return null;
+  const { data, error } = await createAdminClient().from("orders").select("order_number").eq("stripe_payment_intent_id", paymentIntentId).neq("status", "voided").limit(1);
+  if (error) return undefined;
+  return data?.[0] ? Number(data[0].order_number) : null;
+}
+
+// "Stop trying" on the register's "card WAS charged" warning: the card
+// stays charged and the sale won't be in Reports, so a manager is told
+// (Reports -> Register checks). The flag itself is best effort (see
+// flagSale); the register tells staff if this call doesn't get through.
+export async function logAbandonedSale(order: CompleteOrderInput, tries: number): Promise<void> {
+  const staff = await assertStaff();
+  const paymentIntentId = order.payment?.stripePaymentIntentId ?? null;
+  const amount = cents(Number(order.payment?.card) || 0);
+  await flagSale("sale_abandoned", {
+    employeeId: order.employeeId,
+    paymentIntentId: paymentIntentId && /^pi_[A-Za-z0-9]+$/.test(paymentIntentId) ? paymentIntentId : null,
+    details: {
+      summary: `The card was charged $${amount.toFixed(2)} but the sale never saved, and someone tapped "Stop trying". The money is in Stripe with no sale in Reports: check with the cashier, and refund it if the customer shouldn't have paid.`,
+      amount,
+      tip: cents(Number(order.tip) || 0),
+      // No order or tab name: the flags keep no customer details.
+      tabId: order.draftOrderId ?? null,
+      items: (order.lines ?? []).slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`),
+      tries,
+      stoppedBy: staff.name,
+    },
+  });
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------
@@ -309,13 +616,18 @@ export async function completeOrder(params: CompleteOrderInput): Promise<{ order
 // getDraftOrders reads it straight from the row rather than recomputing a
 // bare item subtotal, so the held/tabs lists always show the same
 // tax-and-discount-inclusive number the cashier sees in the cart. Callers
-// pass the totals they already computed for the on-screen cart.
+// pass the totals they already computed for the on-screen cart. An
+// Insiders+ daily coffee is in that total but isn't stored on a draft: the
+// register works it out again when the order is opened, and completeOrder
+// records it when it's paid (so a held order or open tab never uses up the
+// day's coffee).
 
 const ZERO_TOTALS: CheckoutTotals = { subtotal: 0, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, tax: 0, total: 0 };
 
 export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields, totals: CheckoutTotals = ZERO_TOTALS): Promise<string> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: orderNumber, error: numberErr } = await supabase.rpc("next_order_number");
   if (numberErr) throw numberErr;
 
@@ -326,7 +638,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       source: "pos",
       status,
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: status === "tab" ? fields.orderName || null : null,
       tax_free: fields.taxFree,
@@ -373,11 +685,12 @@ export type DraftSaveResult = { ok: true } | { ok: false; error: string; closed?
 export async function updateDraftOrder(id: string, fields: DraftFields, totals: CheckoutTotals, opts?: { kitchen?: "hold" | "now" }): Promise<DraftSaveResult> {
   await assertStaff();
   const supabase = createAdminClient();
+  const memberId = await currentMemberId(fields.memberId);
   const { data: updated, error } = await supabase
     .from("orders")
     .update({
       employee_id: fields.employeeId,
-      member_id: fields.memberId,
+      member_id: memberId,
       order_name: fields.orderName || null,
       tab_name: fields.orderName || null,
       tax_free: fields.taxFree,
@@ -514,6 +827,9 @@ export interface RecentOrder {
   name: string | null;
   cashier: string | null;
   member: string | null;
+  // The member was found by the card that paid, not attached by staff.
+  memberByCard: boolean;
+  cardLabel: string | null; // the card that paid, e.g. "Visa •••• 4242"
   method: string | null;
   cash: number;
   card: number;
@@ -528,15 +844,14 @@ export interface RecentOrder {
 
 export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]> {
   await assertStaff();
-  const { data, error } = await createAdminClient()
-    .from("orders")
-    .select(
-      "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)",
-    )
-    .in("status", ["completed", "refunded", "voided"])
-    .not("completed_at", "is", null)
-    .order("completed_at", { ascending: false })
-    .limit(limit);
+  const base =
+    "id, order_number, status, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, subtotal, tier_discount, monthly_discount, redemption_discount, daily_perk_discount, tax, tip, total, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, screening_id)";
+  const recent = (columns: string) =>
+    createAdminClient().from("orders").select(columns).in("status", ["completed", "refunded", "voided"]).not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(limit);
+  // The card that paid and how the member got on the sale (migration
+  // 20261001220000); without it, the list as it was.
+  let { data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`);
+  if (schemaMissing(error)) ({ data, error } = await recent(base));
   if (error) throw error;
   type Row = {
     id: string;
@@ -550,40 +865,51 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     payment_card_amount: number | null;
     payment_voucher_amount: number | null;
     subtotal: number;
+    daily_perk_discount?: number | null;
     tier_discount: number;
     monthly_discount: number;
     redemption_discount: number;
     tax: number;
     tip: number;
     total: number;
+    member_source?: string | null;
+    card?: CardParts | CardParts[] | null;
     employee: { name: string } | null;
     member: { name: string } | null;
     items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; screening_id: string | null }[];
   };
-  return ((data ?? []) as unknown as Row[]).map((o) => ({
-    id: o.id,
-    orderNumber: Number(o.order_number),
-    status: o.status,
-    at: o.completed_at,
-    name: o.tab_name || o.order_name || null,
-    cashier: o.employee?.name ?? null,
-    member: o.member?.name ?? null,
-    method: o.payment_method,
-    cash: Number(o.payment_cash_amount ?? 0),
-    card: Number(o.payment_card_amount ?? 0),
-    voucher: Number(o.payment_voucher_amount ?? 0),
-    subtotal: Number(o.subtotal),
-    discounts: [
-      { label: "Member discount", amount: Number(o.tier_discount) },
-      { label: "Monthly member discount", amount: Number(o.monthly_discount) },
-      { label: "Points reward", amount: Number(o.redemption_discount) },
-    ].filter((d) => d.amount > 0),
-    tax: Number(o.tax),
-    tip: Number(o.tip),
-    total: Number(o.total),
-    lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
-  }));
+  return ((data ?? []) as unknown as Row[]).map((o) => {
+    const card = Array.isArray(o.card) ? (o.card[0] ?? null) : (o.card ?? null);
+    return {
+      id: o.id,
+      orderNumber: Number(o.order_number),
+      status: o.status,
+      at: o.completed_at,
+      name: o.tab_name || o.order_name || null,
+      cashier: o.employee?.name ?? null,
+      member: o.member?.name ?? null,
+      memberByCard: !!o.member_source && !!o.member,
+      cardLabel: card ? cardLabel(card) : null,
+      method: o.payment_method,
+      cash: Number(o.payment_cash_amount ?? 0),
+      card: Number(o.payment_card_amount ?? 0),
+      voucher: Number(o.payment_voucher_amount ?? 0),
+      subtotal: Number(o.subtotal),
+      discounts: [
+        { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
+        { label: "Member discount", amount: Number(o.tier_discount) },
+        { label: "Monthly member discount", amount: Number(o.monthly_discount) },
+        { label: "Points reward", amount: Number(o.redemption_discount) },
+      ].filter((d) => d.amount > 0),
+      tax: Number(o.tax),
+      tip: Number(o.tip),
+      total: Number(o.total),
+      lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
+    };
+  });
 }
+
+type CardParts = { brand: string | null; last4: string | null; wallet: string | null };
 
 // Refund from the register (manager PIN). Card money goes back to the card
 // through Stripe; for cash, staff hand it back. Returns the reason on failure

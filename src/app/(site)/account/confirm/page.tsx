@@ -4,12 +4,14 @@ import { PageMasthead } from "@/components/print";
 import { safePath } from "@/lib/safe-path";
 import ConfirmButton from "./ConfirmButton";
 
-// Where the links in Supabase's sign-up confirmation, password reset and
-// email change emails land, once the email templates in Supabase point
-// here (/account/confirm?token_hash={{ .TokenHash }}&type=signup, recovery
-// or email_change). Opening the page does nothing by itself; the button
-// does the one-time step, so a mail scanner that opens every link can't
-// spend it first.
+// Where the links in Supabase's sign-up confirmation and email change
+// emails land (and password reset's, if that template is switched too),
+// once the email templates in Supabase point here:
+//   {{ .SiteURL }}/account/confirm?token_hash={{ .TokenHash }}&type=email&next={{ .RedirectTo }}
+// with type=email_change for "Change email address" (type=recovery for
+// "Reset password"). Opening the page does nothing by itself; the button
+// does the one-time step (confirmEmailLink), so a mail scanner that opens
+// every link can't spend it first.
 export const metadata: Metadata = { title: "Confirm your email", robots: { index: false, follow: false } };
 
 const TYPES = new Set(["email", "signup", "recovery", "email_change", "invite"]);
@@ -25,10 +27,16 @@ function nextPath(raw: string | undefined): string | null {
   }
 }
 
-export default async function ConfirmEmailPage({ searchParams }: { searchParams: Promise<{ token_hash?: string; type?: string; next?: string }> }) {
-  const { token_hash: tokenHash, type = "email", next } = await searchParams;
+function one(v: string | string[] | undefined): string {
+  return (Array.isArray(v) ? v[0] : v) ?? "";
+}
+
+export default async function ConfirmEmailPage({ searchParams }: { searchParams: Promise<{ token_hash?: string | string[]; type?: string | string[]; next?: string | string[] }> }) {
+  const params = await searchParams;
+  const tokenHash = one(params.token_hash);
+  const type = one(params.type) || "email";
   const recovery = type === "recovery";
-  const valid = typeof tokenHash === "string" && !!tokenHash && typeof type === "string" && TYPES.has(type);
+  const valid = !!tokenHash && tokenHash.length <= 500 && TYPES.has(type);
 
   return (
     <div className="mx-auto max-w-md">
@@ -42,7 +50,7 @@ export default async function ConfirmEmailPage({ searchParams }: { searchParams:
             <ConfirmButton
               tokenHash={tokenHash}
               type={type}
-              next={nextPath(typeof next === "string" ? next : undefined)}
+              next={nextPath(one(params.next) || undefined)}
               label={recovery ? "Choose a new password" : "Confirm my email"}
             />
           </div>

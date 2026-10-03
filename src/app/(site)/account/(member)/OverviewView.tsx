@@ -10,13 +10,15 @@ import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
 import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
-import { BoothStub, Empty, Panel, PurchaseRows, SectionHead, TicketStub } from "./ui";
+import type { DailyCoffeeState } from "@/lib/daily-perk";
+import { BoothStub, Empty, Panel, PurchaseRows, SectionHead, STACK, TAP, TicketStub } from "./ui";
 
 export default function OverviewView({
   member,
   purchases,
   screenings,
   booths = [],
+  coffee = null,
   googlePhoto,
   welcome,
 }: {
@@ -24,6 +26,8 @@ export default function OverviewView({
   purchases: PurchaseRow[];
   screenings: { upcoming: MemberScreening[]; past: MemberScreening[]; tonight?: MemberScreening[] };
   booths?: MemberBooth[];
+  // Insiders+: today's free coffee (null: not Insiders+, or it couldn't be read).
+  coffee?: DailyCoffeeState | null;
   googlePhoto: string | null;
   welcome: boolean;
 }) {
@@ -38,7 +42,7 @@ export default function OverviewView({
   const rate = member.price_tier ?? "adult";
 
   return (
-    <div className="space-y-12">
+    <div className={STACK}>
       {welcome && (
         <div className="sheet p-5">
           <span className="ctag ctag-yellow">Welcome</span>
@@ -48,12 +52,12 @@ export default function OverviewView({
         </div>
       )}
 
-      <div className="grid gap-7 md:grid-cols-[1.3fr_1fr]">
+      <div className="grid grid-cols-1 gap-7 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         {/* Points: the Panel Pop treatment, the loudest thing on the page. */}
         <section className="sheet halftone halftone-hero bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-          <div className="relative z-[1] p-6">
+          <div className="relative z-[1] p-5 sm:p-6">
             <div className="spec-k !text-[var(--foreground)]">Points balance</div>
-            <div className="font-display mt-1 text-7xl leading-none tabular-nums">{points(balance)}</div>
+            <div className="font-display mt-1 text-6xl leading-none tabular-nums sm:text-7xl">{points(balance)}</div>
             {rewards > 0 ? (
               <p className="mt-3 max-w-[40ch] text-[15px] font-bold">
                 {rewards === 1 ? "You have a reward ready" : `You have ${rewards} rewards ready`}: ${REWARD_VALUE * rewards} off at the register. Just ask when you order.
@@ -66,11 +70,11 @@ export default function OverviewView({
             <div className="mt-4 h-4 overflow-hidden rounded-[3px] border-2 border-[var(--foreground)] bg-[var(--surface)]" aria-hidden="true">
               <div className="h-full bg-[var(--accent)]" style={{ width: `${rewards > 0 && progress === 0 ? 100 : progress}%` }} />
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <span className="spec-code !text-[var(--foreground)]">
                 1 point per $1 · {POINTS_PER_REWARD} points = ${REWARD_VALUE} off
               </span>
-              <Link href="/account/points" className="text-sm font-bold underline decoration-2 underline-offset-2">
+              <Link href="/account/points" className="-my-3 inline-block py-3 text-sm font-bold underline decoration-2 underline-offset-2">
                 Badges &amp; points history →
               </Link>
             </div>
@@ -86,22 +90,31 @@ export default function OverviewView({
             <div className="min-w-0">
               <p className="text-[15px]">Show this at the door or the register and we&apos;ll pull up your account.</p>
               {rate !== "adult" && <p className="spec-code mt-2">{RATE_LABEL[rate]} rate</p>}
+              {coffee && (
+                <p className="mt-3 text-[15px]">
+                  Your free coffee today: <strong className={coffee.usedAt ? "" : "text-[var(--accent)]"}>{coffee.usedAt ? "used" : "ready"}</strong>
+                  <span className="mt-0.5 block text-sm text-[var(--muted)]">
+                    {coffee.usedAt ? "There's another one tomorrow." : "A black coffee or hot tea, on us. Show this card when you order."}
+                  </span>
+                </p>
+              )}
             </div>
           </div>
         </Panel>
       </div>
 
       {!member.avatar_url && (
-        <section className="flex flex-wrap items-center justify-between gap-4 rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] p-5">
+        <section className="flex flex-wrap items-center justify-between gap-4 rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] p-4 sm:p-5">
           <div className="max-w-xl">
             <h2 className="font-display text-xl">Add your photo</h2>
             <p className="mt-1 text-[15px] text-[var(--muted)]">
-              Staff can find your account at the register by your photo, so you don&apos;t have to spell your name over the music. Only our staff see it.
+              Staff can find your account at the register by your photo, so you don&apos;t have to spell your name over the music. It&apos;s on your profile page too, if you share one.
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
-            {googlePhoto && <GooglePhotoButton className="btn-primary px-4 py-2.5" />}
-            <PhotoUploadButton label={googlePhoto ? "Upload a different photo" : "Upload a photo"} className={`${googlePhoto ? "btn-secondary" : "btn-primary"} px-4 py-2.5`} />
+          {/* Full width on a phone, side by side from a tablet up. */}
+          <div className="grid w-full gap-3 sm:flex sm:w-auto sm:flex-wrap">
+            {googlePhoto && <GooglePhotoButton className={`btn-primary ${TAP} px-4 py-2.5`} />}
+            <PhotoUploadButton label={googlePhoto ? "Upload a different photo" : "Upload a photo"} className={`${googlePhoto ? "btn-secondary" : "btn-primary"} ${TAP} px-4 py-2.5`} />
           </div>
         </section>
       )}
@@ -111,14 +124,14 @@ export default function OverviewView({
           <SectionHead title="Your tickets" href="/account/movies" link="All movies" />
           {/* Tonight's show their code right here, for the door. */}
           {tonight.length > 0 && (
-            <div className="mb-7 grid items-start gap-7 sm:grid-cols-2">
+            <div className="mb-6 grid grid-cols-1 items-start gap-6 sm:mb-7 sm:grid-cols-2 sm:gap-7">
               {tonight.map((s) => (
                 <TicketCard key={s.bookingId} t={s} />
               ))}
             </div>
           )}
           {later.length > 0 && (
-            <div className="grid gap-5 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
               {later.slice(0, 4).map((s) => (
                 <TicketStub key={s.bookingId} s={s} />
               ))}
@@ -130,7 +143,7 @@ export default function OverviewView({
       {booths.length > 0 && (
         <section>
           <SectionHead title="Your booths" href="/booths" link="Reserve another" />
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
             {booths.map((b) => (
               <BoothStub key={b.id} b={b} />
             ))}
@@ -148,7 +161,7 @@ export default function OverviewView({
             </Link>
           </Empty>
         ) : (
-          <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
+          <div className="grid grid-cols-3 gap-3 sm:grid-cols-6 sm:gap-4">
             {watched.slice(0, 6).map((s) => (
               <div key={s.bookingId}>
                 <div className="overflow-hidden rounded-[3px] border-2 border-[var(--foreground)] shadow-[3px_3px_0_var(--foreground)]">
@@ -175,7 +188,7 @@ export default function OverviewView({
 
       {plusNeedsCard(member) ? (
         // Insiders+ set at the box office with nothing paying for it yet.
-        <section className="sheet halftone halftone-hero flex flex-wrap items-center justify-between gap-4 bg-[var(--gold)] p-6">
+        <section className="sheet halftone halftone-hero flex flex-wrap items-center justify-between gap-4 bg-[var(--gold)] p-5 sm:p-6">
           <div className="relative z-[1]">
             <span className="ctag ctag-red">Insiders+</span>
             <p className="font-display mt-3 text-2xl">Add a card to keep your Insiders+.</p>
@@ -183,7 +196,7 @@ export default function OverviewView({
               It was set up at the box office. ${RATE_PRICE[rate]}/month or {dollars(ANNUAL_PRICE[rate])}/year; your perks stay on in the meantime.
             </p>
           </div>
-          <PlusLink next="/account" className="btn-primary relative z-[1] px-5 py-3">
+          <PlusLink next="/account" className={`btn-primary ${TAP} relative z-[1] w-full px-5 py-3 sm:w-auto`}>
             Add a card
           </PlusLink>
         </section>
@@ -195,20 +208,21 @@ export default function OverviewView({
               {member.comped ? "Your Insiders+ is complimentary." : `${RATE_LABEL[rate]} rate · ${planPrice(rate, member.billing_interval ?? "month")}, billed on the day you joined.`}
             </p>
           </div>
-          <Link href="/account/billing" className="btn-secondary px-5 py-3">
+          <Link href="/account/billing" className={`btn-secondary ${TAP} w-full px-5 py-3 sm:w-auto`}>
             Billing &amp; statements
           </Link>
         </section>
       ) : (
-        <section className="sheet flex flex-wrap items-center justify-between gap-4 !bg-[var(--foreground)] p-6 text-[var(--background)]">
+        <section className="sheet flex flex-wrap items-center justify-between gap-4 !bg-[var(--foreground)] p-5 text-[var(--background)] sm:p-6">
           <div>
             <span className="ctag ctag-yellow">Insiders+</span>
             <p className="font-display mt-3 text-2xl text-[var(--gold)]">Walk in free, every time.</p>
             <p className="mt-1 max-w-[56ch] text-[15px] opacity-85">
-              Unlimited screenings, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
+              Unlimited screenings, a free black coffee or hot tea every day, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or{" "}
+              {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
             </p>
           </div>
-          <PlusLink next="/account" className="btn-primary px-5 py-3">
+          <PlusLink next="/account" className={`btn-primary ${TAP} w-full px-5 py-3 sm:w-auto`}>
             Get Insiders+
           </PlusLink>
         </section>

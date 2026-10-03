@@ -8,12 +8,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireMember } from "@/lib/member-auth";
 import { getStripe } from "@/lib/stripe";
 import { googlePhotoUrl, linkMemberForUser } from "@/lib/member-link";
+import { setMarketingOptIn } from "@/lib/email/consent";
 import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
 import { birthdayFromInput } from "@/lib/visits";
+import { cleanDisplayName, cleanProfileLine, handleProblem, normalizeHandle } from "@/lib/member-profile";
+import { flairColor, isFlairEffect, isSticker } from "@/lib/flair";
+import { allowAttempt } from "@/lib/rate-limit";
 import { safePath } from "@/lib/safe-path";
 import { pendingClaimFor } from "@/lib/member-claim-token";
-import { PHOTO_TYPES, deleteStoredPhoto } from "@/lib/member-photo";
+import { PHOTO_TYPES, deleteMemberPhotoFile } from "@/lib/member-photos";
 
 // Called right after an email/password sign-in or sign-up in the browser.
 // (Google sign-in links on the server, in /account/callback.)
@@ -25,20 +29,38 @@ export async function linkMemberAccount(name?: string): Promise<{ ok: true } | {
   if (!user) return { ok: false, error: "Not signed in." };
   const result = await linkMemberForUser(user, name);
   if (result.ok) return { ok: true };
-  // Don't leave them half signed in to a login that owns nothing.
-  if (result.reason === "unproven") await supabase.auth.signOut();
+  // Don't leave them half signed in to a login that owns nothing (this
+  // device only).
+  if (result.reason === "unproven") await supabase.auth.signOut({ scope: "local" });
   return { ok: false, error: result.error };
 }
 
-// The link in a Supabase sign-up confirmation, password reset or email
-// change email, once the email templates point at /account/confirm. The
-// page only verifies when the person presses its button, so a mail scanner
-// that opens every link can't use up the one-time token first. Works in
-// any browser: nothing from the sign-up browser is needed.
+// Where the Reset password page sends someone once their new password is
+// saved. A staff login goes to the back office and is never linked to a
+// member account: linking one whose email also has a member row used to
+// sign them out right after the password saved, so the page showed
+// "Auth session missing!" on a second press (Caleb, 10/1).
+export async function afterPasswordReset(): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Your password is saved, but this page lost its sign-in. Sign in with your new password." };
+  const { data: staff } = await createAdminClient().from("employees").select("id").eq("auth_user_id", user.id).maybeSingle();
+  if (staff) return { ok: true, to: "/admin" };
+  const linked = await linkMemberAccount();
+  return linked.ok ? { ok: true, to: "/account" } : linked;
+}
+
+// The link in a Supabase sign-up confirmation (or email change, or password
+// reset) email, once its template points at /account/confirm. The page
+// only verifies when the person presses its button, so a mail scanner that
+// opens every link can't use up the one-time token first. Works in any
+// browser: nothing from the sign-up browser is needed.
 const OTP_TYPES = { email: "email", signup: "email", recovery: "recovery", email_change: "email_change", invite: "invite" } as const;
 
 export async function confirmEmailLink(tokenHash: string, type: string, next: string | null): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
-  const otpType = Object.hasOwn(OTP_TYPES, type) ? OTP_TYPES[type as keyof typeof OTP_TYPES] : null;
+  const otpType = typeof type === "string" && Object.hasOwn(OTP_TYPES, type) ? OTP_TYPES[type as keyof typeof OTP_TYPES] : null;
   if (!otpType || typeof tokenHash !== "string" || !tokenHash || tokenHash.length > 500) {
     return { ok: false, error: "That link isn't complete. Copy the whole link from the email, or ask for a new one." };
   }
@@ -50,26 +72,36 @@ export async function confirmEmailLink(tokenHash: string, type: string, next: st
     return { ok: false, error: "That's one of two links. Open the one we sent to your other email address too, to finish the change." };
   }
   if (error || !data.user) return { ok: false, error: "This link has expired or was already used. Sign in, or ask for a new one from the sign-in page." };
+  // The Reset password page takes it from here (afterPasswordReset).
   if (otpType === "recovery") return { ok: true, to: "/account/reset-password" };
-  const linked = await linkMemberForUser(data.user);
-  if (!linked.ok) {
-    // Don't leave them half signed in to a login that owns nothing.
-    await supabase.auth.signOut();
-    return { ok: false, error: linked.error };
-  }
+  // A staff login goes to the back office and is never linked to a member
+  // account, as after a password reset.
+  const { data: staff } = await createAdminClient().from("employees").select("id").eq("auth_user_id", data.user.id).maybeSingle();
+  if (staff) return { ok: true, to: "/admin" };
   // A login made from a "claim your account" link goes back to that link,
-  // which attaches it to their account.
+  // which attaches it to the account the link was made for (and pays an
+  // old-site member's claim bonus). Before linking: linking by email could
+  // otherwise attach it first, to the same account, without the claim.
   const claim = await pendingClaimFor(data.user);
   if (claim) return { ok: true, to: claim };
+  const linked = await linkMemberForUser(data.user);
+  if (!linked.ok) {
+    // Don't leave them half signed in to a login that owns nothing (this
+    // device only).
+    await supabase.auth.signOut({ scope: "local" });
+    return { ok: false, error: linked.error };
+  }
   // Where they were headed when they signed up (e.g. Insiders+ payment);
   // the bare site address means nowhere in particular.
   const dest = safePath(next);
   return { ok: true, to: dest && dest !== "/account" && dest !== "/" ? dest : linked.created ? "/account?welcome=1" : "/account" };
 }
 
+// This device only (see app/login/actions.ts): a member signing out on a
+// friend's laptop shouldn't end their session on their own phone.
 export async function signOut(): Promise<void> {
   const supabase = await createClient();
-  await supabase.auth.signOut();
+  await supabase.auth.signOut({ scope: "local" });
   redirect("/");
 }
 
@@ -104,7 +136,9 @@ export async function uploadAvatar(formData: FormData): Promise<UploadAvatarResu
   const { data: urlData } = admin.storage.from("member-avatars").getPublicUrl(path);
   const { error } = await admin.from("members").update({ avatar_url: urlData.publicUrl }).eq("id", member.id);
   if (error) throw error;
-  await deleteStoredPhoto(member.avatar_url, member.id);
+  // Replacing a photo deletes the old file too, so it doesn't stay
+  // reachable at its address (lib/member-photos.ts).
+  await deleteMemberPhotoFile(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
@@ -124,10 +158,11 @@ export async function startBillingPortal(): Promise<BillingPortalResult> {
 
 export type ProfileResult = { ok: true } | { ok: false; error: string };
 
-// Members can fix their own name and phone, write a short line about
-// themselves (staff see it when they check in), and give their birthday
-// (month and day, "12-30", for the Birthday Visit badge; "" removes it).
-// Email is how they sign in, so it isn't editable here.
+// Members can fix their own name and phone, write their profile line (on
+// their shared profile page and the check-in screen; lib/member-profile.ts),
+// and give their birthday (month and day, "12-30", for the Birthday Visit
+// badge; "" removes it). Email is how they sign in, so it isn't editable
+// here. A line staff hid stays hidden when it's edited.
 export async function updateMyProfile(fields: { name: string; phone: string; tagline?: string; birthday?: string }): Promise<ProfileResult> {
   const member = await requireMember();
   const name = fields.name.trim();
@@ -135,8 +170,9 @@ export async function updateMyProfile(fields: { name: string; phone: string; tag
   if (name.length > 80) return { ok: false, error: "That name is too long." };
   const phone = fields.phone.trim();
   if (phone && phone.replace(/\D/g, "").length < 10) return { ok: false, error: "Enter a full phone number, with area code." };
-  const tagline = (fields.tagline ?? "").replace(/\s+/g, " ").trim();
-  if (tagline.length > 120) return { ok: false, error: "Keep your line to 120 characters." };
+  const line = cleanProfileLine(fields.tagline);
+  if (!line.ok) return { ok: false, error: line.error };
+  const tagline = line.value ?? "";
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
   if (fields.birthday !== undefined && birthday === undefined) return { ok: false, error: "Pick both the month and the day of your birthday (or neither)." };
   const { error } = await createAdminClient()
@@ -153,14 +189,46 @@ export async function updateMyProfile(fields: { name: string; phone: string; tag
   return { ok: true };
 }
 
+// The master switch for marketing email (the categories and the pause are
+// on /account/email). Recorded and logged through lib/email/consent.ts.
 export async function setEmailOptIn(optIn: boolean): Promise<ProfileResult> {
   const member = await requireMember();
-  const { error } = await createAdminClient()
-    .from("members")
-    .update({ email_opt_in: optIn, email_opt_in_changed_at: new Date().toISOString() })
-    .eq("id", member.id);
-  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  const r = await setMarketingOptIn(member.id, optIn === true, "account");
+  if (!r.ok) return { ok: false, error: "Couldn't save. Try again." };
   revalidatePath("/account", "layout");
+  return { ok: true };
+}
+
+// ---------- linked cards (lib/member-cards.ts) ----------
+
+// Takes a card off their account: it stops earning them points without
+// signing in, and isn't linked to them again on its own. Its type and last
+// four digits are deleted; only Stripe's code for it stays, so it's
+// recognized and not linked again. Only their own. (Staff removing one does
+// the same: admin/members/actions.ts, pos/card-link-actions.ts.)
+export async function removeMyCard(cardId: string): Promise<ProfileResult> {
+  const member = await requireMember();
+  if (typeof cardId !== "string" || !cardId) return { ok: false, error: "Couldn't remove it. Try again." };
+  const { data, error } = await createAdminClient()
+    .from("member_cards")
+    .update({ removed_at: new Date().toISOString(), removed_by_member: true, brand: null, last4: null, wallet: null })
+    .eq("id", cardId)
+    .eq("member_id", member.id)
+    .is("removed_at", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't remove it. Try again." };
+  if (!data?.length) return { ok: false, error: "That card isn't linked to your account anymore." };
+  revalidatePath("/account/profile");
+  return { ok: true };
+}
+
+// Their switch for linking cards at all. Off: no new cards are linked, and
+// the ones already linked stop finding them.
+export async function setCardLinking(on: boolean): Promise<ProfileResult> {
+  const member = await requireMember();
+  const { error } = await createAdminClient().from("members").update({ link_cards: !!on }).eq("id", member.id);
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account/profile");
   return { ok: true };
 }
 
@@ -189,10 +257,11 @@ export async function importGooglePhoto(): Promise<ProfileResult> {
   const { data } = admin.storage.from("member-avatars").getPublicUrl(path);
   const { error } = await admin.from("members").update({ avatar_url: data.publicUrl }).eq("id", member.id);
   if (error) {
-    await deleteStoredPhoto(data.publicUrl, member.id);
+    // Not saved on the account: the new file goes, the old photo stays.
+    await deleteMemberPhotoFile(data.publicUrl, member.id);
     return { ok: false, error: "Couldn't save your photo. Try again." };
   }
-  await deleteStoredPhoto(member.avatar_url, member.id);
+  await deleteMemberPhotoFile(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
@@ -201,7 +270,7 @@ export async function removeMyPhoto(): Promise<ProfileResult> {
   const member = await requireMember();
   const { error } = await createAdminClient().from("members").update({ avatar_url: null }).eq("id", member.id);
   if (error) return { ok: false, error: "Couldn't remove your photo. Try again." };
-  await deleteStoredPhoto(member.avatar_url, member.id);
+  await deleteMemberPhotoFile(member.avatar_url, member.id);
   revalidatePath("/account", "layout");
   return { ok: true };
 }
@@ -268,4 +337,72 @@ export async function switchToYearly(): Promise<{ ok: true } | { ok: false; erro
     const message = e && typeof e === "object" && "message" in e && typeof (e as { message: unknown }).message === "string" && "type" in e ? (e as { message: string }).message : null;
     return { ok: false, error: message ? `The switch didn't go through: ${message}` : "The switch didn't go through. Nothing was changed." };
   }
+}
+
+// ---------- the shared profile page and check-in flair ----------
+// (lib/member-profile.ts, lib/flair.ts)
+
+// Before the member_profiles migration the columns aren't there yet.
+function missingColumn(error: { code?: string } | null): boolean {
+  return error?.code === "42703" || error?.code === "PGRST204";
+}
+const NOT_YET = "Profile pages and check-in effects aren't switched on yet. Try again soon.";
+
+export type SharingResult = { ok: true; handle: string | null; displayName: string | null } | { ok: false; error: string };
+
+// Their profile page: on or off, its link name and the name on it.
+// Turning it off keeps the link name for next time. A new link name works
+// at once and the old one stops (pages are found by the current name
+// only); the database holds the old one for them for HANDLE_HOLD_DAYS
+// (member_retired_handles), so nobody else can take it over meanwhile.
+// Staff can turn a page off; then it stays off until they allow it.
+// Returns what was saved, tidied, for the form to show.
+export async function updateSharing(fields: { share: boolean; handle: string; displayName: string }): Promise<SharingResult> {
+  const member = await requireMember();
+  if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
+  if (!(await allowAttempt(`profile-sharing:${member.id}`, 20, 600))) return { ok: false, error: "That's a lot of changes. Try again in a few minutes." };
+  const share = fields.share === true;
+  if (share && member.profile_hidden_at) {
+    return { ok: false, error: "Our staff turned off your profile page. Email info@royalecinemajoplin.com if you think that's a mistake." };
+  }
+  const handle = normalizeHandle(fields.handle);
+  if (share || handle) {
+    const problem = handleProblem(handle);
+    if (problem) return { ok: false, error: problem };
+  }
+  const name = cleanDisplayName(fields.displayName);
+  if (!name.ok) return { ok: false, error: name.error };
+  const { error } = await createAdminClient()
+    .from("members")
+    .update({ share_profile: share, profile_handle: handle || null, display_name: name.value })
+    .eq("id", member.id)
+    .is("erased_at", null);
+  // Taken, or held for whoever had it until recently: the same answer.
+  if (error?.code === "23505") return { ok: false, error: "Someone has (or recently had) that link. Try another." };
+  if (missingColumn(error)) return { ok: false, error: NOT_YET };
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account", "layout");
+  return { ok: true, handle: handle || null, displayName: name.value };
+}
+
+// Their check-in flair: a color from the palette (null for the Royale's
+// own), an effect, a sticker for Floating reactions, and whether their
+// birthday week gets the party.
+export async function updateFlair(fields: { color: string | null; effect: string; sticker: string; birthdayParty: boolean }): Promise<ProfileResult> {
+  const member = await requireMember();
+  if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
+  if (!(await allowAttempt(`profile-flair:${member.id}`, 30, 600))) return { ok: false, error: "That's a lot of changes. Try again in a few minutes." };
+  const color = fields.color === null ? null : (flairColor(fields.color)?.key ?? undefined);
+  if (color === undefined) return { ok: false, error: "Pick one of the colors." };
+  if (!isFlairEffect(fields.effect)) return { ok: false, error: "Pick one of the effects." };
+  if (!isSticker(fields.sticker)) return { ok: false, error: "Pick one of the stickers." };
+  const { error } = await createAdminClient()
+    .from("members")
+    .update({ flair_color: color, flair_effect: fields.effect, flair_sticker: fields.sticker, birthday_party: fields.birthdayParty !== false })
+    .eq("id", member.id)
+    .is("erased_at", null);
+  if (missingColumn(error)) return { ok: false, error: NOT_YET };
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  revalidatePath("/account", "layout");
+  return { ok: true };
 }

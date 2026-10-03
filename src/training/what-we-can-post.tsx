@@ -1,11 +1,12 @@
 import { BackOfficeNav, DoDont, Hit, Need, Screen, Step, Tip, TrainingPage, s } from "@/components/training/kit";
+import { centralYear } from "@/lib/mplc";
 
 // The MPLC advertising rule (src/lib/mplc.ts) for staff: what they post,
 // print and send themselves. The website, lobby TV and schedule graphic's
 // Public edition already filter it automatically.
-const YEAR = new Date().getFullYear();
-
 export default function WhatWeCanPost() {
+  // The same "this year" the filter uses: Joplin's, not the server's UTC.
+  const YEAR = centralYear();
   return (
     <TrainingPage>
       <Need title="The short version">
@@ -75,7 +76,7 @@ export default function WhatWeCanPost() {
           In the back office, <b>Schedule graphic</b> has an Audience switch. <b>Public</b> leaves the classics off and is safe to post anywhere. <b>Members (email
           list)</b> includes them, and is only for the email list and direct messages.
         </p>
-        <Screen url="rcl-app.vercel.app/admin/schedule-graphic" caption="Back office → Schedule graphic" label="Schedule graphic page with the Public audience button highlighted">
+        <Screen url="www.royalecinemajoplin.com/admin/schedule-graphic" caption="Back office → Schedule graphic" label="Schedule graphic page with the Public audience button highlighted">
           <BackOfficeNav ring="Schedule graphic" n="a" />
           <div className={s.card}>
             <div className={s.small}>Audience</div>

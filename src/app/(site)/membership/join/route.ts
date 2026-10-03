@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
     returnTo: next,
     interval: annual ? "year" : "month",
     firstChargeAt: giftEnds ? heldUntil(giftEnds) : null,
+    // Signed in as themselves: the card they pay with is theirs.
+    linkCard: true,
   }).catch(() => null);
   if (!checkoutUrl) return go("/membership?checkout=unavailable#join");
   return NextResponse.redirect(checkoutUrl, 303);

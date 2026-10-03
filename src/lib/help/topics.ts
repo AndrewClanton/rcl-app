@@ -196,14 +196,27 @@ export const HELP_TOPICS = {
     title: "Check-in for points",
     area: "Register: members and the door",
     body:
-      "Regulars check in on the customer screen with their phone number. A card pops up here with their photo, full name and the last four digits of their phone, so you can say \"yes, that's them\" before anything is saved. That stops anyone checking in as somebody else. A new customer can be set up right there with a first name and phone.",
+      "Regulars check in on the customer screen with their phone number or email, and that's it: there's nothing to confirm. Their visit and its points go on right away (once a day, with streaks and badges as usual; typing it again just says \"Welcome back\"), the screen plays their reward and shows their card, and they go on the current order by themselves (taking over from whoever was on it, with \"Now on this order\"; to switch back, tap Add to order on the other person; never while a card payment is going through). A pop-up over the order shows their photo and name and the one thing to know: red for no payment on file, a free coffee ready, \"Ask their name?\", their birthday week or first visit, with their points. There's nothing to undo on the register. A guest the screen got wrong (a mistyped number) taps \"That's not me\" under their card on the screen: the visit and its points are taken back and they're off the order. A phone number shared by a few accounts asks \"Which one is you?\" on the screen, with a button for each (first name and last initial only): the one they tap checks in like anyone else, and \"None of these\" lets them sign up. Nothing waits on you. Everyone checked in today is first on the Customers tab: tap a card to put them on the order. Hold for details: press and hold a card there, or the order's Member box, for about half a second to see their tier, points, visits, member since and today's check-in time, with Open in Back office for anything to change. If something looks wrong (someone used another person's number, or checked in without being here), tap Flag suspicious activity at the bottom of that panel, pick a reason and add a short note if you like: an admin or owner looks at it in Back office and can take back the check-in's points. A flagged account shows a 🚩 on its card; it doesn't block anything. Found by email with no phone on file, they can add the number they typed, saved as they check in. New customers sign themselves up on the screen (\"Just use my phone number\", or name and email) and are checked in at once. Guests who'd rather tell you: \"New phone account\" on the Customers tab, or \"+ Add name\" / \"+ Add email\" in the Member box, shows on the screen as you type so they can tap \"✓ That's right\". The screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color); it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
   },
   "points-and-badges": {
     title: "Points, visits and badges",
     area: "Register: members and the door",
     body:
-      "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a confirmed check-in, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
+      "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a check-in on the customer screen, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
+  },
+  "card-linked-points": {
+    title: "Points by card, when nobody's attached",
+    area: "Register: members and the door",
+    body:
+      "Once a card has paid for a member's sales with their account on the order on 2 different days (or they paid with it online, signed in), it's linked to them, so a later card sale with nobody attached still earns them the points. They see only the points, not what was bought, and tickets on that sale stay off their account. The register says so right after the sale (\"23 points to Sarah · Visa •••• 4242\"), with an Undo that asks which it was: someone else paid with Sarah's card (the card stays hers), or it isn't her card at all (it's unlinked). Then you can give the points to whoever paid. Undo works for 2 minutes on that register; after that a manager undoes it on the member's page. A card linked to two accounts (a family card) never picks on its own; the register asks who's paying. A staff member's own card, or a card already on someone else's account, is linked only by a manager, from a sale on the member's page. We keep the card type, its last four digits and Stripe's code for the card, never the number, and members can remove a card on their account.",
+  },
+  "daily-coffee": {
+    title: "Insiders+ free daily coffee",
+    area: "Register: members and the door",
+    body:
+      "Insiders+ members get one free black coffee or hot tea each business day (4 AM to 4 AM). With the member on the order, the register takes a daily coffee item's menu price off by itself; add-ons are still charged, and Remove takes it off if they'd rather save it. It's checked again before they pay, so a second one the same day shows when they had the first, and refunding that order gives the day's coffee back. Which items count is ticked on the Menu page.",
+    links: [{ label: "Menu", href: "/admin/menu" }],
   },
   "door-scanner": {
     title: "Scanning tickets and member cards",
@@ -215,19 +228,26 @@ export const HELP_TOPICS = {
     title: "Claim-your-account QR codes",
     area: "Register: members and the door",
     body:
-      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, lets them add a login and see their points online. The code alone isn't enough: they also type the last four digits of the phone on the account. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
+      "Some members have points but no website login: old-site accounts, and regulars set up at the check-in tablet. The QR code, on the tablet after they check in or on their receipt, or the setup link in their email, lets them add a login and see their points online. Scanning it takes them straight to signing in (Google, or an email and password), and that login is attached to their account, so the code is the key: hand the receipt only to them. Each code works once; the tablet's lasts 30 minutes and the receipt's two weeks.",
   },
   "easter-eggs": {
     title: "Just for fun (the ✨ button)",
     area: "Register: members and the door",
     body:
-      "The ✨ button is for fun. Throw streamers and sparkles across the customer screen to get people's attention, or pick a little picture or joke to print at the bottom of the next receipt, no explanation. The receipt surprise turns itself off once it prints, and needs a printer that prints receipts after every sale.",
+      "The ✨ button is for fun. Throw streamers and sparkles across the customer screen to get people's attention, Rickroll the customer screen (the chorus of Never Gonna Give You Up, dance and all, from Rick Astley's official video; it closes itself; press the same button again, now “Stop the Rickroll”, or tap ✕ on the tablet to stop it early; the button says Starting… or Stopping… until the tablet confirms, and if it says the tablet didn't answer, refresh the customer screen), or pick a little picture or joke to print at the bottom of the next receipt, no explanation. If the Rickroll shows a play button instead of starting, tap the screen once. The receipt surprise turns itself off once it prints, and needs a printer that prints receipts after every sale.",
   },
   "senior-student-rates": {
     title: "Senior and student rates",
     area: "Register: members and the door",
     body:
-      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them, at the register (Member → Change rate) or on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
+      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them at the register (Member → Change rate), or a manager on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
+  },
+  "unlimited-no-payment": {
+    title: "No payment on file for unlimited membership",
+    area: "Register: members and the door",
+    body:
+      "They paid for unlimited on our old website, but its billing never charged them and no card came over, so nothing is paying for it now. Set it up while they're here: Card on reader (they tap or insert it; $15 a month plus tax, charged today, then monthly), or On their phone (a QR code on the customer screen, or an emailed link). Not paying today? Ring them up like any guest.",
+    links: [{ label: "Former unlimited members", href: "/admin/members/former-unlimited" }],
   },
 
   // ---------- register: shift tools ----------
@@ -271,7 +291,14 @@ export const HELP_TOPICS = {
     title: "Insiders vs Insiders+",
     area: "Members and memberships",
     body:
-      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
+      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, a free black coffee or hot tea every day, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
+  "points-history": {
+    title: "Changing a member's points",
+    area: "Members and memberships",
+    body:
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, a manager uses Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "gift-membership": {
@@ -296,7 +323,7 @@ export const HELP_TOPICS = {
     title: "Free (community) memberships",
     area: "Members and memberships",
     body:
-      "Community programs give free Insiders+ to people referred by our outreach partners. Grant it from the member's page and pick the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
+      "Community programs give free Insiders+ to people referred by our outreach partners. A manager grants it from the member's page and picks the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
   },
 
   // ---------- menu and inventory ----------
@@ -346,6 +373,13 @@ export const HELP_TOPICS = {
   },
 
   // ---------- reports and money ----------
+  "membership-payments": {
+    title: "Memberships in Reports",
+    area: "Reports and money",
+    body:
+      "Insiders+ is charged by Stripe on its own (a new member's first charge, each monthly or yearly renewal, a switch to yearly), and gift memberships are paid on Stripe's page, so none of it goes through the register. Reports read those charges from Stripe every 10 minutes while they're open and each morning before the daily email, and count each one once, on the business day it was charged. They're in Collected and net sales as their own line, with their tax on the Sales tax tab. A refund comes off the day of the charge, like a register refund. Insiders+ paid in cash or set by hand isn't here: Stripe never sees it.",
+    links: [{ label: "Reports → Members", href: "/admin/reports/members" }],
+  },
   "box-office-csv": {
     title: "The box office report for distributors",
     area: "Reports and money",
