@@ -9,7 +9,7 @@ import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth
 import { logOpsChange } from "@/lib/ops/changes";
 import { putBackOnSale } from "@/lib/ops/outages";
 import { after } from "next/server";
-import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto } from "@/lib/menu-pictures/store";
+import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto, storeTextIcon } from "@/lib/menu-pictures/store";
 import { approvePicture, defaultQuery, fillMissingPictures, storeFoundPicture, type FillReport } from "@/lib/menu-pictures/found";
 import { findCandidates, toView } from "@/lib/menu-pictures/sources";
 import { cleanQuery } from "@/lib/menu-pictures/query";
@@ -187,13 +187,19 @@ export async function addItem(categoryId: string, name: string, price: number, i
 
 export async function updateItem(
   id: string,
-  fields: Partial<{ name: string; price: number; is_alcohol: boolean; is_event_item: boolean; event_price_mode: EventPriceMode | null; active: boolean }>,
+  // daily_perk: can be an Insiders+ member's free daily coffee (lib/daily-perk.ts).
+  fields: Partial<{ name: string; price: number; is_alcohol: boolean; is_event_item: boolean; event_price_mode: EventPriceMode | null; active: boolean; daily_perk: boolean }>,
 ): Promise<Result> {
   const no = await denied();
   if (no) return no;
   if (fields.name !== undefined && !fields.name.trim()) return { ok: false, error: "An item needs a name." };
   if (fields.price !== undefined && !(fields.price >= 0)) return { ok: false, error: "Enter a price of $0.00 or more." };
+  if (fields.daily_perk !== undefined && typeof fields.daily_perk !== "boolean") return { ok: false, error: "Couldn't save that change. Try again." };
   const { error } = await createAdminClient().from("menu_items").update(fields).eq("id", id);
+  // No daily_perk column yet (PGRST204, 42703): its migration isn't applied.
+  if (error && fields.daily_perk !== undefined && (error.code === "PGRST204" || error.code === "42703")) {
+    return { ok: false, error: "The Insiders+ daily coffee needs a database update first (migration 20261001230000_plus_daily_coffee.sql). Nothing was changed." };
+  }
   const f = failed(error, "save that change");
   if (f) return f;
   revalidate();
@@ -242,7 +248,7 @@ export async function deleteItem(id: string): Promise<DeleteItemResult> {
 
 // ---------- photos ----------
 // The product photo on a register button (an item) or tab (a category). The
-// Menu page squares and shrinks it to a ~480px JPEG in the browser; the
+// Menu page squares and shrinks it to a ~640px JPEG in the browser; the
 // store (src/lib/menu-pictures/store.ts, shared with the register's item
 // settings) checks what actually arrived, stores it under a name it makes
 // (the browser never picks the path), saves its address, and deletes the
@@ -279,15 +285,25 @@ export async function findMenuPictures(target: PhotoTarget, id: string, query: s
   if (!photoTable(target)) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
   const q = cleanQuery(query) || (await defaultQuery(target, id));
   if (!q) return { ok: false, error: "That isn't on the menu anymore. Refresh the page." };
-  const { candidates, complete } = await findCandidates(q);
+  const { candidates, complete, sources } = await findCandidates(q);
   if (!candidates.length) return { ok: false, error: complete ? `No free pictures for "${q}". Try other words.` : "The picture search isn't answering. Try again in a minute." };
-  return { ok: true, query: q, candidates: candidates.map(toView) };
+  return { ok: true, query: q, candidates: candidates.map(toView), sources };
 }
 
 export async function pickMenuPicture(target: PhotoTarget, id: string, query: string, index: number, page: string | null): Promise<PictureResult> {
   const no = await denied();
   if (no) return no as { ok: false; error: string };
   const r = await storeFoundPicture(target, id, query, index, page, true);
+  if (r.ok) revalidate();
+  return r;
+}
+
+// A text icon instead of a photo ("$5" glowing red). The server checks it
+// again (lib/menu-pictures/text-icon.ts).
+export async function saveMenuTextIcon(target: PhotoTarget, id: string, icon: unknown): Promise<PictureResult> {
+  const no = await denied();
+  if (no) return no as { ok: false; error: string };
+  const r = await storeTextIcon(target, id, icon);
   if (r.ok) revalidate();
   return r;
 }

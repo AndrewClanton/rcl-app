@@ -1,5 +1,6 @@
 import { isRestrictedRelease } from "@/lib/mplc";
-import { SITE_NAME, SITE_URL, THEATER_ADDRESS } from "@/lib/site";
+import { SITE_URL } from "@/lib/site";
+import { THEATER_REF } from "@/lib/seo/theater";
 import type { Screening } from "@/lib/types";
 
 // schema.org ScreeningEvent markup for a showtime, so search engines can read
@@ -26,12 +27,8 @@ export function screeningEventJsonLd(s: Screening, seatsLeft?: number): Record<s
     eventAttendanceMode: "https://schema.org/OfflineEventAttendanceMode",
     ...(s.movie.poster_url && { image: s.movie.poster_url }),
     ...(s.movie.synopsis && { description: s.movie.synopsis }),
-    location: {
-      "@type": "MovieTheater",
-      name: SITE_NAME,
-      url: SITE_URL,
-      address: THEATER_ADDRESS,
-    },
+    // The theater the site-wide MovieTheater markup describes, by its @id.
+    location: THEATER_REF,
     workPresented: {
       "@type": "Movie",
       name: s.movie.title,

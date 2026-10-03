@@ -1,12 +1,14 @@
-import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo/page-meta";
 import Link from "next/link";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { PageMasthead, SpecFoot } from "@/components/print";
+import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Gift membership", robots: { index: false, follow: false } };
+// A buyer's own receipt page: kept out of search results.
+export const metadata = pageMeta({ title: "Gift membership", description: "An Insiders+ gift membership from Royale Cinema Lounge.", path: "/membership/gift", noindex: true });
 
 // Where Stripe sends the buyer after paying for a gift at the box office
 // (on the staff device, or their own phone from a texted link). The
@@ -70,6 +72,7 @@ export default async function GiftDonePage({ searchParams }: { searchParams: Pro
         <span className="ctag ctag-yellow">What {friend} gets</span>
         <ul className="mt-4 space-y-2 text-[15px]">
           <li>Free entry to every screening, unlimited</li>
+          <li>{DAILY_COFFEE_PERK}</li>
           <li>2 free booth reservations every month</li>
           <li>Concession and merch discounts</li>
           <li>First access to weekly titles and member events</li>

@@ -7,6 +7,14 @@ import { pendingClaimFor } from "@/lib/member-claim-token";
 import { isClaimPath } from "@/lib/claim-link";
 import { PageMasthead } from "@/components/print";
 import AccountForm from "./AccountForm";
+import { pageMeta } from "@/lib/seo/page-meta";
+
+export const metadata = pageMeta({
+  title: "Sign in",
+  description: "Sign in to your Royale Cinema Lounge Insiders account: your tickets, points and membership.",
+  path: "/account/login",
+  noindex: true,
+});
 
 const ERRORS: Record<string, string> = {
   oauth_cancelled: "Sign-in was cancelled. Try again, or use your email.",
@@ -15,11 +23,11 @@ const ERRORS: Record<string, string> = {
   link_failed: "We couldn't connect that sign-in to your membership. Sign in with your email and password, or ask us at the box office.",
 };
 
-export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string }> }) {
-  const { error, next: nextParam } = await searchParams;
+export default async function AccountLoginPage({ searchParams }: { searchParams: Promise<{ error?: string; next?: string; fb?: string }> }) {
+  const { error, next: nextParam, fb } = await searchParams;
   // Where to go once signed in, e.g. straight on to Insiders+ payment.
   const next = safePath(nextParam);
-  const providers = await getSignInProviders();
+  const providers = await getSignInProviders({ facebookPreview: fb === "1" });
   const supabase = await createClient();
   const {
     data: { user },

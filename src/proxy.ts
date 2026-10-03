@@ -1,7 +1,11 @@
 import { type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/proxy";
+import { rewriteMissingShowtime } from "@/lib/showtime-gate";
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
+  // A dead showtime link gets the real 404 page (see lib/showtime-gate.ts).
+  const missing = await rewriteMissingShowtime(request);
+  if (missing) return missing;
   return updateSession(request);
 }
 

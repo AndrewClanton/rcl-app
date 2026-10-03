@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import { contactForRole } from "@/lib/contact-mask";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -10,9 +10,12 @@ import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 import { centralToIso } from "@/lib/ops/time";
-import { getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
+import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
 
 function revalidate() {
+  // The rows behind Home, Showtimes and the sitemap (cached for a minute):
+  // the next visitor gets the change, not the cached copy.
+  updateTag(PUBLIC_SCREENINGS_TAG);
   revalidatePath("/admin/screenings");
   revalidatePath("/showtimes");
   revalidatePath("/");
@@ -36,7 +39,7 @@ async function signedIn(who: "staff" | "manager"): Promise<{ staff: StaffSession
   return { staff, no: null };
 }
 
-// ---------- house events (trivia, comedy, book swap...) for the Now Playing screen ----------
+// ---------- house events (trivia, comedy, book swap...) for the ramp TV ----------
 
 export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string }): Promise<{ ok: true } | Refusal> {
   const { no } = await signedIn("manager");

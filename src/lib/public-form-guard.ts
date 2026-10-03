@@ -21,7 +21,7 @@ export const TOO_MANY_FROM_CONNECTION = "Too many tries from this connection. Wa
 // visitor can't choose their own), hashed: the limit only needs to tell
 // connections apart, and rate_limit_hits never has to hold a raw IP. Local
 // `next dev` has neither header, so everyone there shares one bucket.
-async function connectionKey(): Promise<string> {
+export async function connectionKey(): Promise<string> {
   const h = await headers();
   const ip = h.get("x-real-ip")?.trim() || h.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   return createHash("sha256").update(`rcl-public-form:${ip}`).digest("base64url").slice(0, 22);

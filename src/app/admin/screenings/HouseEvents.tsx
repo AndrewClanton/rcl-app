@@ -17,9 +17,9 @@ function when(e: HouseEvent) {
   return `${day} · ${t(e.starts_at)}${e.ends_at ? `–${t(e.ends_at)}` : ""}`;
 }
 
-// Trivia, comedy, the book swap: they show on the Now Playing screen's
-// countdown next to the films. Not on the public website. Adding and
-// removing them is for managers and up (`canEdit`); everyone sees the list.
+// Trivia, comedy, the book swap: they show on the ramp TV's countdown next
+// to the films. Not on the public website. Adding and removing them is
+// for managers and up (`canEdit`); everyone sees the list.
 export default function HouseEvents({ events, canEdit }: { events: HouseEvent[]; canEdit: boolean }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
@@ -48,7 +48,7 @@ export default function HouseEvents({ events, canEdit }: { events: HouseEvent[];
         House events
         <InfoTip topic="house-events" />
       </h2>
-      <p className="mb-4 text-sm text-[var(--muted)]">Trivia, comedy, the book swap and the like. They count down on the Now Playing screen with the films.</p>
+      <p className="mb-4 text-sm text-[var(--muted)]">Trivia, comedy, the book swap and the like. They count down on the ramp TV with the films.</p>
 
       {events.length > 0 && (
         <div className="mb-4 divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">

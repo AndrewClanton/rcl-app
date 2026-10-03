@@ -88,6 +88,89 @@ export async function recordVisit(memberId: string, confirmedBy: string | null, 
   return { earned, visitPoints: VISIT_POINTS, badges, rewards, weekStreak, alreadyToday: false, balance: Number(a.balance), visits };
 }
 
+// Today's visit, for the register's pop-up when someone checks in at the
+// customer screen: what it paid (null: not paid yet), their week streak,
+// how many visits they've made (1: their first), and the badges it earned.
+// Null when there's none today, or it couldn't be read.
+export interface VisitToday {
+  points: number | null;
+  streak: number | null;
+  visits: number;
+  badges: string[];
+}
+
+export async function visitToday(memberId: string): Promise<VisitToday | null> {
+  const supabase = createAdminClient();
+  const date = visitBusinessDate(new Date());
+  const { data: v } = await supabase.from("member_visits").select("id, points_awarded, streak").eq("member_id", memberId).eq("business_date", date).maybeSingle();
+  if (!v) return null;
+  const [badges, count] = await Promise.all([
+    supabase.from("member_badges").select("badge").eq("visit_id", v.id),
+    supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId),
+  ]);
+  return {
+    points: v.points_awarded === null ? null : Number(v.points_awarded),
+    streak: v.streak === null ? null : Number(v.streak),
+    visits: count.count ?? 0,
+    badges: (badges.data ?? []).map((b) => b.badge as string),
+  };
+}
+
+// A visit taken back: today's, for "That's not me" on the customer screen
+// (a check-in that wasn't them: a mistyped number, say), or a given one
+// (visitId), for a flagged check-in an admin takes back in Back office
+// (lib/member-flags-server.ts). What it paid (its points and any badges'
+// points) comes off their balance as one line in their points history
+// (`note`, never below zero); the badges it earned, and any reward they
+// gave that isn't used yet, go; and the visit itself goes, so a right
+// check-in later that day pays as usual. The visit row is the claim: two
+// people taking it back at once take it back once. Null when there's no
+// such visit, or it couldn't be read.
+export async function undoVisit(
+  memberId: string,
+  by: string | null,
+  { visitId, note = "Check-in undone" }: { visitId?: string; note?: string } = {},
+): Promise<{ taken: number; balance: number | null } | null> {
+  const supabase = createAdminClient();
+  const pick = supabase.from("member_visits").select("id, points_awarded, business_date").eq("member_id", memberId);
+  const { data: visit, error } = await (visitId ? pick.eq("id", visitId) : pick.eq("business_date", visitBusinessDate(new Date()))).maybeSingle();
+  if (error || !visit) return null;
+  // Read before the visit goes: their link to it is cleared when it does.
+  const { data: badges, error: badgeErr } = await supabase.from("member_badges").select("id, badge").eq("visit_id", visit.id);
+  if (badgeErr) return null;
+  const { data: gone, error: goneErr } = await supabase.from("member_visits").delete().eq("id", visit.id).select("id");
+  if (goneErr || !gone?.length) return null;
+
+  const badgeIds = (badges ?? []).map((b) => b.id as string);
+  const rewardKinds = [...new Set((badges ?? []).flatMap((b) => badgeFor(b.badge as string)?.reward ?? []))];
+  await Promise.all([
+    badgeIds.length ? supabase.from("member_badges").delete().in("id", badgeIds) : null,
+    rewardKinds.length
+      ? supabase.from("member_rewards").delete().eq("member_id", memberId).eq("earned_on", visit.business_date as string).in("kind", rewardKinds).is("redeemed_at", null)
+      : null,
+  ]);
+
+  const paid = Math.max(0, Number(visit.points_awarded) || 0);
+  const { data: m } = await supabase.from("members").select("points").eq("id", memberId).maybeSingle();
+  const have = m ? Math.max(0, Number(m.points) || 0) : null;
+  const taken = have === null ? 0 : Math.min(paid, have);
+  if (taken <= 0) return { taken: 0, balance: have };
+  const { data: balance, error: pointsErr } = await supabase.rpc("apply_member_points", {
+    p_member: memberId,
+    p_delta: -taken,
+    p_reason: "visit",
+    p_order: null,
+    p_booking: null,
+    p_note: note,
+    p_by: by,
+  });
+  if (pointsErr) {
+    console.error("undoVisit: points not taken back", pointsErr.code, pointsErr.message);
+    return { taken: 0, balance: have };
+  }
+  return { taken, balance: Number(balance) };
+}
+
 export interface OpenReward {
   id: string;
   kind: RewardKind;

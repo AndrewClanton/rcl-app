@@ -4,14 +4,38 @@ import { useEffect, useRef, useState } from "react";
 import ConfirmModal from "@/components/ConfirmModal";
 import MemberAvatar from "@/components/MemberAvatar";
 import InfoTip from "@/components/help/InfoTip";
-import MemberFinder from "./MemberFinder";
 import { RATE_LABEL, RATE_ORDER, RATE_PRICE } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
-import { searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
+import { addPosMemberEmail, addPosMemberName, searchPosMembers, setPosMemberRate, type PosMember } from "./member-actions";
+import { cleanEmail, firstNameOf } from "@/lib/checkin";
+import { maskEmail, setupName } from "@/lib/registerChannel";
+import { useTabletMirror } from "./tablet-setup";
+import { PhoneOnlyTag } from "./RegisterCheckins";
 import { getMemberRewards, redeemMemberReward, undoMemberReward } from "./checkin-actions";
 import type { OpenReward } from "@/lib/visits-server";
+import { coffeeTime, type DailyCoffeeState } from "@/lib/daily-perk";
+import LegacyPlusCard, { NOT_ACTIVE_RED, NotActiveStamp, type TabletSend } from "./LegacyPlusCard";
+import { memberSignal, memberStanding } from "./member-signal";
+import MemberGlance, { HOLD_CLASS, useLongPress } from "./MemberGlance";
+
+// An Insiders+ member's free daily coffee today, as the register knows it
+// (PosApp): undefined while it's looked up, null if it couldn't be.
+export interface PanelCoffee {
+  today: DailyCoffeeState | null | undefined;
+  onOrder: boolean;
+  retry: () => void;
+}
 
 const SIGNED_OUT = "The register couldn't reach the server. Check the connection, or sign in again if it has been a while.";
+
+// The member on the order checked in on the customer screen
+// (RegisterCheckins): it went through there (its visit and points), so
+// this just says so. Nothing to reverse here (Andrew, 10/2): hold their
+// name to flag the account instead (MemberGlance).
+export interface VisitWaiting {
+  auto: boolean; // the check-in put them on the order by itself
+  line?: string; // "+5 pts · 140 pts · 🔥 3 weeks"
+}
 
 function shortDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" });
@@ -40,14 +64,28 @@ function confirmCopy(m: PosMember, tier: MemberPriceTier) {
 export default function PosMemberPanel({
   member,
   onChange,
+  coffee,
   employeeId,
   onRewardLine,
+  onFind,
+  readerId,
+  toTablet,
+  visit = null,
 }: {
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
+  // Set for an Insiders+ member: their free daily coffee today.
+  coffee: PanelCoffee | null;
   employeeId: string;
   // Puts a redeemed badge reward on the order as a $0 line.
   onRewardLine: (label: string) => void;
+  // "Find by photo": opens the Customers tab beside the menu, at its faces.
+  onFind: () => void;
+  // For setting up Insiders+ here (LegacyPlusCard: no card on file, or an
+  // upgrade): this register's card reader, and the customer screen.
+  readerId: string | null;
+  toTablet: TabletSend;
+  visit?: VisitWaiting | null;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PosMember[]>([]);
@@ -57,7 +95,9 @@ export default function PosMemberPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [finderOpen, setFinderOpen] = useState(false);
+  // Held for half a second, their name shows their account (MemberGlance).
+  const [glance, setGlance] = useState(false);
+  const hold = useLongPress();
   const latest = useRef(0);
 
   useEffect(() => {
@@ -113,6 +153,7 @@ export default function PosMemberPanel({
   }
 
   const rate: MemberPriceTier = member?.price_tier ?? "adult";
+  const standing = member ? memberStanding(member) : null;
   const source = member ? rateSource(member) : null;
   const showNoMatch = query.trim().length >= 2 && !searching && !error && results.length === 0;
 
@@ -121,13 +162,28 @@ export default function PosMemberPanel({
       <div className="eyebrow mb-2">Member</div>
 
       {member ? (
-        <div className="rounded-lg border p-2.5 text-sm" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-center gap-3">
-            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={member.tier === "Insiders+"} />
+        // Edged in gold for paying Insiders+, red for a former unlimited
+        // member who isn't paying or Insiders+ with no card on file
+        // (member-signal.ts), like the order above.
+        <div
+          className={`rounded-lg p-2.5 text-sm ${standing === "insiders" ? "border" : "border-2"}`}
+          style={{ borderColor: standing === "plus" ? "var(--gold)" : standing === "insiders" ? "var(--border)" : "var(--accent)" }}
+        >
+          {visit && (
+            <div className="-mx-2.5 -mt-2.5 mb-2.5 flex items-center gap-2 rounded-t-[7px] px-2.5 py-1.5" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }} role="status">
+              <span className="min-w-0 flex-1 leading-tight">
+                <span className="block text-sm font-bold">📲 Checked in on the screen{visit.auto ? " · on this order" : ""}</span>
+                {visit.line && <span className="block truncate text-xs tabular-nums">{visit.line}</span>}
+              </span>
+            </div>
+          )}
+          <div className={`flex items-center gap-3 ${HOLD_CLASS}`} {...hold(() => setGlance(true))}>
+            <MemberAvatar name={member.name} url={member.avatar_url} size={44} plus={standing === "plus"} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-semibold">{member.name}</span>
-                <span className="shrink-0 text-xs" style={{ color: "var(--muted)" }}>
+                <span className="flex shrink-0 items-center gap-1 text-xs" style={{ color: "var(--muted)" }}>
+                  {member.phoneOnly && <PhoneOnlyTag />}
                   {member.tier}
                 </span>
               </div>
@@ -139,7 +195,46 @@ export default function PosMemberPanel({
             </div>
           </div>
 
+          {/* A former unlimited member who isn't paying: the ways to set it
+              up are on the red banner across the top of the order. */}
+          {member.legacyUnlimited ? (
+            <div className="mt-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-bold leading-snug text-white" style={{ background: NOT_ACTIVE_RED }}>
+              <NotActiveStamp />
+              <span className="min-w-0 flex-1">Unlimited: no payment on file. Set it up at the top of the order.</span>
+            </div>
+          ) : (
+            // Insiders+ with nothing paying for it: the red "no card on file"
+            // card, also up on the customer screen. Plain Insiders: an
+            // upgrade, folded away. Paid-for Insiders+ (a subscription,
+            // complimentary, or a gifted year): nothing to set up.
+            (standing === "nocard" || (standing === "insiders" && !member.subscribed && !member.comped)) && (
+              <LegacyPlusCard
+                key={`unlimited-${member.id}`}
+                kind={standing === "nocard" ? "nocard" : "upgrade"}
+                member={member}
+                readerId={readerId}
+                employeeId={employeeId}
+                toTablet={toTablet}
+                onDone={(m) => {
+                  onChange(m);
+                  setMessage(`${firstNameOf(m.name)} is Insiders+ now.`);
+                }}
+              />
+            )
+          )}
+          {(member.named === false || !member.email) && (
+            <AddDetails
+              key={`add-${member.id}`}
+              member={member}
+              onSaved={(m, msg) => {
+                onChange(m);
+                setMessage(msg);
+                setError(null);
+              }}
+            />
+          )}
           {member.tagline && <div className="mt-2 text-xs italic">“{member.tagline}”</div>}
+          {coffee && <CoffeeToday coffee={coffee} />}
           <MemberRewards key={member.id} memberId={member.id} onRewardLine={onRewardLine} />
 
           <div className="mt-2 flex items-center justify-between gap-2 text-xs">
@@ -198,7 +293,7 @@ export default function PosMemberPanel({
       ) : (
         <>
           <div className="mb-2 flex items-center">
-            <button type="button" className="btn-secondary min-w-0 flex-1 !py-2 text-sm" onClick={() => setFinderOpen(true)}>
+            <button type="button" className="btn-secondary flex min-h-11 min-w-0 flex-1 items-center justify-center gap-2 !py-2 text-sm" onClick={onFind}>
               Find by photo
             </button>
             {/* Scanning a member card or online ticket works anywhere on the register. */}
@@ -224,7 +319,7 @@ export default function PosMemberPanel({
             <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border" style={{ borderColor: "var(--border)" }}>
               {results.map((m) => (
                 <button key={m.id} className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-[var(--surface-hover)]" onClick={() => attach(m)}>
-                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} plus={m.tier === "Insiders+"} />
+                  <MemberAvatar name={m.name} url={m.avatar_url} size={28} plus={memberSignal(m) === "plus"} />
                   <span className="min-w-0 flex-1">
                     <span className="font-medium">{m.name}</span>
                     <span style={{ color: "var(--muted)" }}>
@@ -258,25 +353,197 @@ export default function PosMemberPanel({
         </>
       )}
 
-      {finderOpen && (
-        <MemberFinder
-          onPick={(m) => {
-            setFinderOpen(false);
-            attach(m);
-          }}
-          onClose={() => setFinderOpen(false)}
-        />
-      )}
+      {member && glance && <MemberGlance key={member.id} member={member} employeeId={employeeId} onClose={() => setGlance(false)} />}
 
       {member && confirmTier && (
         <ConfirmModal
-          title={`Switch ${member.name.split(" ")[0]} to ${RATE_LABEL[confirmTier]}?`}
+          title={`Switch ${firstNameOf(member.name)} to ${RATE_LABEL[confirmTier]}?`}
           description={confirmCopy(member, confirmTier)}
           confirmLabel={confirmTier === "adult" ? "Switch to Adult" : "ID checked, switch"}
           onConfirm={() => applyRate(confirmTier)}
           onCancel={() => setConfirmTier(null)}
         />
       )}
+    </div>
+  );
+}
+
+// "Add name" / "Add email" for an account missing one: a phone account
+// (lib/member-name.ts) whose guest wants their name on it, or an email to
+// sign in on the website. Adding only: changing what's there is Back
+// office's job. The customer screen follows along as it's typed (the name
+// as a first name and last initial, the email masked), and the guest's
+// "✓ That's right" there saves it (tablet-setup.tsx).
+function AddDetails({ member, onSaved }: { member: PosMember; onSaved: (m: PosMember, message: string) => void }) {
+  const [open, setOpen] = useState<"name" | "email" | null>(null);
+  const [first, setFirst] = useState("");
+  const [last, setLast] = useState("");
+  const [email, setEmail] = useState("");
+  const [optIn, setOptIn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ready = open === "name" ? !!first.trim() : !!cleanEmail(email);
+  // The guest's "✓ That's right" on the customer screen saves it too.
+  const tablet = useTabletMirror(
+    open !== null,
+    open === "email" ? { what: "email", email: maskEmail(email), ready, hold: !!error } : { what: "name", name: setupName(first, last), ready, hold: !!error },
+    () => void save(),
+  );
+  const mirrored = tablet.mirrored;
+
+  async function save() {
+    if (busy || !open || !ready) return;
+    setBusy(true);
+    setError(null);
+    const r =
+      open === "name"
+        ? await addPosMemberName(member.id, { firstName: first, lastName: last }).catch(() => null)
+        : await addPosMemberEmail(member.id, { email, optIn }).catch(() => null);
+    setBusy(false);
+    if (!r) return setError(SIGNED_OUT);
+    if (!r.ok) return setError(r.error);
+    tablet.saved();
+    setOpen(null);
+    onSaved(r.member, r.message);
+  }
+
+  if (!open) {
+    return (
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {member.named === false && (
+          <button className="btn-secondary min-h-11 !px-3 !py-1 text-xs" onClick={() => setOpen("name")}>
+            + Add name
+          </button>
+        )}
+        {!member.email && (
+          <button className="btn-secondary min-h-11 !px-3 !py-1 text-xs" onClick={() => setOpen("email")}>
+            + Add email
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="mt-2 space-y-1.5 rounded-md border p-2"
+      style={{ borderColor: "var(--border)" }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      {open === "name" ? (
+        <div className="grid grid-cols-[3fr_2fr] gap-1.5">
+          <input
+            className="input min-h-11 !py-1.5 text-sm"
+            placeholder="First name"
+            aria-label="First name"
+            autoFocus
+            maxLength={40}
+            value={first}
+            onChange={(e) => {
+              setError(null);
+              setFirst(e.target.value);
+            }}
+          />
+          <input
+            className="input min-h-11 !py-1.5 text-sm"
+            placeholder="Last (optional)"
+            aria-label="Last name or initial (optional)"
+            maxLength={40}
+            value={last}
+            onChange={(e) => {
+              setError(null);
+              setLast(e.target.value);
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <input
+            className="input min-h-11 !py-1.5 text-sm"
+            type="email"
+            inputMode="email"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            placeholder="their@email.com"
+            aria-label="Their email"
+            autoFocus
+            maxLength={254}
+            value={email}
+            onChange={(e) => {
+              setError(null);
+              setEmail(e.target.value);
+            }}
+          />
+          <label className="flex min-h-11 items-center gap-2 text-xs">
+            <input type="checkbox" className="h-5 w-5" checked={optIn} onChange={(e) => setOptIn(e.target.checked)} />
+            They want our emails (news and showtimes)
+          </label>
+        </>
+      )}
+      {error && (
+        <div className="text-xs" style={{ color: "var(--danger-text)" }}>
+          {error}
+        </div>
+      )}
+      {mirrored && (
+        <div className="text-xs" style={{ color: "var(--muted)" }}>
+          On the customer screen as you type{open === "email" ? " (masked)" : ""}: they can tap ✓ That&apos;s right.
+        </div>
+      )}
+      <div className="flex gap-1.5">
+        <button type="submit" className="btn-primary min-h-11 flex-1 !py-1 text-xs" disabled={busy || !ready}>
+          {busy ? "Saving…" : open === "name" ? "Save name" : "Save email"}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary min-h-11 !px-3 !py-1 text-xs"
+          disabled={busy}
+          onClick={() => {
+            setOpen(null);
+            setError(null);
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// "Free coffee today: ready / used at 9:14 AM". It goes on the order by
+// itself when a daily coffee item is rung (PosApp).
+function CoffeeToday({ coffee }: { coffee: PanelCoffee }) {
+  const { today, onOrder, retry } = coffee;
+  return (
+    <div className="mt-2 flex items-center gap-1 text-xs">
+      <span className="min-w-0 flex-1">
+        ☕ Free coffee today:{" "}
+        {today === undefined ? (
+          <span style={{ color: "var(--muted)" }}>checking…</span>
+        ) : today === null ? (
+          <>
+            <span style={{ color: "var(--muted)" }}>couldn&apos;t check</span>{" "}
+            <button className="hover:underline" style={{ color: "var(--accent)" }} onClick={retry}>
+              Try again
+            </button>
+          </>
+        ) : today.usedAt ? (
+          <>
+            <strong>used at {coffeeTime(today.usedAt)}</strong>
+            {today.orderNumber !== null && <span style={{ color: "var(--muted)" }}> (#{today.orderNumber})</span>}
+          </>
+        ) : (
+          <>
+            <strong style={{ color: "var(--accent)" }}>ready</strong>
+            {onOrder && <span style={{ color: "var(--muted)" }}> · on this order</span>}
+          </>
+        )}
+      </span>
+      <InfoTip topic="daily-coffee" className="!mx-0" />
     </div>
   );
 }
