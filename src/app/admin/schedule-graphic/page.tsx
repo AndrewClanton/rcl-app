@@ -7,7 +7,9 @@ import ScheduleGraphicBuilder from "./ScheduleGraphicBuilder";
 export const dynamic = "force-dynamic";
 
 export default async function ScheduleGraphicPage() {
-  const [screenings, events, notes] = await Promise.all([getUpcomingScreenings(), getUpcomingEvents(), getUpcomingCalendarNotes()]);
+  // The builder never gets the organizer's contact (see the mapping below),
+  // so the shortened cashier copy is all it needs.
+  const [screenings, events, notes] = await Promise.all([getUpcomingScreenings(), getUpcomingEvents("cashier"), getUpcomingCalendarNotes()]);
 
   return (
     <div>

@@ -153,11 +153,15 @@ export default function BoothsAdminPanel({
   reservations,
   calendarMonthStart,
   calendarReservations,
+  fullContact,
 }: {
   booths: Booth[];
   reservations: BoothReservation[];
   calendarMonthStart: string;
   calendarReservations: BoothReservation[];
+  // False for a cashier: guests' emails and phones arrive shortened
+  // (j•••@gmail.com, ••1234) from the server.
+  fullContact: boolean;
 }) {
   const [cancelled, setCancelled] = useState<string | null>(null);
 
@@ -181,6 +185,9 @@ export default function BoothsAdminPanel({
 
         <section>
           <h2 className="mb-3 text-sm font-semibold">Upcoming reservations</h2>
+          {!fullContact && reservations.length > 0 && (
+            <p className="mb-3 text-xs text-[var(--muted)]">Guests&apos; emails and phone numbers are shortened for privacy. A manager can see them in full.</p>
+          )}
           {cancelled && <div className="notice notice-success mb-3 !p-3 text-sm">{cancelled}</div>}
           {reservations.length === 0 ? (
             <div className="text-sm text-[var(--muted)]">No upcoming reservations.</div>
