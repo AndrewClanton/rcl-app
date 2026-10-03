@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Room } from "@/lib/types";
 import { estimateEventTotal } from "@/lib/eventPricing";
-import { submitEventInquiry } from "./actions";
+import { eventInquiryFormToken, submitEventInquiry } from "./actions";
 import { SpecFoot } from "@/components/print";
 import Honeypot from "@/components/Honeypot";
-import { useFormToken } from "@/lib/use-form-token";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -17,7 +16,12 @@ function money(n: number) {
 // hidden field and the form's stamp go back with the request, for the bot
 // check (lib/public-form-guard.ts).
 export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
-  const formToken = useFormToken("eventInquiry");
+  // The stamp, asked for when the form first shows (eventInquiryFormToken).
+  // Null if it never came: the server then asks them to refresh the page.
+  const formToken = useRef<Promise<string | null> | null>(null);
+  useEffect(() => {
+    formToken.current = eventInquiryFormToken().catch(() => null);
+  }, []);
   const [honeypot, setHoneypot] = useState("");
   const [roomId, setRoomId] = useState("");
   const [hours, setHours] = useState(2);
@@ -62,7 +66,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         pizzaCount: pizzas ? parseInt(pizzas, 10) : null,
         organizerName,
         organizerEmail,
-        formToken: await formToken(),
+        formToken: await (formToken.current ?? Promise.resolve(null)),
         honeypot,
       });
       if (!inquiryResult.ok) {

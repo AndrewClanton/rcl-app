@@ -9,12 +9,12 @@ import { allowAttempt } from "@/lib/rate-limit";
 //
 // Two layers:
 //   1. A per-connection limit on every form (allowFromConnection).
-//   2. On the free paths that skip Stripe (a free screening or an
+//   2. On the paths with no card in the way (a free screening or an
 //      Insiders+ seat, an Insiders+ booth, an event request, a free
-//      Insiders sign-up), a light bot check: a hidden
-//      field people never fill in, and a signed "page opened at" stamp so a
-//      form sent back in under a few seconds is refused. No third-party
-//      CAPTCHA: nothing extra loads, nothing is sent anywhere.
+//      Insiders sign-up), a light bot check: a hidden field people never
+//      fill in, and a signed "page opened at" stamp so a form sent back in
+//      under a few seconds is refused. No third-party CAPTCHA: nothing
+//      extra loads, nothing is sent anywhere.
 
 export const TOO_MANY_FROM_CONNECTION = "Too many tries from this connection. Wait a minute and try again.";
 
@@ -22,7 +22,7 @@ export const TOO_MANY_FROM_CONNECTION = "Too many tries from this connection. Wa
 // visitor can't choose their own), hashed: the limit only needs to tell
 // connections apart, and rate_limit_hits never has to hold a raw IP. Local
 // `next dev` has neither header, so everyone there shares one bucket.
-async function connectionKey(): Promise<string> {
+export async function connectionKey(): Promise<string> {
   const h = await headers();
   const ip = h.get("x-real-ip")?.trim() || h.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   return createHash("sha256").update(`rcl-public-form:${ip}`).digest("base64url").slice(0, 22);
@@ -73,8 +73,10 @@ function sign(form: GuardedForm, issuedAt: number): string {
   return createHmac("sha256", signingKey()).update(`${form}:${issuedAt}`).digest("base64url").slice(0, 32);
 }
 
-// Rendered into the page (server side) and sent back with the form. Signed,
-// so a script can't just claim it opened the page ten seconds ago.
+// Rendered into the page (server side) and sent back with the form; a
+// cached page's form asks for one when it shows instead (the events page:
+// eventInquiryFormToken). Signed, so a script can't just claim it opened
+// the page ten seconds ago.
 export function issueFormToken(form: GuardedForm): string {
   const issuedAt = Date.now();
   return `${issuedAt}.${sign(form, issuedAt)}`;

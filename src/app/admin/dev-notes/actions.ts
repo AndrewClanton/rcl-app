@@ -9,9 +9,11 @@ function revalidate() {
   revalidatePath("/admin/dev-notes");
 }
 
-// Called from the global Dev Notes widget, which only renders for admins
-// in the first place (see src/app/layout.tsx) -- this check is defense in
-// depth against the action being invoked directly, not the primary gate.
+// Called from the Leave a dev note dialog (components/dev-notes), whose
+// buttons only show for admins in the first place (the back office menu,
+// the register's shift bar, the staff bar in src/components/DevNotesWidget)
+// -- this check is defense in depth against the action being invoked
+// directly, not the primary gate.
 export async function submitDevNote(input: { pagePath: string; pageTitle: string; message: string }) {
   const staff = await getStaffSession();
   if (!staff || !hasAdminAccess(staff.role)) throw new Error("Not authorized");

@@ -6,6 +6,8 @@ import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { setMarketingOptIn } from "@/lib/email/consent";
+import { memberJoined } from "@/lib/email/automations";
 
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only the generic "Minified React error #441..." reaches the
@@ -20,6 +22,7 @@ export async function submitMembershipSignup(fields: {
   name: string;
   email: string;
   phone: string;
+  emailOptIn?: boolean;
   formToken?: string | null;
   honeypot?: string | null;
 }): Promise<SignupResult> {
@@ -31,7 +34,9 @@ export async function submitMembershipSignup(fields: {
   // use the "already exists" answer to test which emails are members).
   if (!(await allowFromConnection("membership"))) return { ok: false, error: TOO_MANY_FROM_CONNECTION };
   // And the free paths' bot check (a hidden field, a signed page-opened
-  // stamp): with no card in the way, nothing else stops a script.
+  // stamp): a free sign-up now gets a welcome email straight away, so a bot
+  // filling this with strangers' addresses would have us emailing them (the
+  // old site collected about 11,000 of those).
   const notHuman = checkHuman("membership", fields);
   if (notHuman) return { ok: false, error: notHuman };
 
@@ -40,16 +45,28 @@ export async function submitMembershipSignup(fields: {
   const { data: existing } = await supabase.from("members").select("id").ilike("email", exactEmail(email)).maybeSingle();
   if (existing) return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
 
-  const { error } = await supabase.from("members").insert({
-    name,
-    email,
-    phone: fields.phone.trim() || null,
-    tier: "Insiders",
-    points: 0,
-  });
+  // The "email me" box (ticked to start with). Their choice is recorded
+  // either way, with where it came from (lib/email/consent.ts).
+  const optIn = fields.emailOptIn !== false;
+  const { data: made, error } = await supabase
+    .from("members")
+    .insert({
+      name,
+      email,
+      phone: fields.phone.trim() || null,
+      tier: "Insiders",
+      points: 0,
+      email_opt_in: optIn,
+    })
+    .select("id")
+    .single();
   if (error) {
     if (error.code === "23505") return { ok: false, error: "An Insiders account already exists for that email. Ask staff to look it up for you in person." };
     throw error;
+  }
+  if (made) {
+    await setMarketingOptIn(made.id, optIn, "join_form").catch(() => null);
+    if (optIn) memberJoined(made.id);
   }
   return { ok: true };
 }
@@ -64,6 +81,7 @@ export async function startMembershipCheckout(fields: {
   phone: string;
   returnTo?: string | null;
   annual?: boolean;
+  emailOptIn?: boolean;
 }): Promise<CheckoutResult> {
   const name = fields.name.trim();
   const email = fields.email.trim();
@@ -99,6 +117,8 @@ export async function startMembershipCheckout(fields: {
     returnTo: safePath(fields.returnTo),
     interval: fields.annual ? "year" : "month",
     firstChargeAt: giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null,
+    // Applied once they've paid (lib/plus-activate.ts).
+    emailOptIn: fields.emailOptIn === true,
   });
   if (!url) return { ok: false, error: "Could not start checkout. Please try again." };
   return { ok: true, url };

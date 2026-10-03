@@ -27,10 +27,11 @@ export function StreakPanel({ visits }: { visits: VisitSummary }) {
 
   return (
     <Panel title="Weeks in a row" aside="Monday to Sunday">
-      <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center">
-        <div className="shrink-0">
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-5">
+        {/* The count beside its words on a phone, over them from a tablet up. */}
+        <div className="flex shrink-0 items-baseline gap-3 sm:block">
           <div className="font-display text-6xl leading-none tabular-nums">{n}</div>
-          <div className="font-display mt-1 text-lg">{n === 1 ? "week" : "weeks"} in a row</div>
+          <div className="font-display text-lg sm:mt-1">{n === 1 ? "week" : "weeks"} in a row</div>
         </div>
         <div className="min-w-0 flex-1">
           <ol className="grid grid-cols-13 gap-1 sm:gap-1.5" aria-label="The last 13 weeks">
@@ -66,7 +67,7 @@ export function BadgeCabinet({ visits, birthday }: { visits: VisitSummary; birth
   for (const b of visits.badges) earned.set(b.key, { at: b.earnedAt, times: (earned.get(b.key)?.times ?? 0) + 1 });
   return (
     <Panel title="Badges" aside={`${earned.size} of ${BADGES.length}`}>
-      <ul className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
         {BADGES.map((b) => (
           <BadgeTile key={b.key} b={b} earned={earned.get(b.key) ?? null} birthday={birthday} />
         ))}

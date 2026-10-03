@@ -1,11 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { createClient, createImplicitFlowClient } from "@/lib/supabase/client";
+import { plainResetError } from "@/lib/auth-email-errors";
+import { inAppBrowserName, openInChromeHref } from "@/lib/in-app-browser";
 import { linkMemberAccount } from "../actions";
+import { askSignInHelp } from "./actions";
 
 type Mode = "signin" | "signup";
+
+// One link for anyone who can't get in: a forgotten password, or a member
+// (from the old site, or the check-in tablet) who never made a login.
+const HELP_LABEL = "Forgot password or first time here?";
+
+type HelpOutcome = "reset" | "setup" | "generic";
 
 // Google's own "G" mark, as their sign-in button guidelines ask for.
 function GoogleMark() {
@@ -35,6 +44,48 @@ type Provider = "google" | "facebook";
 
 const AFTER_SIGN_IN_COOKIE = "rcl_after_sign_in";
 
+const noSubscribe = () => () => {};
+
+// Stands in for "Continue with Google" inside Facebook's (or another app's)
+// built-in browser, where Google won't sign anyone in.
+function GoogleInAppNote({ app }: { app: string }) {
+  const [copied, setCopied] = useState(false);
+  const chromeHref = useSyncExternalStore(
+    noSubscribe,
+    () => openInChromeHref(window.location.href, navigator.userAgent),
+    () => null,
+  );
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] p-4 text-sm" role="note">
+      <p className="font-semibold">
+        <GoogleMark /> <span className="align-[3px]">Signing in with Google?</span>
+      </p>
+      <p className="mt-1.5 text-[var(--muted)]">
+        Google doesn&apos;t allow it inside {app === "this app" ? "an app's" : `${app}'s`} built-in browser. Tap the ••• menu and choose
+        &ldquo;Open in browser&rdquo;, then sign in from there. Signing in with your email works right here.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {chromeHref && (
+          <a href={chromeHref} className="btn-secondary min-h-11">
+            Open in Chrome
+          </a>
+        )}
+        <button type="button" onClick={copy} className="btn-secondary min-h-11">
+          {copied ? "Link copied" : "Copy this page's link"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // claimToken: signing in from a "claim your account" link (/account/claim,
 // lib/member-claim.ts). `next` is then that link. The login isn't matched
 // to an account by email here: the claim page attaches it to the account
@@ -61,6 +112,8 @@ export default function AccountForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const [oauthBusy, setOauthBusy] = useState<Provider | null>(null);
+  // Only known in the browser; the server render shows the Google button.
+  const inApp = useSyncExternalStore(noSubscribe, () => inAppBrowserName(navigator.userAgent), () => null);
 
   async function handleOAuth(provider: Provider) {
     setOauthBusy(provider);
@@ -80,7 +133,7 @@ export default function AccountForm({
       setOauthBusy(null);
     }
   }
-  const [resetSent, setResetSent] = useState(false);
+  const [help, setHelp] = useState<{ outcome: HelpOutcome; gmail: boolean } | null>(null);
 
   const canSubmit = email.includes("@") && password.length >= 6 && (mode === "signin" || claiming || name.trim().length > 0);
 
@@ -143,24 +196,40 @@ export default function AccountForm({
     router.refresh();
   }
 
-  async function handleForgotPassword() {
+  // Asks the server what fits this email (lib/sign-in-help.ts): a setup
+  // link it emails itself, a word to see us at the bar, or a password
+  // reset, which is sent from here exactly as it always was (Supabase only
+  // sends it if a login has that address).
+  async function handleSignInHelp() {
     if (!email.includes("@")) {
-      setError("Enter your email above first, then click \"Forgot password\".");
+      setError(`Enter your email above first, then tap “${HELP_LABEL}”`);
       return;
     }
     setSubmitting(true);
     setError(null);
-    const supabase = createImplicitFlowClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/account/reset-password`,
-    });
-    setSubmitting(false);
-    if (error) {
-      setError(error.message);
+    setHelp(null);
+    const r = await askSignInHelp(email).catch(() => null);
+    if (!r || !r.ok) {
+      setSubmitting(false);
+      setError(r ? r.error : "Couldn't reach us just now. Try again in a minute.");
       return;
     }
-    setResetSent(true);
+    if (r.outcome === "reset" || r.outcome === "generic") {
+      const { error } = await createImplicitFlowClient().auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/account/reset-password`,
+      });
+      if (error) {
+        setSubmitting(false);
+        setError(plainResetError(error));
+        return;
+      }
+    }
+    setSubmitting(false);
+    // Continue with Google finds a Gmail address's account on its own.
+    setHelp({ outcome: r.outcome, gmail: providers.google && /@(gmail|googlemail)\.com$/i.test(email.trim()) });
   }
+
+  const gmailHint = help?.gmail ? " Or just use Continue with Google." : "";
 
   if (confirmSent) {
     return (
@@ -173,26 +242,30 @@ export default function AccountForm({
     );
   }
 
-  if (resetSent) {
-    return (
-      <div className="notice notice-success">
-        <h2 className="text-lg font-semibold">Check your email</h2>
-        <p className="mt-2 text-sm opacity-90">We sent a password reset link to {email}.</p>
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={handleSubmit} className="sheet crop p-5 sm:p-6">
+      {help && (
+        <div className="notice notice-success mb-5" role="status">
+          <h2 className="text-lg font-semibold">Check your email</h2>
+          <p className="mt-2 text-sm opacity-90">
+            {help.outcome === "reset"
+              ? "We emailed you a link to reset your password."
+              : help.outcome === "setup"
+                ? `We emailed you a link to finish setting up your account. Your points are waiting.${gmailHint}`
+                : "If that email has an account, we've sent you a link."}
+          </p>
+        </div>
+      )}
       {(providers.google || providers.facebook) && (
         <>
           <div className="space-y-2.5">
-            {providers.google && (
+            {providers.google && inApp && <GoogleInAppNote app={inApp} />}
+            {providers.google && !inApp && (
               <button
                 type="button"
                 onClick={() => handleOAuth("google")}
                 disabled={!!oauthBusy}
-                className="flex w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
+                className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg border border-[#747775] bg-white px-4 py-2.5 text-sm font-medium text-[#1f1f1f] transition-colors hover:bg-[#f7f8f8] disabled:opacity-60"
               >
                 <GoogleMark />
                 {oauthBusy === "google" ? "Opening Google…" : "Continue with Google"}
@@ -203,7 +276,7 @@ export default function AccountForm({
                 type="button"
                 onClick={() => handleOAuth("facebook")}
                 disabled={!!oauthBusy}
-                className="flex w-full items-center justify-center gap-3 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#166fe5] disabled:opacity-60"
+                className="flex min-h-11 w-full items-center justify-center gap-3 rounded-lg bg-[#1877F2] px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#166fe5] disabled:opacity-60"
               >
                 <FacebookMark />
                 {oauthBusy === "facebook" ? "Opening Facebook…" : "Continue with Facebook"}
@@ -220,7 +293,7 @@ export default function AccountForm({
       <div className="mb-4 flex gap-2">
         <button
           type="button"
-          className={`chip ${mode === "signin" ? "chip-selected" : ""}`}
+          className={`chip min-h-11 ${mode === "signin" ? "chip-selected" : ""}`}
           onClick={() => {
             setMode("signin");
             setError(null);
@@ -230,7 +303,7 @@ export default function AccountForm({
         </button>
         <button
           type="button"
-          className={`chip ${mode === "signup" ? "chip-selected" : ""}`}
+          className={`chip min-h-11 ${mode === "signup" ? "chip-selected" : ""}`}
           onClick={() => {
             setMode("signup");
             setError(null);
@@ -270,8 +343,8 @@ export default function AccountForm({
       </button>
 
       {mode === "signin" && (
-        <button type="button" className="mt-3 text-xs text-[var(--muted)] hover:text-[var(--accent)]" onClick={handleForgotPassword}>
-          Forgot password?
+        <button type="button" className="mt-1 min-h-11 text-xs text-[var(--muted)] hover:text-[var(--accent)] disabled:opacity-60" disabled={submitting} onClick={handleSignInHelp}>
+          {HELP_LABEL}
         </button>
       )}
     </form>

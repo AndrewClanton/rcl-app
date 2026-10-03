@@ -17,6 +17,9 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null, 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  // Starts ticked (Andrew's call), clearly worded; the choice is recorded
+  // either way.
+  const [emailOptIn, setEmailOptIn] = useState(true);
   const [honeypot, setHoneypot] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +38,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null, 
     setError(null);
     try {
       if (plan === "free") {
-        const result = await submitMembershipSignup({ name, email, phone, formToken, honeypot });
+        const result = await submitMembershipSignup({ name, email, phone, emailOptIn, formToken, honeypot });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -43,7 +46,7 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null, 
         }
         setDone(true);
       } else {
-        const result = await startMembershipCheckout({ name, email, phone, returnTo, annual: plan === "annual" });
+        const result = await startMembershipCheckout({ name, email, phone, returnTo, annual: plan === "annual", emailOptIn });
         if (!result.ok) {
           setError(result.error);
           setSubmitting(false);
@@ -126,6 +129,13 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null, 
           <input className="input" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </label>
         <Honeypot value={honeypot} onChange={setHoneypot} />
+        <label className="flex cursor-pointer items-start gap-3 sm:col-span-2">
+          <input type="checkbox" className="mt-0.5 h-5 w-5 accent-[var(--accent)]" checked={emailOptIn} onChange={(e) => setEmailOptIn(e.target.checked)} />
+          <span className="text-sm">
+            <strong>Email me the weekly lineup and member news.</strong>
+            <span className="block text-[var(--muted)]">Unsubscribe any time.</span>
+          </span>
+        </label>
       </div>
 
       {error && <div className="mt-3 text-sm font-bold text-[var(--danger-text)]">{error}</div>}

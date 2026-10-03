@@ -291,7 +291,7 @@ export function BarList({
 export function SplitBar({ parts, format = (n: number) => money(n) }: { parts: { label: string; value: number; href?: string }[]; format?: (n: number) => string }) {
   const shown = parts.filter((p) => p.value > 0.004);
   const total = shown.reduce((s, p) => s + p.value, 0);
-  const shades = ["rpt-bar-strong", "rpt-bar-mid", "rpt-bar", "rpt-bar-light"];
+  const shades = ["rpt-bar-strong", "rpt-bar-mid", "rpt-bar", "rpt-bar-light", "rpt-bar-hatch"];
   if (total <= 0) return <p className="text-sm text-[var(--muted)]">Nothing yet.</p>;
   // The key goes four across only when its card is wide enough (a
   // container query), so a narrow card in a row of three keeps two.

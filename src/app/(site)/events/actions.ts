@@ -3,8 +3,17 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { estimateEventTotal } from "@/lib/eventPricing";
-import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { allowFromConnection, checkHuman, issueFormToken, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import type { Room } from "@/lib/types";
+
+// The request form's bot-check stamp (lib/public-form-guard.ts), asked for
+// when the form shows (EventBookingForm) instead of printed into the page:
+// the events page is cached for a few minutes, so a stamp built into it
+// would be as old as the cached copy. Nothing secret: it only proves when
+// it was handed out, as loading a page with one does.
+export async function eventInquiryFormToken(): Promise<string> {
+  return issueFormToken("eventInquiry");
+}
 
 // Next.js redacts a *thrown* Server Action error's message in production
 // builds (only a generic "Minified React error..." reaches the client --

@@ -16,7 +16,9 @@ import { bookingSeats, fetchAll } from "./reports";
 //             register orders. Their price is the line's, less the order's
 //             member discounts in proportion; their tax is the order's tax
 //             in proportion (discounts and tax are both figured on the whole
-//             order at the register, src/app/pos/PosApp.tsx computeTotals).
+//             order at the register, lib/register-totals.ts). An Insiders+
+//             daily coffee is taken off a coffee, never a ticket, so the
+//             proportion is of the order less that.
 //   free      $0 tickets: Insiders+ free seats, free screenings, $0 register
 //             tickets.
 // Refunds: a refunded order or booking isn't counted (a full refund also
@@ -93,7 +95,9 @@ type TicketLineRow = {
   screening_id: string;
   quantity: number;
   unit_price: number;
-  orders: { status: string; subtotal: number; tax: number; tier_discount: number; monthly_discount: number; redemption_discount: number };
+  // daily_perk_discount: the Insiders+ daily coffee, missing until its
+  // migration is applied.
+  orders: { status: string; subtotal: number; tax: number; tier_discount: number; monthly_discount: number; redemption_discount: number; daily_perk_discount?: number | null };
 };
 
 function round2(n: number) {
@@ -162,7 +166,9 @@ export async function getBoxOfficeReport(start: string, end: string, now = new D
         fetchAll<TicketLineRow>((a, b) =>
           supabase
             .from("order_items")
-            .select("order_id, screening_id, quantity, unit_price, orders!inner(status, subtotal, tax, tier_discount, monthly_discount, redemption_discount)")
+            // The order's own columns are "*", so this keeps working before
+            // the daily coffee's migration adds daily_perk_discount.
+            .select("order_id, screening_id, quantity, unit_price, orders!inner(*)")
             .in("screening_id", part)
             .eq("orders.status", "completed")
             .order("id")
@@ -227,7 +233,10 @@ export async function getBoxOfficeReport(start: string, end: string, now = new D
     if (!show) continue;
     const amount = Number(l.unit_price) * l.quantity;
     const o = l.orders;
-    const subtotal = Number(o.subtotal) > 0 ? Number(o.subtotal) : amount;
+    // An Insiders+ daily coffee comes off a coffee, never a ticket, and the
+    // other discounts and the tax are figured on what's left after it.
+    const base = Number(o.subtotal) - Number(o.daily_perk_discount ?? 0);
+    const subtotal = base > 0 ? base : amount;
     const share = subtotal > 0 ? amount / subtotal : 0;
     const discount = Math.min(subtotal, Number(o.tier_discount) + Number(o.monthly_discount) + Number(o.redemption_discount)) * share;
     if (Number(l.unit_price) > 0) show.register += l.quantity;

@@ -8,9 +8,9 @@ export default function BillingPortalButton() {
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="text-right">
+    <div className="w-full sm:w-auto sm:text-right">
       <button
-        className="btn-secondary"
+        className="btn-secondary min-h-11 w-full sm:w-auto"
         disabled={pending}
         onClick={async () => {
           setPending(true);

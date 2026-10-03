@@ -202,6 +202,9 @@
   gap: 14px;
   text-align: center;
 }
+.done .title {
+  text-wrap: balance;
+}
 .check {
   width: 104px;
   height: 104px;
@@ -245,7 +248,7 @@
 }
 .claimTitle {
   font-family: var(--display);
-  font-size: clamp(20px, 2.8vh, 26px);
+  font-size: clamp(18px, 2.6vh, 26px);
   line-height: 1.1;
   color: var(--gold);
 }
@@ -254,6 +257,275 @@
     flex-direction: column;
     text-align: center;
   }
+}
+
+/* ---------- "Phone or email" ---------- */
+/* the keypad's display: an email typed there, and its clear button */
+.display {
+  position: relative;
+  padding: 0 8px;
+  min-width: 0;
+  white-space: nowrap;
+  /* a touch smaller than before, so a full number clears the × */
+  font-size: clamp(26px, 4.2vh, 42px);
+}
+.displayEmail {
+  max-width: calc(100% - 104px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: clamp(20px, 3.2vh, 28px);
+}
+.displayClear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  color: var(--cream-dim);
+  font-family: var(--body);
+  font-size: 26px;
+  line-height: 1;
+  touch-action: manipulation;
+}
+/* the keypad's "@ Email" key: gold, so the half of members who check in
+   by email find it */
+.keyEmail {
+  gap: 0;
+  align-content: center;
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.keyEmail:active {
+  color: var(--ink);
+}
+.keyAt {
+  font-family: var(--display);
+  font-size: clamp(26px, 3.8vh, 36px);
+  line-height: 1;
+}
+.keyAtLabel {
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The full keyboard (LetterKeys.tsx) takes the whole screen while it's up:
+   the check-in panel is too narrow for ten keys a row at 44px. Landscape
+   puts "Check in" beside what's typed; upright puts it under the keys. */
+.board {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 260px);
+  grid-template-areas:
+    "head head"
+    "entry cta"
+    "chips chips"
+    "keys keys";
+  align-content: center;
+  gap: clamp(8px, 1.6vh, 14px) 14px;
+  padding: clamp(12px, 2.4vh, 28px) clamp(16px, 3vw, 40px);
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255, 199, 44, 0.06) 1px, transparent 1.5px) 0 0 / 14px 14px,
+    var(--ink-2);
+  overflow-y: auto;
+}
+@media (max-aspect-ratio: 1/1) {
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "head"
+      "entry"
+      "chips"
+      "keys"
+      "cta";
+    align-content: end;
+    gap: 16px;
+    padding-bottom: 28px;
+  }
+}
+.boardHead {
+  grid-area: head;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+.boardActions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+.boardActions .ghost {
+  min-height: 48px;
+  padding: 0 16px;
+}
+.boardActions .ghostIcon {
+  width: 48px;
+  padding: 0;
+  font-size: 20px;
+}
+.boardError {
+  color: #ff8a8e;
+  font-size: 16px;
+  font-weight: 700;
+  margin: 4px 0 0;
+}
+.boardEntry {
+  grid-area: entry;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: clamp(54px, 9vh, 72px);
+  padding: 0 18px;
+  border: 3px solid var(--gold);
+  border-radius: 14px;
+  background: var(--ink);
+  font-family: var(--mono);
+  font-size: clamp(22px, 3.6vh, 32px);
+  overflow: hidden;
+}
+/* a long address keeps its end (where they're typing) in view */
+.boardText {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: safe center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.boardText > span {
+  flex: none;
+}
+.caret {
+  display: inline-block;
+  width: 3px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--gold);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.boardCta {
+  grid-area: cta;
+  min-height: clamp(54px, 9vh, 72px);
+  font-size: clamp(20px, 3vh, 26px);
+}
+.chips {
+  grid-area: chips;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip {
+  flex: 1 1 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 2px solid var(--line);
+  background: var(--ink);
+  color: var(--cream);
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+.chip:active {
+  background: var(--gold);
+  border-color: var(--gold);
+  color: var(--ink);
+}
+.letterKeys {
+  grid-area: keys;
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  gap: clamp(5px, 0.9vh, 8px);
+}
+.lkey {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: clamp(46px, 8.4vh, 74px);
+  border-radius: 10px;
+  border: 2px solid var(--line);
+  background: var(--ink-3);
+  color: var(--cream);
+  font-family: var(--body);
+  font-size: clamp(22px, 3.4vh, 30px);
+  font-weight: 700;
+  transition: background 80ms, transform 80ms, border-color 80ms;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lkey:active {
+  background: var(--gold);
+  color: var(--ink);
+  border-color: var(--gold);
+  transform: scale(0.96);
+}
+.lkey:disabled {
+  opacity: 0.4;
+}
+.lkeySmall {
+  font-size: clamp(15px, 2.4vh, 20px);
+  color: var(--cream-dim);
+}
+.lkeyAt {
+  border-color: var(--gold);
+  color: var(--gold);
+  font-family: var(--display);
+}
+
+/* the new-account form: first and last name side by side */
+.fieldRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.inputCompact {
+  min-height: 52px;
+  font-size: 21px;
+  min-width: 0;
+  width: 100%;
+}
+.ghostShort {
+  min-height: 48px;
+}
+
+/* found by email: "Add this phone for one-tap check-in next time?" */
+.offer {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 16px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  background: var(--ink);
+}
+.offerTitle {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(19px, 2.8vh, 24px);
+  line-height: 1.15;
+  color: var(--gold);
+}
+.offerPhone {
+  font-family: var(--mono);
+  font-size: clamp(28px, 4.2vh, 38px);
+  font-variant-numeric: tabular-nums;
 }
 
 /* banners across the top of the check-in panel */
@@ -287,6 +559,22 @@
 .toastDetail {
   font-size: 17px;
   margin-top: 2px;
+}
+/* their profile line, under a confirmed check-in: one line, with a
+   slightly tighter banner, so it still ends above the digits in the phone
+   number readout (the next person may be typing while it's up). */
+.toastHasLine {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.toastLine {
+  margin-top: 2px;
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ticketsCard {
   border-radius: 14px;
@@ -360,6 +648,35 @@
   border: 3px solid var(--ink);
   border-radius: 10px;
 }
+/* "add your card on your phone" (FinishCard.tsx): the QR code beside the
+   order, never over the keypad */
+.finishCard {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.finishCard .qr {
+  padding: 6px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+}
+.finishCopy {
+  min-width: 0;
+}
+.finishScan {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+@media (max-width: 520px) {
+  .finishCard {
+    flex-direction: column;
+    text-align: center;
+  }
+}
 /* a new badge: ink with a gold edge, its emoji big on a gold coin */
 .toastBadge {
   display: flex;
@@ -427,6 +744,7 @@
   height: auto;
 }
 .sprockets {
+  flex: none;
   height: 16px;
   background: repeating-linear-gradient(90deg, transparent 0 10px, rgba(243, 236, 217, 0.14) 10px 26px, transparent 26px 36px);
   border-top: 2px solid rgba(243, 236, 217, 0.12);
@@ -485,6 +803,7 @@
   color: var(--ink);
 }
 .pitch {
+  flex: none;
   margin-top: auto;
   border: 3px solid var(--gold);
   border-radius: 16px;
@@ -493,6 +812,16 @@
     radial-gradient(circle at 1px 1px, rgba(20, 17, 12, 0.18) 1px, transparent 1.6px) 0 0 / 9px 9px,
     var(--gold);
   color: var(--ink);
+}
+/* a short landscape screen (the 8.7" tablet is about 1005 x 600): a smaller
+   logo and posters, so the points box below has room to breathe */
+@media (min-aspect-ratio: 1/1) and (max-height: 720px) {
+  .logo {
+    width: min(300px, 50%);
+  }
+  .posterImg {
+    max-height: 29vh;
+  }
 }
 .pitchTitle {
   font-family: var(--display);
@@ -504,16 +833,22 @@
   font-size: 0.6em;
   margin-top: 4px;
 }
-/* the badges, as a wrapping row of small printed pills */
+/* the badges, as one line of small printed pills that fades out at the
+   edge: as many as fit, never a second row (on the 8.7" tablet a third row
+   was cut off at the bottom of the screen) */
 .badgeRow {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
 }
 .badgeChip {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -651,15 +986,944 @@
   font-size: 26px;
 }
 
+/* ---------- the member on the order (MemberCards.tsx) ---------- */
+/* "Your unlimited membership isn't active": red with a paper edge, never
+   gold (gold means Insiders+). A banner over the order, or the whole panel
+   (.unlimitedHero) while nothing's rung up yet. */
+.unlimited {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 3px solid var(--paper);
+  background: var(--red);
+  color: #fff;
+  box-shadow: 0 0 0 3px var(--ink), 0 14px 32px rgba(0, 0, 0, 0.5);
+  animation: slide 260ms ease-out both;
+}
+.unlimitedCopy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.notActive {
+  display: inline-block;
+  transform: rotate(-2deg);
+  padding: 3px 10px;
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.unlimitedTitle {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(22px, 3.2vh, 30px);
+  font-weight: 400;
+  line-height: 1.05;
+}
+.unlimitedWhy {
+  margin: 0;
+  font-size: clamp(17px, 2.3vh, 21px);
+  line-height: 1.3;
+}
+.unlimitedTax {
+  font-size: 0.85em;
+  opacity: 0.85;
+}
+/* "$15/month + tax" never breaks apart */
+.unlimitedPrice {
+  white-space: nowrap;
+}
+.tapIcon {
+  flex: none;
+  width: clamp(64px, 9vh, 84px);
+  height: auto;
+}
+.tapWaves {
+  animation: tapPulse 1.6s ease-in-out infinite;
+}
+@keyframes tapPulse {
+  50% {
+    opacity: 0.2;
+  }
+}
+.perks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.perks li {
+  border: 2px solid var(--paper);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: rgba(20, 17, 12, 0.22);
+  font-size: clamp(15px, 2vh, 18px);
+  font-weight: 700;
+}
+.unlimitedHero {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column-reverse;
+  justify-content: center;
+  gap: clamp(12px, 2.4vh, 26px);
+  padding: clamp(18px, 4vh, 44px) clamp(18px, 3vw, 40px);
+  text-align: center;
+}
+.unlimitedHero .unlimitedCopy {
+  flex: none;
+  justify-items: center;
+  gap: clamp(8px, 1.4vh, 14px);
+}
+.unlimitedHero .unlimitedTitle {
+  font-size: clamp(30px, 5.2vh, 52px);
+}
+.unlimitedHero .unlimitedWhy {
+  max-width: 30ch;
+  font-size: clamp(19px, 2.8vh, 26px);
+}
+.unlimitedHero .tapIcon {
+  width: clamp(88px, 15vh, 150px);
+}
+/* the moment it's set up: gold, like Insiders+ everywhere */
+.plusWelcome {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  border: 3px solid var(--ink);
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 0 0 0 3px var(--gold), 0 14px 32px rgba(0, 0, 0, 0.5);
+  animation: badgeIn 480ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.plusWelcome.unlimitedHero {
+  flex: 1;
+  flex-direction: column;
+  gap: clamp(12px, 2.4vh, 26px);
+  padding: clamp(18px, 4vh, 44px) clamp(18px, 3vw, 40px);
+}
+.plusSeal {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 44px;
+  line-height: 1;
+  box-shadow: 0 0 0 3px var(--gold), 0 0 0 6px var(--ink);
+}
+.unlimitedHero .plusSeal {
+  width: clamp(88px, 14vh, 130px);
+  height: clamp(88px, 14vh, 130px);
+  font-size: clamp(64px, 10vh, 96px);
+}
+/* An upright screen gives the order only what the keypad leaves (about 390px
+   on an upright iPad): with a membership card over the order, everything
+   gets tighter and the points strip steps aside, so the total stays in
+   view. */
+@media (max-aspect-ratio: 1/1) {
+  .sideTight {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .sideTight .earn {
+    display: none;
+  }
+  .sideTight .unlimited,
+  .sideTight .plusWelcome {
+    padding: 10px 14px;
+    gap: 12px;
+  }
+  .sideTight .tapIcon {
+    display: none;
+  }
+  .sideTight .unlimitedCopy {
+    gap: 4px;
+  }
+  .sideTight .unlimitedTitle {
+    font-size: 21px;
+  }
+  .sideTight .unlimitedWhy {
+    font-size: 16px;
+  }
+  .sideTight .plusSeal {
+    width: 44px;
+    height: 44px;
+    font-size: 32px;
+  }
+  .unlimitedHero {
+    padding: 14px 18px;
+    gap: 10px;
+  }
+  .unlimitedHero .perks {
+    display: none;
+  }
+  .unlimitedHero .unlimitedTitle {
+    font-size: clamp(26px, 3.4vh, 40px);
+  }
+  .unlimitedHero .unlimitedWhy {
+    font-size: clamp(18px, 2vh, 22px);
+  }
+  .unlimitedHero .tapIcon {
+    width: clamp(72px, 7vh, 96px);
+  }
+  .unlimitedHero .plusSeal {
+    width: 84px;
+    height: 84px;
+    font-size: 60px;
+  }
+}
+
+/* the order's head: whose order it is, and how many items */
+.receiptCount {
+  flex: none;
+  white-space: nowrap;
+}
+.receiptWho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+/* the gold "+" in a paying Insiders+ member's badge (.standingPlus) */
+.plusPillSeal {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+/* ---------- where they stand (MemberCards.tsx StandingChip) ---------- */
+/* Gold only for Insiders+ that's paid for; red for no card on file or a
+   former unlimited membership that isn't active; plain Insiders in the
+   text's own color. */
+.standing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.standingPlus {
+  padding-left: 4px;
+  background: var(--gold);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.standingRed {
+  background: var(--red);
+  border-color: var(--ink);
+  color: #fff;
+}
+
+/* ---------- their account (MemberCards.tsx AccountPanel) ---------- */
+/* At the foot of the order (in place of the points strip), or on its own
+   under a red card or tonight's tickets (.accountAlone). */
+.account {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 22px 12px;
+  background: #ece4cc;
+  color: var(--ink);
+  border-top: 3px solid var(--ink);
+}
+.accountPlus {
+  background: #fbe3a0;
+}
+.accountInfo {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.accountTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.accountName {
+  font-family: var(--display);
+  font-size: clamp(20px, 3vh, 26px);
+  line-height: 1;
+}
+.accountPoints {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.accountWorth {
+  color: #5b5446;
+}
+.accountPerks {
+  font-size: 15px;
+  font-weight: 700;
+}
+.accountEarn {
+  flex: none;
+  display: grid;
+  justify-items: end;
+  line-height: 1;
+}
+.accountEarnLabel {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.accountAlone {
+  padding: 12px 18px;
+  border: 3px solid var(--ink);
+  border-radius: 16px;
+  box-shadow: 0 0 0 3px var(--line), 0 14px 32px rgba(0, 0, 0, 0.45);
+  animation: slide 260ms ease-out both;
+}
+.accountAlone.accountPlus {
+  box-shadow: 0 0 0 3px var(--gold), 0 14px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- their card (MemberCards.tsx MemberCard) ---------- */
+/* Nothing rung up yet: the outward-facing side of their profile, in their
+   color (--flair, set from lib/flair.ts; a quiet cream until they pick
+   one). Edged in gold only for Insiders+ that's paid for. */
+.memberCard {
+  --flair: var(--cream-dim);
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 2vh, 18px);
+  padding: clamp(14px, 2.6vh, 24px) clamp(16px, 2.2vw, 26px);
+  border-radius: 18px;
+  border: 3px solid var(--line);
+  background:
+    radial-gradient(circle at 0 0, color-mix(in srgb, var(--flair) 24%, transparent), transparent 60%),
+    var(--ink-2);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: slide 260ms ease-out both;
+}
+.memberCardPlus {
+  border-color: var(--gold);
+}
+.cardTop {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 2vw, 22px);
+}
+.cardPhoto {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: clamp(96px, 28vh, 190px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--ink-3);
+  color: var(--cream-dim);
+  box-shadow:
+    0 0 0 4px var(--flair),
+    0 0 0 7px var(--ink);
+}
+.cardPhoto img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cardPhoto svg {
+  width: 74%;
+  height: 74%;
+  margin-top: 22%;
+}
+.cardWho {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.cardName {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(28px, 5.4vh, 46px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+.cardLine {
+  margin: 0;
+  font-size: clamp(16px, 2.4vh, 20px);
+  font-style: italic;
+  line-height: 1.25;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.cardFacts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.cardPoints {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.cardPerks {
+  font-size: 15px;
+  font-weight: 700;
+}
+.cardFlair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+.cardFlairBit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.cardSwatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--flair);
+  box-shadow:
+    0 0 0 2px var(--ink),
+    0 0 0 3px var(--cream-dim);
+}
+/* their badges: one row of pills that fades out at the edge, like the
+   welcome's pitch, on the dark card */
+.cardBadgesBox {
+  display: grid;
+  gap: 6px;
+}
+.cardEyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cream-dim);
+}
+.cardBadges {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+}
+.cardBadges .badgeChip {
+  border-color: var(--line);
+  background: var(--ink-3);
+  color: var(--cream);
+}
+.cardNoBadges {
+  margin: 0;
+  font-size: 15px;
+  color: var(--cream-dim);
+}
+/* "Make it yours": what's left to do on their account, and where */
+.cardNext {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 2px dashed var(--line);
+  border-radius: 14px;
+  background: var(--ink);
+}
+.cardNextCopy {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+.cardNextTitle {
+  font-family: var(--display);
+  font-size: clamp(18px, 2.8vh, 22px);
+  line-height: 1.1;
+}
+.cardSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cardSteps li {
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.cardSteps .cardSoon {
+  border-style: dashed;
+  color: var(--cream-dim);
+  white-space: normal;
+}
+.soonTag {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--cream-dim);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+.cardUrl {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--cream-dim);
+}
+.cardQr {
+  flex: none;
+}
+.cardQr .qr {
+  padding: 4px;
+  border: 2px solid var(--line);
+  border-radius: 8px;
+}
+/* An upright screen gives the card only what the keypad leaves: a smaller
+   photo and name, and the account address without its code. */
+@media (max-aspect-ratio: 1/1) {
+  .memberCard {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+  .cardPhoto {
+    width: 100px;
+  }
+  .cardName {
+    font-size: 28px;
+  }
+  .cardLine {
+    -webkit-line-clamp: 1;
+  }
+  .cardFlair,
+  .cardQr {
+    display: none;
+  }
+  .cardNext {
+    padding: 8px 12px;
+  }
+  .sideTight .accountWorth,
+  .sideTight .accountPerks,
+  .sideTight .accountEarnLabel {
+    display: none;
+  }
+  .sideTight .account {
+    padding: 6px 16px;
+  }
+}
+
+/* Upright, the order sits above the keypad and gets whatever the keypad
+   leaves (on the 8.7" tablet held upright, about 600 x 1005, that used to
+   be too little for the total). The keypad is a little more compact (keys
+   still a full finger tall) and the receipt tighter, so the lines, the
+   total and their account all fit. */
+@media (max-aspect-ratio: 1/1) {
+  .checkin {
+    gap: 10px;
+    padding: 16px 18px;
+  }
+  .title {
+    font-size: clamp(26px, 3.4vh, 42px);
+  }
+  .display {
+    min-height: clamp(52px, 6vh, 74px);
+    font-size: clamp(28px, 3.6vh, 40px);
+  }
+  .keys {
+    gap: 8px;
+  }
+  .key {
+    min-height: clamp(50px, 6.2vh, 78px);
+  }
+  .cta {
+    min-height: clamp(54px, 6vh, 72px);
+  }
+  .receiptHead {
+    padding: 10px 18px;
+  }
+  .receiptName {
+    font-size: 24px;
+  }
+  .lines {
+    padding: 2px 18px;
+  }
+  .line {
+    padding: 6px 0;
+  }
+  .lineName,
+  .linePrice {
+    font-size: 18px;
+  }
+  .totals {
+    gap: 2px;
+    padding: 8px 18px 10px;
+    font-size: 16px;
+  }
+  .grand {
+    margin-top: 2px;
+  }
+  .grandAmount {
+    font-size: clamp(34px, 4.4vh, 52px);
+  }
+  .earn,
+  .account {
+    padding: 8px 18px;
+  }
+  .accountAlone {
+    padding: 10px 14px;
+  }
+}
+
+/* A short landscape screen (the 8.7" tablet is about 1005 x 600) with a
+   card over the order: the card and their account get tighter, so the
+   order keeps room for its lines and its total. */
+@media (min-aspect-ratio: 1/1) and (max-height: 720px) {
+  .sideTight {
+    gap: 10px;
+  }
+  .sideTight .unlimited,
+  .sideTight .plusWelcome {
+    padding: 10px 16px;
+    gap: 12px;
+  }
+  .sideTight .unlimitedCopy {
+    gap: 4px;
+  }
+  .sideTight .notActive {
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+  .sideTight .unlimitedTitle {
+    font-size: 22px;
+  }
+  .sideTight .unlimitedWhy {
+    font-size: 16px;
+  }
+  .sideTight .tapIcon {
+    display: none;
+  }
+  .sideTight .plusSeal {
+    width: 44px;
+    height: 44px;
+    font-size: 32px;
+  }
+  .sideTight .receiptHead {
+    padding: 10px 22px;
+  }
+  .sideTight .account {
+    padding: 8px 22px;
+  }
+  .sideTight .accountWorth {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .check,
   .toast,
   .toastBadge,
-  .ticketsCard {
+  .ticketsCard,
+  .unlimited,
+  .tapWaves,
+  .plusWelcome,
+  .accountAlone,
+  .memberCard {
     animation: none;
   }
   .key,
   .cta {
     transition: none;
   }
+}
+
+/* A number we don't know: "Just use my phone number" first, big and plain
+   for guests who'll never want an email login (phone accounts,
+   lib/member-name.ts), then email or the sign-up form. */
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: clamp(96px, 15vh, 130px);
+  padding: 12px 16px;
+}
+.choiceSub {
+  font-family: var(--body);
+  font-size: clamp(16px, 2.3vh, 20px);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.2;
+}
+.choiceRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.choiceRow .ghost {
+  font-size: 18px;
+  line-height: 1.15;
+  padding: 6px 10px;
+}
+.big {
+  font-size: clamp(19px, 2.8vh, 24px);
+  line-height: 1.3;
+  color: var(--cream);
+  margin: 0;
+  text-wrap: balance;
+}
+.phoneBig {
+  font-family: var(--mono);
+  font-size: clamp(30px, 4.6vh, 42px);
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+
+/* ---------- "We're setting up your account" (StaffSetupView.tsx) ---------- */
+/* Staff fill in a guest's account on the register and the whole screen
+   follows along: calm, big and still, for a guest who'd rather just tell
+   them. Over everything but a celebration. */
+.setup {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background:
+    radial-gradient(circle at 50% 0, rgba(255, 199, 44, 0.1), transparent 60%),
+    var(--ink);
+  overflow-y: auto;
+  animation: setupIn 260ms ease-out both;
+}
+@keyframes setupIn {
+  from {
+    opacity: 0;
+  }
+}
+.setupCard {
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(14px, 2.6vh, 24px);
+  padding: clamp(20px, 4vh, 40px) clamp(20px, 4vw, 44px);
+  border: 3px solid var(--line);
+  border-radius: 22px;
+  background: var(--ink-2);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+}
+.setupDone {
+  align-items: center;
+  text-align: center;
+  border-color: var(--gold);
+}
+.setupTitle {
+  font-family: var(--display);
+  font-size: clamp(30px, 5.4vh, 50px);
+  line-height: 1.05;
+  margin: 4px 0 0;
+  text-wrap: balance;
+}
+.setupRows {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.setupRow {
+  display: grid;
+  gap: 4px;
+  padding: 12px 18px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 2px solid var(--line);
+}
+.setupNote {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-family: var(--body);
+}
+.setupValue {
+  margin: 0;
+  min-height: 1.15em;
+  font-family: var(--display);
+  font-size: clamp(30px, 5.6vh, 46px);
+  line-height: 1.15;
+  color: var(--cream);
+  overflow-wrap: anywhere;
+}
+.setupMono {
+  font-family: var(--mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+.setupEmpty {
+  color: var(--line);
+}
+.setupOk {
+  min-height: clamp(72px, 11vh, 96px);
+  font-size: clamp(26px, 4.4vh, 36px);
+}
+.setupFoot {
+  margin: 0;
+  text-align: center;
+  font-size: 18px;
+  color: var(--cream-dim);
+}
+@media (max-aspect-ratio: 1/1) {
+  .setupRow {
+    padding: 10px 14px;
+  }
+}
+
+/* "Done" / "That's not me" under their card (MemberCards.tsx MemberActions). */
+.memberActions {
+  flex: none;
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 10px;
+}
+.memberActions > :only-child {
+  grid-column: 1 / -1;
+}
+.memberDone {
+  min-height: 60px;
+}
+.memberNotMe {
+  min-height: 60px;
+  font-size: 18px;
+}
+/* On the cream account panel at the foot of the order. */
+.accountNotMe {
+  flex: none;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  touch-action: manipulation;
+}
+@media (min-aspect-ratio: 1/1) and (max-height: 720px) {
+  .memberDone,
+  .memberNotMe {
+    min-height: 52px;
+  }
+  .sideCard {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .memberCard .cardSoon {
+    display: none;
+  }
+}
+/* Upright, the card shares the top with the buttons under it: a smaller
+   photo, and the "coming soon" teaser makes room. */
+@media (max-aspect-ratio: 1/1) {
+  .memberDone,
+  .memberNotMe {
+    min-height: 50px;
+  }
+  .sideCard {
+    padding-top: 14px;
+    padding-bottom: 14px;
+    gap: 10px;
+  }
+  .memberCard {
+    gap: 8px;
+  }
+  .memberCard .cardPhoto {
+    width: 80px;
+  }
+  .memberCard .cardSoon {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup {
+    animation: none;
+  }
+}
+
+/* "Which one is you?" (a shared family number): a big button per account. */
+.pickList {
+  display: grid;
+  gap: 12px;
+}
+.pick {
+  font-size: clamp(28px, 4vh, 36px);
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 8px 16px;
+  overflow-wrap: anywhere;
 }

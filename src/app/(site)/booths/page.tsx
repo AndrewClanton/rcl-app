@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import { pageMeta } from "@/lib/seo/page-meta";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveBooths, getBoothBusyTimes } from "@/lib/data/booths";
@@ -9,12 +9,15 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { issueFormToken } from "@/lib/public-form-guard";
 
+// Per request: today's open times, the checkout result and the visitor's own
+// details (and Insiders+ free reservations) are all on this page.
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
+export const metadata = pageMeta({
   title: "Reserve a Booth",
-  description: "Reserve one of our 8 lounge booths for a two-hour window -- pay online to hold your spot. Insiders+ members get 2 free reservations a month.",
-};
+  description: "Reserve one of our 8 lounge booths for a two-hour window and pay online to hold your spot. Insiders+ members get 2 free reservations a month.",
+  path: "/booths",
+});
 
 function tomorrowCentral() {
   const now = new Date();

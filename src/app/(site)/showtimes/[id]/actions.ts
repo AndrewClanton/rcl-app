@@ -9,6 +9,7 @@ import { hasPlusPerks } from "@/lib/plus-status";
 import { sameEmail } from "@/lib/email-match";
 import { memberHasBookingFor } from "@/lib/data/screening-detail";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { isWithinPublicWindow } from "@/lib/public-window";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -51,6 +52,14 @@ export async function startCheckout(fields: {
     .eq("id", fields.screeningId)
     .single();
   if (screeningErr || !screening) return { ok: false, error: "Screening not found." };
+  // Sold online only while the showtime is on the public site: once it has
+  // started its page is gone too (a late arrival buys at the box office), and
+  // one further out than the public window isn't on sale yet.
+  if (!isWithinPublicWindow(screening.starts_at)) {
+    return new Date(screening.starts_at).getTime() < Date.now()
+      ? { ok: false, error: "This showing has already started. Tickets are at the box office, subject to availability." }
+      : { ok: false, error: "Screening not found." };
+  }
   const movie = screening.movie as unknown as { title: string };
 
   const origin = await siteOrigin();
@@ -152,7 +161,15 @@ export async function startCheckout(fields: {
       line_items: lineItems,
       // The webhook confirms (or cancels) the free seat with the paid
       // booking: it finds it by bookings.paid_booking_id.
-      metadata: { booking_id: paidBookingId, screening_id: fields.screeningId, ...(freeBookingId ? { free_booking_id: freeBookingId } : {}) },
+      // signed_in_member: only a signed-in member's own card is linked to
+      // them afterwards (lib/member-cards.ts), not the card of whoever
+      // typed their email.
+      metadata: {
+        booking_id: paidBookingId,
+        screening_id: fields.screeningId,
+        ...(freeBookingId ? { free_booking_id: freeBookingId } : {}),
+        ...(signedInSelf ? { signed_in_member: signedInSelf.id } : {}),
+      },
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // 30 minutes
       success_url: `${origin}/showtimes/${fields.screeningId}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/showtimes/${fields.screeningId}?checkout=cancelled`,
@@ -168,7 +185,7 @@ export async function startCheckout(fields: {
   return { ok: true, url: session.url! };
 }
 
-// What hold_online_seats (supabase/migrations/20261001130000_booking_guards.sql)
+// What hold_online_seats (supabase/migrations/20261003020000_booking_guards.sql)
 // returns: the paid seats' booking and the free seat's, or neither when the
 // seats ran out.
 type SeatHold = { booking_id: string | null; free_booking_id: string | null; seats_left: number };

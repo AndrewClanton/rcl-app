@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { expectedTax, type SalesTaxReport, type TaxMonth } from "@/lib/data/reports";
 import { shiftMonth } from "@/lib/report-periods";
+import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
+import { syncNote } from "../MembershipsCard";
 import { Card, PeriodNav, Pill, Stat, money } from "../ui";
 
 // Reports -> Sales tax, as drawn: the page (./page.tsx) picks the period,
@@ -17,7 +19,14 @@ function shiftQuarter(period: string, n: number) {
   return `${Math.floor(i / 4)}-Q${(i % 4) + 1}`;
 }
 
-export default function TaxScreen({ report, thisMonth }: { report: SalesTaxReport; thisMonth: string }) {
+// " This period: 2 Insiders+ charges had no tax ($30.00 of sales)."
+function untaxedNote(report: SalesTaxReport) {
+  const u = report.untaxedMemberships;
+  if (!u.count) return "";
+  return ` This period: ${u.count} Insiders+ charge${u.count === 1 ? "" : "s"} had no tax (${money(u.sales)} of sales).`;
+}
+
+export default function TaxScreen({ report, thisMonth, sync }: { report: SalesTaxReport; thisMonth: string; sync: PaymentSyncStatus }) {
   const thisQuarter = quarterOf(thisMonth);
   const isQuarter = report.period.includes("Q");
   const prev = isQuarter ? shiftQuarter(report.period, -1) : shiftMonth(report.period, -1);
@@ -54,7 +63,9 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
           <TaxTable month={t} />
           <p className="mt-3 text-xs text-[var(--muted)]">
             At {report.ratePercent}%, {money(taxable)} of taxable sales comes to {money(expected)}; {money(t.tax)} was collected.
-            {Math.abs(expected - t.tax) >= 0.05 && " The gap is rounding, plus any sales that didn't carry tax (online tickets before Sept. 28 had none added)."}
+            {Math.abs(expected - t.tax) >= 0.05 &&
+              " The gap is rounding, plus any sales that didn't carry tax: online tickets sold before tax was added to them, and Insiders+ subscriptions started before the evening of Sept. 28, which are billed without tax (renewals included) until tax is added to them." +
+                untaxedNote(report)}
           </p>
         </Card>
 
@@ -103,10 +114,18 @@ export default function TaxScreen({ report, thisMonth }: { report: SalesTaxRepor
             Refunds: a fully refunded order, ticket or cancelled booth isn&apos;t counted at all. A partial refund comes off the month the order was sold. So a refund made after
             you&apos;ve filed a month changes that month here; the amount you filed stays what it was.
           </li>
-          <li>
-            Not included: Insiders+ monthly and yearly memberships. Stripe bills and taxes those itself, so their tax is in Stripe&apos;s tax reports, not here. Add it to
-            these figures when you file.
-          </li>
+          {report.membershipsTracked ? (
+            <li>
+              Insiders+ memberships: every card charge Stripe made for one (new members, monthly and yearly renewals, switches from monthly to yearly), on the business
+              day it was charged, and gift memberships on the day they were paid. A refund of one comes off the month of the charge. Insiders+ subscriptions started
+              before the evening of Sept. 28 are billed without tax, renewals included, until tax is added to them. {syncNote(sync)}
+            </li>
+          ) : (
+            <li>
+              Not included yet: Insiders+ monthly and yearly memberships. Their database update (member payments) hasn&apos;t been applied, so until then their tax is only
+              in Stripe&apos;s own reports. Add it to these figures when you file.
+            </li>
+          )}
           {!report.giftsTracked && <li>Gift memberships aren&apos;t counted yet: their database update hasn&apos;t been applied.</li>}
         </ul>
       </Card>

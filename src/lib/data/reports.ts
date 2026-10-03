@@ -4,10 +4,19 @@ import { getRecipesByItem } from "./recipes";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
-import { BOOTHS_LABEL, CATEGORY_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { subscriptionLive } from "@/lib/plus-status";
+import { getMemberPaymentsBetween, paymentLine, type MemberPaymentLine, type MemberPaymentRecord } from "@/lib/membership-payments/read";
+import { membershipsDetail, summarizeMemberships, type MembershipTotals } from "@/lib/membership-payments/rows";
 
 // Every report here works in business days: 4 a.m. to 4 a.m. Central, the
 // same day the register and shifts use, so a late sale counts tonight.
+//
+// Money comes from three places, kept apart so nothing is counted twice:
+// register and web orders (orders); the website's tickets and booths
+// (bookings, booth_reservations); and Insiders+ and gift memberships, which
+// Stripe bills itself and never go through the register (member_payments,
+// read from Stripe by src/lib/membership-payments/sync.ts).
 
 // ---------- reading more than 1,000 rows ----------
 // The database hands back at most 1,000 rows per request and says nothing
@@ -153,27 +162,39 @@ export interface DayReport extends SalesSummary {
   orders: DayOrder[];
   ticketLines: DayTicketLine[];
   boothLines: DayBoothLine[];
+  // Insiders+ charges, gift memberships and refunds of them counted this
+  // day (in Collected as their own part), oldest first.
+  membershipLines: MemberPaymentLine[];
 }
 
 // What a stretch of business days added up to: one day (Day), or a week or
 // month (Week, Month). All of them read the same rows (loadSales) and add
 // them up the same way (summarizeSales), so a week is exactly its days.
 export interface SalesSummary {
-  // Money in, by how it arrived: the register's cash and card, and the
-  // website (online tickets, booth fees, web orders). Includes tax and tips.
-  // Vouchers (trivia prizes) paid for goods but brought in no money, so
-  // they're counted apart from what was collected. Partial refunds on the
-  // day's orders are already taken off.
+  // Money in, by how it arrived: the register's cash and card, the website
+  // (online tickets, booth fees, web orders), and Insiders+ and gift
+  // memberships (Stripe billing). Includes tax and tips. Vouchers (trivia
+  // prizes) paid for goods but brought in no money, so they're counted
+  // apart from what was collected. Partial refunds on the day's orders, and
+  // membership refunds, are already taken off.
   vouchers: number;
   cash: number;
   card: number;
   online: number;
   tips: number;
-  tax: number;
-  collected: number;
+  tax: number; // memberships' tax included
+  collected: number; // cash + card + online + memberships.collected
+  // Insiders+ charges (new, renewals, switches to yearly) and gift
+  // memberships, from Stripe: never orders, so never counted twice.
+  memberships: MembershipTotals;
   // What was sold, before tax and tips.
   sold: { label: string; amount: number; detail?: string }[];
-  discounts: number;
+  discounts: number; // member, monthly member and points-reward discounts
+  // Insiders+ free daily coffees given away (lib/daily-perk.ts): their menu
+  // price, on completed orders, and how many. Their own line, so the cost
+  // of the perk shows instead of hiding in the discounts.
+  dailyCoffee: number;
+  dailyCoffeeCount: number;
   partialRefunds: number; // goods given back on part-refunded orders, before tax
   netSales: number;
   ticketsSold: number;
@@ -238,6 +259,9 @@ type DayOrderRow = {
   tier_discount: number;
   monthly_discount: number;
   redemption_discount: number;
+  // The Insiders+ daily coffee given away (lib/daily-perk.ts). Missing
+  // until its migration (20261001230000_plus_daily_coffee.sql) is applied.
+  daily_perk_discount?: number | null;
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
@@ -247,8 +271,10 @@ type DayOrderRow = {
 // The cashier join names its foreign key: since the manager-PIN migration,
 // orders has two links to employees (who rang it up, and refund_approved_by),
 // and a bare employees(name) fails with "more than one relationship".
+// The order's own columns are "*", so the reports keep working before the
+// daily coffee's migration adds daily_perk_discount.
 const DAY_ORDER_COLUMNS =
-  "id, order_number, status, source, completed_at, order_name, tab_name, payment_method, payment_cash_amount, payment_card_amount, payment_voucher_amount, tax, tax_free, tip, total, tier_discount, monthly_discount, redemption_discount, stripe_payment_intent_id, employee_id, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
+  "*, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
 
 type RefundedParts = { amount: number; tax: number; card: number; cash: number };
 const NOTHING_REFUNDED: RefundedParts = { amount: 0, tax: 0, card: 0, cash: 0 };
@@ -325,6 +351,7 @@ export async function getDayReport(date: string): Promise<DayReport> {
       return { screeningId: b.screening_id, online: !b.order_id, paid, free, revenue: paid * Number(b.unit_price), tax: b.order_id ? 0 : Number(b.tax_amount), at: b.created_at };
     }),
     boothLines: rows.booths.map((r) => ({ fee: Number(r.fee_amount), tax: Number(r.tax_amount ?? 0), at: r.created_at })),
+    membershipLines: [...rows.memberships].sort((a, b) => a.counted_at.localeCompare(b.counted_at) || a.paid_at.localeCompare(b.paid_at)).map(paymentLine),
     ...summarizeSales(rows, buckets),
   };
 }
@@ -339,6 +366,8 @@ export interface SalesRows {
   bookings: SaleBooking[]; // confirmed tickets, online and register, by when sold
   booths: SaleBooth[];
   partials: PartialRefundRow[]; // on completed orders sold in the range
+  memberships: MemberPaymentRecord[]; // Insiders+ and gift payments and their refunds, by the day counted
+  membershipsTracked: boolean; // false until the member payments migration is applied
 }
 
 // menu item -> the report's category for it (undefined: candy and other).
@@ -347,7 +376,7 @@ export type Buckets = Map<string, "food" | "coffee" | "soda" | "liquor" | undefi
 // Everything sold between two instants (business-day edges), paged.
 export async function loadSales(start: string, end: string): Promise<{ rows: SalesRows; buckets: Buckets }> {
   const supabase = createAdminClient();
-  const [orders, bookings, booths, buckets, partials] = await Promise.all([
+  const [orders, bookings, booths, buckets, partials, memberships] = await Promise.all([
     fetchAll<DayOrderRow>((from, to) =>
       supabase
         .from("orders")
@@ -368,8 +397,9 @@ export async function loadSales(start: string, end: string): Promise<{ rows: Sal
     ),
     loadBuckets(),
     getPartialRefunds(start, end),
+    getMemberPaymentsBetween(start, end),
   ]);
-  return { rows: { orders, bookings, booths, partials }, buckets };
+  return { rows: { orders, bookings, booths, partials, memberships: memberships.rows, membershipsTracked: memberships.tracked }, buckets };
 }
 
 // Each menu item's category, as the report groups them.
@@ -382,20 +412,22 @@ async function loadBuckets(): Promise<Buckets> {
 }
 
 // The rows split by the business day each belongs to: an order by when it
-// was finished, a ticket or booth by when it was sold, and a partial refund
-// by its order's day (refunds come off the day of the sale).
+// was finished, a ticket or booth by when it was sold, a partial refund by
+// its order's day (refunds come off the day of the sale), and a membership
+// payment by the day it was counted (a refund of one: its payment's day).
 export function salesByDay(rows: SalesRows): Map<string, SalesRows> {
   const days = new Map<string, SalesRows>();
-  const day = (iso: string) => {
-    const date = businessDay(new Date(iso)).date;
+  const byDate = (date: string) => {
     let d = days.get(date);
-    if (!d) days.set(date, (d = { orders: [], bookings: [], booths: [], partials: [] }));
+    if (!d) days.set(date, (d = { orders: [], bookings: [], booths: [], partials: [], memberships: [], membershipsTracked: rows.membershipsTracked }));
     return d;
   };
+  const day = (iso: string) => byDate(businessDay(new Date(iso)).date);
   for (const o of rows.orders) day(o.completed_at).orders.push(o);
   for (const b of rows.bookings) day(b.created_at).bookings.push(b);
   for (const r of rows.booths) day(r.created_at).booths.push(r);
   for (const p of rows.partials) day(p.orders.completed_at).partials.push(p);
+  for (const m of rows.memberships) byDate(m.business_date).memberships.push(m);
   return days;
 }
 
@@ -413,7 +445,9 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     online = 0,
     tips = 0,
     tax = 0,
-    discounts = 0;
+    discounts = 0,
+    dailyCoffee = 0,
+    dailyCoffeeCount = 0;
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
   for (const o of completed) {
@@ -425,6 +459,11 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     tips += Number(o.tip);
     tax += Number(o.tax);
     discounts += Number(o.tier_discount) + Number(o.monthly_discount) + Number(o.redemption_discount);
+    const coffee = Number(o.daily_perk_discount ?? 0);
+    if (coffee > 0) {
+      dailyCoffee += coffee;
+      dailyCoffeeCount++;
+    }
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
       // Tickets are counted from their bookings below, not as bar sales.
@@ -469,6 +508,13 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   // What the orders came to for the goods (the average order is this over the count).
   const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds;
 
+  // Insiders+ and gift memberships: their own part of the money in (never
+  // an order, so nothing here is also counted above), their tax, and a line
+  // in what sold, with their refunds already taken off.
+  const memberships = summarizeMemberships(rows.memberships, rows.membershipsTracked);
+  tax += memberships.tax;
+  const membershipsLine = membershipsDetail(memberships);
+
   const sold = [
     { label: TICKETS_LABEL, amount: ticketRevenue, detail: ticketsSold ? `${ticketsSold} sold${ticketsSold > paidTickets ? `, ${ticketsSold - paidTickets} free` : ""}` : undefined },
     { label: CATEGORY_LABEL.food, amount: category.food },
@@ -477,6 +523,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     { label: CATEGORY_LABEL.coffee, amount: category.coffee },
     { label: CATEGORY_LABEL.liquor, amount: category.liquor },
     { label: BOOTHS_LABEL, amount: boothRevenue },
+    { label: MEMBERSHIPS_LABEL, amount: memberships.sales, detail: membershipsLine || undefined },
   ].filter((r) => r.amount > 0 || r.detail);
   const grossSales = sold.reduce((s, r) => s + r.amount, 0);
   const foodAndDrink = category.food + category.coffee + category.soda + category.liquor;
@@ -488,11 +535,14 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     online,
     tips,
     tax,
-    collected: cash + card + online,
+    collected: cash + card + online + memberships.collected,
+    memberships,
     sold,
     discounts,
+    dailyCoffee,
+    dailyCoffeeCount,
     partialRefunds,
-    netSales: grossSales - discounts - partialRefunds,
+    netSales: grossSales - discounts - dailyCoffee - partialRefunds,
     ticketsSold,
     tickets,
     orderCount: completed.length,
@@ -517,8 +567,9 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       { label: "Expenses", rule: `80% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * EXPENSE_SHARE },
     ],
     // Sales none of the rules above claims: ticket and booth money past the
-    // $4 carve-out, and candy/other.
-    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other,
+    // $4 carve-out, candy/other, and memberships (which the Tax account's
+    // 10% of everything sold does count).
+    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other + memberships.sales,
   };
 }
 
@@ -532,18 +583,19 @@ export interface RevenueDay {
   date: string;
   register: number;
   online: number;
+  memberships: number;
   total: number;
 }
 
-// Money in per business day (register + website), oldest first, with empty
-// days included so the chart's days line up.
+// Money in per business day (register + website + memberships), oldest
+// first, with empty days included so the chart's days line up.
 export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
   const supabase = createAdminClient();
   const dates = recentBusinessDays(days).reverse();
   const { start } = businessDayWindow(dates[0]);
 
   // Paged: 90 days of orders is well past the database's 1,000-row answer.
-  const [orders, bookings, booths, partials] = await Promise.all([
+  const [orders, bookings, booths, partials, memberships] = await Promise.all([
     fetchAll<{ total: number; source: string; completed_at: string }>((from, to) =>
       supabase.from("orders").select("total, source, completed_at").eq("status", "completed").gte("completed_at", start).order("id").range(from, to),
     ),
@@ -555,9 +607,10 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
       supabase.from("booth_reservations").select("fee_amount, tax_amount, created_at").eq("status", "confirmed").gte("created_at", start).order("id").range(from, to),
     ),
     getPartialRefunds(start, null),
+    getMemberPaymentsBetween(start, null),
   ]);
 
-  const byDay = new Map(dates.map((d) => [d, { register: 0, online: 0 }]));
+  const byDay = new Map(dates.map((d) => [d, { register: 0, online: 0, memberships: 0 }]));
   const add = (iso: string, key: "register" | "online", amount: number) => {
     const entry = byDay.get(businessDay(new Date(iso)).date);
     if (entry) entry[key] += amount;
@@ -567,8 +620,13 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
   for (const r of booths) add(r.created_at, "online", Number(r.fee_amount) + Number(r.tax_amount ?? 0));
   // A partial refund comes off the day of the sale, like the Day view.
   for (const p of partials) add(p.orders.completed_at, p.orders.source === "pos" ? "register" : "online", -Number(p.amount));
+  // Memberships on the day they're counted (a refund: its payment's day).
+  for (const m of memberships.rows) {
+    const entry = byDay.get(m.business_date);
+    if (entry) entry.memberships += m.amount_cents / 100;
+  }
 
-  return [...byDay.entries()].map(([date, v]) => ({ date, ...v, total: v.register + v.online }));
+  return [...byDay.entries()].map(([date, v]) => ({ date, ...v, total: v.register + v.online + v.memberships }));
 }
 
 export interface MembershipAnalytics {
@@ -590,6 +648,7 @@ export async function getMembershipAnalytics(): Promise<MembershipAnalytics> {
     tier: string;
     comped: boolean;
     stripe_subscription_id: string | null;
+    subscription_status: string | null;
     created_at: string;
     legacy_user_id: number | null;
     community_program: { name: string } | null;
@@ -600,7 +659,7 @@ export async function getMembershipAnalytics(): Promise<MembershipAnalytics> {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from("members")
-      .select("tier, comped, stripe_subscription_id, created_at, legacy_user_id, community_program:community_programs(name)")
+      .select("tier, comped, stripe_subscription_id, subscription_status, created_at, legacy_user_id, community_program:community_programs(name)")
       .is("erased_at", null)
       .order("id")
       .range(from, from + 999);
@@ -622,7 +681,8 @@ export async function getMembershipAnalytics(): Promise<MembershipAnalytics> {
   for (const m of members) {
     if (m.tier === "Insiders+") {
       insidersPlus++;
-      if (m.stripe_subscription_id) payingInsidersPlus++;
+      // A Stripe subscription still billing them (a cancelled one keeps its id).
+      if (subscriptionLive(m)) payingInsidersPlus++;
     } else {
       insiders++;
     }
@@ -875,13 +935,12 @@ export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | 
 //
 // Counted: completed register and web orders (their tax; register tickets'
 // tax is on their order), online ticket bookings (the tax Stripe added),
-// booth bookings (tax_amount), and gift memberships. Refunds: a fully
-// refunded order, booking or cancelled booth isn't counted at all; a
-// partial refund comes off, in the month of the sale. So a refund made
-// after a month was filed changes that month here.
-//
-// Not here: Insiders+ monthly and yearly memberships. Stripe bills and
-// taxes those directly; their tax is in Stripe's own tax report.
+// booth bookings (tax_amount), Insiders+ memberships (every card charge
+// Stripe made: new, renewals, switches to yearly) and gift memberships,
+// both from member_payments. Refunds: a fully refunded order, booking or
+// cancelled booth isn't counted at all; a partial refund, and a membership
+// refund, comes off in the month of the sale. So a refund made after a
+// month was filed changes that month here.
 
 export interface TaxLine {
   label: string;
@@ -906,6 +965,10 @@ export interface SalesTaxReport {
   total: TaxMonth;
   ratePercent: number;
   giftsTracked: boolean; // false until the gift memberships migration is applied
+  membershipsTracked: boolean; // false until the member payments migration is applied
+  // Insiders+ charges in the period that carried no tax (subscriptions
+  // started before tax was added keep renewing without it), and their sales.
+  untaxedMemberships: { count: number; sales: number };
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -946,6 +1009,7 @@ const TAX_SOURCES = {
   web: "Website orders",
   tickets: "Online ticket sales",
   booths: "Booth bookings",
+  memberships: "Insiders+ memberships",
   gifts: "Gift memberships",
 } as const;
 type TaxSource = keyof typeof TAX_SOURCES;
@@ -963,7 +1027,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   type GiftRow = { price: number; tax_amount: number; paid_at: string };
 
   let giftsTracked = true;
-  const [orders, bookings, booths, gifts, partials] = await Promise.all([
+  const [orders, bookings, booths, memberships, partials] = await Promise.all([
     fetchAll<OrderRow>((from, to) =>
       supabase.from("orders").select("source, tax_free, tax, tip, total, completed_at").eq("status", "completed").gte("completed_at", start).lt("completed_at", end).order("id").range(from, to),
     ),
@@ -974,14 +1038,20 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
     fetchAll<BoothRow>((from, to) =>
       supabase.from("booth_reservations").select("fee_amount, tax_amount, created_at").eq("status", "confirmed").gte("created_at", start).lt("created_at", end).order("id").range(from, to),
     ),
-    fetchAll<GiftRow>((from, to) =>
-      supabase.from("gift_memberships").select("price, tax_amount, paid_at").eq("status", "paid").gte("paid_at", start).lt("paid_at", end).order("id").range(from, to),
-    ).catch(() => {
-      giftsTracked = false;
-      return [] as GiftRow[];
-    }),
+    // Insiders+ charges and gift memberships, with their refunds (negative).
+    getMemberPaymentsBetween(start, end),
     getPartialRefunds(start, end),
   ]);
+  // Until the member payments migration is applied, gifts are read where
+  // they were before (and Insiders+ isn't counted: the screen says so).
+  const gifts = memberships.tracked
+    ? []
+    : await fetchAll<GiftRow>((from, to) =>
+        supabase.from("gift_memberships").select("price, tax_amount, paid_at").eq("status", "paid").gte("paid_at", start).lt("paid_at", end).order("id").range(from, to),
+      ).catch(() => {
+        giftsTracked = false;
+        return [] as GiftRow[];
+      });
 
   const byMonth = new Map(months.map((m) => [m, { lines: new Map<TaxSource, TaxLine>(), refunds: { sales: 0, tax: 0 }, exempt: 0 }]));
   const monthOf = (iso: string) => byMonth.get(businessDay(new Date(iso)).date.slice(0, 7));
@@ -1004,6 +1074,21 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   for (const b of bookings) add(b.created_at, "tickets", bookingSeats(b).paid * Number(b.unit_price), Number(b.tax_amount));
   for (const r of booths) add(r.created_at, "booths", Number(r.fee_amount), Number(r.tax_amount ?? 0));
   for (const g of gifts) add(g.paid_at, "gifts", Number(g.price), Number(g.tax_amount));
+  // A membership on its business day; a refund of one on its payment's day.
+  const untaxedMemberships = { count: 0, sales: 0 };
+  for (const r of memberships.rows) {
+    if (r.product === "plus" && r.kind !== "refund" && r.tax_cents === 0 && r.sales_cents > 0) {
+      untaxedMemberships.count++;
+      untaxedMemberships.sales = round2(untaxedMemberships.sales + r.sales_cents / 100);
+    }
+    const m = byMonth.get(r.business_date.slice(0, 7));
+    if (!m) continue;
+    const source: TaxSource = r.product === "gift" ? "gifts" : "memberships";
+    const line = m.lines.get(source) ?? { label: TAX_SOURCES[source], sales: 0, tax: 0 };
+    line.sales += r.sales_cents / 100;
+    line.tax += r.tax_cents / 100;
+    m.lines.set(source, line);
+  }
   for (const p of partials) {
     const m = monthOf(p.orders.completed_at);
     if (!m) continue;
@@ -1049,7 +1134,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   }
   total.lines = sourceOrder.map((s) => totalLines.get(TAX_SOURCES[s])).filter((l): l is TaxLine => !!l);
 
-  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked };
+  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked, membershipsTracked: memberships.tracked, untaxedMemberships };
 }
 
 // What the tax on a period's taxable sales comes to at the Joplin rate, to
