@@ -9,6 +9,7 @@ import { getTicketCounts } from "@/lib/data/screenings";
 import { getTimesheet, thisWeek } from "@/lib/data/team";
 import { getTrainingOverview } from "@/lib/training/data";
 import { getOftenOut } from "@/lib/ops/outages";
+import { getRanOutWeek, type RanOutWeek } from "@/lib/data/ran-out";
 import { openFlags } from "@/lib/member-flags-server";
 import { FLAG_REASONS } from "@/lib/member-flags";
 import type { OftenOut } from "@/lib/ops/shared";
@@ -178,8 +179,10 @@ export interface TodayBoard {
   trainingOverdue: number | null; // managers only
   // Managers only: open to-dos for the managers ("Buy Hot dog buns at
   // Walmart", from Ran out), and par lines that keep running out.
-  managerTodos: { id: string; title: string; createdAt: string }[] | null;
+  managerTodos: { id: string; title: string; createdAt: string; ranOut: boolean }[] | null;
   oftenOut: OftenOut[] | null;
+  // Managers only: what ran out since Monday, so repeat offenders show.
+  ranOutWeek: RanOutWeek | null;
 }
 
 export async function getTodayBoard(staff: { employeeId: string; role: EmployeeRole }): Promise<TodayBoard> {
@@ -200,7 +203,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     }));
   });
 
-  const [summary, shows, houseEvents, events, booths, onShift, sheet, training, managerTodos, oftenOut] = await Promise.all([
+  const [summary, shows, houseEvents, events, booths, onShift, sheet, training, managerTodos, oftenOut, ranOutWeek] = await Promise.all([
     quietly(getDashboardSummary),
     quietly(async () => {
       const { data, error } = await db
@@ -262,12 +265,13 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     manager ? quietly(getTrainingOverview) : null,
     manager
       ? quietly(async () => {
-          const { data, error } = await db.from("staff_todos").select("id, title, created_at").eq("audience", "managers").is("done_at", null).order("created_at");
+          const { data, error } = await db.from("staff_todos").select("id, title, created_at, outage_id").eq("audience", "managers").is("done_at", null).order("created_at");
           if (error) throw error;
-          return data.map((t) => ({ id: t.id as string, title: t.title as string, createdAt: t.created_at as string }));
+          return data.map((t) => ({ id: t.id as string, title: t.title as string, createdAt: t.created_at as string, ranOut: !!t.outage_id }));
         })
       : null,
     manager ? quietly(() => getOftenOut()) : null,
+    manager ? quietly(() => getRanOutWeek()) : null,
   ]);
 
   const mine = sheet?.find((p) => p.employeeId === staff.employeeId);
@@ -291,5 +295,6 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     trainingOverdue: training ? training.modules.flatMap((m) => m.people.filter((p) => p.assigned && p.overdue)).length : null,
     managerTodos,
     oftenOut,
+    ranOutWeek,
   };
 }

@@ -111,7 +111,10 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
       console.error("ops: shopping list for the status poll", e);
       return null;
     }),
-    supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by, audience, outage_id").is("done_at", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
+    // Not the restock to-dos from Ran out: the purchasers are emailed and
+    // mark it back in stock in Back office. The register shows a quiet
+    // "Out of …" line instead (outNotices).
+    supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by, audience, outage_id").is("done_at", null).is("outage_id", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
     supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
   ]);
 
@@ -185,6 +188,7 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     booths: await boothHolds(today.date),
     outs: outs.outs,
     ranOut: outs.open,
+    outNotices: outs.notices,
   };
 }
 

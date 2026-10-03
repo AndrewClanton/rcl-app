@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOpsApi } from "./api";
-import { isManagerRole, type OnShift, type ShiftStatus, type ShiftTodo } from "@/lib/ops/shared";
+import { isManagerRole, outNoticeText, type OnShift, type ShiftStatus, type ShiftTodo } from "@/lib/ops/shared";
 import OpsPanel, { type OpsTab } from "./OpsPanel";
 import { publishOnShift } from "./on-shift-store";
 import BoothsToday from "./BoothsToday";
@@ -103,13 +103,14 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
   const { cashierId } = useRanOut();
   // A manager (or above) is here: signed in on this iPad, or the person on
   // shift using it, or the register's cashier. Only then does the bar show
-  // the managers' to-dos and how much has run out: the cashier can't go
-  // shopping mid-shift, so they only see OUT on the menu buttons.
+  // the managers' to-dos and the Shopping button's "1 out" count. Everyone
+  // sees the quiet "Out of …" line: the purchasers are emailed, so nobody on
+  // shift is asked to go buy it.
   const roleOf = (id: string | null | undefined) => (id ? staff.find((s) => s.id === id)?.role : undefined);
   const managerHere = isManagerRole(signedInRole) || isManagerRole(roleOf(me?.employeeId)) || isManagerRole(roleOf(cashierId));
   // To-dos from Back office → Team: the ones for whoever's on shift, and the
   // ones for anybody who's on right now (labelled with their name). The
-  // managers' ones (restocking what ran out) only while a manager's here.
+  // managers' ones only while a manager's here.
   const onShiftIds = new Set((status?.onShift ?? []).map((o) => o.employeeId));
   const todos = (status?.todos ?? []).filter((t) => (t.forManagers ? managerHere : !t.assigneeId || onShiftIds.size === 0 || onShiftIds.has(t.assigneeId)));
   const [justDone, setJustDone] = useState<{ id: string; title: string; note: string | null; undo: boolean } | null>(null);
@@ -150,15 +151,13 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
 
   async function todoDone(t: ShiftTodo) {
     setTodoError(null);
-    // A to-do for Caleb is done by Caleb, whoever's tapping. A restock one
-    // (Bought it) by whoever's at the register, like Ran out itself.
-    const by = t.assigneeId ?? (t.outageId ? reporterId : me?.employeeId) ?? null;
+    // A to-do for Caleb is done by Caleb, whoever's tapping. (Restock to-dos
+    // from Ran out aren't on the register: the purchasers are emailed.)
+    const by = t.assigneeId ?? me?.employeeId ?? null;
     const r = await api.setTodoDone(t.id, by).catch(() => null);
-    if (!r || !r.ok) return setTodoError(`"${t.title}" didn't save. Tap ${t.outageId ? "Bought it" : "Done"} again.`);
-    // Buying it closes its Ran out report: what it stopped is back on sale.
-    const back = r.restock?.back ?? [];
-    setJustDone({ id: t.id, title: t.title, note: back.length ? `Back on sale: ${back.join(", ")}.` : null, undo: !t.outageId });
-    setTimeout(() => setJustDone((j) => (j?.id === t.id ? null : j)), t.outageId ? 10_000 : 6000);
+    if (!r || !r.ok) return setTodoError(`"${t.title}" didn't save. Tap Done again.`);
+    setJustDone({ id: t.id, title: t.title, note: null, undo: true });
+    setTimeout(() => setJustDone((j) => (j?.id === t.id ? null : j)), 6000);
     refresh();
   }
 
@@ -253,6 +252,17 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
         </div>
       )}
 
+      {/* What's out right now, one quiet line each. It's information, not a
+          job: the people who buy for the week were emailed, and they mark it
+          back in stock in Back office, which takes the line away. */}
+      {!!status?.outNotices?.length && (
+        <div className="mb-2 grid gap-0.5 px-1 text-sm" style={{ color: "var(--muted)" }} role="status">
+          {status.outNotices.map((n) => (
+            <div key={n.id}>{outNoticeText(n)}</div>
+          ))}
+        </div>
+      )}
+
       {ranOutOpen && (
         <RanOutSheet
           employeeId={reporterId}
@@ -324,7 +334,6 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                   Done: <strong>{justDone.title}</strong>
                   {justDone.note && <span className="block">{justDone.note}</span>}
                 </span>
-                {/* A restock to-do closed its Ran out report too, so it has no Undo. */}
                 {justDone.undo ? (
                   <button
                     className="min-h-11 px-3 font-bold underline"
@@ -361,7 +370,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                 role="status"
               >
                 <span className="rounded bg-[var(--gold)] px-1.5 py-0.5 text-[11px] font-black uppercase tracking-wide text-[var(--gold-foreground)]">
-                  {t.outageId ? "Restock" : t.forManagers ? "Managers" : "To-do"}
+                  {t.forManagers ? "Managers" : "To-do"}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-bold">
@@ -370,8 +379,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                   </div>
                   <div className="text-sm opacity-80">
                     {[
-                      // A restock to-do's details already say who reported it.
-                      t.fromName && !t.outageId && `From ${t.fromName}`,
+                      t.fromName && `From ${t.fromName}`,
                       overdue ? "Overdue" : dueToday ? "Due today" : t.dueDate && `Due ${new Date(`${t.dueDate}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`,
                       t.details,
                     ]
@@ -384,7 +392,7 @@ export default function ShiftBar({ staff, signedInRole }: { staff: { id: string;
                   style={{ borderColor: "currentColor" }}
                   onClick={() => todoDone(t)}
                 >
-                  {t.outageId ? "Bought it" : "Done"}
+                  Done
                 </button>
               </div>
             );
