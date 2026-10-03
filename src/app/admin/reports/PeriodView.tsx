@@ -4,6 +4,7 @@ import type { TipWeek } from "@/lib/data/day-drill";
 import { datesIn, rangeLabel, shortDate, weekday } from "@/lib/report-periods";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
 import MembershipsCard from "./MembershipsCard";
+import { TaxFreeOrdersCard } from "./TaxFreeOrders";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import { BarList, Card, Columns, Delta, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
@@ -66,13 +67,15 @@ export default function PeriodView({
         <Stat label="Average order" value={s.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} beforeText={avgBefore !== null ? vs(avgBefore) : undefined} />
         <Stat label="Collected" value={money(s.collected)} now={s.collected} before={b.collected} sub="with tax and tips, memberships included" />
         <Stat label="Tips" value={money(s.tips)} now={s.tips} before={b.tips} />
-        <Stat label="Sales tax" value={money(s.tax)} now={s.tax} before={b.tax} />
+        <Stat label="Sales tax" value={money(s.tax)} now={s.tax} before={b.tax} sub={s.taxFreeOrders.length ? `${num(s.taxFreeOrders.length)} tax-free order${s.taxFreeOrders.length === 1 ? "" : "s"}, listed below` : undefined} />
         <Stat label="Tickets sold" value={num(s.ticketsSold)} now={s.ticketsSold} before={b.ticketsSold} sub={s.tickets.free ? `${num(s.tickets.free)} free` : undefined} />
       </div>
       <p className="text-center text-xs text-[var(--muted)]">
         Compared with {rangeLabel(report.previous.period.start, report.previous.through)}
         {report.previous.partial ? `, up to the same point ${prevName}` : ""}.
       </p>
+
+      <TaxFreeOrdersCard orders={s.taxFreeOrders} />
 
       <Card
         title="Net sales by day"

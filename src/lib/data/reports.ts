@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getRecipesByItem } from "./recipes";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
+import { taxFreeOrders, type TaxFreeOrder, type TaxFreeOrderRow } from "@/lib/tax-exempt";
+import { attachTaxExemptNames } from "./tax-free-names";
 import { mostRefundable } from "./refund-plan";
 import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 import { subscriptionLive } from "@/lib/plus-status";
@@ -205,6 +207,9 @@ export interface SalesSummary {
   // before tax and tips, after discounts and partial refunds.
   orderCount: number;
   orderSales: number;
+  // Register orders rung up tax-free, oldest first: when, how much, the tax
+  // not charged, who marked it and why (lib/tax-exempt.ts).
+  taxFreeOrders: TaxFreeOrder[];
   topItems: { name: string; qty: number; revenue: number; options: string }[];
   // Nathan's split for moving the day's money into the right accounts.
   accounts: { label: string; rule: string; amount: number }[];
@@ -240,7 +245,9 @@ function lineBucket(l: SaleLine, bucketByItem: Buckets): keyof typeof CATEGORY_L
   return l.is_alcohol ? "liquor" : (l.menu_item_id && bucketByItem.get(l.menu_item_id)) || "other";
 }
 
-type DayOrderRow = {
+// The tax-exempt columns (who marked a tax-free order, who approved it and
+// why) come with "*" once their migration is in (TaxFreeOrderRow).
+type DayOrderRow = Omit<TaxFreeOrderRow, "employee"> & {
   id: string;
   order_number: number;
   status: string;
@@ -399,6 +406,7 @@ export async function loadSales(start: string, end: string): Promise<{ rows: Sal
     getPartialRefunds(start, end),
     getMemberPaymentsBetween(start, end),
   ]);
+  await attachTaxExemptNames(orders);
   return { rows: { orders, bookings, booths, partials, memberships: memberships.rows, membershipsTracked: memberships.tracked }, buckets };
 }
 
@@ -546,6 +554,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     ticketsSold,
     tickets,
     orderCount: completed.length,
+    taxFreeOrders: taxFreeOrders(completed),
     orderSales,
     topItems: [...items.entries()]
       .sort((a, b) => b[1].revenue - a[1].revenue)
@@ -971,6 +980,9 @@ export interface SalesTaxReport {
   // how many, what was charged, and the tax counted inside it (0 unless
   // UNTAXED_MEMBERSHIPS in lib/sales-tax.ts is "included").
   untaxedMemberships: { count: number; charged: number; taxInside: number };
+  // Register orders rung up tax-free in the period: when, how much, the tax
+  // not charged, who marked it and why.
+  taxFreeOrders: TaxFreeOrder[];
 }
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -1023,7 +1035,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   const start = businessDayWindow(`${months[0]}-01`).start;
   const end = businessDayWindow(`${nextMonth(months[months.length - 1])}-01`).start;
 
-  type OrderRow = { source: string; tax_free: boolean; tax: number; tip: number; total: number; completed_at: string };
+  type OrderRow = TaxFreeOrderRow & { source: string; tax: number };
   type BookingRow = { quantity: number; unit_price: number; tax_amount: number; created_at: string };
   type BoothRow = { fee_amount: number; tax_amount: number | null; created_at: string };
   type GiftRow = { price: number; tax_amount: number; paid_at: string };
@@ -1031,7 +1043,8 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   let giftsTracked = true;
   const [orders, bookings, booths, memberships, partials] = await Promise.all([
     fetchAll<OrderRow>((from, to) =>
-      supabase.from("orders").select("source, tax_free, tax, tip, total, completed_at").eq("status", "completed").gte("completed_at", start).lt("completed_at", end).order("id").range(from, to),
+      // "*" for the tax-exempt columns, once their migration is in.
+      supabase.from("orders").select("*, employee:employees!orders_employee_id_fkey(name)").eq("status", "completed").gte("completed_at", start).lt("completed_at", end).order("id").range(from, to),
     ),
     // Register tickets (order_id set) are taxed on their order, counted above.
     fetchAll<BookingRow>((from, to) =>
@@ -1054,6 +1067,8 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
         giftsTracked = false;
         return [] as GiftRow[];
       });
+
+  await attachTaxExemptNames(orders);
 
   const byMonth = new Map(months.map((m) => [m, { lines: new Map<TaxSource, TaxLine>(), refunds: { sales: 0, tax: 0 }, exempt: 0 }]));
   const monthOf = (iso: string) => byMonth.get(businessDay(new Date(iso)).date.slice(0, 7));
@@ -1137,7 +1152,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   }
   total.lines = sourceOrder.map((s) => totalLines.get(TAX_SOURCES[s])).filter((l): l is TaxLine => !!l);
 
-  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked, membershipsTracked: memberships.tracked, untaxedMemberships };
+  return { period, label: taxPeriodLabel(period), months: result, total, ratePercent: SALES_TAX_PERCENT, giftsTracked, membershipsTracked: memberships.tracked, untaxedMemberships, taxFreeOrders: taxFreeOrders(orders) };
 }
 
 // What the tax on a period's taxable sales comes to at the Joplin rate, to

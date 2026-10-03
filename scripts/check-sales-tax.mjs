@@ -6,7 +6,9 @@
 //  3. Discounts come off before tax (Insiders+ 10%, monthly 10%, a points
 //     reward, the daily coffee); a tip is never taxed.
 //  4. Exempt: nothing on the menu is; only a whole order ticked "Tax
-//     exempt" goes untaxed, and the register asks a manager PIN for it.
+//     exempt" goes untaxed, and the register asks a reason and a manager
+//     PIN for it, saved on the order. Reports and the nightly email list
+//     each one with who and why (older ones: who rang it, no reason).
 //  5. Memberships with no tax on top, counted as tax-included in Reports:
 //     $15.00 is $13.80 + $1.20.
 //  6. Booth bookings carry tax at checkout, like online tickets.
@@ -26,6 +28,7 @@ register(
 const { SALES_TAX_PERCENT, SALES_TAX_RATE, salesTaxOn, taxInsideCents, UNTAXED_MEMBERSHIPS } = await import("../src/lib/sales-tax.ts");
 const { registerTotals } = await import("../src/lib/register-totals.ts");
 const { REWARD_VALUE, POINTS_PER_REWARD } = await import("../src/lib/loyalty.ts");
+const { TAX_EXEMPT_REASONS, taxFreeOrders, taxFreeLine, taxFreeCallout, taxFreeStaffIds } = await import("../src/lib/tax-exempt.ts");
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -102,8 +105,41 @@ const rich = { tier: "Insiders", points: POINTS_PER_REWARD };
 const schema = readdirSync(new URL("../supabase/migrations/", import.meta.url)).map((f) => read(`supabase/migrations/${f}`)).join("\n");
 check("no menu item or category can be tax-free (no such column)", !/menu_(items|categories)[^;]*\b(tax_exempt|taxable|tax_free|no_tax)\b/i.test(schema));
 const pos = read("src/app/pos/PosApp.tsx");
-check("ticking Tax exempt asks for a manager PIN first", /checked \? setAskTaxExempt\(true\) : setTaxFree\(false\)/.test(pos) && /approveTaxExempt\(pin/.test(pos));
-check("the PIN is checked and logged on the server", /checkManagerPin\(pin, "tax-exempt"/.test(read("src/app/pos/actions.ts")));
+check("ticking Tax exempt asks for a manager PIN first", /checked \? setAskTaxExempt\(true\) : setTaxFree\(false\)/.test(pos));
+check("the PIN is checked and logged on the server", /checkManagerPin\(input\.pin, "tax-exempt"/.test(read("src/app/pos/actions.ts")));
+
+check("the three reasons", JSON.stringify(Object.keys(TAX_EXEMPT_REASONS)) === JSON.stringify(["certificate", "courtesy", "other"]));
+check("the register asks a reason too", /approveTaxExempt\(\{ pin, tabId: activeTabId, cashierId/.test(pos) && /<TaxExemptModal/.test(pos));
+{
+  const actions = read("src/app/pos/actions.ts");
+  check('"other" needs a note', /input\.reason === "other" && !note/.test(actions));
+  check("the reason goes on the order only when it's tax-free", /if \(!taxFree \|\| !mark/.test(actions) && (actions.match(/\.\.\.taxExemptColumns\(/g) ?? []).length === 3);
+  const mig = read("supabase/migrations/20261003200000_tax_exempt_reason.sql");
+  check("the migration only adds columns (no old order is changed)", /add column if not exists tax_exempt_reason/.test(mig) && !/\bupdate\s+orders\b|\bdelete\s+from\b/i.test(mig.replace(/^--.*$/gm, "")));
+}
+{
+  const at = "2026-10-03T01:41:00Z"; // Oct 2, 8:41 PM in Joplin
+  const base = { id: "a", order_number: 1001, completed_at: at, status: "completed", tax_free: true, tip: 0, total: 5, employee: { name: "Gage Smith" } };
+  const now = taxFreeOrders([{ ...base, tax_exempt_reason: "courtesy", tax_exempt_marker: { name: "Andrew Clanton" }, tax_exempt_approver: { name: "Andrew Clanton" } }]);
+  check("the report line", taxFreeLine(now[0]) === "Oct 2, 8:41 PM · $5.00 · $0.44 not charged · marked by Andrew · Courtesy", taxFreeLine(now[0]));
+  const cert = taxFreeOrders([{ ...base, tip: 2, total: 22, tax_exempt_reason: "certificate", tax_exempt_note: "12345", tax_exempt_marker: { name: "Gage" }, tax_exempt_approver: { name: "Mary" } }]);
+  check("a certificate approved by someone else; the tip isn't in it", taxFreeLine(cert[0]) === "Oct 2, 8:41 PM · $20.00 · $1.75 not charged · marked by Gage, approved by Mary · Tax-exempt certificate #12345", taxFreeLine(cert[0]));
+  const other = taxFreeOrders([{ ...base, tax_exempt_reason: "other", tax_exempt_note: "church group" }]);
+  check("other, with its note (no cashier picked: who rang it)", taxFreeLine(other[0]).endsWith("marked by Gage · Other: church group"), taxFreeLine(other[0]));
+  const old = taxFreeOrders([base]);
+  check("an older order: who rang it, no reason recorded", taxFreeLine(old[0]) === "Oct 2, 8:41 PM · $5.00 · $0.44 not charged · rung by Gage · no reason recorded", taxFreeLine(old[0]));
+  check("only finished tax-free orders are listed", taxFreeOrders([{ ...base, tax_free: false }, { ...base, status: "voided" }]).length === 0);
+  check("the callout", taxFreeCallout(now) === "1 tax-free order today: $0.44 of tax not charged." && taxFreeCallout([]) === null);
+  check("names are looked up only for tax-free orders", JSON.stringify(taxFreeStaffIds([{ ...base, tax_exempt_marked_by: "e1", tax_exempt_approved_by: "e2" }, { ...base, tax_free: false, tax_exempt_marked_by: "e3" }])) === JSON.stringify(["e1", "e2"]));
+}
+{
+  const screens = ["src/app/admin/reports/DayScreen.tsx", "src/app/admin/reports/PeriodView.tsx", "src/app/admin/reports/tax/TaxScreen.tsx"];
+  const missing = screens.filter((p) => !/<TaxFreeOrdersCard/.test(read(p)));
+  check("Day, Week/Month and Sales tax list tax-free orders", missing.length === 0, missing.join(", "));
+  check("the Day report has the callout at the top", /<TaxFreeCallout/.test(read("src/app/admin/reports/DayScreen.tsx")));
+  const email = read("src/lib/email/daily-digest-email.ts");
+  check("the nightly email has the callout and the list", /taxFreeCallout\(r\.taxFreeOrders\)/.test(email) && /map\(taxFreeLine\)/.test(email));
+}
 
 // 5. Memberships with no tax on top.
 check("the membership setting is included or none", UNTAXED_MEMBERSHIPS === "included" || UNTAXED_MEMBERSHIPS === "none", UNTAXED_MEMBERSHIPS);

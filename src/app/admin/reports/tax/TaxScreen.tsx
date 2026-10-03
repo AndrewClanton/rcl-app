@@ -3,6 +3,7 @@ import { expectedTax, type SalesTaxReport, type TaxMonth } from "@/lib/data/repo
 import { shiftMonth } from "@/lib/report-periods";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
 import { syncNote } from "../MembershipsCard";
+import { TaxFreeOrdersCard } from "../TaxFreeOrders";
 import { Card, PeriodNav, Pill, Stat, money } from "../ui";
 
 // Reports -> Sales tax, as drawn: the page (./page.tsx) picks the period,
@@ -59,8 +60,10 @@ export default function TaxScreen({ report, thisMonth, sync }: { report: SalesTa
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat hero className="col-span-2" label="Sales tax collected" value={money(t.tax)} sub={`at ${report.ratePercent}%`} />
         <Stat label="Taxable sales" value={money(taxable)} />
-        <Stat label="Tax-free sales" value={money(t.exemptSales)} />
+        <Stat label="Tax-free sales" value={money(t.exemptSales)} sub={report.taxFreeOrders.length ? `${report.taxFreeOrders.length} order${report.taxFreeOrders.length === 1 ? "" : "s"}, listed below` : undefined} />
       </div>
+
+      <TaxFreeOrdersCard orders={report.taxFreeOrders} />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <Card title="Where it came from">

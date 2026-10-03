@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkManagerPin } from "@/lib/manager-pin";
-import type { ApprovalResult } from "@/lib/pin-rules";
+import type { Approval, ApprovalResult } from "@/lib/pin-rules";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
@@ -20,6 +20,7 @@ import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type Co
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
+import { isTaxExemptReason, TAX_EXEMPT_NOTE_MAX, type TaxExemptMark, type TaxExemptReason } from "@/lib/tax-exempt";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -59,6 +60,9 @@ export interface DraftFields {
   memberId: string | null;
   orderName: string;
   taxFree: boolean;
+  // Why it's tax-free, who marked it and which manager approved it
+  // (approveTaxExempt). Saved on the order only when taxFree.
+  taxExempt?: TaxExemptMark | null;
   monthlyMember: boolean;
   pointsRedeemed: boolean;
   lines: CheckoutLine[];
@@ -80,9 +84,24 @@ export interface DraftOrderFull {
   member_id: string | null;
   member: PosMember | null;
   tax_free: boolean;
+  tax_exempt: TaxExemptMark | null;
   monthly_member: boolean;
   points_redeemed: boolean;
   lines: (CheckoutLine & { unit: number })[];
+}
+
+// The order's tax-exempt columns (migration 20261003200000): only on a
+// tax-free order, so every other sale saves the same as before (and keeps
+// saving if the migration isn't in yet).
+function taxExemptColumns(taxFree: boolean, mark: TaxExemptMark | null | undefined) {
+  if (!taxFree || !mark || !isTaxExemptReason(mark.reason)) return {};
+  return {
+    tax_exempt_reason: mark.reason,
+    tax_exempt_note: mark.note?.trim().slice(0, TAX_EXEMPT_NOTE_MAX) || null,
+    tax_exempt_marked_by: mark.markedBy || null,
+    tax_exempt_approved_by: mark.approvedBy || null,
+    tax_exempt_at: mark.at || new Date().toISOString(),
+  };
 }
 
 function revalidate() {
@@ -322,6 +341,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     monthly_discount: params.totals.monthly_discount,
     redemption_discount: params.totals.redemption_discount,
     tax_free: params.taxFree,
+    ...taxExemptColumns(params.taxFree, params.taxExempt),
     monthly_member: params.monthlyMember,
     tax: params.totals.tax,
     tip,
@@ -642,6 +662,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       order_name: fields.orderName || null,
       tab_name: status === "tab" ? fields.orderName || null : null,
       tax_free: fields.taxFree,
+      ...taxExemptColumns(fields.taxFree, fields.taxExempt),
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
       subtotal: totals.subtotal,
@@ -694,6 +715,7 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
       order_name: fields.orderName || null,
       tab_name: fields.orderName || null,
       tax_free: fields.taxFree,
+      ...taxExemptColumns(fields.taxFree, fields.taxExempt),
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
       subtotal: totals.subtotal,
@@ -752,7 +774,8 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const supabase = createAdminClient();
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id)")
+    // "*": the tax-exempt columns come along once their migration is in.
+    .select("*, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id)")
     .eq("id", id)
     .in("status", OPEN_DRAFT)
     .single();
@@ -764,6 +787,10 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
     member_id: order.member_id,
     member: order.member_id ? await getPosMember(order.member_id) : null,
     tax_free: order.tax_free,
+    tax_exempt:
+      order.tax_free && isTaxExemptReason(order.tax_exempt_reason)
+        ? { reason: order.tax_exempt_reason, note: order.tax_exempt_note ?? null, markedBy: order.tax_exempt_marked_by ?? null, approvedBy: order.tax_exempt_approved_by ?? null, at: order.tax_exempt_at ?? new Date().toISOString() }
+        : null,
     monthly_member: order.monthly_member,
     points_redeemed: order.points_redeemed,
     lines: items.map((i) => ({
@@ -817,16 +844,27 @@ export async function cancelTab(id: string, pin: string): Promise<ApprovalResult
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
 
-// A manager OKs a tax-exempt sale (a customer with a Missouri exemption
-// certificate) with their PIN before the register lets the "Tax exempt"
-// box be ticked. Everything else is taxed (lib/sales-tax.ts). Who approved
-// it is in the PIN log (pin_attempts, context "tax-exempt"), with the tab
-// it was for when there is one.
-export async function approveTaxExempt(pin: string, tabId: string | null): Promise<ApprovalResult> {
+// A manager OKs a tax-free sale with their PIN, and the cashier says why
+// (lib/tax-exempt.ts), before the register lets the "Tax exempt" box be
+// ticked. Everything else is taxed (lib/sales-tax.ts). The answer is the
+// mark the register sends with the order, which saves it on the order for
+// Reports; the PIN log (pin_attempts, context "tax-exempt") has the
+// approval too, with the tab it was for when there is one.
+export type TaxExemptApproval = ({ ok: true; mark: TaxExemptMark } & Approval) | { ok: false; error: string };
+
+export async function approveTaxExempt(input: { pin: string; tabId: string | null; cashierId: string | null; reason: TaxExemptReason; note: string }): Promise<TaxExemptApproval> {
   const staff = await assertStaff();
-  const approval = await checkManagerPin(pin, "tax-exempt", staff.employeeId, tabId ?? undefined);
+  if (!isTaxExemptReason(input.reason)) return { ok: false, error: "Pick why this order is tax-free." };
+  const note = input.note.trim().slice(0, TAX_EXEMPT_NOTE_MAX);
+  if (input.reason === "other" && !note) return { ok: false, error: "Add a short note saying why." };
+  const approval = await checkManagerPin(input.pin, "tax-exempt", staff.employeeId, input.tabId ?? undefined);
   if (!approval.ok) return approval;
-  return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
+  return {
+    ok: true,
+    approvedBy: approval.approvedBy,
+    defaultPin: approval.defaultPin,
+    mark: { reason: input.reason, note: note || null, markedBy: input.cashierId || null, approvedBy: approval.approverId, at: new Date().toISOString() },
+  };
 }
 
 // ---------- recent orders (reprint, refund, "what did they order?") ----------

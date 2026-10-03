@@ -12,6 +12,7 @@ import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
 import OrderSearch from "./OrderSearch";
 import DayDrill from "./DayDrill";
+import { TaxFreeCallout, TaxFreeOrdersCard } from "./TaxFreeOrders";
 import { BarList, Card, Columns, PeriodNav, Pill, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
 // Reports -> Day, as drawn: the page (./page.tsx) checks the sign-in and
@@ -98,6 +99,8 @@ export default function DayScreen({
         </Link>
       </PeriodNav>
 
+      <TaxFreeCallout orders={r.taxFreeOrders} when={date === today ? "today" : "this day"} />
+
       {orderNumber !== null && (
         <Card
           title={`Order #${orderNumber}`}
@@ -169,6 +172,8 @@ export default function DayScreen({
       </div>
 
       <MembershipsCard m={r.memberships} before={before.memberships} prevName={lastWeekday} sync={sync} href={() => to({ show: "memberships" })} />
+
+      <TaxFreeOrdersCard orders={r.taxFreeOrders} />
 
       <Card title={`Orders · ${r.orders.length}`}>
         <OrdersTable orders={r.orders} />
