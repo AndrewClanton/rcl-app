@@ -56,6 +56,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       communityPrograms={communityPrograms}
       staffInfo={staffInfo[member.id]}
       viewerIsAdmin={!!session && hasAdminAccess(session.role)}
+      canManage={!!session && hasManagerAccess(session.role)}
       canEditContact={fullContact}
       eraseLog={eraseLog}
       pointsHistory={pointsHistory}

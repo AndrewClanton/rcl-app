@@ -3,7 +3,7 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireStaff, assertStaff, assertAdmin, assertManager } from "@/lib/auth";
+import { requireStaff, assertStaff, assertAdmin, assertManager, hasManagerAccess } from "@/lib/auth";
 import { getStripe } from "@/lib/stripe";
 import type { MemberPriceTier, MemberTier } from "@/lib/types";
 import { applyMemberRate, type RateChangeResult } from "@/lib/member-rate";
@@ -18,24 +18,45 @@ import { birthdayFromInput } from "@/lib/visits";
 import { MAX_AUTO_LINKED_CARDS, cardLabel, cardOwners, type SaleCard } from "@/lib/card-match";
 import { linkCard, loadCardLinks, loadSaleOrder, staffAccount, storedCard } from "@/lib/member-cards";
 import { MAX_POINTS_CHANGE, formatPoints, pointsReasonProblem } from "@/lib/points-history";
+import { deleteMemberPhotoFile } from "@/lib/member-photos";
+import { centralToIso } from "@/lib/ops/time";
 
 function revalidate() {
   revalidatePath("/admin/members");
   revalidatePath("/admin/reports");
 }
 
-export async function addMember(fields: { name: string; email?: string; phone?: string; tier: MemberTier }) {
+// What the back office's member actions return. A failure carries a
+// message for the screen (useRefreshingAction shows it).
+export type MemberActionResult = { ok: true } | { ok: false; error: string };
+
+const DUPLICATE_EMAIL = "A member already has that email.";
+const TIERS: MemberTier[] = ["Insiders", "Insiders+"];
+
+// Managers and up: points, rates, free memberships and the community
+// programs (the 9/25 call). A cashier gets null, so the action can say why
+// instead of failing blind.
+async function managerOrNull() {
+  const staff = await assertStaff();
+  return hasManagerAccess(staff.role) ? staff : null;
+}
+
+export async function addMember(fields: { name: string; email?: string; phone?: string; tier: MemberTier }): Promise<MemberActionResult> {
   await assertStaff();
-  const name = fields.name.trim();
-  if (!name) return;
+  const name = String(fields?.name ?? "").trim();
+  if (!name) return { ok: false, error: "Enter the member's name." };
+  if (!TIERS.includes(fields.tier)) return { ok: false, error: "Pick Insiders or Insiders+." };
   const supabase = createAdminClient();
-  await supabase.from("members").insert({
+  const { error } = await supabase.from("members").insert({
     name,
-    email: fields.email?.trim() || null,
-    phone: fields.phone?.trim() || null,
+    email: typeof fields.email === "string" ? fields.email.trim() || null : null,
+    phone: typeof fields.phone === "string" ? fields.phone.trim() || null : null,
     tier: fields.tier,
   });
+  if (error?.code === "23505") return { ok: false, error: DUPLICATE_EMAIL };
+  if (error) return { ok: false, error: "Couldn't add the member. Try again." };
   revalidate();
+  return { ok: true };
 }
 
 export async function updateMember(
@@ -48,23 +69,75 @@ export async function updateMember(
     monthly_member: boolean;
     avatar_url: string | null;
   }>
-) {
+): Promise<MemberActionResult> {
   const staff = await assertStaff();
   // Only these fields, whatever else the request carries: points, say,
-  // change only through the points history (changeMemberPoints).
-  const keys = ["name", "email", "phone", "tier", "monthly_member", "avatar_url"] as const;
-  const allowed: Record<string, unknown> = {};
-  for (const k of keys) if (fields && typeof fields === "object" && k in fields) allowed[k] = fields[k];
+  // change only through the points history (changeMemberPoints), and the
+  // login, Stripe ids and the removal stamp through their own actions.
+  const input: Record<string, unknown> = fields && typeof fields === "object" ? fields : {};
+  const allowed: { name?: string; email?: string | null; phone?: string | null; tier?: MemberTier; monthly_member?: boolean } = {};
+  if ("name" in input) {
+    const name = typeof input.name === "string" ? input.name.trim() : "";
+    if (!name) return { ok: false, error: "Name can't be blank." };
+    allowed.name = name;
+  }
+  if ("tier" in input) {
+    if (!TIERS.includes(input.tier as MemberTier)) return { ok: false, error: "Pick Insiders or Insiders+." };
+    allowed.tier = input.tier as MemberTier;
+  }
+  if ("monthly_member" in input) allowed.monthly_member = input.monthly_member === true;
   // Contact details are managers-and-up (see saveMemberDetails); a
   // cashier's email or phone change is dropped rather than applied.
-  if (!seesFullContact(staff.role)) {
-    delete allowed.email;
-    delete allowed.phone;
+  if (seesFullContact(staff.role)) {
+    for (const key of ["email", "phone"] as const) {
+      if (key in input) allowed[key] = typeof input[key] === "string" ? (input[key] as string).trim() || null : null;
+    }
   }
-  if (Object.keys(allowed).length === 0) return;
-  const supabase = createAdminClient();
-  await supabase.from("members").update(allowed).eq("id", id).is("erased_at", null);
+  // A photo can only be taken off here (which deletes the file too), never
+  // pointed somewhere else.
+  const removePhoto = "avatar_url" in input && input.avatar_url === null;
+
+  if (Object.keys(allowed).length) {
+    const { error } = await createAdminClient().from("members").update(allowed).eq("id", id).is("erased_at", null);
+    if (error?.code === "23505") return { ok: false, error: DUPLICATE_EMAIL };
+    if (error) return { ok: false, error: "Couldn't save. Try again." };
+  }
+  if (removePhoto) return takeOffPhoto(id);
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
+}
+
+// "Remove photo" on a member's page: takes it off their account (and the
+// check-in screen) and deletes the stored file, so it isn't still public at
+// its old address. Any staff, as before.
+export async function removeMemberPhoto(memberId: string): Promise<MemberActionResult> {
+  await assertStaff();
+  return takeOffPhoto(memberId);
+}
+
+async function takeOffPhoto(memberId: string): Promise<MemberActionResult> {
+  const supabase = createAdminClient();
+  const { data: member, error: readErr } = await supabase.from("members").select("avatar_url").eq("id", memberId).is("erased_at", null).maybeSingle();
+  if (readErr) return { ok: false, error: "Couldn't remove the photo. Try again." };
+  if (!member) return { ok: false, error: "Member not found." };
+  if (!member.avatar_url) return { ok: true };
+  // Only if it's still the photo just read: one they uploaded a moment ago
+  // stays, file and all.
+  const { data: cleared, error } = await supabase
+    .from("members")
+    .update({ avatar_url: null })
+    .eq("id", memberId)
+    .eq("avatar_url", member.avatar_url)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't remove the photo. Try again." };
+  revalidate();
+  revalidatePath(`/admin/members/${memberId}`);
+  if (!cleared?.length) return { ok: false, error: "Their photo changed just now. Refresh the page and look again." };
+  if (!(await deleteMemberPhotoFile(member.avatar_url, memberId))) {
+    return { ok: false, error: "The photo is off their account, but its file couldn't be deleted from storage. Ask Claude to clean it up." };
+  }
+  return { ok: true };
 }
 
 export type SaveDetailsResult = { ok: true; message: string } | { ok: false; error: string };
@@ -86,7 +159,7 @@ export async function saveMemberDetails(
   if ((fields.email !== undefined || fields.phone !== undefined) && !seesFullContact(staff.role)) {
     return { ok: false, error: "Only a manager can change a member's email or phone." };
   }
-  const name = fields.name.trim();
+  const name = String(fields?.name ?? "").trim();
   const email = fields.email?.trim();
   const phone = fields.phone?.trim();
   const birthday = fields.birthday === undefined ? undefined : birthdayFromInput(fields.birthday);
@@ -131,9 +204,11 @@ export async function saveMemberDetails(
 
 // Senior/student rates are set only after checking an ID in person. For a
 // paying Insiders+ member this also changes their Stripe price from their
-// next bill (see applyMemberRate).
+// next bill (see applyMemberRate). Managers and up here; the register's own
+// rate step (pos/member-actions.ts) is unchanged.
 export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<RateChangeResult> {
-  const staff = await assertStaff();
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can change a member's rate." };
   const result = await applyMemberRate(id, tier, staff.employeeId);
   revalidate();
   revalidatePath(`/admin/members/${id}`);
@@ -144,8 +219,8 @@ export async function setMemberRate(id: string, tier: MemberPriceTier): Promise<
 
 export type PointsChangeResult = { ok: true; balance: number; message: string } | { ok: false; error: string; balance?: number };
 
-// "Add or take away points" on a member's page: any staff member, as
-// typing a new balance was before. Writes one 'adjustment' row in their
+// "Add or take away points" on a member's page: managers and up (the 9/25
+// call that points are managers-only). Writes one 'adjustment' row in their
 // points history with the reason (the member sees it) and who did it (they
 // don't), and only if the balance is still the one the person confirmed
 // ("Balance goes from X to Y"). Never takes a balance below zero.
@@ -153,7 +228,8 @@ export async function changeMemberPoints(
   id: string,
   change: { amount: number; reason: string; expectedBalance: number },
 ): Promise<PointsChangeResult> {
-  const staff = await assertStaff();
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can add or take away points." };
   const amount = Number(change?.amount);
   const reason = typeof change?.reason === "string" ? change.reason.trim().replace(/\s+/g, " ") : "";
   const expected = Number(change?.expectedBalance);
@@ -349,36 +425,46 @@ export async function eraseMemberPersonalInfo(id: string, requestedOn: string): 
 // Insiders+ (the tier with free-entry benefits) at no charge, and tags who
 // approved it and which program it's attributed to so nonprofit grant
 // reporting can tally participation by program (see /admin/reports).
-export async function grantFreeMembership(id: string, fields: { communityProgramId: string | null; notes: string }) {
-  const staff = await requireStaff();
+// Managers and up.
+export async function grantFreeMembership(id: string, fields: { communityProgramId: string | null; notes: string }): Promise<MemberActionResult> {
+  const staff = await managerOrNull();
+  if (!staff) return { ok: false, error: "Only a manager can grant a free membership." };
   const supabase = createAdminClient();
-  await supabase
+  const { data, error } = await supabase
     .from("members")
     .update({
       tier: "Insiders+",
       comped: true,
-      community_program_id: fields.communityProgramId,
-      comp_notes: fields.notes.trim() || null,
+      community_program_id: typeof fields?.communityProgramId === "string" && fields.communityProgramId ? fields.communityProgramId : null,
+      comp_notes: String(fields?.notes ?? "").trim() || null,
       comped_by: staff.employeeId,
       comped_at: new Date().toISOString(),
     })
     .eq("id", id)
-    .is("erased_at", null);
+    .is("erased_at", null)
+    .select("id");
+  if (error) return { ok: false, error: "Couldn't grant the free membership. Try again." };
+  if (!data?.length) return { ok: false, error: "Member not found." };
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
 }
 
 // Only reverts tier to plain Insiders if there's no real paid subscription
 // behind it -- a comped member who separately started paying via Stripe
 // should keep Insiders+ from their subscription, not lose it here.
-export async function revokeFreeMembership(id: string) {
-  await requireStaff();
+// Managers and up.
+export async function revokeFreeMembership(id: string): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can revoke a free membership." };
   const supabase = createAdminClient();
-  const { data: member } = await supabase.from("members").select("stripe_subscription_id, plus_gift_until").eq("id", id).maybeSingle();
-  await supabase
+  const { data: member, error: readErr } = await supabase.from("members").select("stripe_subscription_id, plus_gift_until").eq("id", id).is("erased_at", null).maybeSingle();
+  if (readErr) return { ok: false, error: "Couldn't revoke the free membership. Try again." };
+  if (!member) return { ok: false, error: "Member not found." };
+  const { error } = await supabase
     .from("members")
     .update({
       // A gifted year still running keeps it on too.
-      tier: member?.stripe_subscription_id || (member && giftActive(member)) ? "Insiders+" : "Insiders",
+      tier: member.stripe_subscription_id || giftActive(member) ? "Insiders+" : "Insiders",
       comped: false,
       community_program_id: null,
       comp_notes: null,
@@ -386,23 +472,32 @@ export async function revokeFreeMembership(id: string) {
       comped_at: null,
     })
     .eq("id", id);
+  if (error) return { ok: false, error: "Couldn't revoke the free membership. Try again." };
   revalidate();
+  revalidatePath(`/admin/members/${id}`);
+  return { ok: true };
 }
 
-export async function addCommunityProgram(fields: { name: string; description?: string }) {
-  const name = fields.name.trim();
-  if (!name) return;
-  await requireStaff();
-  const supabase = createAdminClient();
-  await supabase.from("community_programs").insert({ name, description: fields.description?.trim() || null });
+// Managers and up, like granting one.
+export async function addCommunityProgram(fields: { name: string; description?: string }): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can add a community program." };
+  const name = String(fields?.name ?? "").trim();
+  if (!name) return { ok: false, error: "Enter the program's name." };
+  const description = typeof fields.description === "string" ? fields.description.trim() || null : null;
+  const { error } = await createAdminClient().from("community_programs").insert({ name, description });
+  if (error?.code === "23505") return { ok: false, error: "There's already a program with that name." };
+  if (error) return { ok: false, error: "Couldn't add the program. Try again." };
   revalidate();
+  return { ok: true };
 }
 
-export async function setCommunityProgramActive(id: string, active: boolean) {
-  await requireStaff();
-  const supabase = createAdminClient();
-  await supabase.from("community_programs").update({ active }).eq("id", id);
+export async function setCommunityProgramActive(id: string, active: boolean): Promise<MemberActionResult> {
+  if (!(await managerOrNull())) return { ok: false, error: "Only a manager can change a community program." };
+  const { data, error } = await createAdminClient().from("community_programs").update({ active: active === true }).eq("id", id).select("id");
+  if (error) return { ok: false, error: "Couldn't save. Try again." };
+  if (!data?.length) return { ok: false, error: "That program wasn't found. Refresh the page." };
   revalidate();
+  return { ok: true };
 }
 
 // Opens Stripe's own hosted billing portal for this member's Stripe
@@ -432,8 +527,8 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
 
   let firstChargeAt: Date | null = giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null;
   if (firstChargeDate) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate)) return { ok: false, error: "Pick a valid first-charge date." };
-    firstChargeAt = new Date(`${firstChargeDate}T12:00:00-05:00`); // noon Central
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate) || Number.isNaN(Date.parse(`${firstChargeDate}T12:00:00Z`))) return { ok: false, error: "Pick a valid first-charge date." };
+    firstChargeAt = new Date(centralToIso(firstChargeDate, "12:00")); // noon Central, CDT or CST
     // Stripe won't hold a first charge for less than 48 hours.
     if (firstChargeAt.getTime() < Date.now() + 49 * 3_600_000) return { ok: false, error: "The first charge has to be at least 2 days out. Leave the date blank to charge today." };
   }

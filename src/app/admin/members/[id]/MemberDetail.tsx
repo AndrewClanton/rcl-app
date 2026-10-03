@@ -34,6 +34,7 @@ import {
   createMemberCardLink,
   eraseMemberPersonalInfo,
   grantFreeMembership,
+  removeMemberPhoto,
   revokeFreeMembership,
   saveMemberDetails,
   setMemberRate,
@@ -62,6 +63,7 @@ export default function MemberDetail({
   signInHelp = null,
   cards,
   canUndoCardMatch,
+  canManage,
   flags = null,
 }: {
   // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
@@ -85,6 +87,9 @@ export default function MemberDetail({
   // Managers and up can undo a sale the card found this member for, and
   // link a removed card again.
   canUndoCardMatch: boolean;
+  // Managers and up: points, the rate, free memberships. A cashier sees
+  // them but can't change them (the actions refuse too).
+  canManage: boolean;
 }) {
   // Personal info removed on request: nothing left to edit, but the
   // purchases stay visible for refunds and bookkeeping.
@@ -135,9 +140,9 @@ export default function MemberDetail({
       </div>
       {flags && <div className="xl:col-span-2">{flags}</div>}
 
-      <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} />
+      <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} canManage={canManage} />
       <div className="space-y-6">
-        <FreeMembershipCard member={member} communityPrograms={communityPrograms} />
+        <FreeMembershipCard member={member} communityPrograms={communityPrograms} canManage={canManage} />
         <BillingCard member={member} />
         <LinkedCardsCard member={member} cards={cards} canRelink={canUndoCardMatch} />
         <GiftCard member={member} gifts={gifts} />
@@ -180,8 +185,19 @@ export default function MemberDetail({
   );
 }
 
-function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; staffInfo: MemberStaffInfo | undefined; canEditContact: boolean }) {
-  const [pending, run] = useRefreshingAction();
+function ProfileCard({
+  member,
+  staffInfo,
+  canEditContact,
+  canManage,
+}: {
+  member: Member;
+  staffInfo: MemberStaffInfo | undefined;
+  canEditContact: boolean;
+  canManage: boolean;
+}) {
+  const [pending, run, quickError] = useRefreshingAction();
+  const [confirmPhoto, setConfirmPhoto] = useState(false);
   const [name, setName] = useState(member.name);
   const [email, setEmail] = useState(member.email ?? "");
   const [phone, setPhone] = useState(member.phone ?? "");
@@ -233,17 +249,22 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
         )}
         <StaffBadge info={staffInfo} />
         {member.avatar_url && (
-          <button
-            className="text-xs text-[var(--muted)] hover:underline"
-            disabled={pending}
-            onClick={() => {
-              if (confirm("Remove this member's profile photo? Shown on the customer-facing kiosk after phone sign-in.")) {
-                run(() => updateMember(member.id, { avatar_url: null }));
-              }
-            }}
-          >
+          <button className="text-xs text-[var(--muted)] hover:underline" disabled={pending} onClick={() => setConfirmPhoto(true)}>
             Remove photo
           </button>
+        )}
+        {confirmPhoto && (
+          <ConfirmModal
+            title="Remove this member's photo?"
+            description="It shows when they check in, and on their profile page if they share one. The photo file is deleted too."
+            confirmLabel="Remove photo"
+            danger
+            onCancel={() => setConfirmPhoto(false)}
+            onConfirm={() => {
+              setConfirmPhoto(false);
+              run(() => removeMemberPhoto(member.id), { quiet: true });
+            }}
+          />
         )}
         <span
           className={`rounded-full border px-2 py-0.5 text-xs ${
@@ -326,27 +347,27 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
           </div>
         </form>
         <div className="sm:col-span-2">
-          <PointsBalance memberId={member.id} balance={Number(member.points)} />
+          <PointsBalance memberId={member.id} balance={Number(member.points)} canChange={canManage} />
         </div>
         <Field label="Tier" help="insiders-vs-plus">
           <select
             className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
             value={member.tier}
             disabled={pending}
-            onChange={(e) => run(() => updateMember(member.id, { tier: e.target.value as MemberTier }))}
+            onChange={(e) => run(() => updateMember(member.id, { tier: e.target.value as MemberTier }), { quiet: true })}
           >
             <option value="Insiders">Insiders</option>
             <option value="Insiders+">Insiders+</option>
           </select>
         </Field>
-        <RateField member={member} />
+        <RateField member={member} canManage={canManage} />
         <Field label="Monthly member">
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
               checked={member.monthly_member}
               disabled={pending}
-              onChange={(e) => run(() => updateMember(member.id, { monthly_member: e.target.checked }))}
+              onChange={(e) => run(() => updateMember(member.id, { monthly_member: e.target.checked }), { quiet: true })}
             />
             Counts toward monthly-member discount
           </label>
@@ -357,16 +378,24 @@ function ProfileCard({ member, staffInfo, canEditContact }: { member: Member; st
           </Field>
         )}
       </div>
+      {quickError && (
+        <p className="mt-3 text-sm text-[var(--danger-text)]" role="alert">
+          {quickError}
+        </p>
+      )}
     </div>
   );
 }
 
 // Senior/student rates are only set after checking an ID in person. For a
 // paying Insiders+ member the Stripe price changes from their next bill.
-function RateField({ member }: { member: Member }) {
+// Managers and up; a cashier sees the rate but can't change it.
+function RateField({ member, canManage }: { member: Member; canManage: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // The rate picked in the list, waiting on "are you sure".
+  const [asking, setAsking] = useState<MemberPriceTier | null>(null);
   const rate: MemberPriceTier = member.price_tier ?? "adult";
   const setAt = member.price_tier_set_at
     ? new Date(member.price_tier_set_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })
@@ -374,23 +403,31 @@ function RateField({ member }: { member: Member }) {
   const source =
     rate === "adult" ? null : member.rate_set_by?.name && setAt ? `Set by ${member.rate_set_by.name}, ${setAt}` : setAt ? `Set ${setAt}` : "Carried over from the old website";
 
+  function applyRate(t: MemberPriceTier) {
+    setAsking(null);
+    setResult(null);
+    startTransition(async () => {
+      const r = await setMemberRate(member.id, t).catch(() => ({ ok: false as const, error: "Couldn't change the rate. Try again." }));
+      setResult(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
+      router.refresh();
+    });
+  }
+
   return (
-    <Field label="Rate" help="senior-student-rates" hint="Senior and student rates need an ID checked in person. For Insiders+ members, the new price starts with their next bill.">
+    <Field
+      label="Rate"
+      help="senior-student-rates"
+      hint={
+        canManage
+          ? "Senior and student rates need an ID checked in person. For Insiders+ members, the new price starts with their next bill."
+          : "A manager can change the rate, after checking an ID in person."
+      }
+    >
       <select
         className="w-full rounded border border-[var(--border)] px-2 py-1.5 text-sm "
         value={rate}
-        disabled={pending}
-        onChange={(e) => {
-          const t = e.target.value as MemberPriceTier;
-          const check = t === "adult" ? "" : " Only after checking their ID in person.";
-          if (!confirm(`Switch ${member.name} to the ${RATE_LABEL[t]} rate (${RATE_PRICE[t]}/mo for Insiders+)?${check}`)) return;
-          setResult(null);
-          startTransition(async () => {
-            const r = await setMemberRate(member.id, t);
-            setResult(r.ok ? { ok: true, text: r.message } : { ok: false, text: r.error });
-            router.refresh();
-          });
-        }}
+        disabled={pending || !canManage}
+        onChange={(e) => setAsking(e.target.value as MemberPriceTier)}
       >
         {RATE_ORDER.map((t) => (
           <option key={t} value={t}>
@@ -400,6 +437,15 @@ function RateField({ member }: { member: Member }) {
       </select>
       {source && <p className="mt-1 text-xs text-[var(--muted)]">{source}</p>}
       {result && <p className={`mt-1 text-xs ${result.ok ? "text-[var(--success-text)]" : "text-[var(--danger-text)]"}`}>{result.text}</p>}
+      {asking && (
+        <ConfirmModal
+          title={`Switch ${memberLabel(member.name, member.phone)} to the ${RATE_LABEL[asking]} rate?`}
+          description={`$${RATE_PRICE[asking]}/mo for Insiders+.${asking === "adult" ? "" : " Only after checking their ID in person."}`}
+          confirmLabel={asking === "adult" ? "Switch to Adult" : "ID checked, switch"}
+          onCancel={() => setAsking(null)}
+          onConfirm={() => applyRate(asking)}
+        />
+      )}
     </Field>
   );
 }
@@ -419,8 +465,10 @@ function Field({ label, hint, help, children }: { label: string; hint?: string; 
   );
 }
 
-function FreeMembershipCard({ member, communityPrograms }: { member: Member; communityPrograms: CommunityProgram[] }) {
-  const [pending, run] = useRefreshingAction();
+// Granting and revoking are managers-and-up; a cashier sees the status.
+function FreeMembershipCard({ member, communityPrograms, canManage }: { member: Member; communityPrograms: CommunityProgram[]; canManage: boolean }) {
+  const [pending, run, error] = useRefreshingAction();
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [programId, setProgramId] = useState("");
   const [notes, setNotes] = useState("");
@@ -443,16 +491,27 @@ function FreeMembershipCard({ member, communityPrograms }: { member: Member; com
             )}
           </div>
           {member.comp_notes && <p className="text-sm text-[var(--muted)]">{member.comp_notes}</p>}
-          <button
-            className="text-xs text-[var(--muted)] hover:underline"
-            disabled={pending}
-            onClick={() => {
-              if (confirm(`Remove free-membership status from "${member.name}"?`)) run(() => revokeFreeMembership(member.id));
-            }}
-          >
-            Revoke free membership
-          </button>
+          {canManage && (
+            <button className="text-xs text-[var(--muted)] hover:underline" disabled={pending} onClick={() => setConfirmRevoke(true)}>
+              Revoke free membership
+            </button>
+          )}
+          {confirmRevoke && (
+            <ConfirmModal
+              title={`Revoke ${memberLabel(member.name, member.phone)}'s free membership?`}
+              description="They go back to plain Insiders, unless they pay for Insiders+ or have a gifted year running."
+              confirmLabel="Revoke"
+              danger
+              onCancel={() => setConfirmRevoke(false)}
+              onConfirm={() => {
+                setConfirmRevoke(false);
+                run(() => revokeFreeMembership(member.id), { quiet: true });
+              }}
+            />
+          )}
         </div>
+      ) : !canManage ? (
+        <p className="text-sm text-[var(--muted)]">Not a free member. A manager can grant a free membership for a community program.</p>
       ) : formOpen ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] p-3 ">
           <div className="flex flex-wrap items-end gap-2">
@@ -486,7 +545,7 @@ function FreeMembershipCard({ member, communityPrograms }: { member: Member; com
               className="rounded bg-[var(--accent)] px-3 py-1.5 text-xs text-white disabled:opacity-50 "
               disabled={pending}
               onClick={() => {
-                run(() => grantFreeMembership(member.id, { communityProgramId: programId || null, notes }));
+                run(() => grantFreeMembership(member.id, { communityProgramId: programId || null, notes }), { quiet: true });
                 setFormOpen(false);
               }}
             >
@@ -502,6 +561,11 @@ function FreeMembershipCard({ member, communityPrograms }: { member: Member; com
           Grant free membership...
         </button>
       )}
+      {error && (
+        <p className="mt-2 text-sm text-[var(--danger-text)]" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -513,8 +577,9 @@ function BillingCard({ member }: { member: Member }) {
   const [annual, setAnnual] = useState(false);
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // Stripe won't hold a first charge less than 2 days out.
-  const [minFirstCharge] = useState(() => new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
+  // Stripe won't hold a first charge less than 2 days out. The date is
+  // Central's, like the noon charge time it stands for.
+  const [minFirstCharge] = useState(() => new Date(Date.now() + 3 * 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
   const needsCard = plusNeedsCard(member);
   // On a gifted year with nothing after it: the card can go on now, with
   // the first charge held until the gift ends.
