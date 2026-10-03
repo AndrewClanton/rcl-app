@@ -1,5 +1,5 @@
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
-import { SALES_TAX_RATE } from "@/lib/sales-tax";
+import { salesTaxOn } from "@/lib/sales-tax";
 import type { MemberTier } from "@/lib/types";
 import { taxInside } from "@/lib/orgs";
 
@@ -92,8 +92,10 @@ export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthl
   const discount = orgCompDiscount + dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
+  // Tax is figured once, on the whole order after every discount (tips are
+  // never taxed), and rounded to the cent (lib/sales-tax.ts).
   const taxIncluded = !taxFree && !!extra.taxIncluded;
-  const tax = taxFree ? 0 : taxIncluded ? taxInside(taxable).tax : cents(Math.max(0, taxable) * SALES_TAX_RATE);
+  const tax = taxFree ? 0 : taxIncluded ? taxInside(taxable).tax : salesTaxOn(taxable);
   const total = taxIncluded ? cents(Math.max(0, taxable)) : cents(Math.max(0, taxable) + tax);
   return {
     subtotal,

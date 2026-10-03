@@ -9,6 +9,7 @@ import PlusLink from "@/components/PlusLink";
 import Honeypot from "@/components/Honeypot";
 import { CLOSED_DAYS_NOTE, isClosedDate } from "@/lib/closed-days";
 import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
+import { salesTaxOn } from "@/lib/sales-tax";
 
 const RESERVATION_HOURS = 2;
 
@@ -305,6 +306,8 @@ function BoothDetailModal({
               <div>
                 <div className="label-xs !mb-0.5">Reservation fee</div>
                 <div className="font-display text-3xl leading-none tabular-nums">{money(booth.reservation_fee)}</div>
+                {/* Stripe adds Missouri sales tax on top (startBoothCheckout). */}
+                {booth.reservation_fee > 0 && <div className="mt-1 text-xs text-[var(--muted)]">plus {money(salesTaxOn(booth.reservation_fee))} Missouri sales tax</div>}
               </div>
               <button className="btn-primary px-6 py-3 text-base max-sm:w-full" disabled={!canSubmit || submitting} onClick={handleSubmit}>
                 {submitting ? "Just a moment..." : "Reserve this booth"}
