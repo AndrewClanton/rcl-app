@@ -1,7 +1,26 @@
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
-import { BRAKE_PREFIX, guardrailPause, masterSettingOn, sendingGate, SWITCH_OFF, UNDO_PREFIX, UNDO_UNFINISHED, undoPending, undoWaveHanded, UNDOING, waitingAtResend, WAVE_WAITING, type Pace } from "@/lib/email/campaign-send";
-import { arrivalLabel, canUndoWave, undoHoldMs } from "@/lib/email/undo";
+import {
+  BRAKE_PREFIX,
+  guardrailPause,
+  holdsWork,
+  lastWave,
+  masterSettingOn,
+  nextWaveAfter,
+  sendingGate,
+  SWITCH_OFF,
+  UNDO_PREFIX,
+  UNDO_UNFINISHED,
+  undoHoldAt,
+  undoPending,
+  undoWaveHanded,
+  UNDOING,
+  waitingAtResend,
+  waveDayWord,
+  WAVE_WAITING,
+  type Pace,
+} from "@/lib/email/campaign-send";
+import { arrivalLabel } from "@/lib/email/undo";
 import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
@@ -37,12 +56,22 @@ export default async function ReadyToSendPage() {
   const daily = perDay(plan);
   const monthLeft = Math.max(0, perMonth(plan) - usage.month);
   const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
+  // One wave a day: an email whose wave went (or arrives) today can have
+  // its next one the next sending day. Whether Resend holds email for later
+  // (for Undo) is asked once.
+  const [waveNext, holdsOk] = await Promise.all([
+    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? nextWaveAfter(await lastWave((rows[k] as CampaignRow).id).catch(() => null), now) : null] as const)).then(
+      (x) => Object.fromEntries(x) as Record<DesignKey, Date | null>,
+    ),
+    holdsWork().catch(() => true),
+  ]);
   // The next wave is as many as today's share allows (a full wave once
-  // today's has gone); a Send that starts afresh has the small first wave.
+  // today's has gone, or tomorrow's after today's wave); a Send that starts
+  // afresh has the small first wave.
   const first = firstWaveSize(plan);
-  const share = todayLeft > 0 ? todayLeft : daily;
   const startsAfresh = (c: CampaignRow | null) => !c || c.status === "sent" || c.status === "failed" || !!((c.content as { pace?: Pace }).pace ?? {}).firstWave;
-  const sizes = Object.fromEntries(DESIGN_KEYS.map((k) => [k, startsAfresh(rows[k]) ? Math.min(first, share) : share])) as Record<DesignKey, number>;
+  const leftToday = (k: DesignKey) => (waveNext[k] ? 0 : todayLeft);
+  const sizes = Object.fromEntries(DESIGN_KEYS.map((k) => [k, Math.min(startsAfresh(rows[k]) ? first : daily, leftToday(k) > 0 ? leftToday(k) : daily)])) as Record<DesignKey, number>;
   const [counts, results, atResend] = await Promise.all([
     countAudiences(rows, now, sizes).catch(() => null),
     Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
@@ -76,11 +105,12 @@ export default async function ReadyToSendPage() {
     const c = rows[key];
     const count: AudienceCount | null = counts?.[key] ?? null;
     const n = count?.willSend ?? 0;
-    const days = sendingDays(n, daily, todayLeft, startsAfresh(c) ? first : daily);
+    const days = sendingDays(n, daily, leftToday(key), startsAfresh(c) ? first : daily);
     const preview = previewHtml(key, "claim");
-    // The next wave if pressed now: how long it waits at Resend so it can
-    // be undone (none for one too big to call back in time).
-    const nextWave = Math.min(count?.next.n ?? 0, n) || daily;
+    // The next wave if pressed now, and whether (and till when) it would
+    // wait at Resend so it can be undone: the send's own rule.
+    const nextWave = Math.min(count?.next.n ?? 0, n) || sizes[key];
+    const hold = holdsOk && !waveNext[key] ? undoHoldAt(nextWave, now) : null;
     return {
       key,
       title: d.title,
@@ -93,12 +123,12 @@ export default async function ReadyToSendPage() {
       text: preview.text,
       count,
       days: Number.isFinite(days) ? days : null,
-      finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, todayLeft > 0)) : null,
+      finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, leftToday(key) > 0, waveNext[key] ?? undefined)) : null,
       overMonth: n > monthLeft,
       status: c?.status ?? null,
       // "Waiting for staff" is what the wave line says already, and the
-      // brake has its own panel.
-      // An Undo's note, once that Undo can no longer carry on, says so plainly.
+      // brake has its own panel. An Undo's note, once that Undo can no
+      // longer carry on, says so plainly.
       note:
         c?.error?.startsWith(UNDO_PREFIX) && !undoPending(c, now.getTime())
           ? UNDO_UNFINISHED
@@ -113,10 +143,10 @@ export default async function ReadyToSendPage() {
       outcomeAbout: d.outcome.about,
       sendKey: crypto.randomUUID(),
       undo: undos[key],
-      undoMinutes: canUndoWave(nextWave) ? Math.round(undoHoldMs(nextWave) / 60_000) : null,
+      hold: hold ? { minutes: Math.max(1, Math.round((hold.getTime() - now.getTime()) / 60_000)), label: arrivalLabel(hold.toISOString(), now) } : null,
+      nextWaveOn: waveNext[key] ? waveDayWord(waveNext[key] as Date, now) : null,
     };
   });
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -152,6 +182,7 @@ export default async function ReadyToSendPage() {
         sender={{ ok: sender.ok, names: joinNames(sender.names), why: sender.why }}
         myEmail={staff.email}
         serverNow={now.getTime()}
+        noHolds={!holdsOk}
       />
     </div>
   );
