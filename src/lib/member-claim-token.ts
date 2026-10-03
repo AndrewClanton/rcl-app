@@ -17,18 +17,16 @@ import { CLAIM_PATH } from "@/lib/claim-link";
 // made up or edited. The nonce is also recorded in member_claims, which is
 // what makes each link work only once.
 
-export type ClaimKind = "kiosk" | "receipt";
+// "email": the "Set my password" link in the invite email (lib/email).
+export type ClaimKind = "kiosk" | "receipt" | "email";
 
 // Kiosk links are on the tablet for a moment and scanned on the spot;
-// receipt links go home in a pocket.
-export const CLAIM_LIFETIME_S: Record<ClaimKind, number> = { kiosk: 30 * 60, receipt: 14 * 86_400 };
-
-// Wrong guesses at the last four of the phone before a link stops working
-// for good (on top of the per-minute limits in member-claim.ts).
-export const MAX_WRONG_DIGITS = 10;
+// receipt links go home in a pocket; the invite email's last 30 days.
+export const CLAIM_LIFETIME_S: Record<ClaimKind, number> = { kiosk: 30 * 60, receipt: 14 * 86_400, email: 30 * 86_400 };
 
 const VERSION = 1;
-const KINDS: ClaimKind[] = ["kiosk", "receipt"];
+// New kinds go on the end: a token stores its kind by position.
+const KINDS: ClaimKind[] = ["kiosk", "receipt", "email"];
 const BODY_BYTES = 31;
 const SIG_BYTES = 12;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -53,10 +51,19 @@ export interface ClaimToken {
   expired: boolean;
 }
 
-export function sealClaimToken(memberId: string, kind: ClaimKind, now = Date.now()): { token: string; nonce: string; exp: number } | null {
+// `fixed`: a nonce and expiry chosen by the caller instead of random and
+// now-based (the invite email's links, so a retried send renders the very
+// same email).
+export function sealClaimToken(
+  memberId: string,
+  kind: ClaimKind,
+  now = Date.now(),
+  fixed?: { nonce: Buffer; expS: number },
+): { token: string; nonce: string; exp: number } | null {
   if (!UUID.test(memberId) || !KINDS.includes(kind)) return null;
-  const expS = Math.floor(now / 1000) + CLAIM_LIFETIME_S[kind];
-  const nonce = randomBytes(9);
+  if (fixed && fixed.nonce.length !== 9) return null;
+  const expS = fixed ? fixed.expS : Math.floor(now / 1000) + CLAIM_LIFETIME_S[kind];
+  const nonce = fixed ? fixed.nonce : randomBytes(9);
   const body = Buffer.alloc(BODY_BYTES);
   body[0] = VERSION;
   body[1] = KINDS.indexOf(kind);
@@ -89,31 +96,11 @@ export function openClaimToken(token: string | null | undefined, now = Date.now(
   };
 }
 
-// ---------- "the phone digits matched" ----------
-// Once someone types the right last four, this browser gets a short-lived
-// signed note saying so for that one link (kept in an httpOnly cookie by
-// the claim page). It lets them go off to Google to sign in and come back
-// without typing the digits again, and it's what the final link step
-// checks. Useless for any other link.
-
-export const DIGITS_PROOF_COOKIE = "rcl_claim_ok";
-const PROOF_LIFETIME_S = 30 * 60;
-
-export function sealDigitsProof(nonce: string, claimExp: number, now = Date.now()): { value: string; maxAge: number } | null {
-  const expS = Math.min(Math.floor(now / 1000) + PROOF_LIFETIME_S, Math.floor(claimExp / 1000));
-  const maxAge = expS - Math.floor(now / 1000);
-  if (maxAge <= 0) return null;
-  const sig = sign("digits", `${nonce}.${expS}`, 16);
-  return sig ? { value: `${nonce}.${expS}.${sig.toString("base64url")}`, maxAge } : null;
-}
-
-export function digitsProofOk(value: string | null | undefined, nonce: string, now = Date.now()): boolean {
-  const parts = typeof value === "string" ? value.split(".") : [];
-  if (parts.length !== 3 || parts[0] !== nonce || !/^\d{1,12}$/.test(parts[1])) return false;
-  if (Number(parts[1]) * 1000 <= now) return false;
-  const expected = sign("digits", `${parts[0]}.${parts[1]}`, 16);
-  const given = Buffer.from(parts[2], "base64url");
-  return !!expected && given.length === expected.length && timingSafeEqual(expected, given);
+// The invite email's claim link for one send: the nonce comes from the
+// send's id, so rendering that email again (a retried batch) gives the same
+// link, and they share one member_claims row.
+export function emailClaimNonce(sendId: string): Buffer | null {
+  return sign("email-nonce", sendId, 9);
 }
 
 // ---------- a claim in progress on a new login ----------
@@ -124,14 +111,14 @@ export function digitsProofOk(value: string | null | undefined, nonce: string, n
 // second, empty account before the claim page could link the real one.
 // This says whether that claim can still be finished (and where), so
 // linkMemberForUser can leave the linking to the claim page. Once the link
-// is used, runs out or locks, it no longer counts and sign-in works as usual.
+// is used or runs out, it no longer counts and sign-in works as usual.
 export async function pendingClaimFor(user: User): Promise<string | null> {
   const t = user.user_metadata?.rcl_claim;
   const c = typeof t === "string" ? openClaimToken(t) : null;
   if (!c || c.expired) return null;
   const admin = createAdminClient();
-  const { data: claim } = await admin.from("member_claims").select("member_id, used_at, failed_tries").eq("nonce", c.nonce).maybeSingle();
-  if (!claim || claim.member_id !== c.memberId || claim.used_at || claim.failed_tries >= MAX_WRONG_DIGITS) return null;
+  const { data: claim } = await admin.from("member_claims").select("member_id, used_at").eq("nonce", c.nonce).maybeSingle();
+  if (!claim || claim.member_id !== c.memberId || claim.used_at) return null;
   const { data: m } = await admin.from("members").select("auth_user_id, erased_at").eq("id", c.memberId).maybeSingle();
   if (!m || m.auth_user_id || m.erased_at) return null;
   return `${CLAIM_PATH}?t=${t}`;

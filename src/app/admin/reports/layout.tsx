@@ -4,10 +4,10 @@ import { getStaffSession, hasManagerAccess } from "@/lib/auth";
 import ReportsNav from "./ReportsNav";
 
 // Every report shares the tabs: Day, Week, Month, Box office, Sales tax,
-// Bar usage, Members, and for managers and up, Website usage. Each page
-// checks the staff sign-in itself as well as the back office's layout (a
-// layout alone doesn't guard a page's data); here the role only decides
-// which tabs show.
+// Bar usage, Members, and for managers and up, Website usage and Register
+// checks. Each page checks the staff sign-in itself as well as the back
+// office's layout (a layout alone doesn't guard a page's data); here the
+// role only decides which tabs show.
 export default async function ReportsLayout({ children }: { children: React.ReactNode }) {
   const staff = await getStaffSession();
   return (

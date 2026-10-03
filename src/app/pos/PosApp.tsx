@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { MenuCategory, Employee, MemberTier, Recipe } from "@/lib/types";
+import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type RegisterCartSnapshot } from "@/lib/registerChannel";
+import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type RickrollState, type TabletProfile } from "@/lib/registerChannel";
+import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
 import TipModal from "./TipModal";
@@ -13,17 +14,23 @@ import TabCardModal from "./TabCardModal";
 import InfoTip from "@/components/help/InfoTip";
 import { useOnShift } from "./shift/on-shift-store";
 import { publishCashier, useRanOut } from "./shift/ran-out-store";
-import { ItemOutDialog, MenuTile } from "./shift/RanOut";
+import { ItemOutDialog } from "./shift/RanOut";
+import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
-import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import PosMemberPanel from "./PosMemberPanel";
-import RegisterCheckins from "./RegisterCheckins";
+import { UnlimitedBanner } from "./LegacyPlusCard";
+import { PlusRibbon, SignalFrame } from "./MemberSignal";
+import { memberSignal, memberStanding, publishMemberSignal } from "./member-signal";
+import { firstName as firstNameFor, shortName } from "@/lib/card-match";
+import { CheckinArrivals, useRegisterCheckins } from "./RegisterCheckins";
+import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
+import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
@@ -33,17 +40,35 @@ import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
 import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
-import EasterEggs from "./EasterEggs";
+import EasterEggs, { useRickroll } from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useDeviceSettings } from "./devices/settings";
-import UnsavedSaleBanner, { keepUnsavedSale, useUnsavedSale, type UnsavedSale } from "./UnsavedSaleBanner";
+import UnsavedSaleBanner, {
+  clearPendingReaderSale,
+  currentUnsavedSale,
+  keepPendingReaderSale,
+  keepUnsavedSale,
+  readPendingReaderSales,
+  useUnsavedSale,
+  type UnsavedSale,
+} from "./UnsavedSaleBanner";
+import { pickCashier, useCashierPick } from "./cashier-pick";
+import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
+import CardNoticeBanner from "./CardNotice";
+import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
+import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, memberDiscountRate, pointsEarned, registerTotals } from "@/lib/register-totals";
+import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
+import { getDailyCoffee, getTabletProfile } from "./member-actions";
 import {
+  checkBeforePayment,
   completeOrder,
   isDraftOpen,
+  logAbandonedSale,
+  savedOrderForPayment,
   saveDraftOrder,
   updateDraftOrder,
   loadDraftOrder,
@@ -51,12 +76,10 @@ import {
   cancelTab,
   type CheckoutPayment,
   type CheckoutTotals,
+  type CompleteOrderInput,
   type DraftOrderSummary,
   type DraftFields,
 } from "./actions";
-
-// Joplin, MO combined sales tax, shared with online tickets and Insiders+.
-const TAX_RATE = SALES_TAX_RATE;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -73,38 +96,37 @@ interface CartLine {
   isAlcohol: boolean;
 }
 
-// The Movies tab sits alongside the menu categories.
+// The Movies tab sits alongside the menu categories, and so does Customers
+// (who's checked in today, find by face).
 const MOVIES_TAB = "__movies";
+const CUSTOMERS_TAB = "__customers";
 
-type TotalsMember = { tier: MemberTier; points: number } | null;
-
-function memberDiscountRate(member: TotalsMember) {
-  if (!member) return 0;
-  return member.tier === "Insiders+" ? 0.1 : 0.05;
+// A person, drawn like the category icons (CategoryIcon).
+function CustomersIcon() {
+  return (
+    <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
+    </svg>
+  );
 }
 
-function computeTotals(cart: CartLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean) {
-  // Every money figure is rounded to the cent, so the tax shown, the total
-  // charged on the card and the order saved all agree to the penny.
-  const cents = (n: number) => Math.round(n * 100) / 100;
-  const subtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
-  const tierDiscount = cents(subtotal * memberDiscountRate(member));
-  const monthlyDiscount = monthlyMember ? cents(subtotal * 0.1) : 0;
-  const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
-  const redemptionDiscount = canRedeem && pointsRedeemed ? REWARD_VALUE : 0;
-  const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
-  const taxable = subtotal - discount;
-  // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
-  const tax = taxFree ? 0 : cents(Math.max(0, taxable) * TAX_RATE);
-  const total = cents(Math.max(0, taxable) + tax);
-  return { subtotal, tierDiscount, monthlyDiscount, redemptionDiscount, discount, tax, total, canRedeem };
-}
+// A dev note from the register is about the register, or about the
+// customer screen beside it (which has no button of its own: it faces the
+// customer).
+const NOTE_ABOUT: NoteAbout[] = [
+  { label: "This register", path: "/pos", title: "Register" },
+  { label: "Customer screen", path: "/display/customer", title: "Customer screen" },
+];
 
 // Draft rows (held orders + tabs) persist the same shape the cart displays,
 // so the held/tabs lists never drift from what's actually on the check.
-function totalsPayload(t: ReturnType<typeof computeTotals>): CheckoutTotals {
+// The math itself is registerTotals (lib/register-totals.ts), the very one
+// the server redoes to check each sale.
+function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
   return {
     subtotal: t.subtotal,
+    daily_perk_discount: t.dailyPerkDiscount,
     tier_discount: t.tierDiscount,
     monthly_discount: t.monthlyDiscount,
     redemption_discount: t.redemptionDiscount,
@@ -122,6 +144,7 @@ export default function PosApp({
   defaultReaderId,
   initialScreenings,
   registerTopic,
+  canNote,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -131,6 +154,7 @@ export default function PosApp({
   defaultReaderId: string | null;
   initialScreenings: RegisterScreening[];
   registerTopic: string;
+  canNote: boolean; // an admin or the register's shared login is signed in: Dev note
 }) {
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
@@ -143,9 +167,10 @@ export default function PosApp({
   const onShift = useOnShift();
   // The cashier follows the shift: this iPad's shift, else whoever started
   // most recently. A cashier picked by hand holds only until someone starts
-  // or ends a shift (the pick remembers the shift line-up it was made under).
+  // or ends a shift (the pick remembers the shift line-up it was made under),
+  // and it's kept on this iPad, so a reload keeps it too.
   const shiftKey = `${onShift.onShift.map((o) => o.shiftId).join(",")}|${onShift.meEmployeeId ?? ""}`;
-  const [pickedCashier, setPickedCashier] = useState<{ id: string; shiftKey: string } | null>(null);
+  const pickedCashier = useCashierPick();
   const isEmployee = (id: string | null | undefined): id is string => !!id && employees.some((e) => e.id === id);
   const latestOnShift = [...onShift.onShift].sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0]?.employeeId ?? null;
   const onShiftIds = new Set(onShift.onShift.map((o) => o.employeeId));
@@ -181,8 +206,84 @@ export default function PosApp({
   const [outPromptId, setOutPromptId] = useState<string | null>(null);
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
+  // The Insiders+ daily coffee (lib/daily-perk.ts). The attached member's
+  // coffee today is looked up when they're put on the order, however they
+  // got there (a check-in, a search, a scan, a tab): undefined while it's
+  // looked up, null if it couldn't be (then it isn't offered).
+  const isPlus = member?.tier === "Insiders+";
+  // Gold for paying Insiders+, red NOT ACTIVE for a former unlimited member
+  // who isn't paying (member-signal.ts): the frame, the strip over the
+  // order, and the mark beside the title on a phone.
+  const signal = memberSignal(member);
+  // The same, telling plain Insiders from Insiders+ with no card on file
+  // (the customer screen's account panel).
+  const standing = member ? memberStanding(member) : null;
+  useEffect(() => {
+    publishMemberSignal(signal);
+  }, [signal]);
+  useEffect(() => () => publishMemberSignal(null), []);
+  const [coffee, setCoffee] = useState<{ memberId: string; state: DailyCoffeeState | null } | null>(null);
+  const [coffeeTry, setCoffeeTry] = useState(0);
+  // The member whose free coffee staff took off this order.
+  const [coffeeOffFor, setCoffeeOffFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!memberId || !isPlus) return;
+    let live = true;
+    getDailyCoffee(memberId).then(
+      (state) => {
+        if (live) setCoffee({ memberId, state });
+      },
+      () => {
+        if (live) setCoffee({ memberId, state: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId, isPlus, coffeeTry]);
+  const coffeeToday = isPlus && memberId && coffee?.memberId === memberId ? coffee.state : undefined;
+  // Their card on the customer screen (photo, profile line, badges), looked
+  // up when they're put on the order, like the coffee. Null until then, or
+  // if it couldn't be: the screen shows their account panel without it.
+  const [tabletCard, setTabletCard] = useState<{ memberId: string; profile: TabletProfile | null } | null>(null);
+  useEffect(() => {
+    if (!memberId) return;
+    let live = true;
+    getTabletProfile(memberId).then(
+      (profile) => {
+        if (live) setTabletCard({ memberId, profile });
+      },
+      () => {
+        if (live) setTabletCard({ memberId, profile: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId]);
+  const tabletProfile = memberId && tabletCard?.memberId === memberId ? tabletCard.profile : null;
+  // On this order unless it's used, unknown, or staff took it off. Only one
+  // member is on an order, so only their coffee can be.
+  const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
+  // The manual "Monthly member (10% off)" tick counts only with no member on
+  // the order: a member's own discount (10% for Insiders+) applies by
+  // itself, and the two never stack (Andrew, 10/1). An older tab or held
+  // order saved with both comes back without the extra 10%.
+  const monthlyOn = monthlyMember && !member;
+  // Putting someone on the order takes the manual tick off, so it doesn't
+  // come back if they're taken off again.
+  function attachMember(m: PosMember | null) {
+    setMember(m);
+    if (m) setMonthlyMember(false);
+  }
+  // Who's on the order right now, for a check-in whose lookup finishes
+  // between renders (autoAttach).
+  const memberNow = useRef<PosMember | null>(null);
+  useEffect(() => {
+    memberNow.current = member;
+  }, [member]);
   const [pointsRedeemed, setPointsRedeemed] = useState(false);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   // The tab whose last save failed; its warning shows while it's on screen.
@@ -192,6 +293,9 @@ export default function PosApp({
   const [tipOpen, setTipOpen] = useState(false);
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
+  // The tip was asked on the register (a tab, no reader): the pay screen
+  // doesn't ask again, even if they said no tip.
+  const [tipAsked, setTipAsked] = useState(false);
   const [heldListOpen, setHeldListOpen] = useState(false);
   // ✨ Easter eggs: a surprise for the bottom of the next printed receipt.
   const [flourish, setFlourish] = useState<FlourishKey | null>(null);
@@ -206,6 +310,11 @@ export default function PosApp({
     null
   );
   const [toast, setToast] = useState<string | null>(null);
+  // What the last card sale's card did: points found by the card, a card
+  // newly linked, and so on (CardNotice.tsx), newest first. A few are kept,
+  // so the next sale's notice doesn't take away the last one's Undo while
+  // its 2 minutes are still running. `key` starts each one fresh.
+  const [cardNotices, setCardNotices] = useState<{ key: number; notice: CardNotice }[]>([]);
   const devices = useDeviceSettings();
   // Where this register prints: its station's printer through the website,
   // or straight to a printer IP (Devices).
@@ -223,7 +332,7 @@ export default function PosApp({
     (text) => {
       void handleDoorScan(text, printTarget).then(({ scan, message }) => {
         const now = scanStateRef.current;
-        if (scan?.ok && scan.member && !now.member && now.empty) setMember(scan.member);
+        if (scan?.ok && scan.member && !now.member && now.empty) attachMember(scan.member);
         setToast(message);
         setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
       });
@@ -236,6 +345,73 @@ export default function PosApp({
   // The last sale's movie tickets, kept for "Reprint last tickets".
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Check-ins from the customer screen. Always listening, whatever's on
+  // screen; nothing waits on staff (a shared family number is picked on the
+  // screen itself).
+  // A check-in that finds one account puts them on the order by itself, the
+  // latest one in taking over from whoever was on it (Andrew, 10/2), with
+  // "Now on this order: Sarah M. (was Bob K.)" (swap): just to know, no
+  // Undo (the register has no reversal buttons; Add to order on the other
+  // person switches back). Never mid-payment, and not on a register
+  // nobody's looking at (a phone left open on /pos).
+  // The note shows for 20 seconds (swapNote: its key); who to put back
+  // stays while the newcomer is on the order, for the guest's own "Done" or
+  // "That's not me" on the customer screen.
+  const [swap, setSwap] = useState<{ key: number; now: PosMember; was: PosMember } | null>(null);
+  const [swapNote, setSwapNote] = useState<number | null>(null);
+  useEffect(() => {
+    if (!swapNote) return;
+    const timer = setTimeout(() => setSwapNote(null), 20_000);
+    return () => clearTimeout(timer);
+  }, [swapNote]);
+  const swapShown = swap && swapNote === swap.key && member?.id === swap.now.id ? swap : null;
+  function autoAttach(m: PosMember): boolean {
+    if (payOpen || busy || finalizingRef.current || document.visibilityState !== "visible") return false;
+    const was = memberNow.current;
+    if (was?.id === m.id) return true;
+    memberNow.current = m;
+    attachMember(m);
+    const key = Date.now();
+    setSwap(was ? { key, now: m, was } : null);
+    setSwapNote(was ? key : null);
+    return true;
+  }
+  // Off again ("Done" or "That's not me" on the customer screen): whoever
+  // they took over from comes back.
+  function autoUndo(memberId: string): PosMember | null {
+    if (memberNow.current?.id !== memberId) return null;
+    const back = swap?.now.id === memberId ? swap.was : null;
+    memberNow.current = back;
+    attachMember(back);
+    setSwap(null);
+    return back;
+  }
+  const checkins = useRegisterCheckins({
+    registerTopic,
+    member,
+    onAttach: attachMember,
+    autoAttach,
+    lastSale: lastReceipt,
+  });
+  // Something on the Customers tab still to act on that isn't a check-in:
+  // tickets to print, a possible duplicate account, or a former unlimited
+  // member with no payment on file who isn't on the order.
+  const customersNote =
+    !!checkins.dupHint || !!checkins.tonight?.tickets.some((t) => t.printable) || (!!checkins.unlimited && checkins.unlimited.id !== member?.id);
+  // Set when "Find by photo" opens the Customers tab, so it scrolls to the faces.
+  const [findAt, setFindAt] = useState(0);
+  const menuScrollRef = useRef<HTMLDivElement>(null);
+  const [noteOpen, setNoteOpen] = useState(false);
+
+  // What's beside the order: a menu category, Movies or Customers. Each
+  // opens at its top.
+  function pickTab(id: string) {
+    setCategoryId(id);
+    setBuilderItemId(null);
+    setFindAt(0);
+    menuScrollRef.current?.scrollTo({ top: 0 });
+  }
 
   const category = useMemo(() => categories.find((c) => c.id === categoryId) ?? null, [categories, categoryId]);
   const ticketsInCart = useMemo(() => {
@@ -267,9 +443,24 @@ export default function PosApp({
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
-  const totals = computeTotals(cart, member, monthlyMember, taxFree, pointsRedeemed);
+  // A line can be the free coffee if its item is ticked as a daily coffee
+  // (Back office -> Menu): its menu price comes off, its add-ons don't.
+  const totalsLines = cart.map((l) => {
+    const item = findItem(l.menuItemId);
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
+  });
+  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn);
+  // The line it would go on, whether or not it's on: "Use it" puts it back.
+  const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
   const activeTab = activeTabId ? openTabs.find((t) => t.id === activeTabId) : null;
+  // Anything on the order at all, rung up or not: Clear takes it all off.
+  const onOrder = cart.length > 0 || !!member || !!orderName.trim() || taxFree || monthlyMember || pointsRedeemed;
+  // "New tab" with a member on a walk-up order is named for them ("Buddy
+  // F."): one tap on Open tab. Anyone else's tab, or a new tab while
+  // another is open (it starts empty), is named by hand as before.
+  const tabNameSuggestion = !activeTabId && member ? shortName(member.name) : "";
+  const tabNameTaken = !!tabNameSuggestion && openTabs.some((t) => (t.order_name ?? "").trim().toLowerCase() === tabNameSuggestion.toLowerCase());
 
   function currentFields(): DraftFields {
     return {
@@ -277,7 +468,7 @@ export default function PosApp({
       memberId,
       orderName,
       taxFree,
-      monthlyMember,
+      monthlyMember: monthlyOn,
       pointsRedeemed,
       station: devices.station,
       lines: cart.map((l) => ({
@@ -310,6 +501,7 @@ export default function PosApp({
     setTaxFree(f.tax_free);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
+    setCoffeeOffFor(null);
   }
 
   function addLine(line: BuiltLine) {
@@ -341,7 +533,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyMember, pointsRedeemed, memberId]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -414,16 +606,76 @@ export default function PosApp({
     tax: totals.tax,
     total: totals.total,
     // The customer screen's live tally: savings, whose order it is, and the
-    // points it earns (1 per $1 of the subtotal, as completeOrder pays).
+    // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
-      { label: "Member discount", amount: totals.tierDiscount },
+      { label: DAILY_COFFEE_LINE, amount: totals.dailyPerkDiscount },
+      // Named for the guest: "Insiders+ 10% off" is the perk they see applied.
+      { label: isPlus && !member?.legacyUnlimited ? `Insiders+ ${Math.round(memberDiscountRate(member) * 100)}% off` : "Member discount", amount: totals.tierDiscount },
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
       { label: "Points reward", amount: totals.redemptionDiscount },
     ].filter((d) => d.amount > 0),
-    member: member ? { firstName: member.name.trim().split(/\s+/)[0] || member.name, points: Math.round(member.points), plus: member.tier === "Insiders+" } : null,
-    pointsToEarn: Math.max(0, Math.round(totals.subtotal)),
+    // Only what the screen shows: a first name, points, where they stand
+    // (gold only for Insiders+ that's paid for; red for unlimited or no
+    // card), and their Insiders+ perks today. Never an email or phone.
+    member: member
+      ? {
+          // A phone account's "Guest ·· 0199" whole (lib/member-name.ts).
+          firstName: firstNameFor(member.name),
+          points: Math.round(member.points),
+          plus: standing === "plus",
+          unlimited: standing === "unlimited",
+          noCard: standing === "nocard",
+          coffee: !coffeeToday ? null : coffeeToday.usedAt ? "used" : totals.dailyPerkDiscount > 0 ? "on-order" : "ready",
+          discountPct: Math.round(memberDiscountRate(member) * 100),
+          profile: tabletProfile,
+        }
+      : null,
+    pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+
+  // A form staff fill in for a guest standing there shows on the customer
+  // screen as it's typed (tablet-setup.tsx), and the guest's "✓ That's
+  // right" there comes back here to the open form, which saves it.
+  const setupForms = useRef(new Map<string, () => void>());
+  const tabletSetup = useMemo<TabletSetupLink>(
+    () => ({
+      send: (event, payload) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
+      listen: (id, onOk) => {
+        setupForms.current.set(id, onOk);
+        return () => {
+          if (setupForms.current.get(id) === onOk) setupForms.current.delete(id);
+        };
+      },
+    }),
+    [],
+  );
+  // ✨ → Rickroll: the button changes only when the customer screen says
+  // it's started or stopped (EasterEggs.tsx useRickroll).
+  const sendRickroll = useCallback(
+    (event: "rickroll" | "rickroll-stop", payload: object) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
+    [],
+  );
+  const rickroll = useRickroll(sendRickroll);
+  const onRickrollState = useEffectEvent((p: Partial<RickrollState> | null) => rickroll.onState(p));
+  const onSetupOk = useEffectEvent((id: unknown) => {
+    if (typeof id === "string") setupForms.current.get(id)?.();
+  });
+
+  // "Done" or "That's not me" under their card on the customer screen: off
+  // the order, if they're still the one on it ("Done" only while nothing's
+  // rung up: once it is, they're buying), and whoever their check-in took
+  // over from comes back. "That's not me" also lets go of the check-in
+  // that put them there.
+  const onMemberOff = useEffectEvent((p: Partial<MemberOff> | null) => {
+    if (!p || typeof p.firstName !== "string" || !member || firstNameFor(member.name) !== p.firstName) return;
+    if (p.why !== "not-me" && (cart.length > 0 || activeTabId)) return;
+    const back = autoUndo(member.id);
+    if (p.why === "not-me") checkins.notMe(member.id);
+    const message = `${member.name} tapped ${p.why === "not-me" ? "“That's not me”" : "Done"} on the customer screen, so they're off the order${back ? ` and ${back.name} is back on it` : ""}.`;
+    setToast(message);
+    setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
+  });
 
   useEffect(() => {
     const supabase = createClient();
@@ -433,6 +685,9 @@ export default function PosApp({
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
       })
+      .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
+      .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
+      .on("broadcast", { event: "rickroll-state" }, (msg) => onRickrollState(msg.payload))
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -440,12 +695,15 @@ export default function PosApp({
     };
   }, [registerTopic]);
 
+  // Sent again whenever the order changes, and when the member's card or
+  // their Insiders+ coffee today comes back (both are looked up after
+  // they're put on the order; the customer screen shows them).
   useEffect(() => {
     const timer = setTimeout(() => {
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile]);
 
   function resetOrder() {
     setCart([]);
@@ -455,6 +713,9 @@ export default function PosApp({
     setMonthlyMember(false);
     setPointsRedeemed(false);
     setActiveTabId(null);
+    // Looked up again for the next order: a coffee just used shows as used.
+    setCoffee(null);
+    setCoffeeOffFor(null);
   }
 
   // False (with nothing moved) if what's on screen couldn't be saved.
@@ -638,6 +899,26 @@ export default function PosApp({
         return;
       }
     }
+    // A points reward the member no longer has the points for, or a daily
+    // coffee they've already had today (on the other register, say), comes
+    // off before anyone pays. If the check can't run, the sale goes ahead.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
+      setBusy(true);
+      const r = await checkBeforePayment(currentFields(), totalsPayload(totals)).catch(() => null);
+      setBusy(false);
+      if (r && !r.ok) {
+        if (r.points !== undefined) {
+          setPointsRedeemed(false);
+          if (member) setMember({ ...member, points: r.points });
+        }
+        if (r.dropDailyCoffee !== undefined && memberId) {
+          // Already used: the member panel shows when. Otherwise it's just off.
+          if (r.dropDailyCoffee?.usedAt) setCoffee({ memberId, state: r.dropDailyCoffee });
+          else setCoffeeOffFor(memberId);
+        }
+        return setToast(r.error);
+      }
+    }
     // A tab closed with a tap on the reader gets the reader's own tip screen,
     // like any card sale. Only a register with no reader still asks here.
     if (activeTabId && !readerId) {
@@ -647,8 +928,9 @@ export default function PosApp({
     }
   }
 
-  function continueAfterTip(tipAmount: number) {
+  function continueAfterTip(tipAmount: number, asked = false) {
     setTip(tipAmount);
+    setTipAsked(asked);
     setTipOpen(false);
     const hasAlcohol = cart.some((l) => l.isAlcohol);
     if (hasAlcohol) setAgeConfirmOpen(true);
@@ -678,6 +960,27 @@ export default function PosApp({
     }
   }
 
+  // The sale on screen as completeOrder gets it, paid with `payment`. A
+  // tab's tip is asked on the register (TipModal); any other card sale can
+  // get one on the reader. Either way it's one tip on the order.
+  function orderFor(payment: CheckoutPayment): CompleteOrderInput {
+    return {
+      ...currentFields(),
+      totals: totalsPayload(totals),
+      payment,
+      ageVerified: cart.some((l) => l.isAlcohol),
+      tip: cents(tip + (payment.tip ?? 0)),
+      draftOrderId: activeTabId,
+    };
+  }
+
+  // A payment just sent to the reader: kept in this browser until it's
+  // saved or canceled, so a reload mid-payment can still find it (see
+  // recoverReaderPayments).
+  function keepReaderPayment(payment: CheckoutPayment) {
+    if (readerId) keepPendingReaderSale({ readerId, order: orderFor(payment), memberName: member?.name ?? null, startedAt: Date.now() });
+  }
+
   async function finalizeCheckout(payment: CheckoutPayment, note?: string) {
     // A double tap (or a second "paid" answer from the reader) must not save
     // or print the sale twice.
@@ -685,31 +988,15 @@ export default function PosApp({
     finalizingRef.current = true;
     setPayOpen(false);
     setBusy(true);
-    // A tab's tip is asked on the register (TipModal); any other card sale
-    // can get one on the reader. Either way it's one tip on the order.
-    const allTip = tip + (payment.tip ?? 0);
     try {
-      const saved = await saveSale(
-        {
-          order: {
-            ...currentFields(),
-            totals: totalsPayload(totals),
-            payment,
-            ageVerified: cart.some((l) => l.isAlcohol),
-            tip: allTip,
-            draftOrderId: activeTabId,
-          },
-          memberName: member?.name ?? null,
-          tries: 0,
-        },
-        note,
-      );
+      const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note);
       // A charged card that didn't save is cleared too: the sale now lives in
       // the "card WAS charged" banner, so its items can't be charged again,
       // held, or moved onto a tab.
       if (saved || payment.stripePaymentIntentId) {
         resetOrder();
         setTip(0);
+        setTipAsked(false);
       }
     } finally {
       finalizingRef.current = false;
@@ -725,9 +1012,42 @@ export default function PosApp({
     const { payment } = order;
     const allTip = order.tip ?? 0;
     const change = payment.tendered ? Math.round((payment.tendered - payment.cash) * 100) / 100 : 0;
+    // The "card WAS charged" warning holds one sale. It can be holding
+    // another one here: a payment from before a reload, found while this
+    // sale's payment screen was open (recoverReaderPayments). That one is
+    // never wiped or replaced by this sale; if this one needs the warning
+    // too, it waits its turn with the reader payments, already final.
+    const heldOther = () => {
+      const held = currentUnsavedSale();
+      return !!held && held.order.payment.stripePaymentIntentId !== payment.stripePaymentIntentId;
+    };
+    let queued = false;
+    const holdCharged = (s: UnsavedSale, error?: string) => {
+      if (!heldOther()) return keepUnsavedSale(s);
+      keepPendingReaderSale({ readerId: readerId ?? "", order: s.order, memberName: s.memberName, startedAt: Date.now(), final: true });
+      queued = true;
+      setToast(`${error ? `${error} ` : ""}This card WAS charged (${money(s.order.payment.card)}) but the sale didn't save. It comes up for Retry saving once the warning below is dealt with. Don't charge the card again.`);
+    };
+    const clearHeld = () => {
+      if (!heldOther()) keepUnsavedSale(null);
+    };
     let orderNumber: number;
+    let warning: string | undefined;
+    let card: CardNotice | null;
     try {
-      ({ orderNumber } = await completeOrder(order));
+      const r = await completeOrder(order);
+      if (!r.ok) {
+        // The server turned the sale down (it checks the card payment with
+        // Stripe). Its message says what to do; a card that was charged
+        // keeps the warning up so it isn't charged again.
+        if (r.cardCharged) holdCharged({ ...sale, tries: sale.tries + 1 }, r.error);
+        else clearHeld();
+        if (!queued) setToast(r.error);
+        return false;
+      }
+      orderNumber = r.orderNumber;
+      warning = r.warning;
+      card = r.card;
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
@@ -735,24 +1055,38 @@ export default function PosApp({
         // saving (one order per payment, so a retry can't make a second
         // sale) and hold off new charges until it's saved. A small toast here
         // used to let the register go back to charging the card again.
-        keepUnsavedSale({ ...sale, tries: sale.tries + 1, stale });
+        holdCharged({ ...sale, tries: sale.tries + 1, stale });
       } else if (stale) {
         setToast("The register was just updated and this sale didn't save. Reload the page, then ring it up again.");
       } else {
         setToast(e instanceof Error ? `Checkout failed: ${e.message}` : "Checkout failed");
       }
       return false;
+    } finally {
+      // Saved, or kept in the "card WAS charged" warning: either way the
+      // reader payment isn't in progress anymore. (One waiting its turn for
+      // the warning stays in the list.)
+      if (payment.stripePaymentIntentId && !queued) clearPendingReaderSale(payment.stripePaymentIntentId);
     }
-    keepUnsavedSale(null);
+    clearHeld();
+    // Each notice names its order and goes when its 2 minutes are up, so a
+    // quick sale next doesn't take away the last card sale's Undo.
+    if (card) {
+      const next = { key: Date.now(), notice: card };
+      setCardNotices((list) => [next, ...list.filter((n) => n.notice.orderId !== next.notice.orderId)].slice(0, 3));
+    }
     const receipt: ReceiptData = {
       orderNumber,
       at: new Date().toISOString(),
       cashier: employees.find((e) => e.id === order.employeeId)?.name ?? null,
+      // Only a member staff attached. One found by the card isn't printed:
+      // whoever paid takes the receipt, and it may not be their card.
       member: sale.memberName,
       orderName: order.orderName.trim() || null,
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
       subtotal: order.totals.subtotal,
       discounts: [
+        { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
         { label: "Monthly member discount", amount: order.totals.monthly_discount },
         { label: "Points reward", amount: order.totals.redemption_discount },
@@ -766,6 +1100,7 @@ export default function PosApp({
         { label: "Card", amount: payment.card },
         ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
       ],
+      points: { earned: pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0 },
     };
     setLastReceipt(receipt);
     const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
@@ -775,9 +1110,10 @@ export default function PosApp({
     if (allTip > 0) parts.push(`${money(allTip)} tip`);
     if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
     if (change > 0) parts.push(`give ${money(change)} change`);
-    setToast(note ? `${note} ${parts.join(" — ")}` : parts.join(" — "));
+    const notes = [note, warning].filter(Boolean).join(" ");
+    setToast(notes ? `${notes} ${parts.join(" — ")}` : parts.join(" — "));
     router.refresh();
-    setTimeout(() => setToast(null), note ? 15000 : 7000);
+    setTimeout(() => setToast(null), warning ? 30000 : note ? 15000 : 7000);
     return true;
   }
 
@@ -785,19 +1121,24 @@ export default function PosApp({
     if (!unsavedSale || finalizingRef.current) return;
     finalizingRef.current = true;
     setBusy(true);
+    let saved = false;
     try {
       const { draftOrderId } = unsavedSale.order;
+      saved = await saveSale(unsavedSale);
       // If that tab was opened again meanwhile, it's closed now: take it off
       // the screen so it can't be charged a second time.
-      if ((await saveSale(unsavedSale)) && draftOrderId && draftOrderId === activeTabId) resetOrder();
+      if (saved && draftOrderId && draftOrderId === activeTabId) resetOrder();
     } finally {
       finalizingRef.current = false;
       setBusy(false);
     }
+    // Another reader payment from before a reload may be waiting its turn.
+    if (saved) void recoverReaderPayments();
   }
 
-  // The way out if a save can never work (say, the tab was cancelled
-  // elsewhere), so one stuck sale can't keep the register from charging.
+  // The way out if a save can never work, so one stuck sale can't keep the
+  // register from charging. The card stays charged with no sale, so the
+  // office is told (Reports -> Register checks).
   function stopTryingUnsavedSale() {
     const onTab = !!unsavedSale?.order.draftOrderId;
     setConfirmState({
@@ -805,22 +1146,124 @@ export default function PosApp({
       description: `The card stays charged, but the sale won't be in Reports.${onTab ? " Its tab may still be open: have a manager cancel it, don't charge it again." : ""} Only do this if a manager says so.`,
       danger: true,
       confirmLabel: "Stop trying",
-      onConfirm: () => {
+      onConfirm: async () => {
         setConfirmState(null);
+        const sale = unsavedSale;
         keepUnsavedSale(null);
+        if (!sale) return;
+        const told = await logAbandonedSale(sale.order, sale.tries).then(
+          () => true,
+          () => false,
+        );
+        if (!told) setToast(`Stopped trying. The office couldn't be told, so tell a manager: a card was charged ${money(sale.order.payment.card)} with no sale saved.`);
+        void recoverReaderPayments();
       },
     });
   }
+
+  // Reader payments this browser started that never finished here: the
+  // page was reloaded mid-payment (a deploy, a frozen screen). Each is
+  // looked up with Stripe. One that went through becomes the "card WAS
+  // charged" warning, so Retry saving records it; one still waiting on the
+  // reader is stopped first, since nothing is watching it anymore and a tap
+  // now would charge a sale nobody saves. One warning at a time: the next
+  // waits until this one is dealt with.
+  const recoveringRef = useRef(false);
+  async function recoverReaderPayments() {
+    if (recoveringRef.current) return;
+    recoveringRef.current = true;
+    try {
+      for (const p of readPendingReaderSales()) {
+        const paymentIntentId = p.order.payment.stripePaymentIntentId as string;
+        const held = currentUnsavedSale();
+        if (held?.order.payment.stripePaymentIntentId === paymentIntentId) {
+          clearPendingReaderSale(paymentIntentId);
+          continue;
+        }
+        let r = await checkReaderPayment(paymentIntentId).catch(() => null);
+        // No answer (offline, or an out-of-date page): looked at again next load.
+        if (!r) return;
+        if (r.status !== "succeeded" && r.status !== "canceled") {
+          await cancelReaderPayment(paymentIntentId, p.readerId).catch(() => {});
+          r = await checkReaderPayment(paymentIntentId).catch(() => null);
+          if (!r) return;
+        }
+        if (r.status === "succeeded") {
+          // Its sale may have saved just before the page went: then there's
+          // nothing to retry (and no receipt or drawer to repeat).
+          const savedAs = await savedOrderForPayment(paymentIntentId).catch(() => undefined);
+          if (typeof savedAs === "number") {
+            clearPendingReaderSale(paymentIntentId);
+            setToast(`The card payment from before the page reloaded went through and was saved as order #${savedAs}. Nothing more to do.`);
+            continue;
+          }
+          if (held) return;
+          const readerTip = r.tipCents / 100;
+          keepUnsavedSale({
+            // A sale that waited its turn is already final; one from the
+            // reader gets the amount and tip the customer ended up paying.
+            order: p.final ? p.order : { ...p.order, payment: { ...p.order.payment, card: r.amountCents / 100, tip: readerTip }, tip: cents((p.order.tip ?? 0) + readerTip) },
+            memberName: p.memberName,
+            tries: 0,
+          });
+          clearPendingReaderSale(paymentIntentId);
+          setToast(
+            p.final
+              ? "Another card payment was charged but isn't saved yet. Tap Retry saving below, and don't charge that card again."
+              : "A card payment from before the page reloaded went through but isn't saved yet. Tap Retry saving below.",
+          );
+        } else if (r.status === "canceled") {
+          clearPendingReaderSale(paymentIntentId);
+          if (Date.now() - p.startedAt < 30 * 60_000) {
+            const pay = p.order.payment;
+            // A split's cash part was taken before the card, and the note
+            // that said to hand it back went with the reload.
+            const cashBack = pay.method === "split" && pay.cash > 0 ? ` It was a split: hand back the ${money(pay.tendered ?? pay.cash)} cash they gave you first.` : "";
+            // A tab is still open; a walk-up order went with the reload.
+            const again = p.order.draftOrderId ? "Take payment on the tab again." : "Ring the order up again, then take payment.";
+            setToast(`The card payment from before the page reloaded didn't go through, so nothing was charged.${cashBack} ${again}`);
+          }
+        } else {
+          // Still going through: looked at again on the next load.
+          setToast("A card payment from before the page reloaded is still going through. Don't charge that card again: reload in a minute to see if it went through.");
+          return;
+        }
+      }
+    } finally {
+      recoveringRef.current = false;
+    }
+  }
+
+  // Once, when the register opens.
+  useEffect(() => {
+    void recoverReaderPayments();
+  }, []);
 
   return (
     <div className="grid gap-3 md:min-h-0 md:flex-1 md:grid-cols-[370px_1fr] lg:grid-cols-[440px_1fr]">
       {/* Cart panel. On a tablet the page is locked to the screen: the header
           and the checkout block stay put, and only the middle (the order
           itself) scrolls -- so the header and footer are kept to two rows each. */}
-      <div className="card flex flex-col !p-3 md:min-h-0">
+      <SignalFrame signal={signal} />
+      <div
+        className="card relative flex flex-col !p-3 md:min-h-0"
+        style={signal ? { boxShadow: `0 0 0 3px ${signal === "plus" ? "var(--gold)" : "var(--accent)"}` } : undefined}
+      >
+        {/* Someone just checked in on the customer screen: over the top of
+            the order for a few seconds, never over the menu or the total. */}
+        <CheckinArrivals
+          arrivals={checkins.arrivals}
+          onDismiss={checkins.dismissArrival}
+          onOpen={(id) => {
+            checkins.dismissArrival(id);
+            pickTab(CUSTOMERS_TAB);
+            // A phone stacks the menu under the order: bring the tab up.
+            if (!window.matchMedia("(min-width: 768px)").matches) menuScrollRef.current?.parentElement?.scrollIntoView({ block: "start" });
+          }}
+        />
         <div className="shrink-0">
           <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => setPickedCashier({ id: e.target.value, shiftKey })}>
+            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
               <option value="">Choose cashier</option>
               {onShiftIds.size > 0 ? (
                 <>
@@ -888,6 +1331,26 @@ export default function PosApp({
               {tabSaveIssue.stale ? "Tab not saved: the register was just updated. Tap to reload, then check this tab." : "Tab not saved. Tap to retry."}
             </button>
           )}
+          {/* Across the top of the order, never scrolled away: a former
+              unlimited member who isn't paying (with the two ways to set it
+              up), or a paying Insiders+ member. */}
+          {member && signal === "unlimited" ? (
+            <UnlimitedBanner
+              key={member.id}
+              member={member}
+              readerId={readerId}
+              employeeId={employeeId}
+              toTablet={checkins.toTablet}
+              onDone={(m) => {
+                attachMember(m);
+                const done = `${firstNameFor(m.name)} is Insiders+ now.`;
+                setToast(done);
+                setTimeout(() => setToast((t) => (t === done ? null : t)), 8000);
+              }}
+            />
+          ) : (
+            member && signal === "plus" && <PlusRibbon name={member.name} discount={memberDiscountRate(member)} />
+          )}
         </div>
 
         <div className="space-y-2 md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain md:pr-1">
@@ -948,11 +1411,30 @@ export default function PosApp({
             </div>
           )}
 
+          {/* A check-in on the customer screen took over the order from whoever was on it. */}
+          {swapShown && (
+            <div className="notice notice-success flex items-center gap-2 !py-1 !pl-2.5 !pr-1 text-sm" role="status">
+              <span className="min-w-0 flex-1 leading-snug">
+                <strong>Now on this order: {shortName(swapShown.now.name)}</strong> (was {shortName(swapShown.was.name)})
+              </span>
+              <button
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center text-lg leading-none"
+                style={{ color: "var(--muted)" }}
+                aria-label="Dismiss"
+                onClick={() => setSwapNote(null)}
+              >
+                ×
+              </button>
+            </div>
+          )}
           {toast && (
             <div className="notice notice-success p-2.5 text-xs">
               {toast}
             </div>
           )}
+          {cardNotices.map((n) => (
+            <CardNoticeBanner key={n.key} notice={n.notice} onClose={() => setCardNotices((list) => list.filter((x) => x.key !== n.key))} />
+          ))}
           {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
             <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
               <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
@@ -973,7 +1455,7 @@ export default function PosApp({
               No items yet
             </div>
           ) : (
-            cart.map((line) => (
+            cart.map((line, i) => (
               // One compact row per line (quantity, name, price, remove) so a
               // longer order still fits the iPad without scrolling much.
               <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
@@ -1005,6 +1487,11 @@ export default function PosApp({
                       {line.mods.join(", ")}
                     </div>
                   )}
+                  {i === totals.dailyPerkLine && (
+                    <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
+                      ☕ {line.qty > 1 ? "One free today" : "Free today"}
+                    </div>
+                  )}
                 </div>
                 <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
                   {money(line.unit * line.qty)}
@@ -1021,19 +1508,81 @@ export default function PosApp({
             ))
           )}
 
+          {/* The Insiders+ daily coffee: on the order with a way to take it
+              off, or off with a way to put it back. */}
+          {memberId && coffeePick && totals.dailyPerkLine !== null ? (
+            <div
+              className="flex items-center gap-2 rounded-md border-2 px-2 py-1.5 text-xs"
+              style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }}
+            >
+              <span className="min-w-0 flex-1">
+                ☕ <strong>{DAILY_COFFEE_TITLE}</strong>
+                {/* Wraps on an upright iPad rather than cutting off. */}
+                <span className="block">{cart[totals.dailyPerkLine]?.name} free, add-ons still charged</span>
+              </span>
+              <span className="shrink-0 font-bold tabular-nums">−{money(totals.dailyPerkDiscount)}</span>
+              <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setCoffeeOffFor(memberId)}>
+                Remove
+              </button>
+            </div>
+          ) : (
+            memberId &&
+            coffeePick && (
+              <div className="flex items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-xs" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
+                <span className="min-w-0 flex-1">☕ {DAILY_COFFEE_TITLE}: not on this order.</span>
+                <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setCoffeeOffFor(null)}>
+                  Use it
+                </button>
+              </div>
+            )
+          )}
+
+          {/* Its "+ Add name" / "+ Add email" show on the customer screen as they're typed. */}
+          <TabletSetupContext value={tabletSetup}>
           <PosMemberPanel
             member={member}
-            onChange={setMember}
+            onChange={attachMember}
+            visit={checkins.visitFor(memberId)}
+            coffee={
+              isPlus
+                ? {
+                    today: coffeeToday,
+                    onOrder: totals.dailyPerkDiscount > 0,
+                    retry: () => {
+                      setCoffee(null);
+                      setCoffeeTry((n) => n + 1);
+                    },
+                  }
+                : null
+            }
             employeeId={employeeId}
             onRewardLine={(label) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }])}
+            onFind={() => {
+              pickTab(CUSTOMERS_TAB);
+              setFindAt(Date.now());
+            }}
+            readerId={readerId}
+            toTablet={checkins.toTablet}
           />
-          <RegisterCheckins registerTopic={registerTopic} member={member} onAttach={setMember} hasOrder={cart.length > 0 || !!activeTabId} lastSale={lastReceipt} />
+          </TabletSetupContext>
 
           <div className="space-y-1 pt-1">
-          <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
-            Monthly member (10% off)
-          </label>
+          {/* With a member on the order, their discount is ticked by itself
+              (Insiders+ 10%; plain Insiders earn points instead) and the
+              manual Monthly member tick is hidden, so the two can't stack. */}
+          {member ? (
+            isPlus && (
+              <label className="flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+                <input type="checkbox" checked readOnly disabled aria-readonly />
+                Insiders+ · {Math.round(memberDiscountRate(member) * 100)}% off
+              </label>
+            )
+          ) : (
+            <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+              <input type="checkbox" checked={monthlyMember} onChange={(e) => setMonthlyMember(e.target.checked)} />
+              Monthly member (10% off)
+            </label>
+          )}
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
             <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
             Tax exempt
@@ -1067,7 +1616,7 @@ export default function PosApp({
           {/* No new charges while a charged sale is unsaved: if sales aren't
               saving, the register shouldn't keep charging cards. */}
           <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
-            Complete order
+            {employeeId ? "Complete order" : "Pick a cashier"}
           </button>
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
@@ -1078,14 +1627,20 @@ export default function PosApp({
             <button
               className="btn-secondary whitespace-nowrap py-2 text-sm"
               style={activeTabId ? undefined : { color: "var(--danger-text)" }}
-              disabled={(cart.length === 0 && !activeTabId) || busy}
+              disabled={(!onOrder && !activeTabId) || busy}
               onClick={() => {
                 // Leaving a tab is a routine, non-destructive action (it saves
                 // first) -- only skip the confirm step for that case. Clearing
                 // a walk-up order with items actually discards them, so that
-                // one still asks first.
+                // one still asks first. With nothing rung up (just a member,
+                // a name or a tick box), there's nothing to lose: it clears
+                // straight away.
                 if (activeTabId) {
                   void putAwayTab();
+                  return;
+                }
+                if (cart.length === 0) {
+                  resetOrder();
                   return;
                 }
                 setConfirmState({
@@ -1114,7 +1669,21 @@ export default function PosApp({
               onPick={setFlourish}
               canPrint={!!printTarget && devices.autoPrint}
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
+              rickroll={rickroll}
             />
+            {/* Admins only. Docked here, in the row's spare cells, rather than
+                floating over the menu buttons the way it used to. */}
+            {canNote && (
+              <button
+                className="btn-secondary col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap !px-2 py-2 text-sm"
+                style={{ borderColor: "var(--border)", color: "var(--muted)" }}
+                onClick={() => setNoteOpen(true)}
+                title="Leave a dev note about the register or the customer screen"
+              >
+                <NoteIcon size={16} />
+                Dev note
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1125,10 +1694,7 @@ export default function PosApp({
         <div className="mb-3 flex shrink-0 flex-wrap gap-2">
           <button
             className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${categoryId === MOVIES_TAB ? "chip-selected" : ""}`}
-            onClick={() => {
-              setCategoryId(MOVIES_TAB);
-              setBuilderItemId(null);
-            }}
+            onClick={() => pickTab(MOVIES_TAB)}
           >
             <CategoryIcon category="movies" />
             Movies
@@ -1137,16 +1703,26 @@ export default function PosApp({
             <button
               key={c.id}
               className={`chip flex min-w-[5.5rem] flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base ${categoryId === c.id ? "chip-selected" : ""}`}
-              onClick={() => {
-                setCategoryId(c.id);
-                setBuilderItemId(null);
-              }}
+              onClick={() => pickTab(c.id)}
             >
               {/* An icon reads at this size where a tiny photo doesn't. */}
               <CategoryIcon category={c.key} label={c.label} />
               {c.label}
             </button>
           ))}
+          {/* Last, so the menu tabs keep their places. A dot when there's
+              something there to look at (nothing pops up over the menu
+              buttons). Never narrower than its name (an upright iPad gives
+              it a row of its own). */}
+          <button
+            className={`chip relative flex min-w-fit flex-1 items-center justify-center gap-2 !px-3 !py-2.5 !text-base font-bold ${categoryId === CUSTOMERS_TAB ? "chip-selected" : ""}`}
+            onClick={() => pickTab(CUSTOMERS_TAB)}
+            aria-label={`Customers${customersNote ? ": something to look at" : ""}`}
+          >
+            <CustomersIcon />
+            Customers
+            {customersNote && categoryId !== CUSTOMERS_TAB && <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--foreground)" }} aria-hidden />}
+          </button>
         </div>
         {customOpen && (
           <CustomItemModal
@@ -1158,8 +1734,13 @@ export default function PosApp({
           />
         )}
 
-        <div className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
-        {categoryId === MOVIES_TAB ? (
+        <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
+        {categoryId === CUSTOMERS_TAB ? (
+          // Its "New phone account" shows on the customer screen as it's typed.
+          <TabletSetupContext value={tabletSetup}>
+            <CustomersTab checkins={checkins} current={member} hasOrder={cart.length > 0 || !!activeTabId} onAttach={attachMember} findAt={findAt} readerId={readerId} employeeId={employeeId} />
+          </TabletSetupContext>
+        ) : categoryId === MOVIES_TAB ? (
           <MovieTickets
             initial={initialScreenings}
             inCart={ticketsInCart}
@@ -1229,7 +1810,7 @@ export default function PosApp({
       )}
 
       {tipOpen && (
-        <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={continueAfterTip} onCancel={() => setTipOpen(false)} />
+        <TipModal subtotal={totals.subtotal} tabName={activeTab?.order_name ?? "Tab"} onConfirm={(t) => continueAfterTip(t, true)} onCancel={() => setTipOpen(false)} />
       )}
 
       {ageConfirmOpen && (
@@ -1261,11 +1842,14 @@ export default function PosApp({
 
       {payOpen && (
         <PaymentModal
-          total={totals.total + tip}
+          total={cents(totals.total + tip)}
           readerId={readerId}
-          tipEligible={tip > 0 ? null : totals.total - totals.tax}
+          tipEligible={tip > 0 || tipAsked ? null : totals.total - totals.tax}
+          tipTaken={tipAsked}
           tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
           tabName={activeTab?.order_name ?? "Tab"}
+          onReaderStarted={keepReaderPayment}
+          onReaderCanceled={clearPendingReaderSale}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}
         />
@@ -1297,10 +1881,14 @@ export default function PosApp({
           title="Name this tab"
           placeholder="Customer name, seat, etc."
           confirmLabel="Open tab"
+          initialValue={tabNameSuggestion}
+          note={tabNameTaken ? `A tab named ${tabNameSuggestion} is already open.` : null}
           onCancel={() => setOpenTabPromptOpen(false)}
           onSubmit={handleOpenTab}
         />
       )}
+
+      {noteOpen && <DevNoteDialog about={NOTE_ABOUT} onClose={() => setNoteOpen(false)} />}
 
       {confirmState && (
         <ConfirmModal

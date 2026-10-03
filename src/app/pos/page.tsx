@@ -3,10 +3,12 @@ import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { requireStaff } from "@/lib/auth";
+import { canLeaveDevNotes } from "@/lib/dev-notes-access";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
 import PosApp from "./PosApp";
+import { HeaderSignal } from "./MemberSignal";
 import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
@@ -31,7 +33,8 @@ export const viewport: Viewport = {
 };
 
 export default async function PosPage() {
-  const session = await requireStaff();
+  // Signing in again comes back here, not to the back office.
+  const session = await requireStaff("/pos");
 
   const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
     getMenuTree(),
@@ -42,8 +45,8 @@ export default async function PosPage() {
     getRegisterScreenings(),
   ]);
 
-  // Tickets/events aren't ready for POS ordering yet (event booking flow,
-  // per-showtime ticket linkage) -- hide that category here for now.
+  // Tickets are sold from the Movies tab (per showing, with seats counted),
+  // so the menu's tickets category stays off the register's item buttons.
   // Items a manager hid ("Hide from register" on the Menu page) stay off.
   const orderableCategories = withoutHiddenItems(categories).filter((c) => c.key !== "tickets");
 
@@ -52,11 +55,14 @@ export default async function PosPage() {
     // exactly one screen height and the panels inside scroll on their own.
     <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-3 md:h-dvh md:overflow-hidden md:overscroll-none md:py-2">
       {/* The iPad already shows the date; its height goes to the order instead. */}
-      <div className="mb-2 flex shrink-0 items-baseline justify-between md:hidden">
+      <div className="mb-2 flex shrink-0 items-baseline gap-2 md:hidden">
         <h1 className="font-display text-xl" style={{ color: "var(--foreground)" }}>
           Royale Cinema Lounge <span style={{ color: "var(--accent)" }}>· Point of Sale</span>
         </h1>
-        <span className="eyebrow">
+        {/* Gold "+" for a paying Insiders+ member on the order; NOT ACTIVE
+            for a former unlimited member who isn't paying. */}
+        <HeaderSignal />
+        <span className="eyebrow ml-auto">
           {new Date().toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" })}
         </span>
       </div>
@@ -77,6 +83,9 @@ export default async function PosPage() {
           defaultReaderId={defaultReaderId()}
           initialScreenings={showings.ok ? showings.screenings : []}
           registerTopic={registerTopic()}
+          // Dev note only while an admin, or the register's shared login, is
+          // signed in (src/lib/dev-notes-access; submitting checks again).
+          canNote={canLeaveDevNotes(session)}
         />
       </ItemSettingsProvider>
     </div>
