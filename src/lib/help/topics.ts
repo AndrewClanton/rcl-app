@@ -240,7 +240,7 @@ export const HELP_TOPICS = {
     title: "Senior and student rates",
     area: "Register: members and the door",
     body:
-      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them, at the register (Member → Change rate) or on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
+      "Insiders+ is $15 a month, $12 for seniors and $10 for students. Those rates are never chosen online: staff switch them at the register (Member → Change rate), or a manager on the member's page, only after checking an ID in person. For someone already paying, the new price starts with their next bill; nothing is charged today. Paying yearly is 15% off any rate.",
   },
   "unlimited-no-payment": {
     title: "No payment on file for unlimited membership",
@@ -255,7 +255,16 @@ export const HELP_TOPICS = {
     title: "Ran out (86 it)",
     area: "Register: shift tools",
     body:
-      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does. The managers get a to-do to buy more (\"Buy Hot dog buns at Walmart\"), with a nudge to raise the par if it keeps happening, and when one marks it Bought it, everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the register shows a quiet line, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\". When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+    links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
+    trainingSlug: "par-count-and-shopping-list",
+  },
+  "ran-out-alerts": {
+    title: "Ran-out emails and Back in stock",
+    area: "Menu and inventory",
+    body:
+      "Shopping is done at the start of the week, enough for the whole week, so running out is a problem to fix, not a chore for whoever's on shift. When staff tap Ran out, the people picked under \"Ran-out alerts go to\" get one email: what ran out, when, who reported it, the par, this week's counts, and a suggestion to raise the par. Its Back in stock button opens Back office → Ran out (signed in), where marking it back in stock clears the register's line. \"Ran out this week\" lists repeats so the pars that are too low stand out. Owners and admins pick who gets the email.",
+    links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-count": {
@@ -276,7 +285,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. Bought it (here, or on the manager's to-do) clears a Ran out report and puts its menu items back on sale; Found some or False alarm clears it without buying anything.",
+      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {
@@ -298,7 +307,7 @@ export const HELP_TOPICS = {
     title: "Changing a member's points",
     area: "Members and memberships",
     body:
-      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, use Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, a manager uses Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "gift-membership": {
@@ -323,7 +332,7 @@ export const HELP_TOPICS = {
     title: "Free (community) memberships",
     area: "Members and memberships",
     body:
-      "Community programs give free Insiders+ to people referred by our outreach partners. Grant it from the member's page and pick the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
+      "Community programs give free Insiders+ to people referred by our outreach partners. A manager grants it from the member's page and picks the program: no card, no billing. The counts show up in Reports for nonprofit reporting.",
   },
 
   // ---------- menu and inventory ----------
@@ -350,7 +359,7 @@ export const HELP_TOPICS = {
     title: "Scheduling a screening",
     area: "Showtimes, events and booths",
     body:
-      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
+      "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Duplicate on a showing copies it here for another date. Repeat adds the same showing at several start times on the days you pick across a date range, listed first so you can check them. Adding, moving or removing a showing takes a manager. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
     trainingSlug: "what-we-can-post",
   },
   "house-events": {

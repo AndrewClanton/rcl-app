@@ -192,9 +192,14 @@ export default function ShoppingListTab({
               Ran out
             </h3>
             <span className="text-sm" style={{ color: "var(--muted)" }}>
-              {ranOut ? `${ranOut} reported during a shift. Get these first.` : "Nothing else is out."}
+              {ranOut ? `${ranOut} reported during a shift. The buyers have been emailed.` : "Nothing else is out."}
             </span>
           </div>
+          {ranOut > 0 && (
+            <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+              Once it&apos;s restocked, the buyers mark it back in stock in Back office → Ran out.
+            </p>
+          )}
           {done && (
             <div className="notice notice-success mt-3 flex items-center gap-3 !px-3 !py-2 text-sm" role="status">
               <span className="flex-1">{done}</span>
@@ -256,10 +261,7 @@ export default function ShoppingListTab({
                           False alarm
                         </button>
                         <button className="btn-secondary min-h-11 !px-3 !py-2 text-sm" disabled={busyId === o.id} onClick={() => resolve(o, "found")}>
-                          Found some
-                        </button>
-                        <button className="btn-primary min-h-11 !px-5 !py-2" disabled={busyId === o.id} onClick={() => resolve(o, "bought")}>
-                          {busyId === o.id ? "Saving…" : "Bought it"}
+                          {busyId === o.id ? "Saving…" : "Found some"}
                         </button>
                       </div>
                     </li>

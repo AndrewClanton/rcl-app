@@ -15,7 +15,9 @@ import { changeMemberPoints, loadPointsHistory } from "../actions";
 
 // ---------- the balance, and "Add or take away points" ----------
 
-export function PointsBalance({ memberId, balance }: { memberId: string; balance: number }) {
+// canChange: managers and up (changeMemberPoints refuses anyone else). A
+// cashier sees the balance and the history, and a note instead.
+export function PointsBalance({ memberId, balance, canChange }: { memberId: string; balance: number; canChange: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<"add" | "take">("add");
@@ -91,7 +93,8 @@ export function PointsBalance({ memberId, balance }: { memberId: string; balance
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-2xl font-semibold tabular-nums">{formatPoints(balance)}</span>
         <span className="text-sm text-[var(--muted)]">points</span>
-        {!open && (
+        {!canChange && <span className="text-xs text-[var(--muted)]">A manager can add or take away points.</span>}
+        {canChange && !open && (
           <button
             type="button"
             className="rounded border border-[var(--border)] px-3 py-1.5 text-sm hover:border-[var(--foreground)]"
@@ -111,7 +114,7 @@ export function PointsBalance({ memberId, balance }: { memberId: string; balance
         )}
       </div>
 
-      {open && (
+      {canChange && open && (
         <div className="mt-3 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--surface-hover)] p-3">
           {!confirming ? (
             <form

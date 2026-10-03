@@ -9,12 +9,13 @@ import { getBoothReservationsForMonth } from "@/lib/data/booths";
 import type { BoothReservation } from "@/lib/types";
 import { assertStaff } from "@/lib/auth";
 
-// monthStart is the first day of the month, e.g. "2026-09-01".
+// monthStart is the first day of the month, e.g. "2026-09-01". Guests'
+// contact details come back shortened for a cashier, same as the page.
 export async function getReservationsForMonth(monthStart: string): Promise<BoothReservation[]> {
-  await assertStaff();
+  const staff = await assertStaff();
   const [y, m] = monthStart.split("-").map(Number);
   const nextMonth = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-  return getBoothReservationsForMonth(monthStart, nextMonth);
+  return getBoothReservationsForMonth(monthStart, nextMonth, staff.role);
 }
 
 function revalidate() {

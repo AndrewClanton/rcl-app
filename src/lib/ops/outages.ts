@@ -1,7 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { logOpsChange } from "./changes";
-import { OFTEN_OUT_DAYS, OFTEN_OUT_TIMES, outReason, restockTaskText, type OftenOut, type OutageResolution, type RegisterOut } from "./shared";
+import { OFTEN_OUT_DAYS, OFTEN_OUT_TIMES, outReason, restockTaskText, type OftenOut, type OutageResolution, type OutNotice, type RegisterOut } from "./shared";
 
 // "Ran out" (86 it), the parts more than one screen needs: what's 86'd for
 // the register's poll, putting items back on sale (the register's shopping
@@ -14,16 +14,26 @@ const db = () => createAdminClient();
 // Menu items 86'd right now, and how many reports are open. Never throws:
 // every register polls this each minute, and a failure (or a database
 // without the migration yet) only means no OUT tags.
-export async function currentOuts(): Promise<{ outs: RegisterOut[]; open: number }> {
+export async function currentOuts(): Promise<{ outs: RegisterOut[]; open: number; notices: OutNotice[] }> {
   try {
     const supabase = db();
     const [items, open] = await Promise.all([
       supabase.from("menu_items").select("id, out_since, out_note, out_outage_id").not("out_since", "is", null),
-      supabase.from("stock_outages").select("id, label").is("resolved_at", null),
+      // "*": alert_sent_to may not be there yet on a database without the migration.
+      supabase.from("stock_outages").select("*").is("resolved_at", null).order("reported_at"),
     ]);
-    if (items.error) return { outs: [], open: 0 };
-    const labels = new Map((open.data ?? []).map((o) => [o.id as string, o.label as string]));
+    if (items.error) return { outs: [], open: 0, notices: [] };
+    const openRows = (open.data ?? []) as { id: string; label: string; alert_sent_to?: string[] | null }[];
+    const labels = new Map(openRows.map((o) => [o.id, o.label]));
+    // Who each report's email reached, by first name.
+    const sentIds = [...new Set(openRows.flatMap((o) => o.alert_sent_to ?? []))];
+    const firsts = new Map<string, string>();
+    if (sentIds.length) {
+      const { data: people } = await supabase.from("employees").select("id, name").in("id", sentIds);
+      for (const p of people ?? []) firsts.set(p.id as string, (p.name as string).trim().split(/\s+/)[0]);
+    }
     return {
+      notices: openRows.map((o) => ({ id: o.id, what: o.label, emailed: (o.alert_sent_to ?? []).map((id) => firsts.get(id)).filter((n): n is string => !!n) })),
       outs: (items.data ?? []).map((i) => ({
         itemId: i.id as string,
         reason: (i.out_note as string | null) || "Out",
@@ -31,10 +41,10 @@ export async function currentOuts(): Promise<{ outs: RegisterOut[]; open: number
         outageId: (i.out_outage_id as string | null) ?? null,
         what: i.out_outage_id ? (labels.get(i.out_outage_id as string) ?? null) : null,
       })),
-      open: open.error ? 0 : (open.data ?? []).length,
+      open: open.error ? 0 : openRows.length,
     };
   } catch {
-    return { outs: [], open: 0 };
+    return { outs: [], open: 0, notices: [] };
   }
 }
 
@@ -126,6 +136,21 @@ export async function closeOutage(outageId: string, resolution: OutageResolution
 const DAY_MS = 86_400_000;
 const likeText = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
+// How many times it's run out: this report and the ones before it in the 30
+// days up to it, false alarms left out. The same par line, or the same words
+// if it isn't on the sheet. At least 1.
+export async function timesOut(o: { parItemId: string | null; label: string; reportedAt: string }): Promise<number> {
+  let q = db()
+    .from("stock_outages")
+    .select("id", { count: "exact", head: true })
+    .gte("reported_at", new Date(Date.parse(o.reportedAt) - OFTEN_OUT_DAYS * DAY_MS).toISOString())
+    .lte("reported_at", o.reportedAt)
+    .or("resolution.is.null,resolution.neq.mistake");
+  q = o.parItemId ? q.eq("par_item_id", o.parItemId) : q.is("par_item_id", null).ilike("label", likeText(o.label));
+  const { count } = await q;
+  return Math.max(1, count ?? 1);
+}
+
 // A report's to-do, made if it hasn't got one. False when there's none
 // (the report is closed, or saving it failed).
 export async function ensureRestockTodo(outageId: string): Promise<boolean> {
@@ -141,17 +166,10 @@ export async function ensureRestockTodo(outageId: string): Promise<boolean> {
   const item = o.item as unknown as { name: string; par_qty: number | null; unit: string | null; unit_size: string | null; source: string | null } | null;
   const reportedAt = o.reported_at as string;
 
-  // This report and the ones before it in the 30 days up to it, false
-  // alarms left out: the same par line, or the same words if it isn't on
-  // the sheet.
-  let times = supabase
-    .from("stock_outages")
-    .select("id", { count: "exact", head: true })
-    .gte("reported_at", new Date(Date.parse(reportedAt) - OFTEN_OUT_DAYS * DAY_MS).toISOString())
-    .lte("reported_at", reportedAt)
-    .or("resolution.is.null,resolution.neq.mistake");
-  times = o.par_item_id ? times.eq("par_item_id", o.par_item_id) : times.is("par_item_id", null).ilike("label", likeText(o.label as string));
-  const [{ count }, { data: staff }] = await Promise.all([times, supabase.from("employees").select("id, name")]);
+  const [count, { data: staff }] = await Promise.all([
+    timesOut({ parItemId: (o.par_item_id as string | null) ?? null, label: o.label as string, reportedAt }),
+    supabase.from("employees").select("id, name"),
+  ]);
 
   const people = (staff ?? []).map((e) => ({ id: e.id as string, name: (e.name as string).trim() }));
   const source = item?.source?.trim() || null;
@@ -168,7 +186,7 @@ export async function ensureRestockTodo(outageId: string): Promise<boolean> {
     parQty: item?.par_qty === null || item?.par_qty === undefined ? null : Number(item.par_qty),
     unit: item?.unit ?? null,
     unitSize: item?.unit_size ?? null,
-    times: Math.max(1, count ?? 1),
+    times: count,
   });
   const { error } = await supabase
     .from("staff_todos")
@@ -227,7 +245,7 @@ export async function removeTodo(todoId: string): Promise<{ ok: true } | { ok: f
   if (!t) return { ok: true };
   const outage = t.outage as unknown as { resolved_at: string | null } | null;
   if (outage && !outage.resolved_at) {
-    return { ok: false, error: "That's a Ran out to-do. Tap Bought it once it's bought, or close the report on the register's shopping list (Found some, False alarm)." };
+    return { ok: false, error: "That's a Ran out to-do. Tap Bought it once it's bought, or close the report in Back office → Ran out (Back in stock, Found some, False alarm)." };
   }
   const { error } = await supabase.from("staff_todos").delete().eq("id", todoId);
   return error ? { ok: false, error: "Couldn't remove that. Try again." } : { ok: true };

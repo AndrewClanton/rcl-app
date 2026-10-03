@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { logOpsChange } from "@/lib/ops/changes";
 import { closeOutage, ensureRestockTodo, getOftenOut, putBackOnSale } from "@/lib/ops/outages";
+import { sendRanOutAlert } from "@/lib/ops/ran-out-alert";
 import {
   OUT_ITEMS_MAX,
   OUT_LABEL_MAX,
@@ -19,8 +20,9 @@ import {
 
 // "Ran out" (86 it) on the register: report that something ran out
 // mid-shift, stop selling the menu items that need it (their buttons show
-// OUT), and give the managers a to-do to buy more; it's also at the top of
-// their shopping list until someone buys it. Staff-only, like the rest of
+// OUT), and email the people who buy for the week (Back office → Ran out →
+// Ran-out alerts go to). It's also a restock to-do for the managers and at
+// the top of their shopping list until it's back in stock. Staff-only, like the rest of
 // the shift tools; `employeeId` is whoever's using the register (same trust
 // model as orders), checked against the staff list.
 
@@ -125,14 +127,15 @@ export interface ReportOutageInput {
   menuItemIds: string[]; // stop selling these
 }
 
-// "We're out of X." Stops the ticked menu items, makes the managers' restock
-// to-do, and lands on the shopping list. Reporting a par line that's already
-// out adds to that report (and its one to-do).
+// "We're out of X." Stops the ticked menu items, emails the purchasers (once
+// per report), makes the managers' restock to-do, and lands on the shopping
+// list. Reporting a par line that's already out adds to that report (and its
+// one to-do and one email).
 export async function reportOutage(
   input: ReportOutageInput,
   employeeId: string | null,
   shiftId: string | null,
-): Promise<Result<{ outageId: string; name: string; stopped: string[]; added: boolean; todo: boolean }>> {
+): Promise<Result<{ outageId: string; name: string; stopped: string[]; added: boolean; todo: boolean; emailed: string[] }>> {
   const staff = await assertStaff();
   if (!(await allowAttempt(`ran-out:${staff.employeeId}`, 20, 300))) return { ok: false, error: BUSY };
   if (!input || typeof input !== "object") return { ok: false, error: "Say what ran out." };
@@ -226,7 +229,9 @@ export async function reportOutage(
   else if (stopped) await logOpsChange("outage", outageId, "changed", [`Still out of ${label}`, stopped].join(" · "), by);
   // Made once per report: a second report of the same line finds it.
   const todo = await ensureRestockTodo(outageId);
-  return { ok: true, outageId, name: label, stopped: stoppedNames, added: !existing, todo };
+  // Claimed per report, so a second tap or another register doesn't resend.
+  const { emailed } = await sendRanOutAlert(outageId);
+  return { ok: true, outageId, name: label, stopped: stoppedNames, added: !existing, todo, emailed };
 }
 
 // Par lines that keep running out, for the managers' "Raise par?" on the

@@ -39,6 +39,9 @@ import pg from "pg";
 import { config } from "dotenv";
 
 config({ path: ".env.local", quiet: true });
+// Reporting emails the purchasers (src/lib/ops/ran-out-alert.ts). Never
+// from a check: with no key, sendEmail sends nothing.
+delete process.env.RESEND_API_KEY;
 
 let failures = 0;
 const check = (label, ok, detail = "") => {
@@ -76,6 +79,7 @@ const session = JSON.stringify({ employeeId: emp.id, name: emp.name, role: "mana
 const stubs = {
   "server-only": "",
   "next/cache": "export function revalidatePath() {} export function revalidateTag() {}",
+  "next/server": "export function after(f) { return Promise.resolve().then(typeof f === 'function' ? f : () => f); }",
   "@/lib/auth": `const s = ${session};
     export async function assertStaff() { return s; }
     export async function getStaffSession() { return s; }
@@ -264,8 +268,10 @@ try {
   check("poll: the register sees the 86 and what ran out", !!p1 && p1.what === "Ran-out check buns" && p1.outageId === O1 && poll.open >= 1);
   const status = await ops.getShiftStatus();
   check("poll: getShiftStatus carries outs and the open count", status.outs.some((o) => o.itemId === M1) && status.ranOut >= 1);
-  const st1 = status.todos.find((t) => t.id === t1.id);
-  check("poll: the to-do rides along, marked for managers and its report", !!st1 && st1.forManagers === true && st1.outageId === O1 && st1.assigneeId === null);
+  // The register never shows the restock to-do (no Bought it there): just
+  // the quiet "Out of …" line. The purchasers are emailed instead.
+  check("poll: the restock to-do stays off the register", !status.todos.some((t) => t.id === t1.id));
+  check("poll: the quiet Out of line rides along", status.outNotices.some((n) => n.id === O1 && n.what === "Ran-out check buns"));
   const sheet = await ops.getParSheet();
   check("par count: the line shows it was reported out", !!sheet.outs[P1]);
   check("options: the line shows as already out", !!(await ranOut.getRanOutOptions()).open[P1]);

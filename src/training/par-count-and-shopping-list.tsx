@@ -107,7 +107,7 @@ export default function ParCountAndShoppingList() {
         <p>
           Tap <b>Ran out</b> on the shift bar and type what ran out: it searches the par sheet, and anything that isn&apos;t on it can be typed in as is. Under{" "}
           <b>Stop selling these?</b> tick the menu items that need it; items whose recipe uses it are ticked for you. Save: those buttons show <b>OUT</b> on the register,
-          and it goes to the top of the shopping list.
+          and the people who buy for the week get an email. You don&apos;t need to buy it: the register shows a quiet line saying who was emailed.
         </p>
         <Screen url={`${HOST}/pos`} caption="Register → Ran out" label="The Ran out sheet with a menu item ticked">
           <div className={s.card}>
@@ -135,8 +135,9 @@ export default function ParCountAndShoppingList() {
 
       <Step n={6} title="Use the shopping list">
         <p>
-          Tap <b>Shopping</b>. First comes whatever ran out, then everything under par, grouped by the store it&apos;s bought at, with how many to get. When it&apos;s
-          bought, mark it <b>Bought</b>. <b>Found more</b> or <b>False alarm</b> clears a Ran out report without buying anything.
+          Tap <b>Shopping</b>. First comes whatever ran out, then everything under par, grouped by the store it&apos;s bought at, with how many to get. The buyers
+          are emailed about anything that ran out and mark it back in stock in Back office. <b>Found some</b> or <b>False alarm</b> clears a Ran out report without
+          buying anything.
         </p>
       </Step>
     </TrainingPage>

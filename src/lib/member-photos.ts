@@ -38,3 +38,35 @@ export async function removeMemberPhotos(
   const { error } = await bucket.remove([...names]);
   return error ? { removed: 0, ok: false } : { removed: names.size, ok };
 }
+
+// Photos only (no SVG, which can carry script), with the extension each is
+// stored under. The stored name comes from this list, never from the
+// uploaded file's name or whatever type a server claims.
+export const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" };
+
+// Removing or replacing one photo deletes its stored file too, so the old
+// picture doesn't stay reachable at its address. Only a file named after
+// this member, or after an account merged into them (member_merges), is
+// ever touched. True when there was nothing of theirs to delete or it's
+// gone; false when storage refused or the merge log couldn't be read for a
+// file that may be theirs (the file is then still up).
+export async function deleteMemberPhotoFile(url: string | null | undefined, memberId: string): Promise<boolean> {
+  let path: string | null;
+  try {
+    path = memberPhotoPath(url);
+  } catch {
+    return true; // not an address we made
+  }
+  if (!path || path.includes("/")) return true;
+  const admin = createAdminClient();
+  if (!path.startsWith(`${memberId}-`)) {
+    const { data: merges, error } = await admin.from("member_merges").select("dropped_id").eq("keep_id", memberId);
+    if (error) return false;
+    if (!(merges ?? []).some((r) => path.startsWith(`${String(r.dropped_id)}-`))) return true;
+  }
+  const { error } = await admin
+    .storage.from(MEMBER_PHOTO_BUCKET)
+    .remove([path])
+    .catch((e: unknown) => ({ error: e }));
+  return !error;
+}
