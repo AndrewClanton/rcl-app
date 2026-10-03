@@ -8,7 +8,7 @@ import MoviePoster from "@/components/MoviePoster";
 import PlusLink from "@/components/PlusLink";
 import { Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
 import type { Screening } from "@/lib/types";
-import { businessDay, businessDayWindow } from "@/lib/ops/time";
+import { businessDay, businessDayWindow, shiftDate } from "@/lib/ops/time";
 import { DIRECTIONS_URL, SITE_DESCRIPTION } from "@/lib/site";
 import { pageMeta } from "@/lib/seo/page-meta";
 
@@ -33,7 +33,9 @@ const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: TZ });
 function whenLabel(iso: string) {
   const d = new Date(iso);
   const today = dayKey(new Date());
-  const tomorrow = dayKey(new Date(Date.now() + 86_400_000));
+  // The next date, not now + 24 hours: that's a date off for an hour the
+  // nights the clocks change.
+  const tomorrow = shiftDate(today, 1);
   const day = dayKey(d) === today ? "Today" : dayKey(d) === tomorrow ? "Tomorrow" : d.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: TZ });
   return { day, time: d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ }) };
 }

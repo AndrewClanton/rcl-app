@@ -190,8 +190,10 @@ export async function copyWeekForward(weekStart: string): Promise<Result & { cop
   const staff = await assertManager();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) return { ok: false, error: "Pick a week." };
   const supabase = createAdminClient();
+  // The week's business days, 4 a.m. Monday to 4 a.m. the next Monday by
+  // the wall clock (not 7 x 24 hours, an hour off across a clock change).
   const from = centralToIso(weekStart, "04:00");
-  const to = new Date(new Date(from).getTime() + 7 * 86_400_000).toISOString();
+  const to = centralToIso(shiftDate(weekStart, 7), "04:00");
   const { data } = await supabase.from("staff_schedule").select("employee_id, starts_at, ends_at, note").is("deleted_at", null).gte("starts_at", from).lt("starts_at", to);
   if (!data?.length) return { ok: false, error: "There's nothing on this week to copy." };
   const week = 7 * 86_400_000;
@@ -211,7 +213,7 @@ export async function copyWeekForward(weekStart: string): Promise<Result & { cop
     .select("employee_id, starts_at")
     .is("deleted_at", null)
     .gte("starts_at", to)
-    .lt("starts_at", new Date(new Date(to).getTime() + 7 * 86_400_000).toISOString());
+    .lt("starts_at", centralToIso(shiftDate(weekStart, 14), "04:00"));
   const taken = new Set((existing ?? []).map((e) => `${e.employee_id}|${new Date(e.starts_at).getTime()}`));
   const fresh = next.filter((s) => !taken.has(`${s.employee_id}|${new Date(s.starts_at).getTime()}`));
   if (fresh.length) {
