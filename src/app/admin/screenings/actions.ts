@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath, updateTag } from "next/cache";
-import { assertStaff, getStaffSession } from "@/lib/auth";
+import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
+import { contactForRole } from "@/lib/contact-mask";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { UserFacingError } from "@/lib/errors";
 import { searchMovies, getMovieDetails } from "@/lib/omdb";
@@ -20,10 +21,29 @@ function revalidate() {
   revalidatePath("/");
 }
 
+// ---------- who can change what ----------
+// Everyone on staff can open Showtimes, look up the schedule and see who
+// holds tickets. Adding, moving or removing a showing or a house event is
+// for managers and up (code review B4), the way the menu is: a moved or
+// removed showing changes what people have bought tickets for. The page
+// hides those controls from cashiers; the actions check again here.
+
+type Refusal = { ok: false; error: string };
+
+async function signedIn(who: "staff" | "manager"): Promise<{ staff: StaffSession; no: null } | { staff: null; no: Refusal }> {
+  const staff = await getStaffSession();
+  if (!staff) return { staff: null, no: { ok: false, error: "Your staff session has expired. Sign in again." } };
+  if (who === "manager" && !hasManagerAccess(staff.role)) {
+    return { staff: null, no: { ok: false, error: "Only a manager can change the showtimes. Ask a manager to make this change." } };
+  }
+  return { staff, no: null };
+}
+
 // ---------- house events (trivia, comedy, book swap...) for the ramp TV ----------
 
-export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string }): Promise<{ ok: true } | { ok: false; error: string }> {
-  await assertStaff();
+export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string }): Promise<{ ok: true } | Refusal> {
+  const { no } = await signedIn("manager");
+  if (no) return no;
   const title = input.title.trim();
   if (!title) return { ok: false, error: "Give the event a name." };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{1,2}:\d{2}$/.test(input.start)) return { ok: false, error: "Pick a date and start time." };
@@ -41,8 +61,9 @@ export async function addHouseEvent(input: { title: string; note: string; date: 
   return { ok: true };
 }
 
-export async function deleteHouseEvent(id: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  await assertStaff();
+export async function deleteHouseEvent(id: string): Promise<{ ok: true } | Refusal> {
+  const { no } = await signedIn("manager");
+  if (no) return no;
   const { error } = await createAdminClient().from("house_events").delete().eq("id", id);
   if (error) return { ok: false, error: "Couldn't remove that event. Try again." };
   revalidatePath("/admin/screenings");
@@ -51,13 +72,15 @@ export async function deleteHouseEvent(id: string): Promise<{ ok: true } | { ok:
 
 // Actions the UI needs a readable error from return it instead of throwing:
 // production replaces a thrown message with "Minified React error #441".
-// Checks the staff session itself, like assertStaff() on the actions below.
+// Checks the session itself (a manager's, for `who` = "manager", see above)
+// and hands it to `fn`.
 export type Result<T> = ({ ok: true } & T) | { ok: false; error: string };
 
-async function attempt<T>(fn: () => Promise<T>): Promise<Result<T>> {
-  if (!(await getStaffSession())) return { ok: false, error: "Your staff session has expired. Sign in again." };
+async function attempt<T>(fn: (staff: StaffSession) => Promise<T>, who: "staff" | "manager" = "staff"): Promise<Result<T>> {
+  const { staff, no } = await signedIn(who);
+  if (no) return no;
   try {
-    return { ok: true, ...(await fn()) };
+    return { ok: true, ...(await fn(staff)) };
   } catch (e) {
     if (e instanceof UserFacingError) return { ok: false, error: e.message };
     console.error(e);
@@ -248,22 +271,91 @@ function checkFields(f: ScreeningFields) {
   if (!(Number.isInteger(f.capacity) && f.capacity > 0)) throw new UserFacingError("Capacity has to be at least 1 seat.");
 }
 
+// "Fri, Oct 3 at 7:00 PM", from the Central date and time as typed, to name
+// one showing of several in a message.
+function showingLabel(f: ScreeningFields) {
+  const day = new Date(`${f.date}T12:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
+  const [h, m] = f.time.split(":").map(Number);
+  return `${day} at ${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+}
+
+// The most showings one save adds (Repeat across a long date range).
+const MOST_AT_ONCE = 200;
+
+// Checks every showing first, then saves them in one insert, so either all
+// of them are added or none are, and a problem names the showing it's with.
+// Also refuses a showing in a room that already has one starting then (on
+// the schedule, or twice in the list), the easy mistake with Duplicate and
+// Repeat.
+async function insertScreenings(list: ScreeningFields[]): Promise<number> {
+  if (!Array.isArray(list) || list.length === 0) throw new UserFacingError("Pick a date and start time.");
+  if (list.length > MOST_AT_ONCE) throw new UserFacingError(`That's ${list.length} showings. Add at most ${MOST_AT_ONCE} at a time: pick a shorter date range.`);
+  const rows = list.map((f, i) => {
+    try {
+      checkFields(f);
+    } catch (e) {
+      if (e instanceof UserFacingError && list.length > 1) {
+        const which = /^\d{4}-\d{2}-\d{2}$/.test(f.date) && /^\d{1,2}:\d{2}$/.test(f.time) ? showingLabel(f) : `Showing ${i + 1}`;
+        throw new UserFacingError(`${which}: ${e.message} Nothing was added.`);
+      }
+      throw e;
+    }
+    return {
+      movie_id: f.movie_id,
+      room_id: f.room_id,
+      starts_at: centralToIso(f.date, f.time),
+      ticket_price: f.ticket_price,
+      capacity: f.capacity,
+    };
+  });
+
+  const key = (roomId: string, iso: string) => `${roomId} ${Date.parse(iso)}`;
+  const inList = new Set<string>();
+  rows.forEach((r, i) => {
+    if (inList.has(key(r.room_id, r.starts_at))) throw new UserFacingError(`${showingLabel(list[i])} is in the list twice. Nothing was added.`);
+    inList.add(key(r.room_id, r.starts_at));
+  });
+
+  // Showings already in those rooms at those times. A few dozen times per
+  // request keeps the URL short.
+  const supabase = createAdminClient();
+  const roomIds = [...new Set(rows.map((r) => r.room_id))];
+  const takenKeys = new Set<string>();
+  for (let i = 0; i < rows.length; i += 50) {
+    const { data: taken, error: readErr } = await supabase
+      .from("screenings")
+      .select("room_id, starts_at")
+      .in("room_id", roomIds)
+      .in("starts_at", rows.slice(i, i + 50).map((r) => r.starts_at));
+    if (readErr) throw readErr;
+    for (const t of taken ?? []) takenKeys.add(key(t.room_id as string, t.starts_at as string));
+  }
+  const clashes = list.filter((_, i) => takenKeys.has(key(rows[i].room_id, rows[i].starts_at))).map(showingLabel);
+  if (clashes.length > 0) {
+    if (list.length === 1) throw new UserFacingError(`That room already has a showing on ${clashes[0]}. Pick another time or room.`);
+    const named = clashes.length > 3 ? `${clashes.slice(0, 3).join("; ")} and ${clashes.length - 3} more` : clashes.join("; ");
+    throw new UserFacingError(
+      `That room already has ${clashes.length === 1 ? "a showing" : "showings"} on ${named}. Take ${clashes.length === 1 ? "it" : "those"} off the list and save again. Nothing was added.`,
+    );
+  }
+
+  const { error } = await supabase.from("screenings").insert(rows);
+  if (error) throw error;
+  revalidate();
+  return rows.length;
+}
+
 export async function addScreening(fields: ScreeningFields): Promise<Result<object>> {
   return attempt(async () => {
-    checkFields(fields);
-    const { error } = await createAdminClient()
-      .from("screenings")
-      .insert({
-        movie_id: fields.movie_id,
-        room_id: fields.room_id,
-        starts_at: centralToIso(fields.date, fields.time),
-        ticket_price: fields.ticket_price,
-        capacity: fields.capacity,
-      });
-    if (error) throw error;
-    revalidate();
+    await insertScreenings([fields]);
     return {};
-  });
+  }, "manager");
+}
+
+// Repeat in the scheduler: the same movie, room, price and capacity at
+// several start times across a date range. All or nothing (see above).
+export async function addScreenings(list: ScreeningFields[]): Promise<Result<{ added: number }>> {
+  return attempt(async () => ({ added: await insertScreenings(list) }), "manager");
 }
 
 function tickets(n: number) {
@@ -311,7 +403,7 @@ export async function updateScreening(
     revalidate();
     revalidatePath(`/showtimes/${id}`);
     return {};
-  });
+  }, "manager");
   if (result.ok && "confirm" in result && typeof result.confirm === "string") return { ok: false, error: result.confirm, confirm: result.confirm };
   return result;
 }
@@ -319,7 +411,7 @@ export async function updateScreening(
 // Removing a screening used to delete its bookings with it (they cascade
 // in the database), paid tickets included, with the money still taken.
 // Now it refuses while anyone holds a ticket, and says what to do. The
-// database refuses too (migration 20260929210000_keep_sold_tickets.sql),
+// database refuses too (migration 20260929213000_keep_sold_tickets.sql),
 // in case a ticket sells between this check and the delete.
 export async function deleteScreening(id: string): Promise<Result<object>> {
   return attempt(async () => {
@@ -338,10 +430,13 @@ export async function deleteScreening(id: string): Promise<Result<object>> {
     if (error) throw error;
     revalidate();
     return {};
-  });
+  }, "manager");
 }
 
-// The ticket list for one showing (the "Tickets" button).
+// The ticket list for one showing (the "Tickets" button). An online
+// buyer's email comes back shortened ("j•••@gmail.com") unless the login
+// is a manager's or up (code review P6; see lib/contact-mask). Masked here,
+// on the server: anything sent to the browser is readable there.
 export async function listScreeningTickets(id: string): Promise<Result<{ tickets: ScreeningTicket[] }>> {
-  return attempt(async () => ({ tickets: await getScreeningTickets(id) }));
+  return attempt(async (staff) => ({ tickets: (await getScreeningTickets(id)).map((t) => contactForRole(t, staff.role)) }));
 }
