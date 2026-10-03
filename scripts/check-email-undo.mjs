@@ -438,6 +438,30 @@ let c2;
   check("wave size 10: the first wave is 10, not 25", w1.ok && rowsOf(campaign()).length === 10, JSON.stringify(w1));
 }
 
+// ===================== 12. only the people picked send =====================
+// lib/email/senders.ts: sending to members is a tick on the person.
+{
+  for (const t of ["email_sends", "email_campaigns"]) db[t].length = 0;
+  db.email_settings.find((x) => x.key === "resend_plan").value = { daily: 102, monthly: 100000, reserve: 2 };
+  setClock("2026-10-29T10:00:00-05:00"); // a Thursday
+  const me = db.employees.find((e) => e.id === fakes.staff.employeeId);
+  me.sends_email = false;
+  const nobody = await actions.sendDesign(KEY, randomUUID());
+  check("senders: with nobody picked, Send is refused and says an owner picks who", !nobody.ok && /Nobody is picked/.test(nobody.error) && !campaign(), JSON.stringify(nobody));
+  db.employees.push(
+    { id: randomUUID(), name: "Nathan Example", role: "owner", active: true, sends_email: true },
+    { id: randomUUID(), name: "Mary Example", role: "owner", active: true, sends_email: true },
+  );
+  const notMe = await actions.sendDesign(KEY, randomUUID());
+  check("senders: someone not picked is refused, and told who sends", !notMe.ok && /^Only (Nathan and Mary|Mary and Nathan) send email to members\./.test(notMe.error) && !campaign(), JSON.stringify(notMe));
+  const test = await actions.sendDesignTest(KEY);
+  check("senders: they can still send themselves a test", test.ok, JSON.stringify(test));
+  me.sends_email = true;
+  const picked = await actions.sendDesign(KEY, randomUUID());
+  check("senders: once picked, Send goes", picked.ok && rowsOf(campaign()).length > 0, JSON.stringify(picked));
+  db.employees.splice(1);
+}
+
 await flushAfter();
 console.log(`\n${passed} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

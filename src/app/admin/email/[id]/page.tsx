@@ -10,6 +10,7 @@ import { centralParts, suggestedSlot } from "@/lib/email/timing";
 import { firstNameOf } from "@/lib/email/format";
 import { AUTOMATION_LABEL, KIND_LABEL } from "@/lib/email/types";
 import Composer from "./Composer";
+import { senderCheck } from "@/lib/email/senders";
 import Results from "./Results";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function CampaignPage({ params }: { params: Promise<{ id: string }> }) {
   const staff = await requireManager();
+  const sends = (await senderCheck(staff).catch(() => null))?.ok ?? false;
   const { id } = await params;
   if (!UUID.test(id)) notFound();
   const c = await getCampaign(id);
@@ -64,7 +66,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           campaign={c}
           initialData={data}
           options={options}
-          canSend={hasAdminAccess(staff.role)}
+          canSend={sends}
           gate={await sendingGate()}
           sender={senderStatus()}
           myEmail={staff.email}
@@ -74,7 +76,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           lastWaveProblem={waveProblem(lastWave)}
         />
       )}
-      {detail && <Results detail={detail} canSend={hasAdminAccess(staff.role)} campaignId={c.id} status={c.status} kind={c.kind} />}
+      {detail && <Results detail={detail} canSend={sends} canStop={sends || hasAdminAccess(staff.role)} campaignId={c.id} status={c.status} kind={c.kind} />}
     </div>
   );
 }

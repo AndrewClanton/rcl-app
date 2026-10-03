@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assertAdmin, assertManager, hasAdminAccess } from "@/lib/auth";
+import { assertAdmin, assertManager } from "@/lib/auth";
+import { senderRefusal } from "@/lib/email/senders";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { allowAttempt } from "@/lib/rate-limit";
@@ -49,7 +50,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const off = (reason: string) => `Nothing goes out while sending is off, tests included. ${reason}`;
 const STOPPED =
-  "Sending is stopped right now (someone pressed Emergency stop, or too many emails bounced or were marked as spam). An admin or owner can resume it on the Email page.";
+  "Sending is stopped right now (someone pressed Emergency stop, or too many emails bounced or were marked as spam). Someone who sends email can resume it on the Email page.";
 const NO_PICTURES = "The pictures for these emails aren't on our picture server yet. The go-live checklist on the Email page shows what's missing.";
 
 // "Paused. 78 called back from Resend; 2 had already gone."
@@ -133,6 +134,8 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
 export async function sendDesign(key: string, sendKey: string): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
   if (!isDesignKey(key) || !UUID.test(sendKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   const gate = await sendingGate();
   if (!gate.ok) return { ok: false, error: off(gate.reason) };
   if (await guardrailPause()) return { ok: false, error: STOPPED };
@@ -238,8 +241,10 @@ async function restNote(r: { status: string; note: string | null }): Promise<str
 // as many as today's share allows. `pageKey` is fresh each page load, so a
 // double click sends one wave.
 export async function sendNextWave(key: string, pageKey: string): Promise<Result<{ message: string }>> {
-  await assertManager();
+  const staff = await assertManager();
   if (!isDesignKey(key) || !UUID.test(pageKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   const gate = await sendingGate();
   if (!gate.ok) return { ok: false, error: off(gate.reason) };
   if (await guardrailPause()) return { ok: false, error: STOPPED };
@@ -362,6 +367,9 @@ export async function pauseDesign(key: string): Promise<Result<{ message: string
 export async function resumeDesign(key: string, checked?: string): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
   if (!isDesignKey(key)) return { ok: false, error: "Pick one of the three emails." };
+  // Carrying on sends the rest, so it's for the people who send.
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   const gate = await sendingGate();
   if (!gate.ok) return { ok: false, error: off(gate.reason) };
   if (await guardrailPause()) return { ok: false, error: STOPPED };
@@ -370,7 +378,6 @@ export async function resumeDesign(key: string, checked?: string): Promise<Resul
   if (undoUnderWay(c)) return { ok: false, error: UNDO_UNDER_WAY };
   let content = c.content;
   if ((c.error ?? "").startsWith(BRAKE_PREFIX)) {
-    if (!hasAdminAccess(staff.role)) return { ok: false, error: "The automatic brake stopped this one. An admin or owner can carry on after checking the list." };
     const what = String(checked ?? "").trim();
     if (what.length < 5) return { ok: false, error: "Say what you checked (a few words)." };
     const w = await lastWave(c.id);

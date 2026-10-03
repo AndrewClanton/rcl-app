@@ -257,7 +257,8 @@ function Card({
   canTest,
   testBlocker,
   myEmail,
-  isAdmin,
+  isSender,
+  senderNames,
 }: {
   card: CardData;
   plan: PlanData;
@@ -265,7 +266,8 @@ function Card({
   canTest: boolean;
   testBlocker: Blocker | null;
   myEmail: string;
-  isAdmin: boolean;
+  isSender: boolean;
+  senderNames: string; // "Nathan and Mary"
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -390,7 +392,7 @@ function Card({
                 Nothing more of this email goes until someone carries on. Look at who bounced or complained (More detail, below): old or mistyped addresses, or
                 people who never asked for email. Bounced addresses are already on the never-mail list, so they won&apos;t be sent to again.
               </p>
-              {isAdmin ? (
+              {isSender ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     className="input !w-auto min-w-56 flex-1 text-sm"
@@ -404,7 +406,7 @@ function Card({
                   </button>
                 </div>
               ) : (
-                <p className="text-xs">An admin or owner can carry on here once they&apos;ve checked the list.</p>
+                <p className="text-xs">{senderNames || "Whoever sends email"} can carry on here once they&apos;ve checked the list.</p>
               )}
             </div>
           )}
@@ -588,8 +590,8 @@ function Card({
             )}
             <p className="mt-3 text-xs text-[var(--muted)]">
               A wave can&apos;t be taken back once it arrives. Anyone who no longer fits by then (signed up meanwhile, turned email off) is skipped. You can pause at any
-              time, and Pause also calls back any of the wave still waiting to arrive. If too many bounce or anyone marks it as spam, the next wave won&apos;t go until an
-              admin or owner has checked.
+              time, and Pause also calls back any of the wave still waiting to arrive. If too many bounce or anyone marks it as spam, the next wave won&apos;t go until
+              someone who sends email has checked.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="btn-secondary" onClick={() => setConfirm(null)}>
@@ -740,6 +742,7 @@ export default function ReadyToSend({
   countsFailed,
   plan,
   isAdmin,
+  sender,
   myEmail,
   serverNow,
 }: {
@@ -752,6 +755,9 @@ export default function ReadyToSend({
   countsFailed: boolean;
   plan: PlanData;
   isAdmin: boolean;
+  // Whether this person may send to members, who may, and if not, why
+  // (lib/email/senders.ts).
+  sender: { ok: boolean; names: string; why: string | null };
   myEmail: string;
   serverNow: number;
 }) {
@@ -767,16 +773,24 @@ export default function ReadyToSend({
       : offKind === "master"
         ? { text: "Sending is switched off at the top level (Vercel). An owner turns that on once, then uses the switch on the Email page.", ...toSwitch }
         : { text: `Sending isn't set up yet: ${offReason ?? "see the go-live checklist on the Email page."}`, href: "/admin/email", label: "See the go-live checklist" };
+  const senderBlocker: Blocker | null = sender.ok ? null : { text: sender.why ?? "Only the people picked to send email can send it to members.", href: "/admin/email#senders", label: "See who sends" };
   const blocker: Blocker | null =
+    senderBlocker ??
     offBlocker ??
     (stopped
-      ? { text: "Sending is stopped. An admin or owner can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
+      ? { text: "Sending is stopped. Someone who sends email can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
       : !picturesReady
         ? { text: "The pictures for these emails aren't on our picture server yet.", href: "/admin/email", label: "See the go-live checklist" }
         : null);
   const testBlocker = offBlocker ?? (stopped ? blocker : null);
   return (
     <div className="space-y-6">
+      {senderBlocker && (
+        <div className="notice space-y-2 text-sm">
+          <p>{senderBlocker.text}</p>
+          <BlockerLink b={senderBlocker} />
+        </div>
+      )}
       {offBlocker && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
@@ -789,7 +803,7 @@ export default function ReadyToSend({
       {stopped && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            <strong>Sending is stopped right now.</strong> {stopped} An admin or owner can resume it on the Email page once they&apos;ve checked what happened.
+            <strong>Sending is stopped right now.</strong> {stopped} Someone who sends email can resume it on the Email page once they&apos;ve checked what happened.
           </p>
           <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
             Go to the Email page
@@ -836,8 +850,8 @@ export default function ReadyToSend({
             <strong>Read the results, wave by wave.</strong> <em>Delivered</em> reached their inbox. <em>Opened</em> is rough (some phones open every email by
             themselves). <em>Clicked</em> tapped something. The number that matters is the last one: who <em>signed in</em> (the first two emails) or{" "}
             <em>set up Insiders+</em> (the third) since it went. If a wave has trouble (unsubscribes, bounces, or nobody clicking), don&apos;t send the next one: press
-            Pause. The automatic brake also stops an email by itself if more than 5 in 100 of a wave bounce or anyone marks it as spam; an admin or owner carries on
-            after checking.
+            Pause. The automatic brake also stops an email by itself if more than 5 in 100 of a wave bounce or anyone marks it as spam; someone who sends email
+            carries on after checking.
           </li>
         </ol>
         <p className="mt-2 text-xs text-[var(--muted)]">
@@ -881,7 +895,17 @@ export default function ReadyToSend({
       </section>
 
       {cards.map((c) => (
-        <Card key={c.key} card={c} plan={plan} blocker={blocker} canTest={!testBlocker} testBlocker={testBlocker} myEmail={myEmail} isAdmin={isAdmin} />
+        <Card
+          key={c.key}
+          card={c}
+          plan={plan}
+          blocker={blocker}
+          canTest={!testBlocker}
+          testBlocker={testBlocker}
+          myEmail={myEmail}
+          isSender={sender.ok}
+          senderNames={sender.names}
+        />
       ))}
     </div>
   );

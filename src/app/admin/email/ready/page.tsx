@@ -8,6 +8,7 @@ import { countAudiences, designCampaign, designResults, picturesReady, previewHt
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
 import { finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
 import type { CampaignRow } from "@/lib/email/campaign";
+import { joinNames, senderCheck } from "@/lib/email/senders";
 import ReadyToSend, { type CardData, type UndoCard } from "./ReadyToSend";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,7 @@ const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", 
 
 export default async function ReadyToSendPage() {
   const staff = await requireManager();
+  const sender = await senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: "Couldn't check who can send. Reload the page." }));
   const now = new Date();
   const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
   const [plan, usage, pause, pictures, mode] = await Promise.all([
@@ -147,6 +149,7 @@ export default async function ReadyToSendPage() {
           goesAt: slot.getTime() === now.getTime() ? "now" : `at ${slot.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} ${dayLabel(slot)}`,
         }}
         isAdmin={hasAdminAccess(staff.role)}
+        sender={{ ok: sender.ok, names: joinNames(sender.names), why: sender.why }}
         myEmail={staff.email}
         serverNow={now.getTime()}
       />

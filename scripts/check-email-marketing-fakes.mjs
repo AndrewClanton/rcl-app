@@ -23,7 +23,9 @@ export const db = {
   movies: [],
   menu_items: [],
   house_events: [],
-  employees: [],
+  // The signed-in test admin (staff, below), picked to send email
+  // (lib/email/senders.ts).
+  employees: [{ id: "e0000000-0000-4000-8000-000000000001", name: "Test Admin", role: "admin", active: true, sends_email: true }],
   legacy_billing_payers: [],
 };
 

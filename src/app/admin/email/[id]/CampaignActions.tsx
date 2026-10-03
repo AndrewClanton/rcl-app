@@ -9,7 +9,23 @@ import { cancelCampaign, duplicateCampaign, resumeCampaign } from "../actions";
 // Buttons on a campaign that's gone (or is going) out: copy it, stop what
 // hasn't gone yet (including email handed to Resend for later, even once
 // the campaign reads "sent"), or resume one that paused.
-export default function CampaignActions({ id, status, kind, canSend, waitingAtResend = 0 }: { id: string; status: string; kind: CampaignKind; canSend: boolean; waitingAtResend?: number }) {
+// canSend: may send to members, so may carry a paused one on
+// (lib/email/senders.ts). canStop: may cancel (a sender, or any admin).
+export default function CampaignActions({
+  id,
+  status,
+  kind,
+  canSend,
+  canStop,
+  waitingAtResend = 0,
+}: {
+  id: string;
+  status: string;
+  kind: CampaignKind;
+  canSend: boolean;
+  canStop: boolean;
+  waitingAtResend?: number;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -44,7 +60,7 @@ export default function CampaignActions({ id, status, kind, canSend, waitingAtRe
           Resume
         </button>
       )}
-      {canSend && (["scheduled", "sending", "paused"].includes(status) || (["sent", "cancelled"].includes(status) && waitingAtResend > 0)) && (
+      {canStop && (["scheduled", "sending", "paused"].includes(status) || (["sent", "cancelled"].includes(status) && waitingAtResend > 0)) && (
         <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" disabled={pending} onClick={() => setConfirmCancel(true)}>
           Stop the rest
         </button>

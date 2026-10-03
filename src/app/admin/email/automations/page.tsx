@@ -5,6 +5,7 @@ import PageHeader from "@/components/admin/PageHeader";
 import { ensureAutomations } from "@/lib/email/automations";
 import { AUTOMATION_LABEL, EXCLUSION_LABEL, type Automation, type Exclusion } from "@/lib/email/types";
 import AutomationSwitch from "./AutomationSwitch";
+import { senderCheck } from "@/lib/email/senders";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,8 @@ export const dynamic = "force-dynamic";
 
 export default async function AutomationsPage() {
   const staff = await requireManager();
+  // Switching one on is for whoever sends email; off is a stop, so admins too.
+  const sends = (await senderCheck(staff).catch(() => null))?.ok ?? false;
   const rows = await ensureAutomations().catch(() => []);
   const stats = await automationStats(rows.map((r) => r.id));
 
@@ -49,7 +52,7 @@ export default async function AutomationsPage() {
                   </div>
                   {r.error && <div className="mt-1 text-xs text-[var(--danger-text)]">{r.error}</div>}
                 </div>
-                <AutomationSwitch automation={a} on={r.status === "active"} canChange={hasAdminAccess(staff.role)} />
+                <AutomationSwitch automation={a} on={r.status === "active"} canChange={sends || (r.status === "active" && hasAdminAccess(staff.role))} />
               </div>
             </li>
           );
