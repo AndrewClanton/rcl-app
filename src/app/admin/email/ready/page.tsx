@@ -29,6 +29,8 @@ import { finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMor
 import type { CampaignRow } from "@/lib/email/campaign";
 import { joinNames, senderCheck } from "@/lib/email/senders";
 import ReadyToSend, { type CardData, type UndoCard } from "./ReadyToSend";
+import { designTestKey, lastTestOf, testLog, testWhen } from "../_studio/tests-log";
+import { StatusChip } from "../_studio/ui";
 
 export const dynamic = "force-dynamic";
 // "Send" hands the first wave to Resend inside the action.
@@ -45,12 +47,13 @@ export default async function ReadyToSendPage() {
   const sender = await senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: "Couldn't check who can send. Reload the page." }));
   const now = new Date();
   const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
-  const [plan, usage, pause, pictures, mode] = await Promise.all([
+  const [plan, usage, pause, pictures, mode, tests] = await Promise.all([
     getSendPlan(),
     listUsage(now).catch(() => ({ today: 0, month: 0 })),
     guardrailPause().catch(() => null),
     picturesReady(),
     getWaveMode(),
+    testLog(),
   ]);
   const gate = await sendingGate();
   const daily = perDay(plan);
@@ -145,6 +148,10 @@ export default async function ReadyToSendPage() {
       undo: undos[key],
       hold: hold ? { minutes: Math.max(1, Math.round((hold.getTime() - now.getTime()) / 60_000)), label: arrivalLabel(hold.toISOString(), now) } : null,
       nextWaveOn: waveNext[key] ? waveDayWord(waveNext[key] as Date, now) : null,
+      lastTest: (() => {
+        const t = lastTestOf(tests, designTestKey(key), staff.employeeId);
+        return t ? { who: t.who, when: testWhen(t.at, now) } : null;
+      })(),
     };
   });
   return (
@@ -154,6 +161,7 @@ export default async function ReadyToSendPage() {
         back={{ href: "/admin/email", label: "Email" }}
         title="Ready to send"
         purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. They go out in waves, the members most used to hearing from us first, so each wave can be checked before the next."
+        actions={pause ? <StatusChip label="Sending is stopped" tone="stopped" /> : gate.ok ? <StatusChip label="Sending is on" tone="sent" /> : <StatusChip label="Sending is off" tone="off" />}
       />
       <ReadyToSend
         cards={cards}
