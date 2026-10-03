@@ -9,14 +9,9 @@ import { searchMovies, getMovieDetails } from "@/lib/omdb";
 import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
-<<<<<<< HEAD
-import { centralToIso } from "@/lib/ops/time";
+import { centralToIso, shiftDate } from "@/lib/ops/time";
 import { SHOWING_VISIBILITIES, isOutdoorRoom, type ShowingVisibility } from "@/lib/showing-visibility";
 import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
-=======
-import { centralToIso, shiftDate } from "@/lib/ops/time";
-import { getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
->>>>>>> 916eb74 (Lobby TV, schedule and late end times use the 4 AM business day on DST nights)
 
 function revalidate() {
   // The rows behind Home, Showtimes and the sitemap (cached for a minute):
