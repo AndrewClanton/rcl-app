@@ -5,6 +5,8 @@
 export const CATEGORY_LABEL = { food: "Food", other: "Candy & other", soda: "Drinks", coffee: "Coffee", liquor: "Alcohol" } as const;
 export const TICKETS_LABEL = "Movie tickets";
 export const BOOTHS_LABEL = "Booths";
+// Insiders+ charges and gift memberships (Stripe billing, not the register).
+export const MEMBERSHIPS_LABEL = "Insiders+ memberships";
 
 // What Nathan's inventory and expense rules count ("Where the money goes").
 export const FOOD_AND_DRINK = "Food & drink";

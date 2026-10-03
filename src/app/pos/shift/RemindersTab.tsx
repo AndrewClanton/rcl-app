@@ -192,6 +192,11 @@ function ReminderForm({
           <label className="block">
             <div className="label-xs">Time</div>
             <input id="reminder-time" type="time" className="input w-40" value={time} onChange={(e) => setTime(e.target.value)} />
+            {/^0[0-3]:/.test(time) && (
+              <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+                After midnight counts as the night before: a Friday reminder at this time pops up late Friday night.
+              </p>
+            )}
           </label>
           <div>
             <div className="label-xs">Days (none picked = every day)</div>

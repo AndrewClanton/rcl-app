@@ -25,7 +25,7 @@ export default function SwitchToYearly({ yearlyLabel }: { yearlyLabel: string })
             <strong>Save 15% by paying yearly:</strong> {yearlyLabel}, plus tax.
           </p>
           <button
-            className="btn-primary !px-4 !py-2 text-sm"
+            className="btn-primary min-h-11 w-full !px-4 !py-2 text-sm sm:w-auto"
             disabled={busy}
             onClick={async () => {
               setBusy(true);
@@ -47,7 +47,7 @@ export default function SwitchToYearly({ yearlyLabel }: { yearlyLabel: string })
           </p>
           <div className="flex flex-wrap gap-2">
             <button
-              className="btn-primary !px-4 !py-2"
+              className="btn-primary min-h-11 !px-4 !py-2"
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
@@ -61,7 +61,7 @@ export default function SwitchToYearly({ yearlyLabel }: { yearlyLabel: string })
             >
               {busy ? "Switching…" : `Pay ${money(preview.amountDue)} and switch`}
             </button>
-            <button className="btn-secondary !px-4 !py-2" disabled={busy} onClick={() => setPreview(null)}>
+            <button className="btn-secondary min-h-11 !px-4 !py-2" disabled={busy} onClick={() => setPreview(null)}>
               Not now
             </button>
           </div>

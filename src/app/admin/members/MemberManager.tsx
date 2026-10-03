@@ -10,6 +10,7 @@ import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import { addCommunityProgram, addMember, setCommunityProgramActive } from "./actions";
 import StaffBadge from "./StaffBadge";
 import InfoTip from "@/components/help/InfoTip";
+import { memberLabel } from "@/lib/member-name";
 
 function tierBadgeClass(tier: MemberTier) {
   return tier === "Insiders+"
@@ -101,7 +102,7 @@ export default function MemberManager({
                 className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm hover:bg-[var(--surface-hover)] "
               >
                 <span className="flex min-w-[160px] flex-1 flex-wrap items-center gap-1.5 font-medium">
-                  {m.name}
+                  {memberLabel(m.name, m.phone)}
                   <StaffBadge info={staffInfo[m.id]} />
                 </span>
                 <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>

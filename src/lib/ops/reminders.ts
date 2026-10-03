@@ -46,10 +46,12 @@ export function evaluateReminders(input: ReminderInput): DueReminder[] {
       if (r.days && r.days.length && !r.days.includes(today.dow)) continue;
       if (!r.time_of_day) continue;
       const [h, m] = r.time_of_day.split(":").map(Number);
-      // Due from its time until the business day rolls over at 4 a.m.
-      // (nowMinutes < 240 means we're past midnight, still "today").
-      const minutesIntoDay = input.nowMinutes < 240 ? input.nowMinutes + 1440 : input.nowMinutes;
-      if (minutesIntoDay < h * 60 + m) continue;
+      // Due from its time until the business day rolls over at 4 a.m. Both
+      // sides count from the start of the business day, so a time after
+      // midnight (a 1 a.m. closing reminder) belongs to the end of the night
+      // it closes: due at 1 a.m., not from 4 a.m. the day before.
+      const fromDayStart = (mins: number) => (mins < 240 ? mins + 1440 : mins);
+      if (fromDayStart(input.nowMinutes) < fromDayStart(h * 60 + m)) continue;
       const t = new Date(2000, 0, 1, h, m).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
       out.push({ reminderId: r.id, occurrence: today.date, message: r.message, detail: `Due at ${t}`, assigneeName: who(r), urgent: false });
     } else if (r.kind === "schedule_low") {

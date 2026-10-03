@@ -1,6 +1,7 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { getStripe } from "@/lib/stripe";
 import { activatePlusFromCheckout } from "@/lib/plus-activate";
+import { recordCheckoutPayment } from "@/lib/membership-payments/sync";
 import { safePath } from "@/lib/safe-path";
 
 // Where Stripe sends someone after they pay for Insiders+. Makes them
@@ -18,7 +19,12 @@ export async function GET(req: NextRequest) {
       const session = await getStripe().checkout.sessions.retrieve(sessionId, { expand: ["subscription"] });
       const sub = session.subscription;
       const status = typeof sub === "object" && sub ? sub.status : null;
-      if (status === "active" || status === "trialing") await activatePlusFromCheckout(session);
+      if (status === "active" || status === "trialing") {
+        await activatePlusFromCheckout(session);
+        // The first charge, into Reports (after the redirect; the webhook
+        // and the Reports sync do the same, and it's only counted once).
+        after(() => recordCheckoutPayment(session));
+      }
       dest.searchParams.set("checkout", "success");
       dest.searchParams.set("session_id", sessionId);
     } catch {

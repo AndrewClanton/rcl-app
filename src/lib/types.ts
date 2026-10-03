@@ -62,6 +62,9 @@ export interface MenuItem {
   event_price_mode: EventPriceMode | null;
   sort_order: number;
   active: boolean;
+  // An Insiders+ member's free daily coffee can be this item (lib/daily-perk.ts).
+  // Missing until migration 20261001230000_plus_daily_coffee.sql is applied.
+  daily_perk?: boolean;
   // 86'd ("Ran out" on the register): set while it shouldn't be sold, with
   // the reason shown on its button ("Out of hot dog buns").
   out_since?: string | null;
@@ -69,7 +72,7 @@ export interface MenuItem {
   out_outage_id?: string | null;
   // The picture on its register button: always a file in our public
   // "menu-photos" bucket (a photo someone took, or a free one the server
-  // found and stored), else its label tile. Where it came from and its
+  // found and stored), a text icon, else its label tile. Where it came from and its
   // credit: lib/menu-pictures/shared.ts (PictureState).
   image_url?: string | null;
   image_source?: PictureSource | null;
@@ -77,6 +80,9 @@ export interface MenuItem {
   image_query?: string | null;
   image_index?: number | null;
   image_approved_at?: string | null;
+  // A text icon ("$5" glowing red) when image_source is 'text': read it
+  // through pictureOf, which checks it.
+  image_text?: unknown;
   modifier_groups: ModifierGroup[];
 }
 
@@ -93,6 +99,7 @@ export interface MenuCategory {
   image_query?: string | null;
   image_index?: number | null;
   image_approved_at?: string | null;
+  image_text?: unknown;
   items: MenuItem[];
   subcategories: MenuCategory[];
 }
@@ -213,6 +220,9 @@ export interface Member {
   price_tier_set_by: string | null;
   price_tier_set_at: string | null;
   email_opt_in?: boolean;
+  // Their own switch for card-linked points (lib/member-cards.ts). Optional:
+  // not every members query selects it.
+  link_cards?: boolean;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;
@@ -225,12 +235,25 @@ export interface Member {
   // When a gifted year of Insiders+ runs out (lib/gift-membership.ts).
   // Optional: not every members query selects it.
   plus_gift_until?: string | null;
-  // Their own short line (profile), shown to staff at check-in. Optional:
-  // not every members query selects it.
+  // Their profile line (lib/member-profile.ts): on their shared profile page
+  // and the check-in screen, unless staff hid it (tagline_hidden_at).
+  // Optional: not every members query selects it.
   tagline?: string | null;
   // "2000-MM-DD": only the month and day mean anything (lib/visits.ts), for
   // the Birthday Visit badge. Optional: not every members query selects it.
   birthday?: string | null;
+  // Their shared profile page and check-in flair (lib/member-profile.ts,
+  // lib/flair.ts). Optional: missing until the member_profiles migration,
+  // and not every members query selects them.
+  share_profile?: boolean;
+  profile_handle?: string | null;
+  display_name?: string | null;
+  tagline_hidden_at?: string | null;
+  profile_hidden_at?: string | null;
+  flair_color?: string | null;
+  flair_effect?: string | null;
+  flair_sticker?: string | null;
+  birthday_party?: boolean;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;

@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow, centralToIso, shiftDate } from "@/lib/ops/time";
 import { latestLines } from "@/lib/ops/par-counts";
 import { qtyLabel } from "@/lib/ops/shared";
+import { getMembershipRefundsMade } from "@/lib/membership-payments/read";
 import { getDayReport, type DayReport } from "./reports";
 
 // The end-of-day email to the admins: how the business day went, how that
@@ -107,6 +108,16 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
   const voided = day.orders.filter((o) => o.status === "voided");
   if (voided.length) watch.push(`${voided.length} order${voided.length === 1 ? " was" : "s were"} voided: ${voided.map((o) => `#${o.orderNumber}`).join(", ")}.`);
   if (day.vouchers > 0) watch.push(`${money(day.vouchers)} in trivia vouchers was redeemed.`);
+
+  // Insiders+ or gift membership refunds given back through Stripe that
+  // day (each comes off the day of its charge, which may be earlier).
+  await safely(undefined, async () => {
+    const refunds = await getMembershipRefundsMade(start, end);
+    if (!refunds.length) return;
+    const back = -refunds.reduce((s, r) => s + r.amount_cents, 0) / 100;
+    const days = [...new Set(refunds.map((r) => dayLabel(r.business_date, { weekday: "short", month: "short", day: "numeric" })))];
+    watch.push(`${refunds.length} membership refund${refunds.length === 1 ? "" : "s"} through Stripe: ${money(back)} given back, taken off the day${days.length === 1 ? "" : "s"} of the charge (${days.join(", ")}).`);
+  });
 
   await safely(undefined, async () => {
     const dow = new Date(`${date}T12:00:00Z`).getUTCDay();

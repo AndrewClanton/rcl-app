@@ -4,7 +4,10 @@ import InfoTip from "@/components/help/InfoTip";
 import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
-import { BOOTHS_LABEL, FOOD_AND_DRINK, TICKETS_LABEL } from "@/lib/report-categories";
+import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import MembershipsCard from "./MembershipsCard";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
 import OrderSearch from "./OrderSearch";
@@ -41,6 +44,7 @@ export default function DayScreen({
   found,
   drill,
   canRecord,
+  sync,
 }: {
   r: DayReport;
   before: DayReport; // the same weekday a week earlier
@@ -52,16 +56,25 @@ export default function DayScreen({
   found: DayOrder | null;
   drill: DayDrillData;
   canRecord: boolean; // managers and up record tip payouts
+  sync: PaymentSyncStatus; // when member payments were last read from Stripe
 }) {
   const keep: Keep = { date: date === today ? undefined : date, days: days === 30 ? undefined : String(days) };
-  const vs = `vs ${money(before.collected)} last ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}`;
+  const lastWeekday = `last ${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })}`;
+  const vs = `vs ${money(before.collected)} ${lastWeekday}`;
   // This day with a drill-down open (and an order search kept, if any).
   // Just the query: it opens over this page, wherever it is.
   const to = (d: Drill) => {
     const q = new URLSearchParams(Object.entries({ ...keep, order: orderNumber ? String(orderNumber) : undefined, ...d }).filter(([, v]) => v) as [string, string][]);
     return `?${q.toString()}`;
   };
-  const soldHref = (label: string) => (label === TICKETS_LABEL ? to({ show: "tickets" }) : label === BOOTHS_LABEL ? to({ show: "orders", pay: "online" }) : to({ show: "orders", cat: label }));
+  const soldHref = (label: string) =>
+    label === TICKETS_LABEL
+      ? to({ show: "tickets" })
+      : label === BOOTHS_LABEL
+        ? to({ show: "orders", pay: "online" })
+        : label === MEMBERSHIPS_LABEL
+          ? to({ show: "memberships" })
+          : to({ show: "orders", cat: label });
   const fullRefunds = r.orders.filter((o) => o.status === "refunded");
 
   return (
@@ -117,6 +130,7 @@ export default function DayScreen({
                 <Rows
                   rows={[
                     ...(r.discounts > 0 ? [{ label: "Member discounts", value: `−${money(r.discounts)}`, muted: true, href: to({ show: "net" }) }] : []),
+                    ...(r.dailyCoffee > 0 ? [{ label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true, href: to({ show: "net" }) }] : []),
                     ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
                     { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
                     ...(fullRefunds.length > 0
@@ -149,10 +163,12 @@ export default function DayScreen({
             }))}
           />
           <p className="mt-2 text-xs text-[var(--muted)]">
-            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
+            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy, memberships). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
           </p>
         </Card>
       </div>
+
+      <MembershipsCard m={r.memberships} before={before.memberships} prevName={lastWeekday} sync={sync} href={() => to({ show: "memberships" })} />
 
       <Card title={`Orders · ${r.orders.length}`}>
         <OrdersTable orders={r.orders} />
@@ -173,7 +189,17 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat hero className="col-span-2" label="Collected" value={money(r.collected)} now={r.collected} before={before.collected} beforeText={vs} sub="cash, card and online, with tax and tips" href={to({ show: "collected" })} />
+        <Stat
+          hero
+          className="col-span-2"
+          label="Collected"
+          value={money(r.collected)}
+          now={r.collected}
+          before={before.collected}
+          beforeText={vs}
+          sub={r.memberships.collected !== 0 ? `cash, card, online and ${money(r.memberships.collected)} in memberships, with tax and tips` : "cash, card, online and memberships, with tax and tips"}
+          href={to({ show: "collected" })}
+        />
         <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} href={to({ show: "net" })} />
         <Stat label="Orders" value={num(r.orderCount)} now={r.orderCount} before={before.orderCount} href={to({ show: "orders" })} />
         <Stat label="Tips" value={money(r.tips)} now={r.tips} before={before.tips} sub={r.tips > 0 ? (paidOut ? "paid out" : "not paid out yet") : undefined} href={to({ show: "tips" })} />
@@ -188,6 +214,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
               { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
               { label: "Cash", value: r.cash, href: to({ show: "orders", pay: "cash" }) },
               { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
+              { label: "Memberships", value: r.memberships.collected, href: to({ show: "memberships" }) },
               { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
             ]}
           />
@@ -229,7 +256,7 @@ function TrendCard({ trend, date, days, keep }: { trend: RevenueDay[]; date: str
           label: new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-US", days <= 7 ? { weekday: "short", timeZone: "UTC" } : { month: "short", day: "numeric", timeZone: "UTC" }),
           value: d.total,
           strong: d.date === date,
-          title: `${longDate(d.date)}: ${money(d.total)}${d.online ? ` (${money(d.online)} online)` : ""}`,
+          title: `${longDate(d.date)}: ${money(d.total)}${d.online || d.memberships ? ` (${[d.online ? `${money(d.online)} online` : "", d.memberships ? `${money(d.memberships)} memberships` : ""].filter(Boolean).join(", ")})` : ""}`,
           href: href({ ...keep, date: d.date === last ? undefined : d.date }),
         }))}
         emptyText="Nothing collected in these days."

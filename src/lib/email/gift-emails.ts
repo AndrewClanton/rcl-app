@@ -3,6 +3,8 @@
 // inline styles (what Gmail and phone mail apps render), in the Royale
 // print palette, like the booth emails.
 
+import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
+
 const INK = "#14110c";
 const MUTED = "#6b6455";
 const RULE = "#e3ddc9";
@@ -33,7 +35,7 @@ function frame(inner: string) {
 
 function perks() {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
-    ${["Free entry to every screening, unlimited", "2 free booth reservations every month", "Concession and merch discounts", "First access to weekly titles and member events"]
+    ${["Free entry to every screening, unlimited", DAILY_COFFEE_PERK, "2 free booth reservations every month", "Concession and merch discounts", "First access to weekly titles and member events"]
       .map((p) => `<tr><td style="padding:8px 0;border-bottom:1px solid ${RULE};font:700 15px/1.4 Arial,Helvetica,sans-serif;color:${INK}">✓&nbsp; ${esc(p)}</td></tr>`)
       .join("")}
   </table>`;
