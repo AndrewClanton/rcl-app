@@ -4,6 +4,8 @@
 -- approving refunds after 3 days (src/lib/manager-pin.ts); this is how its
 -- age is known. Written by the server whenever a PIN is saved (Staff page,
 -- My PIN). The app needs this column before the code that uses it deploys.
+-- Needs 20260929100000_manager_pins.sql (employees.pin_must_change,
+-- pin_attempts) applied first. Adds a column only, so no new grants.
 
 alter table employees add column if not exists pin_set_at timestamptz;
 
