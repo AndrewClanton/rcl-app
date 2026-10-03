@@ -8,8 +8,10 @@ import { useOpsApi } from "./api";
 
 // Booths held today (each one a to-do until its Reserved card is printed and
 // set out) and tomorrow's bookings, with the ones booked in the last day
-// marked NEW -- so a booking made online never goes unnoticed.
-export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus["booths"]; onChanged: () => void }) {
+// marked NEW -- so a booking made online never goes unnoticed. The register
+// shows it behind its Booths button (StaffButton.tsx), in a window: `bare`
+// leaves off the box it used to sit in above the register.
+export default function BoothsToday({ booths, onChanged, bare = false }: { booths: ShiftStatus["booths"]; onChanged: () => void; bare?: boolean }) {
   const api = useOpsApi();
   const target = usePrintTarget();
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,15 +38,23 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
 
   return (
     <div
-      className="mb-3 rounded-lg border-2 px-4 py-2.5"
-      style={{ borderColor: "var(--foreground)", background: waiting > 0 ? "var(--gold)" : "var(--surface)", color: waiting > 0 ? "var(--gold-foreground)" : undefined }}
+      className={bare ? "" : "mb-3 rounded-lg border-2 px-4 py-2.5"}
+      style={bare ? undefined : { borderColor: "var(--foreground)", background: waiting > 0 ? "var(--gold)" : "var(--surface)", color: waiting > 0 ? "var(--gold-foreground)" : undefined }}
       role="status"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm font-black uppercase tracking-wide">
-          Booths today{today.length > 0 ? ` · ${today.length}` : ""}
-          {waiting > 0 && <span className="ml-2 font-bold normal-case tracking-normal">Print the Reserved card and set it on the booth.</span>}
-        </span>
+        {bare ? (
+          waiting > 0 && (
+            <span className="rounded px-2 py-1 text-sm font-bold" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
+              Print the Reserved card and set it on the booth.
+            </span>
+          )
+        ) : (
+          <span className="text-sm font-black uppercase tracking-wide">
+            Booths today{today.length > 0 ? ` · ${today.length}` : ""}
+            {waiting > 0 && <span className="ml-2 font-bold normal-case tracking-normal">Print the Reserved card and set it on the booth.</span>}
+          </span>
+        )}
         {!target && today.length > 0 && <span className="text-xs">No printer set up on this register (Devices). You can still mark cards as set out.</span>}
       </div>
 

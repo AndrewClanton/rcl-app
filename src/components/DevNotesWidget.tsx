@@ -9,7 +9,7 @@ import DevNoteDialog, { NoteIcon } from "@/components/dev-notes/DevNoteDialog";
 // floating in the bottom-right corner of every page, on top of whatever was
 // there (on the register, the menu buttons). Now:
 //   - Back office (/admin): in the menu (AdminShell).
-//   - Register (/pos): on the shift bar (ShiftBar), with a choice of the
+//   - Register (/pos): in the order's bottom row (PosApp), with a choice of the
 //     register or the customer screen beside it.
 //   - Display screens (/display/...): none. They're signage or face the
 //     customer, and often have nobody at them.

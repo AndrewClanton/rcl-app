@@ -9,20 +9,27 @@ import { getStationPrinterStatus, type StationPrinterStatus } from "../print-act
 import { printTargetOf, sendPrint } from "../printing";
 import { saveDeviceSettings, useDeviceSettings } from "./settings";
 import InfoTip from "@/components/help/InfoTip";
+import { TABLET_SOUND_DEFAULT } from "@/lib/registerChannel";
 
 // The "Devices" button on the register: which register this is (Bar or
 // Outdoor stand), its card reader, how it prints (through the website to
 // the station's printer, or straight to a printer's IP the old way),
-// whether receipts print on their own, and test buttons for the printer and
-// the cash drawer.
+// whether receipts print on their own, test buttons for the printer and
+// the cash drawer, and the customer screen's sound effects (on or off, and
+// how loud), sent to the screen over the register's channel.
 export default function DevicesPanel({
   onReprint,
   onReprintTickets,
   fallbackReaderId,
+  sendToTablet,
+  buttonClassName = "chip relative shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm",
 }: {
   onReprint: (() => Promise<PrintResult>) | null;
   onReprintTickets: (() => Promise<PrintResult>) | null;
   fallbackReaderId: string | null;
+  // To the customer screen over the register's channel ("sound", "sound-test").
+  sendToTablet: (event: string, payload: object) => void;
+  buttonClassName?: string;
 }) {
   const settings = useDeviceSettings();
   const [open, setOpen] = useState(false);
@@ -59,12 +66,15 @@ export default function DevicesPanel({
   const viaStation = settings.printVia === "station";
   const missing = [!readerId && "reader", !target && "printer"].filter(Boolean);
   const stationLabel = STATION_LABEL[settings.station];
+  // What the customer screen plays: as set here, else its own default.
+  const sound = { on: settings.tabletSound ?? TABLET_SOUND_DEFAULT.on, volume: settings.tabletVolume ?? TABLET_SOUND_DEFAULT.volume };
 
   return (
     <>
       <button
-        className="chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm"
+        className={buttonClassName}
         title={missing.length ? `No ${missing.join(" or ")} set up on this register` : undefined}
+        aria-label={missing.length ? `Devices: no ${missing.join(" or ")} set up` : "Devices"}
         onClick={() => {
           setAddress(settings.printerAddress);
           setResult(null);
@@ -73,7 +83,9 @@ export default function DevicesPanel({
           if (settings.printVia === "station") void loadStationPrinter(settings.station);
         }}
       >
-        Devices{missing.length ? <span style={{ color: "var(--danger-text)" }}> · set up</span> : null}
+        Devices
+        {/* Red: something on this register still needs setting up. */}
+        {missing.length > 0 && <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 0 2px var(--surface)" }} aria-hidden />}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>
@@ -283,8 +295,68 @@ export default function DevicesPanel({
               </label>
             </section>
 
+            <section className="space-y-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+              <div className="label-xs flex items-center">
+                Customer screen sounds
+                <InfoTip topic="devices-tablet-sound" />
+              </div>
+              <label className="flex min-h-11 items-center gap-2 text-sm">
+                <input
+                  id="tablet-sound-on"
+                  type="checkbox"
+                  className="h-5 w-5"
+                  checked={sound.on}
+                  onChange={(e) => {
+                    const next = { ...sound, on: e.target.checked };
+                    saveDeviceSettings({ tabletSound: next.on, tabletVolume: next.volume });
+                    sendToTablet("sound", next);
+                    if (next.on) sendToTablet("sound-test", {});
+                  }}
+                />
+                Play sound effects on the customer screen
+              </label>
+              <label className="block text-sm" htmlFor="tablet-sound-volume">
+                <span className="flex items-baseline justify-between">
+                  <span>Volume</span>
+                  <span className="tabular-nums" style={{ color: "var(--muted)" }}>
+                    {sound.volume}%
+                  </span>
+                </span>
+                <input
+                  id="tablet-sound-volume"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  className="mt-1 h-11 w-full"
+                  style={{ accentColor: "var(--accent)" }}
+                  disabled={!sound.on}
+                  value={sound.volume}
+                  onChange={(e) => {
+                    const next = { ...sound, volume: Number(e.target.value) };
+                    saveDeviceSettings({ tabletSound: next.on, tabletVolume: next.volume });
+                    sendToTablet("sound", next);
+                  }}
+                  // Let go of the slider: a sample at the new level.
+                  onPointerUp={() => sendToTablet("sound-test", {})}
+                  onKeyUp={() => sendToTablet("sound-test", {})}
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="btn-secondary" disabled={!sound.on} onClick={() => sendToTablet("sound-test", {})}>
+                  Play a test sound
+                </button>
+                <span className="text-xs" style={{ color: "var(--muted)" }}>
+                  Silent? Tap the customer screen once, and check the iPad&apos;s own volume.
+                </span>
+              </div>
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Short arcade blips for check-ins, items, the total, paying and the fun stuff. Keep it low: the cinema is right next door.
+              </p>
+            </section>
+
             <p className="text-xs" style={{ color: "var(--muted)" }}>
-              These choices are saved on this device only, so each register can have its own reader and printer.
+              These choices are saved on this device only, so each register can have its own reader and printer. The sound settings are also kept on the customer screen.
             </p>
           </div>
         </div>

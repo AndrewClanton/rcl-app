@@ -4,7 +4,15 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type RickrollState, type TabletProfile } from "@/lib/registerChannel";
+import {
+  EMPTY_CART_SNAPSHOT,
+  TABLET_SOUND_DEFAULT,
+  type MemberOff,
+  type RegisterCartSnapshot,
+  type RickrollState,
+  type TabletProfile,
+  type TabletSound,
+} from "@/lib/registerChannel";
 import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
@@ -45,6 +53,7 @@ import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
+import { BoothsButton, StaffButton } from "./shift/StaffButton";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, {
   clearPendingReaderSale,
@@ -162,7 +171,7 @@ export default function PosApp({
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderName, setOrderName] = useState("");
   // The cashier: whoever picked themselves in the list, else the person
-  // using this iPad per the shift bar, else the only person on shift. No
+  // using this iPad per the Staff tools, else the only person on shift. No
   // more re-picking after every reload.
   const onShift = useOnShift();
   // The cashier follows the shift: this iPad's shift, else whoever started
@@ -178,11 +187,11 @@ export default function PosApp({
     (pickedCashier && pickedCashier.shiftKey === shiftKey && isEmployee(pickedCashier.id) ? pickedCashier.id : "") ||
     (isEmployee(onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
     (isEmployee(latestOnShift) ? latestOnShift : "");
-  // "Ran out" reports from the shift bar are made in the cashier's name.
+  // "Ran out" reports from the Staff sheet are made in the cashier's name.
   useEffect(() => {
     publishCashier(employeeId || null);
   }, [employeeId]);
-  // 86'd items: what the shift bar's poll last saw, else what the page
+  // 86'd items: what the Staff tools' poll last saw, else what the page
   // loaded with.
   const ranOut = useRanOut();
   const tileExtras = useMenuTileExtras();
@@ -631,8 +640,22 @@ export default function PosApp({
         }
       : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
+    // The payment screen is up: "ready to pay" on the customer screen.
+    paying: payOpen,
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+  const sendToTablet = useCallback((event: string, payload: object) => {
+    registerChannelRef.current?.send({ type: "broadcast", event, payload });
+  }, []);
+  // The customer screen's sound effects, once someone's set them on this
+  // register (Devices): sent when they change and whenever the screen
+  // (re)joins. Never set here: the screen keeps its own.
+  const tabletSound: TabletSound | null =
+    devices.tabletSound === undefined && devices.tabletVolume === undefined
+      ? null
+      : { on: devices.tabletSound ?? TABLET_SOUND_DEFAULT.on, volume: devices.tabletVolume ?? TABLET_SOUND_DEFAULT.volume };
+  const tabletSoundRef = useRef<TabletSound | null>(null);
+  tabletSoundRef.current = tabletSound;
 
   // A form staff fill in for a guest standing there shows on the customer
   // screen as it's typed (tablet-setup.tsx), and the guest's "✓ That's
@@ -684,6 +707,7 @@ export default function PosApp({
     channel
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
+        if (tabletSoundRef.current) channel.send({ type: "broadcast", event: "sound", payload: tabletSoundRef.current });
       })
       .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
       .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
@@ -703,7 +727,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen]);
 
   function resetOrder() {
     setCart([]);
@@ -990,6 +1014,8 @@ export default function PosApp({
     setBusy(true);
     try {
       const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note);
+      // The customer screen's "paid" sound.
+      if (saved) sendToTablet("paid", {});
       // A charged card that didn't save is cleared too: the sale now lives in
       // the "card WAS charged" banner, so its items can't be charged again,
       // held, or moved onto a tab.
@@ -1262,8 +1288,8 @@ export default function PosApp({
           }}
         />
         <div className="shrink-0">
-          <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <select className="input min-h-11 min-w-[7rem] flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
               <option value="">Choose cashier</option>
               {onShiftIds.size > 0 ? (
                 <>
@@ -1294,17 +1320,16 @@ export default function PosApp({
                 ))
               )}
             </select>
-            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
+            {/* Everything about working a shift, with a red count of what
+                needs a look (shift/StaffButton.tsx). It replaced the shift
+                bar that took a whole row above the register. */}
+            <StaffButton />
+            <button className={`chip min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
               Held {heldOrders.length}
             </button>
-            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
+            <button className={`chip min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
               Tabs {openTabs.length}
             </button>
-            <DevicesPanel
-              fallbackReaderId={defaultReaderId}
-              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
-              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
-            />
           </div>
 
           <div className="mb-2 flex items-center gap-2">
@@ -1671,17 +1696,30 @@ export default function PosApp({
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
               rickroll={rickroll}
             />
+            {/* This register's reader, printer, drawer and the customer
+                screen's sounds. Down here in the row's spare cells, so the
+                top row has room for the Staff button. */}
+            <DevicesPanel
+              buttonClassName="btn-secondary relative whitespace-nowrap !px-2 py-2 text-sm"
+              fallbackReaderId={defaultReaderId}
+              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
+              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
+              sendToTablet={sendToTablet}
+            />
+            {/* Booths held today (it used to be a box above the register). */}
+            <BoothsButton className="btn-secondary whitespace-nowrap !px-2 py-2 text-sm" />
             {/* Admins only. Docked here, in the row's spare cells, rather than
                 floating over the menu buttons the way it used to. */}
             {canNote && (
               <button
-                className="btn-secondary col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap !px-2 py-2 text-sm"
+                className="btn-secondary inline-flex items-center justify-center gap-1 whitespace-nowrap !px-2 py-2 text-sm"
                 style={{ borderColor: "var(--border)", color: "var(--muted)" }}
                 onClick={() => setNoteOpen(true)}
                 title="Leave a dev note about the register or the customer screen"
+                aria-label="Dev note"
               >
                 <NoteIcon size={16} />
-                Dev note
+                Note
               </button>
             )}
           </div>

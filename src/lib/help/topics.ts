@@ -157,6 +157,17 @@ export const HELP_TOPICS = {
     links: [{ label: "Printers (managers)", href: "/admin/printers" }],
     trainingSlug: "receipt-printer-setup",
   },
+  "devices-tablet-sound": {
+    title: "Customer screen sounds",
+    area: "Register: devices",
+    body:
+      "The customer screen plays short arcade-style sounds so guests hear what's happening: a coin for checking in (+5), two notes for \"Welcome back\", a blip for each item rung up and a tick when the total changes, a little run when the payment screen opens and a happy one when the sale goes through, sparkles for streamers and entrances, a tape clunking into the VCR for the Rickroll, and a soft \"hmm\" for a number it doesn't know. Turn them on or off and set the volume under Devices → Customer screen sounds; it's on at 40% to start, and kept low because the cinema is next door. The register sends the setting to the screen, and both remember it. Turning on reduced motion on the screen only calms the animations: sound has its own switch here.",
+    steps: [
+      "Tap Devices (bottom row of the order), scroll to Customer screen sounds.",
+      "Move the volume and let go: the screen plays a sample at that level. Play a test sound does the same.",
+      "Silent? Browsers only play sound after the screen has been tapped, so tap the customer screen once. Then check the iPad's own volume and that it isn't on silent.",
+    ],
+  },
 
   // ---------- register: payments ----------
   "card-on-file-tip": {
@@ -251,11 +262,29 @@ export const HELP_TOPICS = {
   },
 
   // ---------- register: shift tools ----------
+  "staff-button": {
+    title: "The Staff button",
+    area: "Register: shift tools",
+    body:
+      "Everything about working a shift lives behind one Staff button, next to the cashier at the top of the order, so the order and the menu keep the whole screen. The red number on it counts what needs a look: checklist items left, to-dos and training for whoever's on, anything that's run out, and people on today's schedule who haven't started yet. Tap it for the Staff sheet: who's on shift (tap your name if it's you), Start a shift and End your shift; then Ran out, Checklist, Schedule and My hours; then Needs a look (to-dos with their Done, training to open, what's out, anyone who hasn't started); then Par sheet and Shopping list; then History and Reminders. When nobody's on shift yet, the button says Start shift instead. Booths held today are their own button in the order's bottom row, gold while a Reserved card still needs printing. Reminders that are due still show above the register until you tap Done or Remind me later.",
+    steps: [
+      "Start of the night: tap Start shift (top of the order) and pick your name. The checklist opens.",
+      "Something ran out: Staff → Ran out.",
+      "Closing: Staff → End your shift → I'm closing for the night → do the par count.",
+    ],
+  },
+  "staff-schedule": {
+    title: "The schedule on the register",
+    area: "Register: shift tools",
+    body:
+      "Staff → Schedule shows who's working today and whether they've started (\"On since 4:02 PM\", \"Due at 8:00 PM\", or \"Not started yet\" once their start time has passed), then the next 7 days. It's the same schedule a manager keeps in Back office → Team; the register only reads it. Someone due in later today, or late, adds to the red number on the Staff button until they start their shift.",
+    links: [{ label: "Back office → Team (managers)", href: "/admin/team" }],
+  },
   "ran-out": {
     title: "Ran out (86 it)",
     area: "Register: shift tools",
     body:
-      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the register shows a quiet line, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\". When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+      "Ran out is for something that runs out mid-shift: Staff → Ran out. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the Staff sheet shows a quiet line under Needs a look, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\" (it counts in the Staff button's red number). When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
     links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
     trainingSlug: "par-count-and-shopping-list",
   },
@@ -271,7 +300,7 @@ export const HELP_TOPICS = {
     title: "The par count",
     area: "Register: shift tools",
     body:
-      "Par is how much of each thing we keep on hand. On the register's Par sheet, count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
+      "Par is how much of each thing we keep on hand. On the register's Par sheet (Staff → Par sheet, or End your shift → I'm closing for the night), count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-quarters": {
@@ -285,7 +314,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
+      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up, and it isn't on the register all day: it comes up after the closing par count, or under Staff → Shopping list (marked when something's run out). A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {
@@ -378,7 +407,7 @@ export const HELP_TOPICS = {
     title: "Booth reservations",
     area: "Showtimes, events and booths",
     body:
-      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee.",
+      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee. On the register, the Booths button in the order's bottom row (\"2 booths\") lists today's and tomorrow's: it's gold while a Reserved card still needs printing, with a red dot for a booking made in the last day.",
   },
 
   // ---------- reports and money ----------

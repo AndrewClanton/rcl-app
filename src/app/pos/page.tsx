@@ -10,7 +10,7 @@ import PosApp from "./PosApp";
 import { HeaderSignal } from "./MemberSignal";
 import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
-import ShiftBar from "./shift/ShiftBar";
+import StaffTools from "./shift/StaffTools";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
 
@@ -67,9 +67,11 @@ export default async function PosPage() {
       </div>
       <div className="shrink-0">
         <UpdateBanner current={deploymentId()} />
-        {/* Roles, so the managers' to-dos and Ran out details show only
-            while a manager is signed in or on shift at this iPad. */}
-        <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
+        {/* The shift tools behind the register's Staff button, and any
+            reminder that's due. Roles, so the managers' to-dos and Ran out
+            details show only while a manager is signed in or on shift at
+            this iPad. */}
+        <StaffTools staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
       </div>
       {/* Press and hold a menu button for its settings (manager PIN). */}
       <ItemSettingsProvider>

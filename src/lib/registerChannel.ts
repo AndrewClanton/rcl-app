@@ -40,6 +40,28 @@ export interface RegisterCartSnapshot {
     profile?: TabletProfile | null;
   } | null;
   pointsToEarn?: number;
+  // The register's payment screen is open: the customer screen plays its
+  // "ready to pay" sound. (A sale that saved sends "paid" on its own.)
+  paying?: boolean;
+}
+
+// The customer screen's sound effects (display/customer/sounds.ts): on or
+// off, and how loud (0 to 100). Set on the register under Devices, sent as
+// "sound", and remembered on both. A register only sends it once someone
+// has set it there, so two registers never argue over the default.
+export interface TabletSound {
+  on: boolean;
+  volume: number;
+}
+
+// Modest by default: the 37-seat cinema is next door.
+export const TABLET_SOUND_DEFAULT: TabletSound = { on: true, volume: 40 };
+
+export function parseTabletSound(p: unknown): TabletSound | null {
+  if (!p || typeof p !== "object") return null;
+  const { on, volume } = p as Partial<TabletSound>;
+  if (typeof on !== "boolean" || typeof volume !== "number" || !Number.isFinite(volume)) return null;
+  return { on, volume: Math.min(100, Math.max(0, Math.round(volume))) };
 }
 
 // The outward-facing side of a member's profile (lib/member-profile.ts), as

@@ -2,7 +2,7 @@ import { Hit, Need, Screen, Step, Tip, TrainingPage, s } from "@/components/trai
 import { SITE_URL } from "@/lib/site";
 
 // The par count, counting in quarters, the shopping list and "Ran out", on
-// the register's shift bar (src/app/pos/shift/). Written for the par sheet
+// the register's Staff sheet (src/app/pos/shift/). Written for the par sheet
 // that saves a section at a time and counts bottles to the quarter. Change
 // the steps? Bump the version in the catalog.
 const HOST = SITE_URL.replace(/^https?:\/\//, "");
@@ -55,7 +55,7 @@ export default function ParCountAndShoppingList() {
 
       <Step n={1} title="Open the par sheet from the register">
         <p>
-          On the register, the shift bar along the top has <b>Par sheet</b>, <b>Shopping</b> and <b>Ran out</b>. Tap <b>Par sheet</b>. Pick the sheet you&apos;re counting
+          On the register, tap <b>Staff</b> (next to the cashier, at the top of the order): it has <b>Par sheet</b>, <b>Shopping list</b> and <b>Ran out</b>. Tap <b>Par sheet</b>. Pick the sheet you&apos;re counting
           (the bar, the kitchen, the stand); each button says how many are counted so far.
         </p>
       </Step>
@@ -105,7 +105,7 @@ export default function ParCountAndShoppingList() {
 
       <Step n={5} title="Something ran out mid-shift? Tap Ran out">
         <p>
-          Tap <b>Ran out</b> on the shift bar and type what ran out: it searches the par sheet, and anything that isn&apos;t on it can be typed in as is. Under{" "}
+          Tap <b>Staff</b>, then <b>Ran out</b>, and type what ran out: it searches the par sheet, and anything that isn&apos;t on it can be typed in as is. Under{" "}
           <b>Stop selling these?</b> tick the menu items that need it; items whose recipe uses it are ticked for you. Save: those buttons show <b>OUT</b> on the register,
           and the people who buy for the week get an email. You don&apos;t need to buy it: the register shows a quiet line saying who was emailed.
         </p>
