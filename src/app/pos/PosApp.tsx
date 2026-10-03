@@ -68,7 +68,8 @@ import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
 import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
 import ManagerPinModal from "@/components/ManagerPinModal";
-import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
+import TaxExemptModal from "./TaxExemptModal";
+import type { TaxExemptMark, TaxExemptReason } from "@/lib/tax-exempt";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -443,8 +444,10 @@ export default function PosApp({
   }, [flourish]);
   const [tabsListOpen, setTabsListOpen] = useState(false);
   const [cancelTabId, setCancelTabId] = useState<string | null>(null);
-  // Ticking "Tax exempt" waits for a manager PIN (approveTaxExempt).
+  // Ticking "Tax exempt" waits for a reason and a manager PIN
+  // (approveTaxExempt); the mark goes on the order for Reports.
   const [askTaxExempt, setAskTaxExempt] = useState(false);
+  const [taxExemptMark, setTaxExemptMark] = useState<TaxExemptMark | null>(null);
   const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{ title: string; description?: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void } | null>(
     null
@@ -906,6 +909,7 @@ export default function PosApp({
       memberId,
       orderName,
       taxFree,
+      taxExempt: taxFree ? taxExemptMark : null,
       monthlyMember: monthlyOn,
       pointsRedeemed,
       station: devices.station,
@@ -946,6 +950,7 @@ export default function PosApp({
     setOrderName(f.order_name ?? "");
     setMember(f.member);
     setTaxFree(f.tax_free);
+    setTaxExemptMark(f.tax_exempt);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
     setCoffeeOffFor(null);
@@ -1034,7 +1039,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded, totals.taxIncluded, !!ownerRate]);
+  }, [activeTabId, cart, orderName, taxFree, taxExemptMark, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded, totals.taxIncluded, !!ownerRate]);
 
   // Mirrors the cart onto the customer-facing kiosk display in real time,
   // via Realtime broadcast rather than a database row -- entirely separate
@@ -1295,6 +1300,7 @@ export default function PosApp({
     setOrderName("");
     setMember(null);
     setTaxFree(false);
+    setTaxExemptMark(null);
     setMonthlyMember(false);
     setPointsRedeemed(false);
     setActiveTabId(null);
@@ -1460,9 +1466,10 @@ export default function PosApp({
     router.refresh();
   }
 
-  async function handleTaxExempt(pin: string) {
-    const r = await approveTaxExempt(pin, activeTabId);
-    if (!r.ok) throw new Error(r.error); // shown in the PIN box
+  async function handleTaxExempt(reason: TaxExemptReason, note: string, pin: string) {
+    const r = await approveTaxExempt({ pin, tabId: activeTabId, cashierId: employeeId || null, reason, note });
+    if (!r.ok) throw new Error(r.error); // shown in the box
+    setTaxExemptMark(r.mark);
     setTaxFree(true);
     setAskTaxExempt(false);
     setToast(`Tax exempt. ${approvalText(r)}`);
@@ -2752,12 +2759,7 @@ export default function PosApp({
       )}
 
       {askTaxExempt && (
-        <ManagerPinModal
-          title="Tax-exempt sale"
-          description={`Only for a customer with a Missouri tax exemption certificate. Everything else is taxed at ${SALES_TAX_PERCENT}%. A manager approves each one.`}
-          onCancel={() => setAskTaxExempt(false)}
-          onSubmit={handleTaxExempt}
-        />
+        <TaxExemptModal onCancel={() => setAskTaxExempt(false)} onSubmit={handleTaxExempt} />
       )}
 
       {tabCardFor && (
