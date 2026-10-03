@@ -4,10 +4,18 @@
 //
 // Usage: node scripts/apply-sql.mjs supabase/migrations/xxx.sql [more.sql ...]
 // Requires SUPABASE_DB_PASSWORD and NEXT_PUBLIC_SUPABASE_URL in .env.local.
+//
+// A migration from 2026-10-03 on that creates a table, view, sequence or
+// function without granting it is refused before anything runs: since
+// Supabase's Oct 30, 2026 change the app can't reach it otherwise (see
+// scripts/check-grants.mjs and supabase/README.md). --skip-grant-check runs
+// it anyway.
 
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { Client } from "pg";
 import { config } from "dotenv";
+import { CUTOFF, checkSql } from "./check-grants.mjs";
 
 config({ path: ".env.local", quiet: true });
 
@@ -20,10 +28,27 @@ if (!password || !host) {
   process.exit(1);
 }
 
-const files = process.argv.slice(2);
+const skipGrantCheck = process.argv.includes("--skip-grant-check");
+const files = process.argv.slice(2).filter((a) => a !== "--skip-grant-check");
 if (files.length === 0) {
   console.error("Usage: node scripts/apply-sql.mjs <file.sql> [more.sql ...]");
   process.exit(1);
+}
+
+if (!skipGrantCheck) {
+  let refused = false;
+  for (const file of files) {
+    if (basename(file) < CUTOFF) continue;
+    const problems = checkSql(readFileSync(file, "utf8"));
+    if (!problems.length) continue;
+    refused = true;
+    console.error(`${file} creates things it doesn't grant:`);
+    for (const p of problems) console.error(`  ${p}`);
+  }
+  if (refused) {
+    console.error("\nNothing was run. Add the grants (supabase/README.md, \"Grants\"), or pass --skip-grant-check.");
+    process.exit(1);
+  }
 }
 
 const client = new Client({
