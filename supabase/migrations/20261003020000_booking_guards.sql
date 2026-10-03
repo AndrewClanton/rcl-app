@@ -32,7 +32,8 @@
 --
 -- 4. A trigger: when a paid booking is refunded or cancelled, the free seat
 --    that came with it goes the same way (a refund returns the whole
---    checkout's payment, as when it was one booking).
+--    checkout's payment, as when it was one booking; a free seat that was
+--    still pending is cancelled).
 --
 -- The functions are server-only: executable by service_role alone (the
 -- website calls the two below through supabase.rpc with the service key).
@@ -210,7 +211,10 @@ set search_path = public
 as $$
 begin
   if new.status = 'refunded' then
-    update bookings set status = 'refunded' where paid_booking_id = new.id and status = 'confirmed';
+    -- A free seat still pending (its confirm hadn't landed yet) is let go
+    -- rather than left holding a seat.
+    update bookings set status = case when status = 'confirmed' then 'refunded' else 'cancelled' end
+    where paid_booking_id = new.id and status in ('pending', 'confirmed');
   elsif new.status = 'cancelled' then
     update bookings set status = 'cancelled' where paid_booking_id = new.id and status in ('pending', 'confirmed');
   end if;

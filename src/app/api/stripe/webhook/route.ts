@@ -73,17 +73,20 @@ export async function POST(request: NextRequest) {
           .eq("id", bookingId)
           .eq("status", "pending")
           .then(check("booking"));
-        // The Insiders+ member's own free seat, a $0 booking of its own
-        // that came with these paid seats. No payment on it, so a refund
-        // is always made from the paid booking.
-        await supabase.from("bookings").update({ status: "confirmed" }).eq("paid_booking_id", bookingId).eq("status", "pending").then(check("free seat"));
-
         const { data: booking, error: bookingErr } = await supabase
           .from("bookings")
           .select("member_id, customer_email, quantity, unit_price, status")
           .eq("id", bookingId)
           .maybeSingle();
         if (bookingErr) failed.push("booking points");
+        // The Insiders+ member's own free seat, a $0 booking of its own
+        // that came with these paid seats. No payment on it, so a refund
+        // is always made from the paid booking. Confirmed only beside
+        // confirmed paid seats: a retry after the paid booking was refunded
+        // mustn't bring it back (the database lets it go with them).
+        if (booking?.status === "confirmed") {
+          await supabase.from("bookings").update({ status: "confirmed" }).eq("paid_booking_id", bookingId).eq("status", "pending").then(check("free seat"));
+        }
         let memberId: string | null = booking?.member_id ?? null;
         // Bought signed out: it goes to the member with that email now that
         // it's paid (so they earn the points), never before.
