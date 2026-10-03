@@ -15,15 +15,16 @@ import { sealArtName } from "./designs/art-token";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
 import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE, legacyNeedsSetup } from "@/lib/legacy-plus";
-import { firstWaveSize, getSendPlan, getWaveMode, nextMorningWave, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
+import { addUndone, firstWaveSize, getSendPlan, getWaveMode, nextMorningWave, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
-import { cancelEmail, deliver, getEmail, type OutgoingEmail, type ResendResult } from "./resend";
+import { cancelEmail, deliver, deliverOne, getEmail, refusedSchedule, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
 import { sendEmail } from "./send";
 import { nextSendSlot, sendByFor, type SendBy } from "./timing";
+import { centralToIso, shiftDate } from "@/lib/ops/time";
 import { emailTokensReady, listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "./tokens";
 import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, type Category, type ConsentSource, type PrefCategory, type SendRecord, type SendStatus } from "./types";
-import { canUndoWave, undoHoldMs, undoOpen, UNDO_CANCEL_GAP_MS, UNDO_RUN_MS, UNDO_SECONDS, UNDO_STOP_BEFORE_MS, type UndoBefore, type UndoDone, type WaveUndo } from "./undo";
+import { canUndoWave, undoHoldMs, undoNeedsMs, undoOpen, UNDO_LEASE_WAIT_MS, UNDO_RUN_MS, UNDO_SECONDS, UNDO_STOP_BEFORE_MS, type UndoBefore, type UndoDone, type WaveUndo } from "./undo";
 
 // Sending a campaign to its list, per person, through Resend's batch API.
 //
@@ -532,6 +533,7 @@ const centralDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { 
 export interface WaveTally {
   n: number; // wave 1, 2, ...
   day: string; // the day it was chosen (Central), as Ready to send's wave table counts them
+  arrives: string | null; // the latest any of it is due
   sent: number;
   bounced: number;
   complained: number;
@@ -539,9 +541,9 @@ export interface WaveTally {
 
 export async function lastWave(campaignId: string): Promise<WaveTally | null> {
   const admin = createAdminClient();
-  const rows: { status: string; created_at: string; bounce_type: string | null; complained_at: string | null }[] = [];
+  const rows: { status: string; created_at: string; deliver_at: string | null; bounce_type: string | null; complained_at: string | null }[] = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await admin.from("email_sends").select("status, created_at, bounce_type, complained_at").eq("campaign_id", campaignId).order("id").range(from, from + 999);
+    const { data, error } = await admin.from("email_sends").select("status, created_at, deliver_at, bounce_type, complained_at").eq("campaign_id", campaignId).order("id").range(from, from + 999);
     if (error) throw new Error("Couldn't read how the last wave did.");
     rows.push(...((data ?? []) as typeof rows));
     if ((data ?? []).length < 1000) break;
@@ -558,14 +560,40 @@ export async function lastWave(campaignId: string): Promise<WaveTally | null> {
   const days = [...byDay.keys()].sort();
   const day = days[days.length - 1];
   const list = byDay.get(day) ?? [];
+  const due = list.map((r) => r.deliver_at).filter((x): x is string => !!x);
   return {
     n: days.length,
     day,
+    arrives: due.length ? due.reduce((a, b) => (Date.parse(b) > Date.parse(a) ? b : a)) : null,
     sent: list.filter((r) => HANDED_OVER.has(r.status)).length,
     bounced: list.filter((r) => r.status === "bounced" || r.bounce_type === "Permanent").length,
     complained: list.filter((r) => r.status === "complained" || !!r.complained_at).length,
   };
 }
+
+// One wave a day (Central). The wave-by-wave results, the brake and a
+// checked brake (pace.brakeOk) all go by the day a wave was chosen, so a
+// second wave that day would be counted as part of the first, and its
+// bounces would never trip the brake. Nor does a new wave go on a day the
+// last one is still to arrive (one held overnight, pressed for near 7 PM).
+// Returns when the next wave can go, or null if it can go today.
+export function nextWaveAfter(w: WaveTally | null, now: Date): Date | null {
+  if (!w) return null;
+  const arrives = w.arrives ? centralDay(w.arrives) : w.day;
+  const busy = arrives > w.day ? arrives : w.day;
+  if (busy < centralDay(now.toISOString())) return null;
+  // (6 AM the day after: before the window, so the slot is that day's
+  // 10:30, or Monday's. Not midnight: centralToIso gets that wrong in CST.)
+  return nextSendSlot(new Date(centralToIso(shiftDate(busy, 1), "06:00")));
+}
+
+// "tomorrow", or the day ("Monday").
+export function waveDayWord(d: Date, now = new Date()): string {
+  if (centralDay(d.toISOString()) === shiftDate(centralDay(now.toISOString()), 1)) return "tomorrow";
+  return d.toLocaleDateString("en-US", { weekday: "long", timeZone: "America/Chicago" });
+}
+
+export const oneWaveADay = (next: Date, now = new Date()) => `The next wave can go ${waveDayWord(next, now)}, once you've seen how this one did.`;
 
 export function brakeVerdict(w: WaveTally | null): string | null {
   if (!w || w.sent <= 0) return null;
@@ -613,21 +641,26 @@ export async function brakeForSend(campaignId: string | null | undefined, now = 
 
 // ---------- one minute to undo (Ready to send) ----------
 // A wave staff just pressed for waits at Resend a few minutes (prepareWave,
-// undo.ts). For its first minute, Undo calls back every one and takes the
-// wave's rows away, so the email is as it was before the press: nobody
-// counts as having had it (audience.ts skips anyone with any row for the
-// email, and the database allows one row per person per email), none of
-// today's or this month's share is used (listUsage counts rows), and the
-// wave-by-wave results and the brake never see it (both count rows). Only
-// rows that never left are deleted: never handed over, held back at
-// hand-over, or called back with Resend's say-so. One that had already gone
-// keeps its row (so it's never sent twice), and the message says so.
+// undo.ts). For a minute after it's handed over, Undo calls back every one
+// and takes the wave's rows away, so the email is as it was before the
+// press: nobody counts as having had it (audience.ts skips anyone with any
+// row for the email, and the database allows one row per person per
+// email), and the wave-by-wave results and the brake never see it (both
+// count rows). Only rows that never left are deleted: never handed over,
+// held back at hand-over, or called back with Resend's say-so. One that
+// had already gone keeps its row (so it's never sent twice), and so does
+// one Resend may have (it didn't answer when it was handed over): the
+// message says so. Emails Resend called back are still counted against
+// that day's share (send-plan.ts addUndone), in case Resend counts them.
 
 export const UNDO_PREFIX = "Undo: ";
 export const UNDOING = `${UNDO_PREFIX}calling back the last wave.`;
 // On the screen, once an Undo that didn't finish can no longer carry on.
 export const UNDO_UNFINISHED = "Undo didn't finish in time, so what it couldn't call back goes out as planned (see the results). Press Carry on sending when you're ready.";
+export const UNDO_MAYBE = "Undo: Resend may have this one (it didn't answer when it was handed over), so it isn't sent again.";
 const NEVER_SENT = ["cancelled", "failed", "suppressed", "held_out"];
+// What Resend says of an email that went (or won't go): it can't be called back.
+const WENT_EVENTS = new Set(["sent", "delivered", "delivery_delayed", "bounced", "complained", "opened", "clicked", "failed", "suppressed"]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const paceOf = (c: Pick<CampaignRow, "content">) => ((c.content as { pace?: Pace } | null)?.pace ?? {}) as Pace;
 
@@ -673,6 +706,39 @@ export function undoUnderWay(c: Pick<CampaignRow, "content" | "error">, nowMs = 
   return c.error === UNDOING && Number.isFinite(started) && nowMs - started < UNDO_RUN_MS + 60_000;
 }
 
+// Changes the email's pace (content.pace) without losing a change made
+// elsewhere meanwhile: read, change, and write only if nothing changed
+// since (a few tries). `change` returns null to leave it.
+async function patchPace(id: string, change: (p: Pace) => Pace | null): Promise<boolean> {
+  for (let i = 0; i < 4; i++) {
+    const c = await getCampaign(id);
+    if (!c) return false;
+    const next = change(paceOf(c));
+    if (!next) return false;
+    const { data, error } = await createAdminClient()
+      .from("email_campaigns")
+      .update({ content: { ...c.content, pace: next }, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("updated_at", c.updated_at)
+      .select("id");
+    if (!error && data?.length) return true;
+  }
+  return false;
+}
+
+// The minute starts once the wave is with Resend (the press's run calls
+// this after the hand-over), so the button shows for about 60 seconds. It
+// ends sooner only if the hand-over took so long that a full minute would
+// leave Undo too little time before the wave is due.
+export async function startUndoMinute(campaignId: string, key: string): Promise<void> {
+  await patchPace(campaignId, (p) => {
+    const u = p.undo;
+    if (!u || u.key !== key || u.started) return null;
+    const until = Math.min(Date.now() + UNDO_SECONDS * 1000, Date.parse(u.arrives) - undoNeedsMs(u.n));
+    return { ...p, undo: { ...u, until: new Date(until).toISOString() } };
+  });
+}
+
 function waveRows(u: WaveUndo, campaignId: string, cols: string) {
   let q = createAdminClient().from("email_sends").select(cols).eq("campaign_id", campaignId).lte("created_at", u.to);
   if (u.after) q = q.gt("created_at", u.after);
@@ -687,14 +753,17 @@ export async function undoWaveHanded(campaignId: string, u: WaveUndo): Promise<n
 }
 
 // One email waiting at Resend, for Undo: as callBack, but when Resend won't
-// cancel it, Resend is asked what became of it, because an earlier try
-// whose answer was lost may have cancelled it already.
+// cancel it, Resend is asked what became of it. Called back already (an
+// earlier try whose answer was lost): "ok". Gone only when Resend says it
+// went; still waiting, or no clear answer: "retry".
 async function undoCallBack(resendId: string): Promise<"ok" | "gone" | "retry"> {
   const r = await callBack(resendId);
   if (r !== "gone") return r;
   const e = await getEmail(resendId);
-  if (e.ok) return /cancel/i.test(e.data?.last_event ?? "") ? "ok" : "gone";
-  return e.status === 0 || e.status === 429 || e.status >= 500 ? "retry" : "gone";
+  if (!e.ok) return "retry";
+  const last = String(e.data?.last_event ?? "").toLowerCase();
+  if (last.startsWith("cancel")) return "ok";
+  return WENT_EVENTS.has(last) ? "gone" : "retry";
 }
 
 export type UndoOutcome =
@@ -703,13 +772,15 @@ export type UndoOutcome =
   | { kind: "stopped" } // stopped from the Email page meanwhile
   | { kind: "busy" } // another call-back is running: press again in a moment
   | { kind: "already"; done: UndoDone } // a second press: what the first did
-  | { kind: "done"; u: WaveUndo; calledBack: number; went: number; waiting: number };
+  | { kind: "done"; u: WaveUndo; calledBack: number; went: number; maybe: number; waiting: number };
 
 // Undo for the wave pressed with page key `key`. Safe to press twice, or in
 // two tabs: the email is marked as being undone first (only if nothing
 // changed it since it was read), only one call-back runs at a time (the
 // recall lease), a row goes only once Resend has called it back, and a
-// finished Undo leaves what it did for a second press to report.
+// finished Undo leaves what it did for a second press to report. An Undo
+// taken in time that didn't finish carries on whenever it's pressed again
+// (calling back still stops short of when the wave is due).
 export async function undoWave(campaignId: string, key: string): Promise<UndoOutcome> {
   const admin = createAdminClient();
   const begun = Date.now();
@@ -721,9 +792,10 @@ export async function undoWave(campaignId: string, key: string): Promise<UndoOut
     if (pace.undone?.key === key) return { kind: "already", done: pace.undone };
     u = pace.undo ?? null;
     if (!u || u.key !== key) return { kind: "none" };
-    if (!undoOpen(u, Date.now())) return { kind: "late", arrives: u.arrives };
+    const resuming = !!u.started && c.status === "paused" && (c.error ?? "").startsWith(UNDO_PREFIX);
+    if (!resuming && !undoOpen(u, Date.now())) return { kind: "late", arrives: u.arrives };
     if (!["scheduled", "sending", "sent", "paused"].includes(c.status)) return { kind: "stopped" };
-    if (u.started && c.error === UNDOING) break; // under way in another tab (or one that died): carry on
+    if (resuming && undoUnderWay(c)) break; // another press is calling back right now: wait for it below
     // Paused, so no run hands over more of it and nothing else starts; and
     // when Undo was taken, so pressing again carries on after the minute.
     const at = new Date().toISOString();
@@ -744,15 +816,15 @@ export async function undoWave(campaignId: string, key: string): Promise<UndoOut
   // One call-back at a time (Pause, the brake, a stop): wait a little for
   // another to finish, or for another press of Undo to (the hold allows
   // for this wait).
-  let lease = await takeRecallLease(deadline + 60_000);
+  let lease = await takeRecallLease(Math.max(deadline, Date.now()) + 60_000);
   while (!lease) {
-    if (Date.now() > Math.min(begun + 40_000, deadline)) return { kind: "busy" };
+    if (Date.now() > begun + UNDO_LEASE_WAIT_MS) return { kind: "busy" };
     await sleep(1000);
     const now = await getCampaign(campaignId);
     if (!now) return { kind: "none" };
     const done = paceOf(now).undone;
     if (done?.key === key) return { kind: "already", done };
-    lease = await takeRecallLease(deadline + 60_000);
+    lease = await takeRecallLease(Math.max(deadline, Date.now()) + 60_000);
   }
 
   let calledBack = 0;
@@ -761,124 +833,167 @@ export async function undoWave(campaignId: string, key: string): Promise<UndoOut
     // batch still on its way to Resend (a run that hadn't seen the pause
     // yet) lands as 'scheduled', and the next pass calls it back.
     const cant = new Set<string>(); // gone already, or no id to cancel it by
+    const atResend: string[] = []; // the day (UTC) each one called back was handed over
     let moved = Date.now();
-    // Nothing moving for this long (a batch whose run died on its way to
-    // Resend, Resend refusing every cancel): stop, and say what's left.
-    while (Date.now() < deadline && Date.now() - moved < 45_000) {
-      const { data, error } = await waveRows(wave, campaignId, "id, status, batch_key, resend_email_id")
-        .in("status", ["queued", "scheduled", ...NEVER_SENT])
-        .order("id")
-        .range(0, 999);
-      if (error) throw new Error("Couldn't read the wave.");
-      const rows = ((data ?? []) as unknown as { id: string; status: string; batch_key: string | null; resend_email_id: string | null }[]).filter((r) => !cant.has(r.id));
-      if (!rows.length) break;
-      let progress = false;
-      // Never handed over, or held back when it was due: the row simply goes.
-      const quiet = rows.filter((r) => NEVER_SENT.includes(r.status)).map((r) => r.id);
-      if (quiet.length) {
-        const { data: gone } = await admin.from("email_sends").delete().in("id", quiet).in("status", NEVER_SENT).select("id");
-        progress ||= !!gone?.length;
-      }
-      // Queued and not numbered for a batch: never reached Resend. (A
-      // numbered one may be on its way there: it's waited for.)
-      const queued = rows.filter((r) => r.status === "queued" && !r.batch_key).map((r) => r.id);
-      if (queued.length) {
-        const { data: gone } = await admin.from("email_sends").delete().in("id", queued).eq("status", "queued").is("batch_key", null).select("id");
-        calledBack += gone?.length ?? 0;
-        progress ||= !!gone?.length;
-      }
-      let tries = 0;
-      for (const r of rows.filter((x) => x.status === "scheduled")) {
-        if (Date.now() > deadline) break;
-        // Handed over with no id saved: Resend can't be asked to stop it.
-        if (!r.resend_email_id) {
-          cant.add(r.id);
-          continue;
+    type Row = { id: string; status: string; batch_key: string | null; batch_at: string | null; resend_email_id: string | null; submitted_at: string | null; created_at: string };
+    try {
+      // Nothing moving for this long (Resend refusing every cancel): stop,
+      // and say what's left.
+      while (Date.now() < deadline && Date.now() - moved < 45_000) {
+        const { data, error } = await waveRows(wave, campaignId, "id, status, batch_key, batch_at, resend_email_id, submitted_at, created_at")
+          .in("status", ["queued", "scheduled", ...NEVER_SENT])
+          .order("id")
+          .range(0, 999);
+        if (error) throw new Error("Couldn't read the wave.");
+        const rows = ((data ?? []) as unknown as Row[]).filter((r) => !cant.has(r.id));
+        if (!rows.length) break;
+        let progress = false;
+        // Never handed over, or held back when it was due: the row simply goes.
+        const quiet = rows.filter((r) => NEVER_SENT.includes(r.status)).map((r) => r.id);
+        if (quiet.length) {
+          const { data: gone } = await admin.from("email_sends").delete().in("id", quiet).in("status", NEVER_SENT).select("id");
+          progress ||= !!gone?.length;
         }
-        if (tries++) await sleep(UNDO_CANCEL_GAP_MS);
-        const res = await undoCallBack(r.resend_email_id);
-        if (res === "ok") {
-          const { data: del } = await admin.from("email_sends").delete().eq("id", r.id).eq("status", "scheduled").select("id");
-          if (del?.length) calledBack++;
-          progress = true;
-        } else if (res === "gone") {
-          await admin.from("email_sends").update({ status: "submitted", error: GONE }).eq("id", r.id).eq("status", "scheduled");
-          cant.add(r.id);
-          progress = true;
+        // Queued and not numbered for a batch: never reached Resend.
+        const queued = rows.filter((r) => r.status === "queued" && !r.batch_key).map((r) => r.id);
+        if (queued.length) {
+          const { data: gone } = await admin.from("email_sends").delete().in("id", queued).eq("status", "queued").is("batch_key", null).select("id");
+          calledBack += gone?.length ?? 0;
+          progress ||= !!gone?.length;
         }
+        // Numbered for a batch that never got a clear answer: on its way, if
+        // a run still has the email (wait for it); otherwise Resend may have
+        // them and no id to cancel them by was saved. Those are kept, never
+        // sent again, and reported as maybe gone.
+        const unsure = rows.filter((r) => r.status === "queued" && r.batch_key);
+        if (unsure.length) {
+          const live = await getCampaign(campaignId);
+          const running = !!live?.locked_until && Date.parse(live.locked_until) > Date.now();
+          if (!running) {
+            for (const r of unsure) {
+              await admin
+                .from("email_sends")
+                .update({ status: "submitted", submitted_at: r.batch_at ?? new Date().toISOString(), error: UNDO_MAYBE })
+                .eq("id", r.id)
+                .eq("status", "queued")
+                .eq("batch_key", r.batch_key as string);
+              cant.add(r.id);
+            }
+            progress = true;
+          }
+        }
+        for (const r of rows.filter((x) => x.status === "scheduled")) {
+          if (Date.now() > deadline) break;
+          // Handed over with no id saved: Resend can't be asked to stop it.
+          if (!r.resend_email_id) {
+            cant.add(r.id);
+            continue;
+          }
+          const res = await undoCallBack(r.resend_email_id);
+          if (res === "ok") {
+            const { data: del } = await admin.from("email_sends").delete().eq("id", r.id).eq("status", "scheduled").select("id");
+            if (del?.length) {
+              calledBack++;
+              atResend.push(utcDay(new Date(r.submitted_at ?? r.created_at)));
+            }
+            progress = true;
+          } else if (res === "gone") {
+            await admin.from("email_sends").update({ status: "submitted", error: GONE }).eq("id", r.id).eq("status", "scheduled");
+            cant.add(r.id);
+            progress = true;
+          }
+        }
+        // Nothing moved (a batch still on its way, Resend busy): a moment.
+        if (progress) moved = Date.now();
+        else await sleep(1000);
       }
-      // Nothing moved (a batch still on its way, Resend busy): a moment.
-      if (progress) moved = Date.now();
-      else await sleep(1000);
+    } finally {
+      // Called back, but perhaps counted by Resend all the same.
+      if (atResend.length) await addUndone(atResend).catch((e) => console.error("undo usage:", e instanceof Error ? e.message : e));
     }
   } finally {
     await dropRecallLease(lease);
   }
 
-  // What's left of the wave: gone (it went), or still waiting at Resend.
-  const { data: left, error: leftErr } = await waveRows(wave, campaignId, "status").range(0, 999);
+  // What's left of the wave: gone (it went), maybe gone, or still waiting.
+  const { data: left, error: leftErr } = await waveRows(wave, campaignId, "status, deliver_at, error").range(0, 999);
   if (leftErr) throw new Error("Couldn't read the wave.");
-  const statuses = ((left ?? []) as unknown as { status: string }[]).map((r) => r.status);
-  const went = statuses.filter((s) => HANDED_OVER.has(s) && s !== "scheduled").length;
-  const waiting = statuses.filter((s) => s === "scheduled" || s === "queued").length;
-  const done: UndoDone = { key, at: new Date().toISOString(), calledBack, went };
+  const nowMs = Date.now();
+  const rest = (left ?? []) as unknown as { status: string; deliver_at: string | null; error: string | null }[];
+  const ahead = (r: (typeof rest)[number]) => r.status === "scheduled" && Date.parse(r.deliver_at ?? "") > nowMs;
+  const maybe = rest.filter((r) => r.error === UNDO_MAYBE).length;
+  const went = rest.filter((r) => r.error !== UNDO_MAYBE && HANDED_OVER.has(r.status) && !ahead(r)).length;
+  const waiting = rest.filter((r) => r.status === "queued" || ahead(r)).length;
+  const done: UndoDone = { key, at: new Date().toISOString(), calledBack, went, ...(maybe ? { maybe } : {}) };
   if (waiting) {
     // Some couldn't be called back yet: it stays paused, and pressing Undo
-    // again (until shortly before they're due) carries on.
-    await admin
+    // again carries on (until shortly before they're due).
+    const { error } = await admin
       .from("email_campaigns")
       .update({ error: `${UNDO_PREFIX}${waiting.toLocaleString("en-US")} of wave ${wave.wave} couldn't be called back yet. Press Undo again, or Call back below.`, updated_at: new Date().toISOString() })
       .eq("id", campaignId)
       .eq("status", "paused")
       .like("error", `${UNDO_PREFIX}%`);
+    if (error) throw new Error("Couldn't save where Undo got to.");
   } else {
     await putBack(campaignId, wave, done);
   }
-  return { kind: "done", u: wave, calledBack, went, waiting };
+  return { kind: "done", u: wave, calledBack, went, maybe, waiting };
 }
 
 // After a full Undo: the email as it was before the press. One that didn't
 // exist before goes again (if nobody got any of it), so Send starts afresh.
-// If some had already gone, those stay counted (in its numbers and the
-// results), and the rest is as before. The press's page key stays spent.
+// If some had already gone (or may have), those stay counted, in its
+// numbers and the results, and the rest is as before. The press's page key
+// stays spent. Each step is checked: if one fails it throws, and the email
+// is left paused as being undone, so pressing Undo again finishes it.
 async function putBack(campaignId: string, u: WaveUndo, done: UndoDone) {
   const admin = createAdminClient();
-  const cur = await getCampaign(campaignId);
+  const { data: row, error: readErr } = await admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).eq("id", campaignId).maybeSingle();
+  if (readErr) throw new Error("Couldn't read the email to put it back.");
+  const cur = row as CampaignRow | null;
   if (!cur) return;
   const iso = new Date().toISOString();
+  const kept = done.went + (done.maybe ?? 0);
   const lastWaveAs = (n: number) => {
     const list = [...(((cur.content as { waves?: { at: string; n: number }[] }).waves ?? []) as { at: string; n: number }[])];
     if (list.length) list[list.length - 1] = { ...list[list.length - 1], n };
     return list;
   };
-  // Each change below only while it's still marked as being undone (not
+  // Each change only while it's still marked as being undone (not
   // cancelled from the Email page meanwhile).
   const undoing = `${UNDO_PREFIX}%`;
+  const failed = "Couldn't put the email back as it was. Press Undo again.";
   if (!u.before) {
     const { count, error } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", campaignId);
-    if (!error && !count) {
-      await admin.from("email_campaigns").delete().eq("id", campaignId).eq("status", "paused").like("error", undoing);
+    if (error || count === null) throw new Error(failed);
+    if (!count) {
+      const { error: delErr } = await admin.from("email_campaigns").delete().eq("id", campaignId).eq("status", "paused").like("error", undoing);
+      if (delErr) throw new Error(failed);
       return;
     }
-    await admin
+    const { error: upErr } = await admin
       .from("email_campaigns")
       .update({
         status: "sent",
         error: null,
         sent_at: iso,
         locked_until: null,
-        recipients: done.went,
+        recipients: count,
         held_out: 0,
-        content: { ...cur.content, waves: lastWaveAs(done.went), pace: { go: null, goKey: u.key, undone: done } },
+        content: { ...cur.content, waves: lastWaveAs(kept), pace: { go: null, goKey: u.key, undone: done } },
         updated_at: iso,
       })
       .eq("id", campaignId)
       .eq("status", "paused")
       .like("error", undoing);
+    if (upErr) throw new Error(failed);
     return;
   }
   const b = u.before;
-  await admin
+  // Whoever had it from this wave is no longer among those still to go.
+  const remaining = typeof b.pace.remaining === "number" ? Math.max(0, b.pace.remaining - kept) : b.pace.remaining;
+  const { error: upErr } = await admin
     .from("email_campaigns")
     .update({
       status: b.status === "sending" ? "scheduled" : b.status,
@@ -887,16 +1002,55 @@ async function putBack(campaignId: string, u: WaveUndo, done: UndoDone) {
       sent_at: b.sent_at,
       approved_by: b.approved_by,
       approved_at: b.approved_at,
-      recipients: b.recipients === null && !done.went ? null : (b.recipients ?? 0) + done.went,
+      recipients: b.recipients === null && !kept ? null : (b.recipients ?? 0) + kept,
       held_out: b.held_out,
       excluded: b.excluded ?? {},
       locked_until: null,
-      content: { ...cur.content, waves: done.went ? lastWaveAs(done.went) : (b.waves ?? []), pace: { ...b.pace, go: null, goKey: u.key, undone: done } },
+      content: { ...cur.content, waves: kept ? lastWaveAs(kept) : (b.waves ?? []), pace: { ...b.pace, remaining, go: null, goKey: u.key, undone: done } },
       updated_at: iso,
     })
     .eq("id", campaignId)
     .eq("status", "paused")
     .like("error", undoing);
+  if (upErr) throw new Error(failed);
+}
+
+// ---------- whether Resend holds email for later ----------
+// scheduled_at is how email waits at Resend: for the send window, the
+// schedule-ahead, and Undo's minute. Resend's docs differ on whether the
+// batch endpoint takes it, so: a batch refused for it goes one by one
+// (POST /emails); refused there too, or taken but sent at once (Resend
+// asked about the first one it was to hold), that's noted here
+// (email_settings 'resend_scheduling'), and from then on nothing is handed
+// over before it's due and there's no Undo (Ready to send says so). Once
+// it's sorted with Resend, a developer deletes that setting to try again.
+const SCHEDULING = "resend_scheduling";
+export const NO_HOLD = "Resend wouldn't hold email to send later, so this wave went straight away and can't be undone. From now on, email is handed over only when it's due.";
+
+export async function holdsWork(): Promise<boolean> {
+  const { data, error } = await createAdminClient().from("email_settings").select("value").eq("key", SCHEDULING).maybeSingle();
+  if (error) return true;
+  return (data?.value as { works?: unknown } | undefined)?.works !== false;
+}
+
+async function holdsDontWork(why: string) {
+  const at = new Date().toISOString();
+  const { error } = await createAdminClient().from("email_settings").upsert({ key: SCHEDULING, value: { works: false, at, why: why.slice(0, 300) }, updated_at: at }, { onConflict: "key" });
+  if (error) console.error("resend scheduling:", error.message);
+}
+
+// Whether Resend is really holding this email for later (asked once a run,
+// of the first one handed over to arrive later): not if it has no
+// scheduled_at, or says anything but "scheduled". Null: no clear answer
+// (then it's taken as held: switching holds off by mistake would stop the
+// morning run's email until it's due, which a once-a-day run never sees).
+async function holdTook(resendId: string | null): Promise<boolean | null> {
+  if (!resendId) return null;
+  const e = await getEmail(resendId);
+  if (!e.ok) return null;
+  const last = String(e.data?.last_event ?? "").toLowerCase();
+  if (!e.data?.scheduled_at || (last && last !== "scheduled")) return false;
+  return last === "scheduled" ? true : null;
 }
 
 // ---------- the lease ----------
@@ -1088,20 +1242,58 @@ export interface UndoPress {
   first: boolean;
 }
 
-export const UNDO_WAITS = "The next wave waits until the last one can no longer be undone.";
+// When a wave of `n` pressed for at `now` would arrive if it's held for
+// Undo, or null if it can't be: too big to call back in time, or the hold
+// would carry it past what a run hands to Resend now (Saturday evening,
+// when the next slot is Monday). The confirm step asks the same, so it
+// never promises an Undo the send won't give. (Whether Resend holds email
+// at all is asked separately: holdsWork.)
+export function undoHoldAt(n: number, now: Date): Date | null {
+  if (!canUndoWave(n)) return null;
+  const at = nextSendSlot(now);
+  const hold = nextSendSlot(new Date(Math.max(at.getTime(), now.getTime() + undoHoldMs(n))));
+  if (hold.getTime() !== at.getTime() && hold.getTime() > now.getTime() + scheduleAheadMs()) return null;
+  return hold;
+}
+
+type WaveList = { at: string; n: number }[];
 
 export async function prepareWave(c: CampaignRow, data: RenderData, now = new Date(), press: UndoPress | null = null): Promise<{ c: CampaignRow; more: boolean; note: string | null }> {
   const admin = createAdminClient();
   const patch: Partial<CampaignRow> = {};
   const links = freezeLinks(asInput(c), data, c.links ?? []);
   if (links.length !== (c.links ?? []).length) patch.links = links;
+  // Changes to the pace (and the wave list) are made to whatever the email
+  // has when they're saved: if it changed meanwhile (an Undo, a press in
+  // another tab), it's read again, so nothing saved elsewhere is lost.
+  let paceChange: Partial<Pace> | null = null;
+  let addWave: { at: string; n: number } | null = null;
+  const withChanges = (content: CampaignRow["content"]): CampaignRow["content"] => {
+    const cur = (content ?? { blocks: [] }) as CampaignRow["content"];
+    const waves = addWave ? [...(((cur as { waves?: WaveList }).waves ?? []) as WaveList), addWave] : null;
+    return { ...cur, ...(waves ? { waves } : {}), pace: { ...paceOf({ content: cur }), ...(paceChange ?? {}) } } as CampaignRow["content"];
+  };
+  const setPace = (p: Partial<Pace>) => {
+    paceChange = { ...(paceChange ?? {}), ...p };
+  };
   const save = async () => {
+    const content = paceChange || addWave;
+    if (content) patch.content = withChanges(c.content);
     if (!Object.keys(patch).length) return;
-    const { error } = await admin
-      .from("email_campaigns")
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq("id", c.id);
-    if (error) throw new Error("Couldn't save who it's going to.");
+    let cur = c;
+    for (let i = 0; ; i++) {
+      const { data: done, error } = await admin
+        .from("email_campaigns")
+        .update({ ...patch, ...(content ? { content: withChanges(cur.content) } : {}), updated_at: new Date().toISOString() })
+        .eq("id", c.id)
+        .eq("updated_at", cur.updated_at)
+        .select("id");
+      if (error) throw new Error("Couldn't save who it's going to.");
+      if (done?.length) return;
+      const fresh = i < 3 ? await getCampaign(c.id) : null;
+      if (!fresh) throw new Error("Couldn't save who it's going to.");
+      cur = fresh;
+    }
   };
   const pace: Pace = { ...((c.content as { pace?: Pace }).pace ?? {}) };
 
@@ -1119,18 +1311,18 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
     // After the last wave, it's done (anyone new waits for a fresh Send).
     const more = pace.remaining !== 0;
     const note = more ? WAVE_WAITING : null;
-    if (pace.go || (pace.note ?? null) !== note) {
-      patch.content = { ...c.content, pace: { ...pace, go: null, note } } as CampaignRow["content"];
-    }
+    if (pace.go || (pace.note ?? null) !== note) setPace({ go: null, note });
     await save();
     return { c: { ...c, ...patch }, more, note };
   }
 
-  // The last wave can still be undone: nothing new until it can't (a full
-  // Undo puts the email back as it was before that wave).
+  // None while the last wave can still be undone (a full Undo puts the
+  // email back as it was before it).
   if (undoOpen(pace.undo, Date.now())) {
+    const note = manual ? WAVE_WAITING : `The next wave goes ${dayName(nextMorningWave(now, false))}.`;
+    setPace({ go: null, note });
     await save();
-    return { c: { ...c, ...patch }, more: true, note: UNDO_WAITS };
+    return { c: { ...c, ...patch }, more: true, note };
   }
 
   // The brake: the last wave bounced or drew complaints over the line.
@@ -1143,17 +1335,16 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   const plan = await getSendPlan();
   const room = await roomToday(now, plan);
   const later = (why: string) => ({ more: true, note: why });
-  // Waves that go by themselves: one a day, so the small first wave isn't
-  // followed by a full one the same day before anyone could look at it.
-  const pressed = !!pace.go && utcDay(new Date(pace.go)) === utcDay(now);
-  const lastAt = ((c.content as { waves?: { at: string }[] }).waves ?? []).at(-1)?.at;
-  const waveToday = !!lastAt && utcDay(new Date(lastAt)) === utcDay(now);
   let verdict: { more: boolean; note: string | null } | null = null;
   if (!waveCanGoToday(now)) verdict = later(manual ? `${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)` : `The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
   else if (room <= 0) verdict = later(manual ? `Today's share of Resend's daily limit is used up. ${WAVE_WAITING}` : DAILY_LIMIT);
-  else if (!manual && !pressed && waveToday) verdict = later(`The next wave goes ${dayName(nextMorningWave(now, false))}.`);
+  // One wave a day (nextWaveAfter): a wave chosen today, or arriving today.
+  const last = verdict ? null : await lastWave(c.id);
+  const nextDay = verdict ? null : nextWaveAfter(last, now);
+  if (nextDay) verdict = later(manual ? WAVE_WAITING : `The next wave goes ${dayName(nextDay)}.`);
   if (verdict) {
-    patch.content = { ...c.content, pace: { ...pace, note: verdict.note } } as CampaignRow["content"];
+    // (A press is used up only by a wave today that rules out another.)
+    setPace({ note: verdict.note, ...(nextDay ? { go: null } : {}) });
     await save();
     return { c: { ...c, ...patch }, ...verdict };
   }
@@ -1171,12 +1362,12 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   if (!resolved.send.length && spaced > 0) {
     // Everyone left had another of these lately: a later wave.
     const note = `${spaced.toLocaleString("en-US")} still to go had another ready-made email in the last ${DESIGN_GAP_DAYS} days, so they get this one in a later wave.`;
-    patch.content = { ...c.content, pace: { ...pace, remaining: spaced, note, go: null } } as CampaignRow["content"];
+    setPace({ remaining: spaced, note, go: null });
     await save();
     return { c: { ...c, ...patch }, more: true, note };
   }
   if (!resolved.send.length) {
-    patch.content = { ...c.content, pace: { ...pace, remaining: 0, note: null, go: null } } as CampaignRow["content"];
+    setPace({ remaining: 0, note: null, go: null });
     if (c.recipients === null) {
       patch.recipients = 0;
       patch.held_out = 0;
@@ -1186,35 +1377,29 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
     return { c: { ...c, ...patch }, more: false, note: null };
   }
   // A wave staff just pressed for waits at Resend a few minutes before it's
-  // due, so for its first minute Undo can call every one back. Its rows are
-  // the ones this queueing makes: after the newest row before it, up to the
-  // newest after it (the database's own times; this run holds the email's
-  // lease, so nothing else queues for it meanwhile).
-  // (Only if a run still hands it over now: scheduled_at reaches that far.)
-  const holdAt = nextSendSlot(new Date(Math.max(at.getTime(), Date.now() + undoHoldMs(resolved.send.length))));
-  const held = !!press && canUndoWave(resolved.send.length) && (holdAt.getTime() === at.getTime() || holdAt.getTime() <= Date.now() + scheduleAheadMs());
-  let deliverAt = at;
-  let after: string | null = null;
-  let waveNo = 1;
-  if (held) {
-    deliverAt = holdAt;
-    after = await newestSend(c.id);
-    const last = await lastWave(c.id);
-    waveNo = !last ? 1 : last.day === centralDay(new Date().toISOString()) ? last.n : last.n + 1;
-  }
+  // due, so for a minute after it's handed over Undo can call every one
+  // back. Its rows are the ones this queueing makes: after the newest row
+  // before it, up to the newest after it (the database's own times; this
+  // run holds the email's lease, so nothing else queues for it meanwhile).
+  const holdAt = press && (await holdsWork()) ? undoHoldAt(resolved.send.length, new Date()) : null;
+  const deliverAt = holdAt && holdAt.getTime() > at.getTime() ? holdAt : at;
+  const after = holdAt ? await newestSend(c.id) : null;
   const n = await queueSends(c.id, resolved, deliverAt);
   let undo: WaveUndo | undefined;
-  if (press && held && n > 0) {
+  if (press && holdAt && n > 0) {
     const to = await newestSend(c.id);
     const t = Date.now();
     if (to && to !== after) {
       undo = {
         key: press.key,
-        wave: waveNo,
+        wave: (last?.n ?? 0) + 1,
         n,
         at: new Date(t).toISOString(),
+        // For now: the minute starts again once they're handed over
+        // (startUndoMinute).
         until: new Date(t + UNDO_SECONDS * 1000).toISOString(),
         arrives: deliverAt.toISOString(),
+        planned: at.toISOString(),
         after,
         to,
         first: press.first,
@@ -1222,11 +1407,11 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
       };
     }
   }
-  const waves = [...(((c.content as { waves?: { at: string; n: number }[] }).waves ?? []) as { at: string; n: number }[]), { at: now.toISOString(), n }];
+  addWave = { at: now.toISOString(), n };
   const note = manual && left > 0 ? WAVE_WAITING : null;
   // A wave nobody can undo drops the last one's record (long over by now).
   // The first wave has gone (if anyone was queued): the next is a full one.
-  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note, go: null, undo, firstWave: n > 0 ? undefined : pace.firstWave } } as CampaignRow["content"];
+  setPace({ remaining: left, note, go: null, undo, firstWave: n > 0 ? undefined : pace.firstWave });
   patch.recipients = (c.recipients ?? 0) + resolved.willSend;
   patch.held_out = (c.held_out ?? 0) + resolved.heldOut;
   patch.excluded = resolved.excluded;
@@ -1243,8 +1428,13 @@ interface QueuedRow {
   batch_key: string | null;
   batch_at: string | null;
   created_at: string;
+  error: string | null;
 }
-const ROW_COLUMNS = "id, member_id, deliver_at, batch_no, batch_key, batch_at, created_at";
+const ROW_COLUMNS = "id, member_id, deliver_at, batch_no, batch_key, batch_at, created_at, error";
+// On a row whose hand-over got no clear answer (Resend may have it): its
+// key is kept until Resend answers clearly, even if it then says "slow
+// down", so a retry can never send it twice.
+const UNCLEAR = "Resend may have this one (no clear answer yet): it's tried again under the same key, so it can't go twice.";
 
 interface MemberRow {
   id: string;
@@ -1384,14 +1574,20 @@ async function stopReason(c: CampaignRow): Promise<string | null> {
 // How Resend's refusal reads: `unknown` (it may have got it: the network,
 // a 5xx, another request with the key still going), `later` (nothing was
 // taken, and trying again soon won't help: a rate limit or used-up quota,
-// a bad key, an unverified sender), or `bad_item` (nothing was taken, and
-// something in the emails is wrong: an odd address).
-type Refusal = "unknown" | "later" | "bad_item";
+// a bad key, an unverified sender), `schedule` (nothing was taken: Resend
+// won't take scheduled_at there; a setup problem, not an address), or
+// `bad_item` (nothing was taken, and something in the emails is wrong: an
+// odd address). If any try of the request may have reached Resend (it
+// timed out or got a 5xx before a 429), it's `unknown` whatever the last
+// answer was: the key is kept, so a retry can't send twice.
+type Refusal = "unknown" | "later" | "schedule" | "bad_item";
 const SYSTEMIC = new Set(["invalid_from_address", "invalid_access", "missing_api_key", "invalid_api_key", "restricted_api_key", "invalid_idempotency_key", "daily_quota_exceeded", "monthly_quota_exceeded", "rate_limit_exceeded"]);
 function refusal(r: Extract<ResendResult<unknown>, { ok: false }>): Refusal {
+  if (r.unclear) return "unknown";
   if (r.status === 0 || r.status >= 500 || r.status < 400) return "unknown";
   if (r.status === 409) return "unknown";
   if (r.status === 401 || r.status === 403 || r.status === 429 || SYSTEMIC.has(r.name ?? "")) return "later";
+  if (refusedSchedule(r)) return "schedule";
   return "bad_item";
 }
 
@@ -1407,6 +1603,7 @@ export interface DeliverResult {
   tooLate: number; // cancelled: they'd have arrived after the email's words stopped being true
   tooLateWhy: string | null;
   late: string | null; // the rest would arrive over a day late: paused for an admin
+  noHold: string | null; // Resend wouldn't hold email for later (NO_HOLD): no Undo
 }
 
 export function lateNote(by: SendBy): string {
@@ -1440,7 +1637,7 @@ async function legacyStillNeedsSetup(ids: string[]): Promise<Set<string>> {
 export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: number, now = new Date()): Promise<DeliverResult> {
   const admin = createAdminClient();
   const from = process.env.EMAIL_FROM?.trim() ?? "";
-  const result: DeliverResult = { submitted: 0, cancelled: 0, failed: 0, unsure: 0, batches: 0, done: false, error: null, stopped: null, tooLate: 0, tooLateWhy: null, late: null };
+  const result: DeliverResult = { submitted: 0, cancelled: 0, failed: 0, unsure: 0, batches: 0, done: false, error: null, stopped: null, tooLate: 0, tooLateWhy: null, late: null, noHold: null };
   const href = (sendId: string) => trackedLinks(c.links ?? [], sendId);
   const input = asInput(c);
   const shape: CampaignShape = shapeOf(c);
@@ -1457,6 +1654,42 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
   const sendBy = isAutomation(c) || paced ? null : sendByFor(c);
   const tooLate = (r: QueuedRow, t: Date) => !!sendBy && effectiveDeliverAt(r.deliver_at, t).getTime() > sendBy.at.getTime();
   let failures = 0;
+  // Whether Resend holds email for later (scheduled_at). If it won't, only
+  // what's due goes now, and a wave held for Undo goes when it would have
+  // with no hold (holdsWork).
+  let canHold = await holdsWork();
+  let checkedHold = false;
+  const dropHold = async (why: string) => {
+    canHold = false;
+    result.noHold = NO_HOLD;
+    await holdsDontWork(why);
+    const u = paced ? paceOf(c).undo : null;
+    if (!u) return;
+    let q = admin.from("email_sends").update({ deliver_at: u.planned }).eq("campaign_id", c.id).eq("status", "queued").is("batch_key", null).lte("created_at", u.to);
+    if (u.after) q = q.gt("created_at", u.after);
+    await q;
+    await patchPace(c.id, (p) => (p.undo?.key === u.key ? { ...p, undo: null } : null));
+  };
+  // Asked of the first email handed over to arrive later: is Resend really
+  // holding it? If it sent it at once, those just handed over are out now
+  // (not waiting), and nothing else is handed over early.
+  const checkHold = async (list: { row: QueuedRow; item: OutgoingEmail; id: string | null }[]): Promise<boolean> => {
+    const held = list.find((x) => x.item.scheduled_at && x.id);
+    if (checkedHold || !held) return true;
+    checkedHold = true;
+    if ((await holdTook(held.id)) !== false) return true;
+    const at = new Date().toISOString();
+    await admin
+      .from("email_sends")
+      .update({ status: "submitted", deliver_at: at })
+      .in(
+        "id",
+        list.map((x) => x.row.id),
+      )
+      .eq("status", "scheduled");
+    await dropHold("Resend sent at once an email it was asked to hold.");
+    return false;
+  };
 
   // A late welcome or birthday is worse than none.
   if (isAutomation(c)) {
@@ -1487,7 +1720,9 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       break;
     }
     const t = new Date();
-    const horizon = t.getTime() + scheduleAheadMs();
+    // How far ahead email is handed over to wait at Resend (only what's due,
+    // if Resend won't hold email).
+    const horizon = t.getTime() + (canHold ? scheduleAheadMs() : 60_000);
 
     // A batch that was numbered but never confirmed (a crash, a timeout)
     // goes again first, with the same key.
@@ -1769,20 +2004,33 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       return ok;
     };
 
-    // Each alone, under its own key (after Resend refused the batch
-    // outright, so it took none of them).
-    if (key.endsWith(":split")) {
+    // Each alone, under its own key, after Resend refused the batch
+    // outright (so it took none of them): for an odd address (":split",
+    // each still through the batch endpoint), or for scheduled_at (":one",
+    // each through POST /emails, which documents scheduled_at).
+    if (key.endsWith(":split") || key.endsWith(":one")) {
+      const single = key.endsWith(":one");
       let taken = 0;
       let halt: string | null = null;
+      let again = false; // re-keyed, or Resend won't hold email: round again
       const refused: { row: QueuedRow; why: string }[] = [];
       for (let i = 0; i < items.length; i++) {
-        const one = await deliver([items[i]], `${key}:${itemRows[i].id}`);
+        const oneKey = `${key}:${itemRows[i].id}`;
+        const one = single ? await deliverOne(items[i], oneKey) : await deliver([items[i]], oneKey);
         if (one.ok || (one.status === 409 && one.name === "invalid_idempotent_request")) {
-          if (!(await markAccepted([{ row: itemRows[i], item: items[i], id: one.ok ? one.data[0] || null : null }], one.ok ? null : "Handed over earlier; Resend's id wasn't saved."))) {
+          const accepted = [{ row: itemRows[i], item: items[i], id: one.ok ? one.data[0] || null : null }];
+          if (!(await markAccepted(accepted, one.ok ? null : "Handed over earlier; Resend's id wasn't saved."))) {
             result.error = "Resend took an email but saving that failed. The next run finishes it (nothing is sent twice).";
             return result;
           }
           taken++;
+          // Resend sent it at once instead of holding it: the rest wait
+          // until they're due.
+          if (!(await checkHold(accepted))) {
+            await unnumber(itemRows.slice(i + 1).map((r) => r.id));
+            again = true;
+            break;
+          }
           continue;
         }
         const kind = refusal(one);
@@ -1790,14 +2038,33 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
           refused.push({ row: itemRows[i], why: scrubAddresses(one.error) || "Resend refused it." });
           continue;
         }
+        if (kind === "schedule") {
+          const rest = itemRows.slice(i).map((r) => r.id);
+          if (!single) {
+            // The batch endpoint won't take scheduled_at: one by one through POST /emails.
+            const { error: oneErr } = await admin.from("email_sends").update({ batch_key: `${key.replace(/:split$/, "")}:one` }).in("id", rest).eq("status", "queued");
+            if (oneErr) {
+              result.error = "Couldn't save the queue.";
+              return result;
+            }
+          } else {
+            // Not there either: nothing goes before it's due, and no Undo.
+            await unnumber(rest);
+            await dropHold(`Resend refused scheduled_at: ${scrubAddresses(one.error)}`);
+          }
+          again = true;
+          break;
+        }
         // Stop here. The ones not tried yet (and this one, when Resend
         // surely didn't take it) go again later under a new key; one that
         // may have gone keeps its own key, so a retry can't send it twice.
-        await unnumber(itemRows.slice(kind === "later" ? i : i + 1).map((r) => r.id));
+        const unclear = kind !== "later" || itemRows[i].error === UNCLEAR;
+        if (kind !== "later") await admin.from("email_sends").update({ error: UNCLEAR }).eq("id", itemRows[i].id).eq("status", "queued");
+        await unnumber(itemRows.slice(unclear ? i + 1 : i).map((r) => r.id));
         halt = `Resend didn't accept an email in batch ${batchNo}: ${scrubAddresses(one.error)}`;
         break;
       }
-      if (!halt && !taken && refused.length > 1) {
+      if (!halt && !again && !taken && refused.length > 1) {
         // Every one refused: it's the email or the setup, not the addresses.
         await unnumber(refused.map((x) => x.row.id));
         result.error = `Resend refused every email in batch ${batchNo}: ${refused[0].why}`;
@@ -1809,7 +2076,7 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       }
       result.submitted += taken;
       result.failed += refused.length;
-      result.batches++;
+      if (taken || refused.length) result.batches++;
       if (halt) {
         result.error = halt;
         return result;
@@ -1819,7 +2086,8 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
 
     const sent = await deliver(items, key);
     if (sent.ok) {
-      if (!(await markAccepted(itemRows.map((row, i) => ({ row, item: items[i], id: sent.data[i] || null })), null))) {
+      const accepted = itemRows.map((row, i) => ({ row, item: items[i], id: sent.data[i] || null }));
+      if (!(await markAccepted(accepted, null))) {
         // Resend has them; the next run re-sends the same batch under the
         // same key and Resend answers with the same ids, without sending.
         result.error = "Resend took a batch but saving the result failed. The next run finishes it (nothing is sent twice).";
@@ -1828,6 +2096,8 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       result.submitted += items.length;
       result.batches++;
       failures = 0;
+      // Resend sent at once what it was asked to hold: nothing else early.
+      await checkHold(accepted);
       continue;
     }
     if (sent.status === 409 && sent.name === "invalid_idempotent_request") {
@@ -1842,16 +2112,23 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       continue;
     }
     const kind = refusal(sent);
-    if (kind === "bad_item") {
-      // Nothing was taken. Send them one by one, so one odd address can't
-      // hold up everyone behind it.
-      const splitKey = `${key}:split`;
-      const { error: splitErr } = await admin.from("email_sends").update({ batch_key: splitKey }).in("id", itemRows.map((r) => r.id)).eq("status", "queued");
+    if (kind === "bad_item" || kind === "schedule") {
+      // Nothing was taken. One by one: so one odd address can't hold up
+      // everyone behind it (":split"), or, if the batch endpoint won't take
+      // scheduled_at, through POST /emails (":one").
+      const oneKey = `${key}:${kind === "schedule" ? "one" : "split"}`;
+      const { error: splitErr } = await admin.from("email_sends").update({ batch_key: oneKey }).in("id", itemRows.map((r) => r.id)).eq("status", "queued");
       if (splitErr) {
         result.error = "Couldn't save the queue.";
         return result;
       }
       continue;
+    }
+    if (kind === "later" && rows.some((r) => r.error === UNCLEAR)) {
+      // An earlier try of this key got no clear answer, so Resend may have
+      // it: the key stays, and the next run asks again with it.
+      result.stopped = "Resend asked us to slow down. The rest go on the next run.";
+      return result;
     }
     if (kind === "later") {
       // Nothing was taken: these go again on a later run, under a new key.
@@ -1870,6 +2147,9 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       result.error = `Resend didn't accept batch ${batchNo}: ${scrubAddresses(sent.error)}`;
       return result;
     }
+    // No clear answer: Resend may have them. Same key next time.
+    await admin.from("email_sends").update({ error: UNCLEAR }).in("id", itemRows.map((r) => r.id)).eq("status", "queued").eq("batch_key", key);
+    for (const r of rows) r.error = UNCLEAR;
     failures++;
     if (failures >= 3) {
       result.error = `Resend didn't answer for batch ${batchNo}: ${scrubAddresses(sent.error)} It goes again (same key) on the next run.`;
@@ -1888,10 +2168,12 @@ export interface RunResult {
   cancelled: number;
   status: string;
   note: string | null;
+  noHold?: boolean; // Resend wouldn't hold email for later: this wave can't be undone
 }
 
 function runNote(r: DeliverResult): string | null {
   const bits = [
+    r.noHold,
     r.error,
     r.stopped ? `Stopped: ${r.stopped}` : null,
     r.late,
@@ -1939,6 +2221,8 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
       wave = { more: w.more, note: w.note };
     } else c = await prepareCampaign(c, data, now);
     const r = await deliverQueued(c, data, deadline, now);
+    // The wave staff pressed for is with Resend: its minute to undo starts.
+    if (opts.press) await startUndoMinute(id, opts.press.key).catch((e) => console.error("undo minute:", e instanceof Error ? e.message : e));
     const iso = new Date().toISOString();
     const note = runNote(r);
     let status: string = c.status;
@@ -1971,7 +2255,7 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
       status = "scheduled";
       await admin.from("email_campaigns").update({ status, locked_until: null, error: note, updated_at: iso }).eq("id", id).eq("status", "sending");
     }
-    return { id, name: c.name, ran: true, submitted: r.submitted, cancelled: r.cancelled, status, note };
+    return { id, name: c.name, ran: true, submitted: r.submitted, cancelled: r.cancelled, status, note, ...(r.noHold ? { noHold: true } : {}) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Something went wrong.";
     if (isAutomation(c)) {
