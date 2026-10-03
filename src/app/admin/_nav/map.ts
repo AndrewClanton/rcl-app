@@ -176,8 +176,8 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     {
       href: "/display",
       label: "Screens & TVs",
-      about: "Pick what a tablet or TV shows: kitchen, bar, lobby, ramp.",
-      keywords: "displays live displays kitchen bar customer screen kiosk ramp lobby box office signage tv",
+      about: "Pick what a tablet or TV shows: kitchen, bar, lobby, Now Playing.",
+      keywords: "displays live displays kitchen bar customer screen kiosk ramp now playing lobby box office signage tv",
     },
     { href: "/admin/staff", label: "Staff logins & access", about: "Who can sign in, and what each person can do.", keywords: "roles admin manager cashier accounts permissions logins", min: "owner" },
     { href: "/admin/dev-notes", label: "Dev notes", about: "Notes about the site to review and hand to Claude.", keywords: "feedback bugs backlog claude dev notes", min: "admin", badge: "devNotes" },
@@ -224,7 +224,7 @@ function shortcuts(dates: { yesterday: string; lastWeek: string }): (MapLink & {
     { area: "setup", href: "/display/bar", label: "Bar screen", about: "Drink tickets to make.", keywords: "display prep" },
     { area: "setup", href: "/display/customer", label: "Customer screen", about: "The tablet facing the guest: lineup, check-in, their order.", keywords: "kiosk check in display" },
     { area: "setup", href: "/display/box-office", label: "Lobby showtimes board", about: "The public showtimes sign.", keywords: "box office signage display tv" },
-    { area: "setup", href: "/display/ramp", label: "Ramp TV", about: "Big poster and countdown to the next film.", keywords: "portrait countdown display tv" },
+    { area: "setup", href: "/display/now-playing", label: "Now Playing screen", about: "Big poster and countdown to the next film.", keywords: "ramp tv portrait countdown display" },
   ];
 }
 

@@ -33,7 +33,7 @@ export default function WhatWeCanPost() {
             <>Posting about a movie released in {YEAR} anywhere: Instagram, Facebook, stories, window signs</>,
             <>Telling members about classics through the members&apos; email list</>,
             <>Sending the Members schedule graphic in a direct message to one person</>,
-            <>Classics on the screens inside the building that need a staff login, like the ramp TV</>,
+            <>Classics on the screens inside the building that need a staff login, like the Now Playing screen</>,
           ]}
           no={[
             <>Posting a classic on social media, in a story, or in a comment</>,
