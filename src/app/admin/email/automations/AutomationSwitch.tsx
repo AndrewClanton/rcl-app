@@ -11,7 +11,7 @@ export default function AutomationSwitch({ automation, on, canChange }: { automa
   const [error, setError] = useState<string | null>(null);
   return (
     <div className="text-right">
-      <label className={`flex items-center gap-2 text-sm font-semibold ${canChange ? "cursor-pointer" : ""}`}>
+      <label className={`flex min-h-11 items-center gap-2 text-sm font-semibold ${canChange ? "cursor-pointer" : ""}`}>
         <input
           type="checkbox"
           className="h-5 w-5 accent-[var(--accent)]"
