@@ -170,6 +170,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     },
     { href: "/admin/reports/box-office", label: "Box office", about: "Admissions and ticket money per movie, for the distributors.", keywords: "distributors film rental admissions tickets print" },
     { href: "/admin/reports/tax", label: "Sales tax", about: "Tax collected, by month or quarter, for the Missouri return.", keywords: "missouri return quarter dor tax" },
+    {
+      href: "/admin/owner-tab",
+      label: "Owner tab",
+      about: "What the owners had at the owner rate, each month's statement, recording a payment, and who gets the owner rate.",
+      keywords: "owner rate at cost beer drinks owners tab statement settle pay monthly",
+      min: "owner",
+    },
   ],
   setup: [
     {

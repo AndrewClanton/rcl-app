@@ -10,6 +10,7 @@ import { getTimesheet, thisWeek } from "@/lib/data/team";
 import { getTrainingOverview } from "@/lib/training/data";
 import { getOftenOut } from "@/lib/ops/outages";
 import { getRanOutWeek, type RanOutWeek } from "@/lib/data/ran-out";
+import { ownerTabThisMonth } from "@/lib/data/owner-tab";
 import { openFlags } from "@/lib/member-flags-server";
 import { FLAG_REASONS } from "@/lib/member-flags";
 import type { OftenOut } from "@/lib/ops/shared";
@@ -183,6 +184,8 @@ export interface TodayBoard {
   oftenOut: OftenOut[] | null;
   // Managers only: what ran out since Monday, so repeat offenders show.
   ranOutWeek: RanOutWeek | null;
+  // Owners only: the owner tab this month so far, all owners together.
+  ownerTab: { owed: number; menuValue: number; orders: number } | null;
 }
 
 export async function getTodayBoard(staff: { employeeId: string; role: EmployeeRole }): Promise<TodayBoard> {
@@ -203,7 +206,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     }));
   });
 
-  const [summary, shows, houseEvents, events, booths, onShift, sheet, training, managerTodos, oftenOut, ranOutWeek] = await Promise.all([
+  const [summary, shows, houseEvents, events, booths, onShift, sheet, training, managerTodos, oftenOut, ranOutWeek, ownerTab] = await Promise.all([
     quietly(getDashboardSummary),
     quietly(async () => {
       const { data, error } = await db
@@ -272,6 +275,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
       : null,
     manager ? quietly(() => getOftenOut()) : null,
     manager ? quietly(() => getRanOutWeek()) : null,
+    staff.role === "owner" ? quietly(() => ownerTabThisMonth()) : null,
   ]);
 
   const mine = sheet?.find((p) => p.employeeId === staff.employeeId);
@@ -296,5 +300,6 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
     managerTodos,
     oftenOut,
     ranOutWeek,
+    ownerTab,
   };
 }

@@ -8,6 +8,7 @@ import InfoTip from "@/components/help/InfoTip";
 import { approvalText } from "@/lib/pin-rules";
 import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "./actions";
 import { printTickets } from "./print-tickets";
+import { ownerTabLabel, ownerTabReceiptLabel } from "@/lib/register-totals";
 import { sendPrint, targetName, type PrintTarget } from "./printing";
 
 const TZ = "America/Chicago";
@@ -30,16 +31,19 @@ function asReceipt(o: RecentOrder): ReceiptData {
     tax: o.tax,
     tip: o.tip,
     total: o.total,
-    payments: [
-      { label: "Voucher", amount: o.voucher },
-      { label: "Cash", amount: o.cash },
-      { label: "Card", amount: o.card },
-    ],
+    payments: o.ownerTab
+      ? [{ label: ownerTabReceiptLabel(o.ownerTab), amount: o.total }]
+      : [
+          { label: "Voucher", amount: o.voucher },
+          { label: "Cash", amount: o.cash },
+          { label: "Card", amount: o.card },
+        ],
     reprint: true,
   };
 }
 
 function paidWith(o: RecentOrder) {
+  if (o.ownerTab) return ownerTabLabel(o.ownerTab);
   return [o.voucher > 0 && "voucher", o.cash > 0 && "cash", o.card > 0 && (o.cardLabel ?? "card")].filter(Boolean).join(" + ") || o.method || "—";
 }
 
@@ -153,7 +157,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                         selected.name && `For ${selected.name}`,
                         selected.cashier && `Rung up by ${selected.cashier}`,
                         selected.member && `Member: ${selected.member}${selected.memberByCard ? " (points by card)" : ""}`,
-                        `Paid ${paidWith(selected)}`,
+                        selected.ownerTab ? paidWith(selected) : `Paid ${paidWith(selected)}`,
                       ]
                         .filter(Boolean)
                         .join(" · ")}
@@ -257,7 +261,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
 
       {refunding && selected && (
         <ManagerPinModal
-          description={`Refund order #${selected.orderNumber} (${money(selected.total)})? ${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
+          description={`Refund order #${selected.orderNumber} (${money(selected.total)})? ${selected.ownerTab ? `It comes off ${selected.ownerTab}'s owner tab; no money changes hands.` : ""}${selected.card > 0 ? "The card part goes back to the card. " : ""}${selected.cash > 0 ? `Hand back ${money(selected.cash)} cash.` : ""}`}
           onCancel={() => setRefunding(false)}
           onSubmit={async (pin) => {
             const r = await refundRegisterOrder(selected.id, pin);

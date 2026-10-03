@@ -31,12 +31,18 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+// "2026-10" -> "October 2026", for an owner-tab payment's statement.
+function monthName(month: string) {
+  return new Date(`${month}-15T12:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 // What each order counts for, figure by figure (completed orders only).
 const goods = (o: DayOrder) => o.total - o.tax - o.tip - (o.refunded - o.refundedTax);
 const moneyIn = (o: DayOrder) => (o.source === "pos" ? o.cash + o.card - o.refundedCash - o.refundedCard : o.total - o.refunded);
 
-type Pay = "card" | "cash" | "vouchers" | "online";
-const PAY_LABEL: Record<Pay, string> = { card: "Card", cash: "Cash", vouchers: "Vouchers", online: "Online" };
+// "owner": put on an owner's monthly tab (no money in until it's paid).
+type Pay = "card" | "cash" | "vouchers" | "online" | "owner";
+const PAY_LABEL: Record<Pay, string> = { card: "Card", cash: "Cash", vouchers: "Vouchers", online: "Online", owner: "Owner tab" };
 
 type Filters = { status: string; pay: Pay | ""; who: string; cat: string; item: string; q: string };
 
@@ -44,7 +50,7 @@ function readFilters(sp: URLSearchParams): Filters {
   const pay = sp.get("pay");
   return {
     status: sp.get("status") ?? "completed",
-    pay: pay === "card" || pay === "cash" || pay === "vouchers" || pay === "online" ? pay : "",
+    pay: pay === "card" || pay === "cash" || pay === "vouchers" || pay === "online" || pay === "owner" ? pay : "",
     who: sp.get("who") ?? "",
     cat: sp.get("cat") ?? "",
     item: sp.get("item") ?? "",
@@ -58,6 +64,7 @@ function matches(o: DayOrder, f: Filters) {
   if (f.pay === "cash" && !(o.source === "pos" && o.cash > 0)) return false;
   if (f.pay === "vouchers" && !(o.source === "pos" && o.voucher > 0)) return false;
   if (f.pay === "online" && o.source === "pos") return false;
+  if (f.pay === "owner" && !o.ownerTab) return false;
   if (f.who && (f.who === NO_CASHIER ? !!o.cashier : o.cashier !== f.who)) return false;
   if (f.cat && !o.lines.some((l) => inCategory(l.category, f.cat))) return false;
   if (f.item && !o.lines.some((l) => l.name === f.item)) return false;
@@ -217,6 +224,8 @@ function OrdersView({
             ? { label: "Paid with vouchers", of: (o) => o.voucher }
             : f.pay === "online"
               ? { label: "Paid online, less partial refunds", of: (o) => o.total - o.refunded }
+              : f.pay === "owner"
+                ? { label: "Put on an owner's monthly tab, with tax: money in once it's paid", of: (o) => o.total }
               : view === "net"
                 ? { label: "Goods: before tax and tip, after discounts and partial refunds", of: goods }
                 : view === "collected"
@@ -264,6 +273,18 @@ function OrdersView({
               ...(r.dailyCoffee > 0 ? [{ key: "coffee", label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true }] : []),
               ...(r.partialRefunds > 0 ? [{ key: "part", label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
               { key: "net", label: "Net sales", value: money(r.netSales), strong: true },
+              // Not taken off: the owner tab line is already at what the owners pay.
+              ...(r.ownerTab.orders > 0
+                ? [
+                    {
+                      key: "owner",
+                      label: `Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost`,
+                      value: `${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu`,
+                      muted: true,
+                      href: hrefFor({ show: "orders", pay: "owner" }),
+                    },
+                  ]
+                : []),
             ]}
           />
         </Section>
@@ -277,12 +298,32 @@ function OrdersView({
               { key: "cash", label: "Cash (register)", value: money(r.cash), href: hrefFor({ show: "orders", pay: "cash" }) },
               { key: "online", label: "Online (tickets, booths, web orders)", value: money(r.online), href: hrefFor({ show: "orders", pay: "online" }) },
               { key: "members", label: "Insiders+ memberships (Stripe billing)", value: money(r.memberships.collected), href: hrefFor({ show: "memberships" }) },
+              ...(r.ownerTab.paid !== 0 ? [{ key: "ownerpaid", label: "Owner tab payments (recorded today)", value: money(r.ownerTab.paid) }] : []),
               { key: "total", label: "Collected", value: money(r.collected), strong: true },
               ...(r.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in, not counted)", value: money(r.vouchers), muted: true, href: hrefFor({ show: "orders", pay: "vouchers" }) }] : []),
+              ...(r.ownerTab.owed > 0
+                ? [{ key: "owner", label: "Put on owner tabs (money in once it's paid, not counted)", value: money(r.ownerTab.owed), muted: true, href: hrefFor({ show: "orders", pay: "owner" }) }]
+                : []),
               { key: "tips", label: "Of it, tips", value: money(r.tips), muted: true, href: hrefFor({ show: "tips" }) },
-              { key: "tax", label: "Of it, sales tax", value: money(r.tax), muted: true, href: hrefFor({ show: "tax" }) },
+              // The owner tabs' tax is owed with the tab, not collected yet.
+              { key: "tax", label: "Of it, sales tax", value: money(r.tax - r.ownerTab.tax), muted: true, href: hrefFor({ show: "tax" }) },
             ]}
           />
+          {r.ownerPaymentLines.length > 0 && (
+            <ul className="mt-3 divide-y divide-[var(--border)] text-sm">
+              {r.ownerPaymentLines.map((p, i) => (
+                <li key={i} className="flex items-baseline gap-3 py-1.5">
+                  <span className="min-w-0 flex-1">
+                    {p.owner}&apos;s owner tab, {monthName(p.month)}
+                    <span className="block text-xs text-[var(--muted)]">
+                      {time(p.at)} · {p.method}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-semibold tabular-nums">{money(p.amount)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
       )}
 
@@ -457,7 +498,10 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
       <Section title={money(r.tax)} subtitle="Sales tax collected, by where it came from.">
         <Lines
           rows={[
-            { key: "pos", label: "Register orders", value: money(sumTax(completed.filter((o) => o.source === "pos"))), href: hrefFor({ show: "orders" }) },
+            { key: "pos", label: "Register orders", value: money(sumTax(completed.filter((o) => o.source === "pos" && !o.ownerTab))), href: hrefFor({ show: "orders" }) },
+            ...(completed.some((o) => o.ownerTab)
+              ? [{ key: "owner", label: "Owner tabs (owed, paid with the monthly statement)", value: money(sumTax(completed.filter((o) => o.ownerTab))), href: hrefFor({ show: "orders", pay: "owner" }) }]
+              : []),
             ...(completed.some((o) => o.source !== "pos") ? [{ key: "web", label: "Website orders", value: money(sumTax(completed.filter((o) => o.source !== "pos"))) }] : []),
             ...(onlineTickets.length ? [{ key: "tix", label: "Online tickets", value: money(onlineTickets.reduce((s, t) => s + t.tax, 0)), href: hrefFor({ show: "tickets" }) }] : []),
             ...(r.boothLines.length ? [{ key: "booth", label: "Booths", value: money(r.boothLines.reduce((s, b) => s + b.tax, 0)) }] : []),

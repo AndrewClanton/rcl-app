@@ -68,8 +68,8 @@ export function dailyDigestSubject(d: DailyDigest) {
 export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   const r = d.day;
   const orders = r.orders.filter((o) => o.status === "completed").length;
-  // Memberships are in the money in, but they aren't orders.
-  const orderMoney = r.collected - r.memberships.collected;
+  // Memberships and owner-tab payments are in the money in, but they aren't orders.
+  const orderMoney = r.collected - r.memberships.collected - r.ownerTab.paid;
   const compare: string[] = [];
   if (d.lastWeek?.collected) compare.push(`${change(r.collected, d.lastWeek.collected)} last week (${money(d.lastWeek.collected)})`);
   if (d.weekdayAverage && d.weekdayAverage.weeks > 1) compare.push(`typical ${d.label.split(",")[0]}: ${money(d.weekdayAverage.collected)}`);
@@ -81,13 +81,24 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   ];
   // Charged by Stripe, never at the register (so not in Cash or Card).
   if (r.membershipLines.length) money_in.push(["Insiders+ memberships (Stripe)", money(r.memberships.collected)]);
+  // Owners paying their monthly owner-tab statements, the day it's recorded.
+  if (r.ownerTab.paid !== 0) money_in.push(["Owner tab payments", money(r.ownerTab.paid)]);
   if (r.vouchers > 0) money_in.push(["Trivia vouchers (no money in)", money(r.vouchers)]);
   money_in.push(["Collected", money(r.collected), true]);
+  // Sold at the owner rate, on an owner's monthly tab: no money in until it's paid.
+  if (r.ownerTab.owed > 0) money_in.push([`<span style="color:${MUTED}">Put on owner tabs (not collected yet)</span>`, `<span style="color:${MUTED}">${money(r.ownerTab.owed)}</span>`]);
 
   const sold: [string, string, boolean?][] = r.sold.map((s) => [`${esc(s.label)}${s.detail ? ` <span style="color:${MUTED}">· ${esc(s.detail)}</span>` : ""}`, money(s.amount)]);
   if (r.discounts > 0) sold.push(["Member discounts", `−${money(r.discounts)}`]);
   if (r.dailyCoffee > 0) sold.push([`${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, `−${money(r.dailyCoffee)}`]);
   sold.push(["Net sales", money(r.netSales), true]);
+  // Not taken off: the owner tab line is already at what the owners pay.
+  if (r.ownerTab.orders > 0) {
+    sold.push([
+      `<span style="color:${MUTED}">Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost</span>`,
+      `<span style="color:${MUTED}">${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu</span>`,
+    ]);
+  }
   sold.push([`<span style="color:${MUTED}">Tips · sales tax</span>`, `<span style="color:${MUTED}">${money(r.tips)} · ${money(r.tax)}</span>`]);
 
   const body = [

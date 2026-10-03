@@ -13,6 +13,7 @@ import { registerTopic } from "@/lib/register-topic";
 import ShiftBar from "./shift/ShiftBar";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
+import { ownerRatePeople } from "@/lib/owner-rate-server";
 
 export const dynamic = "force-dynamic";
 
@@ -35,13 +36,15 @@ export default async function PosPage() {
   // Signing in again comes back here, not to the back office.
   const session = await requireStaff("/pos");
 
-  const [categories, employees, heldOrders, openTabs, recipesByItem, showings] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, owners] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getDraftOrders("held"),
     getDraftOrders("tab"),
     getRecipesByItem(),
     getRegisterScreenings(),
+    // Who gets the owner rate; nobody until its database update is applied.
+    ownerRatePeople().catch(() => null),
   ]);
 
   // Tickets are sold from the Movies tab (per showing, with seats counted),
@@ -84,6 +87,7 @@ export default async function PosPage() {
           registerTopic={registerTopic()}
           // Dev note only while an admin is signed in (submitting checks again).
           canNote={hasAdminAccess(session.role)}
+          owners={owners ?? []}
         />
       </ItemSettingsProvider>
     </div>

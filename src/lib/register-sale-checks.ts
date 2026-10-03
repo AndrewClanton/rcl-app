@@ -198,11 +198,12 @@ export async function checkSaleTotals(sale: SaleForCheck): Promise<TotalsCheck> 
 
 // must_choose: a "pick one" question with no default (the $5 Special's
 // soda). Read with "*", so a database without that column still checks.
-type Group = { item_id: string; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
+export type Group = { item_id: string; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
 
 // What a line's modifiers add to the item's price, found by option name
-// (the register saves names, not ids).
-function modifierPrice(groups: Group[], mods: string[]): { extra: number } | { unknown: string } | { ambiguous: string } {
+// (the register saves names, not ids). The owner rate prices options with
+// it too (lib/owner-rate-server.ts).
+export function modifierPrice(groups: Group[], mods: string[]): { extra: number } | { unknown: string } | { ambiguous: string } {
   let extra = 0;
   for (const name of mods) {
     const deltas = new Set(groups.flatMap((g) => g.options.filter((o) => o.name === name).map((o) => Number(o.price_delta))));

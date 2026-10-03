@@ -60,12 +60,28 @@ import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import CardNoticeBanner from "./CardNotice";
 import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
-import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, memberDiscountRate, pointsEarned, registerTotals } from "@/lib/register-totals";
+import {
+  cents,
+  dailyPerkPick,
+  ENFORCE_REGISTER_TOTALS,
+  isRewardLine,
+  memberDiscountRate,
+  OWNER_PRICING_LABEL,
+  OWNER_PRICING_TAG,
+  ownerLinePrice,
+  ownerOrderTotals,
+  ownerTabLabel,
+  ownerTabReceiptLabel,
+  pointsEarned,
+  registerTotals,
+} from "@/lib/register-totals";
+import OwnerRateModal, { type OwnerRateOn } from "./OwnerRateModal";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee, getTabletProfile } from "./member-actions";
 import {
   checkBeforePayment,
   completeOrder,
+  completeOwnerTabOrder,
   isDraftOpen,
   logAbandonedSale,
   savedOrderForPayment,
@@ -145,6 +161,7 @@ export default function PosApp({
   initialScreenings,
   registerTopic,
   canNote,
+  owners,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -155,6 +172,7 @@ export default function PosApp({
   initialScreenings: RegisterScreening[];
   registerTopic: string;
   canNote: boolean; // an admin is signed in: Dev note
+  owners: { id: string; name: string }[]; // who gets the owner rate (Back office, Owner tab)
 }) {
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
@@ -345,6 +363,14 @@ export default function PosApp({
   // The last sale's movie tickets, kept for "Reprint last tickets".
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The owner rate (lib/register-totals.ts): on while an owner's own PIN
+  // approval is on this order. It never changes the order's own prices (a
+  // tab saves those), only what's shown and what goes on the owner's tab,
+  // so Undo puts the order straight back to menu prices.
+  const [ownerRate, setOwnerRate] = useState<OwnerRateOn | null>(null);
+  const [ownerAskOpen, setOwnerAskOpen] = useState(false);
+  // What the age check opens next: payment, or the owner tab.
+  const [ageNext, setAgeNext] = useState<"pay" | "owner">("pay");
 
   // Check-ins from the customer screen. Always listening, whatever's on
   // screen; nothing waits on staff (a shared family number is picked on the
@@ -450,6 +476,16 @@ export default function PosApp({
     return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
   });
   const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn);
+  // With the owner rate on: each line's owner price and how it was priced,
+  // and the order at those prices (taxed, nothing else off). The member and
+  // their perks stay on the order underneath, for Undo.
+  const ownerLines = ownerRate
+    ? cart.map((l) => ownerLinePrice({ menuItemId: l.menuItemId, screeningId: l.screeningId, unit: l.unit }, l.menuItemId ? ownerRate.book[l.menuItemId] : null))
+    : null;
+  const ownerTotals = ownerLines ? ownerOrderTotals(ownerLines.map((o, i) => ({ unit: o.unit, qty: cart[i].qty }))) : null;
+  const menuSubtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
+  // A badge reward is a member perk: the server won't put one on an owner tab.
+  const rewardOnOwnerTab = !!ownerRate && cart.some((l) => isRewardLine({ menu_item_id: l.menuItemId, screening_id: l.screeningId, name: l.name, unit_price: l.unit }));
   // The line it would go on, whether or not it's on: "Use it" puts it back.
   const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
@@ -502,6 +538,7 @@ export default function PosApp({
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
     setCoffeeOffFor(null);
+    setOwnerRate(null);
   }
 
   function addLine(line: BuiltLine) {
@@ -516,24 +553,6 @@ export default function PosApp({
   function removeLine(key: string) {
     setCart((prev) => prev.filter((l) => l.key !== key));
   }
-
-  // Keeps the active tab's DB row current as the cart is built, instead of
-  // only saving when the cashier switches away/holds/checks out. Without
-  // this, the Tabs list (and a reload or crash) showed whatever was on the
-  // tab the last time it was left, not what had just been added to it.
-  useEffect(() => {
-    if (!activeTabId) return;
-    const id = activeTabId;
-    const fields = currentFields();
-    const payload = totalsPayload(totals);
-    const timer = setTimeout(() => {
-      saveTab(id, fields, payload).then((ok) => {
-        if (ok) router.refresh();
-      });
-    }, 900);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -586,11 +605,30 @@ export default function PosApp({
     });
   }
 
+  // Keeps the active tab's DB row current as the cart is built, instead of
+  // only saving when the cashier switches away/holds/checks out. Without
+  // this, the Tabs list (and a reload or crash) showed whatever was on the
+  // tab the last time it was left, not what had just been added to it.
+  useEffect(() => {
+    if (!activeTabId) return;
+    const id = activeTabId;
+    const fields = currentFields();
+    const payload = totalsPayload(totals);
+    const timer = setTimeout(() => {
+      saveTab(id, fields, payload).then((ok) => {
+        if (ok) router.refresh();
+      });
+    }, 900);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
+
   // Mirrors the cart onto the customer-facing kiosk display in real time,
   // via Realtime broadcast rather than a database row -- entirely separate
   // from the draft/tab persistence above, so this can't affect payment or
   // order-history logic. cartSnapshotRef always holds the latest snapshot
-  // (updated every render, read from both the debounced broadcast-on-change
+  // (written after every render by the effect under cartSnapshot, which
+  // runs before the effects that read it: the debounced broadcast-on-change
   // effect below and the request-state handler in the subscribe effect),
   // which avoids a stale closure in the long-lived channel subscription.
   const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
@@ -599,7 +637,20 @@ export default function PosApp({
   const unsavedSale = useUnsavedSale();
   // "Put a card on file?" for a tab (right after opening it, or from its chip).
   const [tabCardFor, setTabCardFor] = useState<{ id: string; name: string } | null>(null);
-  cartSnapshotRef.current = {
+  const cartSnapshot: RegisterCartSnapshot = ownerTotals
+    ? {
+        // The owner rate: the menu prices, the owner rate as what came off
+        // them, and the owner's total. No member perks or points with it.
+        orderName,
+        items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
+        subtotal: menuSubtotal,
+        tax: ownerTotals.tax,
+        total: ownerTotals.total,
+        discounts: [{ label: "Owner rate, at cost", amount: cents(menuSubtotal - ownerTotals.subtotal) }].filter((d) => d.amount > 0),
+        member: null,
+        pointsToEarn: 0,
+      }
+    : {
     orderName,
     items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
     subtotal: totals.subtotal,
@@ -632,6 +683,9 @@ export default function PosApp({
       : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
   };
+  useEffect(() => {
+    cartSnapshotRef.current = cartSnapshot;
+  });
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
   // A form staff fill in for a guest standing there shows on the customer
@@ -703,7 +757,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, ownerTotals?.total]);
 
   function resetOrder() {
     setCart([]);
@@ -716,6 +770,7 @@ export default function PosApp({
     // Looked up again for the next order: a coffee just used shows as used.
     setCoffee(null);
     setCoffeeOffFor(null);
+    setOwnerRate(null);
   }
 
   // False (with nothing moved) if what's on screen couldn't be saved.
@@ -830,6 +885,8 @@ export default function PosApp({
       // screen keeps its own items: it's saved and the new tab starts empty.
       const fromScreen = !activeTabId;
       if (!fromScreen && !(await saveOpenTab())) return;
+      // A new tab is a new order: the owner's approval was for the one on screen.
+      setOwnerRate(null);
       const id = fromScreen
         ? await saveDraftOrder("tab", { ...currentFields(), orderName: name }, totalsPayload(totals))
         : await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
@@ -933,8 +990,111 @@ export default function PosApp({
     setTipAsked(asked);
     setTipOpen(false);
     const hasAlcohol = cart.some((l) => l.isAlcohol);
-    if (hasAlcohol) setAgeConfirmOpen(true);
-    else setPayOpen(true);
+    if (hasAlcohol) {
+      setAgeNext("pay");
+      setAgeConfirmOpen(true);
+    } else setPayOpen(true);
+  }
+
+  // "Put on owner tab": no card, no cash, no tip. The same checks as a sale
+  // first (the tab's still open, the seats are there, ID for alcohol). The
+  // server says if the owner's approval has run out.
+  async function putOnOwnerTab() {
+    if (!ownerRate || !employeeId || cart.length === 0) return;
+    // A tab closed on the other register mustn't be closed again from here.
+    if (activeTabId) {
+      setBusy(true);
+      const open = await isDraftOpen(activeTabId).catch(() => null);
+      setBusy(false);
+      if (open === null) return setToast("Couldn't check the tab. Check the connection and try again.");
+      if (!open) {
+        resetOrder();
+        router.refresh();
+        return setToast("That tab was already closed on another register, so it's been cleared from here. Check Recent orders.");
+      }
+    }
+    const seats = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, quantity: l.qty }));
+    if (seats.length) {
+      setBusy(true);
+      const r = await checkTicketSeats(seats).catch(() => null);
+      setBusy(false);
+      if (!r || !r.ok) return setToast(r && !r.ok ? r.error : "Couldn't check seats. Check the connection and try again.");
+    }
+    if (cart.some((l) => l.isAlcohol)) {
+      setAgeNext("owner");
+      setAgeConfirmOpen(true);
+    } else void finalizeOwnerTab();
+  }
+
+  // Saves the owner-tab order. The server prices it again from the menu and
+  // the recipes and refuses it if the register's figures differ, so what's
+  // saved and printed is the server's. Nothing is charged, so a failure just
+  // leaves the order on screen.
+  async function finalizeOwnerTab() {
+    if (!ownerRate || !ownerLines || !ownerTotals || finalizingRef.current) return;
+    finalizingRef.current = true;
+    setBusy(true);
+    try {
+      const fields = currentFields();
+      const r = await completeOwnerTabOrder({
+        ...fields,
+        // No member, so no perks and no points (the member stays on screen
+        // until the order's done, for Undo).
+        memberId: null,
+        monthlyMember: false,
+        pointsRedeemed: false,
+        taxFree: false,
+        lines: fields.lines.map((l, i) => ({ ...l, unit_price: ownerLines[i].unit })),
+        totals: { subtotal: ownerTotals.subtotal, tax: ownerTotals.tax, total: ownerTotals.total },
+        ownerRate: { ownerId: ownerRate.ownerId, token: ownerRate.token, nonce: ownerRate.nonce },
+        ageVerified: cart.some((l) => l.isAlcohol),
+        draftOrderId: activeTabId,
+      });
+      if (!r.ok) {
+        if (r.again) setOwnerRate(null);
+        setToast(r.error);
+        return;
+      }
+      const receipt: ReceiptData = {
+        orderNumber: r.orderNumber,
+        at: new Date().toISOString(),
+        cashier: employees.find((e) => e.id === employeeId)?.name ?? null,
+        member: null,
+        orderName: orderName.trim() || null,
+        // Each line says how it was priced and its menu price, in plain ASCII for the printer.
+        lines: r.lines.map((l) => ({
+          name: l.name,
+          qty: l.quantity,
+          unit: l.unit_price,
+          mods: [...l.modifiers, ...(l.owner_pricing && l.owner_pricing !== "menu" ? [`${OWNER_PRICING_LABEL[l.owner_pricing]}, menu ${money(l.menu_unit_price ?? 0)}`] : [])],
+        })),
+        subtotal: r.totals.subtotal,
+        discounts: [],
+        tax: r.totals.tax,
+        tip: 0,
+        total: r.totals.total,
+        payments: [{ label: ownerTabReceiptLabel(r.owner), amount: r.totals.total }],
+        points: { earned: 0, rewardUsed: false },
+      };
+      setLastReceipt(receipt);
+      const tickets: TicketSale[] = r.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
+      setLastTickets(tickets.length ? { orderNumber: r.orderNumber, lines: tickets } : null);
+      void printAfterSale(receipt, false, tickets);
+      resetOrder();
+      setTip(0);
+      setTipAsked(false);
+      const done = `Order #${r.orderNumber} went on ${r.owner}'s owner tab: ${money(r.totals.total)} with tax, at cost (menu value ${money(r.menuValue)}). Nothing to charge.`;
+      setToast(done);
+      setTimeout(() => setToast((t) => (t === done ? null : t)), 10000);
+      router.refresh();
+    } catch (e) {
+      // Trying again is safe: one approval saves one order, so a save whose
+      // answer got lost is found, not made twice.
+      setToast(isStaleBuildError(e) ? "The register was just updated and this didn't save. Reload the page, then ring it up again." : "Couldn't reach the server, so nothing went on the tab yet. Try again.");
+    } finally {
+      finalizingRef.current = false;
+      setBusy(false);
+    }
   }
 
   // Never blocks or undoes a sale: the order is already saved when this runs,
@@ -1487,15 +1647,30 @@ export default function PosApp({
                       {line.mods.join(", ")}
                     </div>
                   )}
-                  {i === totals.dailyPerkLine && (
+                  {i === totals.dailyPerkLine && !ownerLines && (
                     <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
                       ☕ {line.qty > 1 ? "One free today" : "Free today"}
                     </div>
                   )}
                 </div>
-                <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
-                  {money(line.unit * line.qty)}
-                </span>
+                {ownerLines?.[i] ? (
+                  // The owner price, with the menu price struck through and how it was priced.
+                  <span className="shrink-0 text-right text-sm leading-tight tabular-nums" style={{ color: "var(--foreground)" }}>
+                    {ownerLines[i].unit !== cents(line.unit) && (
+                      <s className="mr-1 text-xs" style={{ color: "var(--muted)" }}>
+                        {money(line.unit * line.qty)}
+                      </s>
+                    )}
+                    <span className="font-semibold">{money(ownerLines[i].unit * line.qty)}</span>
+                    <span className="block text-[10px] font-semibold" style={{ color: ownerLines[i].how === "half" ? "var(--danger-text)" : "var(--muted)" }}>
+                      {OWNER_PRICING_TAG[ownerLines[i].how]}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
+                    {money(line.unit * line.qty)}
+                  </span>
+                )}
                 <button
                   className="h-9 w-9 shrink-0 rounded-md text-lg"
                   style={{ color: "var(--danger-text)" }}
@@ -1508,9 +1683,29 @@ export default function PosApp({
             ))
           )}
 
+          {/* The owner rate: whose, and what it means for this order. Member
+              perks don't go with it, so their rows are hidden until Undo. */}
+          {ownerRate && ownerTotals && (
+            <div className="rounded-md border-2 px-2.5 py-2 text-xs" style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }} role="status">
+              <div className="flex items-baseline justify-between gap-2">
+                <strong className="text-sm">{ownerTabLabel(ownerRate.firstName)}</strong>
+                <span className="shrink-0 tabular-nums">menu value {money(menuSubtotal)}</span>
+              </div>
+              <p className="mt-0.5 leading-snug">
+                Menu items at cost, or half price with no cost on file. Tickets and custom items at their normal price. Taxed as usual; no member discount, daily
+                coffee, reward or points.
+              </p>
+              {rewardOnOwnerTab && (
+                <p className="mt-1 font-semibold" style={{ color: "var(--danger-text)" }}>
+                  A badge reward can&apos;t go on the owner tab. Take it off first.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* The Insiders+ daily coffee: on the order with a way to take it
               off, or off with a way to put it back. */}
-          {memberId && coffeePick && totals.dailyPerkLine !== null ? (
+          {ownerRate ? null : memberId && coffeePick && totals.dailyPerkLine !== null ? (
             <div
               className="flex items-center gap-2 rounded-md border-2 px-2 py-1.5 text-xs"
               style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }}
@@ -1566,7 +1761,7 @@ export default function PosApp({
           />
           </TabletSetupContext>
 
-          <div className="space-y-1 pt-1">
+          <div className={`space-y-1 pt-1 ${ownerRate ? "hidden" : ""}`}>
           {/* With a member on the order, their discount is ticked by itself
               (Insiders+ 10%; plain Insiders earn points instead) and the
               manual Monthly member tick is hidden, so the two can't stack. */}
@@ -1599,25 +1794,41 @@ export default function PosApp({
         <div className="shrink-0">
           {unsavedSale && <UnsavedSaleBanner sale={unsavedSale} busy={busy} onRetry={retryUnsavedSale} onStop={stopTryingUnsavedSale} />}
           <div className="mt-2 flex items-end justify-between gap-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
-            <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
-              <div>Subtotal {money(totals.subtotal)}</div>
-              {totals.discount > 0 && <div>Discount -{money(totals.discount)}</div>}
-              <div>Tax {money(totals.tax)}</div>
-            </div>
+            {ownerTotals ? (
+              <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
+                <div>
+                  At cost {money(ownerTotals.subtotal)} <s>{money(menuSubtotal)}</s>
+                </div>
+                <div>Tax {money(ownerTotals.tax)}</div>
+              </div>
+            ) : (
+              <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
+                <div>Subtotal {money(totals.subtotal)}</div>
+                {totals.discount > 0 && <div>Discount -{money(totals.discount)}</div>}
+                <div>Tax {money(totals.tax)}</div>
+              </div>
+            )}
             <div className="text-right">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                Total · {itemCount} item{itemCount === 1 ? "" : "s"}
+                {ownerTotals ? "Owner tab" : "Total"} · {itemCount} item{itemCount === 1 ? "" : "s"}
               </div>
               <div className="text-2xl font-semibold leading-tight tabular-nums" style={{ color: "var(--accent)" }}>
-                {money(totals.total)}
+                {money(ownerTotals ? ownerTotals.total : totals.total)}
               </div>
             </div>
           </div>
           {/* No new charges while a charged sale is unsaved: if sales aren't
-              saving, the register shouldn't keep charging cards. */}
-          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
-            {employeeId ? "Complete order" : "Pick a cashier"}
-          </button>
+              saving, the register shouldn't keep charging cards. An owner-tab
+              order never opens the payment screen: nothing is charged. */}
+          {ownerRate ? (
+            <button className="btn-primary mt-2 min-h-12 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={() => void putOnOwnerTab()}>
+              {employeeId ? `Put on ${ownerRate.firstName}'s owner tab` : "Pick a cashier"}
+            </button>
+          ) : (
+            <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
+              {employeeId ? "Complete order" : "Pick a cashier"}
+            </button>
+          )}
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
               Start your shift (or choose a cashier above) to ring this up.
@@ -1671,6 +1882,18 @@ export default function PosApp({
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
               rickroll={rickroll}
             />
+            {/* The owner rate: only when someone is ticked for it (Back office,
+                Owner tab). On, it's the way back to normal prices. */}
+            {(owners.length > 0 || ownerRate) &&
+              (ownerRate ? (
+                <button className="btn-secondary min-h-11 !px-2 py-1 text-sm leading-tight" style={{ color: "var(--danger-text)" }} disabled={busy} onClick={() => setOwnerRate(null)}>
+                  Undo owner rate
+                </button>
+              ) : (
+                <button className="btn-secondary min-h-11 whitespace-nowrap !px-2 py-2 text-sm" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={() => setOwnerAskOpen(true)}>
+                  Owner rate
+                </button>
+              ))}
             {/* Admins only. Docked here, in the row's spare cells, rather than
                 floating over the menu buttons the way it used to. */}
             {canNote && (
@@ -1830,7 +2053,9 @@ export default function PosApp({
                 className="btn-primary"
                 onClick={() => {
                   setAgeConfirmOpen(false);
-                  setPayOpen(true);
+                  // An owner-tab order goes on the tab; it never opens payment.
+                  if (ageNext === "owner") void finalizeOwnerTab();
+                  else setPayOpen(true);
                 }}
               >
                 ID checked — 21+
@@ -1838,6 +2063,17 @@ export default function PosApp({
             </div>
           </div>
         </div>
+      )}
+
+      {ownerAskOpen && (
+        <OwnerRateModal
+          owners={owners}
+          onCancel={() => setOwnerAskOpen(false)}
+          onApproved={(approval) => {
+            setOwnerAskOpen(false);
+            setOwnerRate(approval);
+          }}
+        />
       )}
 
       {payOpen && (

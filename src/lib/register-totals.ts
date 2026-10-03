@@ -110,3 +110,122 @@ export function pointsEarned(t: { subtotal: number; tier_discount: number; month
 export function isRewardLine(l: { menu_item_id: string | null; screening_id?: string | null; name: string; unit_price: number }) {
   return !l.menu_item_id && !l.screening_id && Number(l.unit_price) === 0 && l.name.endsWith("(badge reward)");
 }
+
+// ---------- the owner rate ----------
+// Andrew, 10/3: the owners (a tick on the person: employees.owner_rate) can
+// have anything on the menu at what it cost the business, so enjoying the
+// place doesn't dig into the bottom line invisibly. The owner types their
+// own PIN, and the order goes on their monthly owner tab instead of being
+// paid (lib/owner-rate-server.ts, Back office -> Owner tab).
+//
+// How a line is priced:
+// - A menu item at cost: its recipe, each ingredient's amount times its
+//   unit cost (the same costs as the bar's pour cost). Only when the recipe
+//   has at least one ingredient and every one of them has a cost: a partly
+//   costed recipe would undercharge. Never more than the menu price.
+// - No recipe, or an ingredient with no cost on file: half the menu price,
+//   and the line says so, so someone can add the cost.
+// - Options and add-ons (a shot of syrup, a second topping) have no recipes
+//   of their own, so whatever they add to the price is charged at half.
+//   One that takes money off takes half of that off.
+// - Movie tickets and custom items: their normal price. (A badge reward or
+//   a free Insiders+ seat is a member perk, so the server won't put one on
+//   an owner tab: lib/owner-rate-server.ts.)
+// The order is then taxed like any sale, with no member discount, monthly
+// discount, daily coffee or points reward on top, and it earns no points.
+
+export type OwnerPricing = "cost" | "half" | "menu";
+
+export const OWNER_PRICING_LABEL: Record<OwnerPricing, string> = {
+  cost: "at cost",
+  half: "half price: no cost on file",
+  menu: "normal price",
+};
+
+// Whose tab an order went on, on the register and in Recent orders.
+export const ownerTabLabel = (firstName: string) => `Owner tab · ${firstName} · at cost`;
+// The same on a printed receipt: the printer only prints plain ASCII, and
+// drops a middle dot.
+export const ownerTabReceiptLabel = (firstName: string) => `Owner tab - ${firstName} - at cost`;
+
+// The register's short tag beside a line.
+export const OWNER_PRICING_TAG: Record<OwnerPricing, string> = { cost: "at cost", half: "½ price", menu: "normal price" };
+
+// A menu item as the owner rate sees it: its menu price, and what its
+// recipe cost (null: no recipe, or an ingredient with no cost).
+export interface OwnerItem {
+  price: number;
+  cost: number | null;
+}
+
+// Menu item id -> its price and cost, from the server after the owner's PIN.
+export type OwnerBook = Record<string, OwnerItem>;
+
+// What a recipe cost the business, to the cent. Null when there's nothing
+// to go on. Added up in a fixed order (by ingredient), so the register and
+// the server get the very same figure however the database lists them.
+export function recipeCost(ingredients: { ingredientId?: string; quantity: number; unitCost: number | null | undefined }[] | null | undefined): number | null {
+  if (!ingredients || ingredients.length === 0) return null;
+  let cost = 0;
+  const ordered = [...ingredients].sort((a, b) => (a.ingredientId ?? "").localeCompare(b.ingredientId ?? "") || Number(a.quantity) - Number(b.quantity));
+  for (const i of ordered) {
+    const unit = i.unitCost;
+    if (unit === null || unit === undefined || !Number.isFinite(Number(unit)) || Number(unit) < 0) return null;
+    if (!(Number(i.quantity) > 0)) return null;
+    cost += Number(i.quantity) * Number(unit);
+  }
+  return cents(cost);
+}
+
+// One line at the owner rate. `unit` is the line's menu price each, its
+// options included (as rung); `item` is its menu item (missing for a
+// ticket, a custom item, or an item the book doesn't have, which is
+// charged half of what it was rung at).
+export function ownerLinePrice(line: { menuItemId: string | null; screeningId?: string | null; unit: number }, item: OwnerItem | null | undefined): { unit: number; how: OwnerPricing } {
+  // Whole cents first, so the register and the server start from the same
+  // figures (a price built up option by option can be a hair off).
+  const menu = cents(Math.max(0, Number(line.unit) || 0));
+  if (line.screeningId || !line.menuItemId) return { unit: menu, how: "menu" };
+  if (!item) return { unit: cents(menu / 2), how: "half" };
+  // What the options added (or took off), half of it either way.
+  const options = cents(menu - Number(item.price));
+  const base = item.cost !== null && item.cost !== undefined ? Number(item.cost) : Number(item.price) / 2;
+  const unit = cents(Math.max(0, Math.min(menu, base + options / 2)));
+  return { unit, how: item.cost !== null && item.cost !== undefined ? "cost" : "half" };
+}
+
+// An owner order's totals: the owner prices, taxed like any sale, with
+// nothing else off (no member, no monthly 10%, no reward, no daily coffee).
+export function ownerOrderTotals(lines: { unit: number; qty: number }[]) {
+  return registerTotals(lines, null, false, false, false, false);
+}
+
+// What the register sent for an owner order against what the server
+// figured from the recipes. One plain sentence per difference of more than
+// a cent, so the sale is refused rather than saved at the register's word.
+export function ownerSaleProblems(
+  sent: { lines: { name: string; unit_price: number; quantity: number }[]; totals: { subtotal: number; tax: number; total: number } },
+  figured: { lines: { name: string; unit_price: number; quantity: number }[]; totals: { subtotal: number; tax: number; total: number } },
+): string[] {
+  const problems: string[] = [];
+  // Over a cent, or not a number at all (a missing figure is a difference).
+  const off = (a: number, b: number) => !(Math.abs(Number(a) - Number(b)) <= 0.0101);
+  if (sent.lines.length !== figured.lines.length) problems.push(`The register sent ${sent.lines.length} lines; the order has ${figured.lines.length}.`);
+  sent.lines.forEach((l, i) => {
+    const f = figured.lines[i];
+    if (!f) return;
+    if (l.quantity !== f.quantity) problems.push(`"${l.name}": the register sent ${l.quantity}, the order has ${f.quantity}.`);
+    if (off(l.unit_price, f.unit_price)) problems.push(`"${l.name}" was sent at $${Number(l.unit_price).toFixed(2)} each; the owner rate is $${Number(f.unit_price).toFixed(2)}.`);
+  });
+  for (const key of ["subtotal", "tax", "total"] as const) {
+    if (off(sent.totals[key], figured.totals[key])) problems.push(`${key[0].toUpperCase()}${key.slice(1)}: the register sent $${Number(sent.totals[key]).toFixed(2)}, the server figures $${Number(figured.totals[key]).toFixed(2)}.`);
+  }
+  return problems;
+}
+
+// The signed approval an owner's PIN gives the register (lib/approval-token.ts):
+// for that owner, for one order (the nonce), for a few minutes.
+export function ownerRateScope(ownerId: string, nonce: string) {
+  return `owner-rate:${ownerId}:${nonce}`;
+}
+export const OWNER_RATE_APPROVAL_MS = 10 * 60_000;

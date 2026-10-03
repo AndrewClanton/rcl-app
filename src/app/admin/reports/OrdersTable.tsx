@@ -174,10 +174,17 @@ function RefundChooser({ order, onCancel, onFull, onPart }: { order: DayOrder; o
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="card w-full max-w-sm shadow-2xl">
         <h3 className="text-lg font-semibold">Refund order #{order.orderNumber}</h3>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
-          {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
-        </p>
+        {order.ownerTab ? (
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {money(order.total)} on {order.ownerTab}&apos;s owner tab. Refunding it takes it off the tab (and the statement, if it&apos;s already paid, shows the
+            credit). No money changes hands.
+          </p>
+        ) : (
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            {money(order.total)} paid{order.tip > 0 ? `, ${money(order.tip)} of it tip` : ""}
+            {order.refunded > 0 ? `. ${money(order.refunded)} already refunded.` : "."}
+          </p>
+        )}
 
         <button className="btn-secondary mt-4 w-full" onClick={onFull}>
           Refund all of it{order.refunded > 0 ? " (the rest)" : ""}

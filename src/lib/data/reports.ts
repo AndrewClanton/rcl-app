@@ -4,7 +4,7 @@ import { getRecipesByItem } from "./recipes";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
-import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, OWNER_TAB_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 import { subscriptionLive } from "@/lib/plus-status";
 import { getMemberPaymentsBetween, paymentLine, type MemberPaymentLine, type MemberPaymentRecord } from "@/lib/membership-payments/read";
 import { membershipsDetail, summarizeMemberships, type MembershipTotals } from "@/lib/membership-payments/rows";
@@ -17,6 +17,12 @@ import { membershipsDetail, summarizeMemberships, type MembershipTotals } from "
 // (bookings, booth_reservations); and Insiders+ and gift memberships, which
 // Stripe bills itself and never go through the register (member_payments,
 // read from Stripe by src/lib/membership-payments/sync.ts).
+//
+// The owner tab (lib/register-totals.ts): an order put on an owner's
+// monthly tab is a sale the day it's rung, at the owner rate, with its own
+// line in what sold and its tax in the sales tax, but no money came in, so
+// it isn't in Collected. A payment against an owner's statement
+// (owner_tab_payments) is money in on the day it's recorded.
 
 // ---------- reading more than 1,000 rows ----------
 // The database hands back at most 1,000 rows per request and says nothing
@@ -135,7 +141,10 @@ export interface DayOrder {
   refundedCard: number;
   refundedCash: number;
   // Each line, with the Day report's category for it ("Food", "Movie tickets").
+  // An owner-tab order's lines are "Owner tab", at the owner price.
   lines: { name: string; qty: number; amount: number; category: string }[];
+  // An owner-tab order: whose tab (first name). Null for any other sale.
+  ownerTab: string | null;
 }
 
 // A ticket booking behind the Day report's ticket figures, and a booth
@@ -165,6 +174,8 @@ export interface DayReport extends SalesSummary {
   // Insiders+ charges, gift memberships and refunds of them counted this
   // day (in Collected as their own part), oldest first.
   membershipLines: MemberPaymentLine[];
+  // Owner-tab payments recorded this day (in Collected as their own part).
+  ownerPaymentLines: { owner: string; month: string; amount: number; method: string; at: string }[];
 }
 
 // What a stretch of business days added up to: one day (Day), or a week or
@@ -209,6 +220,20 @@ export interface SalesSummary {
   // Nathan's split for moving the day's money into the right accounts.
   accounts: { label: string; rule: string; amount: number }[];
   unassigned: number;
+  ownerTab: OwnerTabSummary;
+}
+
+// The owner tab (lib/register-totals.ts): owner-rate sales, in what sold
+// and the sales tax but not Collected, and payments against the owners'
+// statements, in Collected the day they're recorded.
+export interface OwnerTabSummary {
+  orders: number; // owner-tab orders (refunded ones aren't counted)
+  sales: number; // what the owners pay for the goods, before tax (a ticket on one is in Movie tickets)
+  menuValue: number; // the same goods at menu prices
+  tax: number; // sales tax on them, owed with the tab
+  owed: number; // put on owner tabs: their totals, tax included
+  paid: number; // owner-tab payments recorded (money in)
+  payments: number;
 }
 
 // Nathan's account rules. Each is its own rule, not a split of one pot, so
@@ -252,6 +277,7 @@ type DayOrderRow = {
   payment_cash_amount: number | null;
   payment_card_amount: number | null;
   payment_voucher_amount: number | null;
+  subtotal: number;
   tax: number;
   tax_free: boolean;
   tip: number;
@@ -262,11 +288,26 @@ type DayOrderRow = {
   // The Insiders+ daily coffee given away (lib/daily-perk.ts). Missing
   // until its migration (20261001230000_plus_daily_coffee.sql) is applied.
   daily_perk_discount?: number | null;
+  // The owner tab (payment_method 'owner_tab'): whose, and the menu value
+  // it replaced. Missing until 20261003060000_owner_tab.sql is applied.
+  owner_tab_employee_id?: string | null;
+  owner_menu_value?: number | null;
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
   items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; menu_item_id: string | null; is_alcohol: boolean; screening_id: string | null }[];
 };
+
+const isOwnerTab = (o: { payment_method: string | null }) => o.payment_method === "owner_tab";
+
+// First names of the owners whose tabs these orders went on (and of anyone
+// else named), for the Orders table. Best effort: empty if it can't be read.
+async function firstNames(ids: (string | null | undefined)[]): Promise<Map<string, string>> {
+  const want = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!want.length) return new Map();
+  const { data } = await createAdminClient().from("employees").select("id, name").in("id", want);
+  return new Map((data ?? []).map((e) => [e.id as string, String(e.name ?? "").trim().split(/\s+/)[0] || "owner"]));
+}
 
 // The cashier join names its foreign key: since the manager-PIN migration,
 // orders has two links to employees (who rang it up, and refund_approved_by),
@@ -280,9 +321,10 @@ type RefundedParts = { amount: number; tax: number; card: number; cash: number }
 const NOTHING_REFUNDED: RefundedParts = { amount: 0, tax: 0, card: 0, cash: 0 };
 
 // One order as the Orders table shows it. `parts` is what partial refunds
-// have given back so far.
-function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets): DayOrder {
+// have given back so far. `owners`: first names, for an owner-tab order.
+function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets, owners: Map<string, string> = new Map()): DayOrder {
   const refunded = parts.amount;
+  const owner = isOwnerTab(o) ? (owners.get(o.owner_tab_employee_id ?? "") ?? "owner") : null;
   return {
     id: o.id,
     orderNumber: Number(o.order_number),
@@ -292,7 +334,7 @@ function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets)
     name: o.tab_name || o.order_name || null,
     items: o.items.map((l) => (l.quantity > 1 ? `${l.quantity} ${l.name}` : l.name)).join(", "),
     // "cash + voucher" when vouchers paid part of it.
-    method: Number(o.payment_voucher_amount) > 0 && o.payment_method !== "voucher" ? `${o.payment_method} + voucher` : o.payment_method,
+    method: owner ? `owner tab (${owner})` : Number(o.payment_voucher_amount) > 0 && o.payment_method !== "voucher" ? `${o.payment_method} + voucher` : o.payment_method,
     tip: Number(o.tip),
     total: Number(o.total),
     refunded,
@@ -320,8 +362,9 @@ function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets)
       name: l.name,
       qty: l.quantity,
       amount: Number(l.unit_price) * l.quantity,
-      category: l.screening_id ? TICKETS_LABEL : CATEGORY_LABEL[lineBucket(l, bucketByItem)],
+      category: l.screening_id ? TICKETS_LABEL : owner ? OWNER_TAB_LABEL : CATEGORY_LABEL[lineBucket(l, bucketByItem)],
     })),
+    ownerTab: owner,
   };
 }
 
@@ -342,9 +385,13 @@ export async function getDayReport(date: string): Promise<DayReport> {
   const { start, end } = businessDayWindow(date);
   const { rows, buckets } = await loadSales(start, end);
   const refundedByOrder = partsByOrder(rows.partials);
+  const names = await firstNames([...rows.orders.filter(isOwnerTab).map((o) => o.owner_tab_employee_id), ...rows.ownerPayments.map((p) => p.owner_id)]);
   return {
     date,
-    orders: rows.orders.map((o) => toDayOrder(o, refundedByOrder.get(o.id) ?? NOTHING_REFUNDED, buckets)),
+    orders: rows.orders.map((o) => toDayOrder(o, refundedByOrder.get(o.id) ?? NOTHING_REFUNDED, buckets, names)),
+    ownerPaymentLines: [...rows.ownerPayments]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map((p) => ({ owner: names.get(p.owner_id) ?? "owner", month: p.month, amount: Number(p.amount), method: p.method, at: p.created_at })),
     // The same seats and money summarizeSales counts (bookingSeats), one per booking.
     ticketLines: rows.bookings.map((b) => {
       const { paid, free } = bookingSeats(b);
@@ -368,6 +415,24 @@ export interface SalesRows {
   partials: PartialRefundRow[]; // on completed orders sold in the range
   memberships: MemberPaymentRecord[]; // Insiders+ and gift payments and their refunds, by the day counted
   membershipsTracked: boolean; // false until the member payments migration is applied
+  ownerPayments: OwnerPaymentRow[]; // payments against owner-tab statements, by the day recorded
+}
+
+export type OwnerPaymentRow = { owner_id: string; month: string; amount: number; method: string; created_at: string };
+
+// Owner-tab payments recorded between two instants. Empty (not an error)
+// until 20261003060000_owner_tab.sql is applied.
+export async function getOwnerTabPayments(start: string, end: string | null): Promise<OwnerPaymentRow[]> {
+  const supabase = createAdminClient();
+  try {
+    return await fetchAll<OwnerPaymentRow>((from, to) => {
+      let q = supabase.from("owner_tab_payments").select("owner_id, month, amount, method, created_at").gte("created_at", start);
+      if (end) q = q.lt("created_at", end);
+      return q.order("id").range(from, to);
+    });
+  } catch {
+    return [];
+  }
 }
 
 // menu item -> the report's category for it (undefined: candy and other).
@@ -376,7 +441,7 @@ export type Buckets = Map<string, "food" | "coffee" | "soda" | "liquor" | undefi
 // Everything sold between two instants (business-day edges), paged.
 export async function loadSales(start: string, end: string): Promise<{ rows: SalesRows; buckets: Buckets }> {
   const supabase = createAdminClient();
-  const [orders, bookings, booths, buckets, partials, memberships] = await Promise.all([
+  const [orders, bookings, booths, buckets, partials, memberships, ownerPayments] = await Promise.all([
     fetchAll<DayOrderRow>((from, to) =>
       supabase
         .from("orders")
@@ -398,8 +463,9 @@ export async function loadSales(start: string, end: string): Promise<{ rows: Sal
     loadBuckets(),
     getPartialRefunds(start, end),
     getMemberPaymentsBetween(start, end),
+    getOwnerTabPayments(start, end),
   ]);
-  return { rows: { orders, bookings, booths, partials, memberships: memberships.rows, membershipsTracked: memberships.tracked }, buckets };
+  return { rows: { orders, bookings, booths, partials, memberships: memberships.rows, membershipsTracked: memberships.tracked, ownerPayments }, buckets };
 }
 
 // Each menu item's category, as the report groups them.
@@ -419,7 +485,7 @@ export function salesByDay(rows: SalesRows): Map<string, SalesRows> {
   const days = new Map<string, SalesRows>();
   const byDate = (date: string) => {
     let d = days.get(date);
-    if (!d) days.set(date, (d = { orders: [], bookings: [], booths: [], partials: [], memberships: [], membershipsTracked: rows.membershipsTracked }));
+    if (!d) days.set(date, (d = { orders: [], bookings: [], booths: [], partials: [], memberships: [], membershipsTracked: rows.membershipsTracked, ownerPayments: [] }));
     return d;
   };
   const day = (iso: string) => byDate(businessDay(new Date(iso)).date);
@@ -428,6 +494,7 @@ export function salesByDay(rows: SalesRows): Map<string, SalesRows> {
   for (const r of rows.booths) day(r.created_at).booths.push(r);
   for (const p of rows.partials) day(p.orders.completed_at).partials.push(p);
   for (const m of rows.memberships) byDate(m.business_date).memberships.push(m);
+  for (const p of rows.ownerPayments) day(p.created_at).ownerPayments.push(p);
   return days;
 }
 
@@ -449,8 +516,13 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     dailyCoffee = 0,
     dailyCoffeeCount = 0;
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
+  const ownerTab: OwnerTabSummary = { orders: 0, sales: 0, menuValue: 0, tax: 0, owed: 0, paid: 0, payments: 0 };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
   for (const o of completed) {
+    // An owner-tab order took no money (its cash and card are 0), so it
+    // adds nothing to Collected: its goods are their own line in what sold,
+    // and its tax is owed with the tab.
+    const owner = isOwnerTab(o);
     if (o.source === "pos") {
       cash += Number(o.payment_cash_amount ?? 0);
       card += Number(o.payment_card_amount ?? 0);
@@ -464,10 +536,22 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       dailyCoffee += coffee;
       dailyCoffeeCount++;
     }
+    if (owner) {
+      // A ticket on it is at its normal price both ways, and counted with
+      // the tickets below.
+      const tickets = o.items.filter((l) => l.screening_id).reduce((s, l) => s + Number(l.unit_price) * l.quantity, 0);
+      ownerTab.orders++;
+      ownerTab.tax += Number(o.tax);
+      ownerTab.owed += Number(o.total);
+      ownerTab.menuValue += Number(o.owner_menu_value ?? o.subtotal) - tickets;
+    }
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
       // Tickets are counted from their bookings below, not as bar sales.
-      if (!l.screening_id) category[lineBucket(l, bucketByItem)] += amount;
+      if (!l.screening_id) {
+        if (owner) ownerTab.sales += amount;
+        else category[lineBucket(l, bucketByItem)] += amount;
+      }
       const it = items.get(l.name) ?? { qty: 0, revenue: 0, options: new Map() };
       it.qty += l.quantity;
       it.revenue += amount;
@@ -515,6 +599,12 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   tax += memberships.tax;
   const membershipsLine = membershipsDetail(memberships);
 
+  // Payments against the owners' statements: money in, the day recorded.
+  for (const p of rows.ownerPayments ?? []) {
+    ownerTab.paid += Number(p.amount);
+    ownerTab.payments++;
+  }
+
   const sold = [
     { label: TICKETS_LABEL, amount: ticketRevenue, detail: ticketsSold ? `${ticketsSold} sold${ticketsSold > paidTickets ? `, ${ticketsSold - paidTickets} free` : ""}` : undefined },
     { label: CATEGORY_LABEL.food, amount: category.food },
@@ -524,6 +614,12 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     { label: CATEGORY_LABEL.liquor, amount: category.liquor },
     { label: BOOTHS_LABEL, amount: boothRevenue },
     { label: MEMBERSHIPS_LABEL, amount: memberships.sales, detail: membershipsLine || undefined },
+    // At what the owners pay, with the menu value it replaced beside it.
+    {
+      label: OWNER_TAB_LABEL,
+      amount: ownerTab.sales,
+      detail: ownerTab.orders ? `${ownerTab.orders} order${ownerTab.orders === 1 ? "" : "s"} at cost, menu value ${money(ownerTab.menuValue)}` : undefined,
+    },
   ].filter((r) => r.amount > 0 || r.detail);
   const grossSales = sold.reduce((s, r) => s + r.amount, 0);
   const foodAndDrink = category.food + category.coffee + category.soda + category.liquor;
@@ -535,7 +631,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     online,
     tips,
     tax,
-    collected: cash + card + online + memberships.collected,
+    collected: cash + card + online + memberships.collected + ownerTab.paid,
     memberships,
     sold,
     discounts,
@@ -567,9 +663,18 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       { label: "Expenses", rule: `80% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * EXPENSE_SHARE },
     ],
     // Sales none of the rules above claims: ticket and booth money past the
-    // $4 carve-out, candy/other, and memberships (which the Tax account's
-    // 10% of everything sold does count).
-    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other + memberships.sales,
+    // $4 carve-out, candy/other, memberships and the owner tab (which the
+    // Tax account's 10% of everything sold does count). The owner tab isn't
+    // food and drink money here: none came in yet.
+    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other + memberships.sales + ownerTab.sales,
+    ownerTab: {
+      ...ownerTab,
+      sales: round2(ownerTab.sales),
+      menuValue: round2(ownerTab.menuValue),
+      tax: round2(ownerTab.tax),
+      owed: round2(ownerTab.owed),
+      paid: round2(ownerTab.paid),
+    },
   };
 }
 
@@ -584,6 +689,7 @@ export interface RevenueDay {
   register: number;
   online: number;
   memberships: number;
+  ownerTab: number; // owner-tab payments recorded that day
   total: number;
 }
 
@@ -595,9 +701,9 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
   const { start } = businessDayWindow(dates[0]);
 
   // Paged: 90 days of orders is well past the database's 1,000-row answer.
-  const [orders, bookings, booths, partials, memberships] = await Promise.all([
-    fetchAll<{ total: number; source: string; completed_at: string }>((from, to) =>
-      supabase.from("orders").select("total, source, completed_at").eq("status", "completed").gte("completed_at", start).order("id").range(from, to),
+  const [orders, bookings, booths, partials, memberships, ownerPayments] = await Promise.all([
+    fetchAll<{ total: number; source: string; completed_at: string; payment_method: string | null }>((from, to) =>
+      supabase.from("orders").select("total, source, completed_at, payment_method").eq("status", "completed").gte("completed_at", start).order("id").range(from, to),
     ),
     // Register tickets are already inside their order's total.
     fetchAll<{ quantity: number; unit_price: number; tax_amount: number; created_at: string }>((from, to) =>
@@ -608,14 +714,17 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
     ),
     getPartialRefunds(start, null),
     getMemberPaymentsBetween(start, null),
+    getOwnerTabPayments(start, null),
   ]);
 
-  const byDay = new Map(dates.map((d) => [d, { register: 0, online: 0, memberships: 0 }]));
-  const add = (iso: string, key: "register" | "online", amount: number) => {
+  const byDay = new Map(dates.map((d) => [d, { register: 0, online: 0, memberships: 0, ownerTab: 0 }]));
+  const add = (iso: string, key: "register" | "online" | "ownerTab", amount: number) => {
     const entry = byDay.get(businessDay(new Date(iso)).date);
     if (entry) entry[key] += amount;
   };
-  for (const o of orders) add(o.completed_at, o.source === "pos" ? "register" : "online", Number(o.total));
+  // An owner-tab order took no money; its payment counts the day it's recorded.
+  for (const o of orders) if (!isOwnerTab(o)) add(o.completed_at, o.source === "pos" ? "register" : "online", Number(o.total));
+  for (const p of ownerPayments) add(p.created_at, "ownerTab", Number(p.amount));
   for (const b of bookings) add(b.created_at, "online", bookingSeats(b).paid * Number(b.unit_price) + Number(b.tax_amount));
   for (const r of booths) add(r.created_at, "online", Number(r.fee_amount) + Number(r.tax_amount ?? 0));
   // A partial refund comes off the day of the sale, like the Day view.
@@ -626,7 +735,7 @@ export async function getRevenueTrend(days: number): Promise<RevenueDay[]> {
     if (entry) entry.memberships += m.amount_cents / 100;
   }
 
-  return [...byDay.entries()].map(([date, v]) => ({ date, ...v, total: v.register + v.online + v.memberships }));
+  return [...byDay.entries()].map(([date, v]) => ({ date, ...v, total: v.register + v.online + v.memberships + v.ownerTab }));
 }
 
 export interface MembershipAnalytics {
@@ -880,6 +989,7 @@ export async function getPourCostReport(): Promise<PourCostRow[]> {
 export interface DashboardSummary {
   todaysRevenue: number;
   todaysOrders: number;
+  todaysOwnerTabOrders: number; // put on an owner's tab: no money in, so not in the two above
   totalMembers: number;
   compedMembers: number;
   upcomingScreenings: number;
@@ -891,7 +1001,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   const { start } = businessDayWindow(businessDay().date);
 
   const [todaysOrdersRes, memberCountRes, compedCountRes, screeningsCountRes] = await Promise.all([
-    supabase.from("orders").select("total").eq("status", "completed").gte("completed_at", start),
+    supabase.from("orders").select("total, payment_method").eq("status", "completed").gte("completed_at", start),
     supabase.from("members").select("id", { count: "exact", head: true }).is("erased_at", null),
     supabase.from("members").select("id", { count: "exact", head: true }).is("erased_at", null).eq("comped", true),
     supabase.from("screenings").select("id", { count: "exact", head: true }).gte("starts_at", new Date().toISOString()),
@@ -901,10 +1011,13 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
   if (compedCountRes.error) throw compedCountRes.error;
   if (screeningsCountRes.error) throw screeningsCountRes.error;
 
-  const todaysOrders = todaysOrdersRes.data ?? [];
+  // Owner-tab orders took no money: counted on their own.
+  const all = todaysOrdersRes.data ?? [];
+  const todaysOrders = all.filter((o) => !isOwnerTab(o));
   return {
     todaysRevenue: todaysOrders.reduce((s, o) => s + o.total, 0),
     todaysOrders: todaysOrders.length,
+    todaysOwnerTabOrders: all.length - todaysOrders.length,
     totalMembers: memberCountRes.count ?? 0,
     compedMembers: compedCountRes.count ?? 0,
     upcomingScreenings: screeningsCountRes.count ?? 0,
@@ -924,8 +1037,12 @@ export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | 
   if (!data) return null;
   const row = data as unknown as DayOrderRow;
   const { start, end } = businessDayWindow(businessDay(new Date(row.completed_at)).date);
-  const [partials, buckets] = await Promise.all([row.status === "completed" ? getPartialRefunds(start, end) : [], loadBuckets()]);
-  return toDayOrder(row, partsByOrder(partials.filter((p) => p.order_id === row.id)).get(row.id) ?? NOTHING_REFUNDED, buckets);
+  const [partials, buckets, names] = await Promise.all([
+    row.status === "completed" ? getPartialRefunds(start, end) : [],
+    loadBuckets(),
+    firstNames(isOwnerTab(row) ? [row.owner_tab_employee_id] : []),
+  ]);
+  return toDayOrder(row, partsByOrder(partials.filter((p) => p.order_id === row.id)).get(row.id) ?? NOTHING_REFUNDED, buckets, names);
 }
 
 // ---------- sales tax ----------
@@ -1004,8 +1121,13 @@ function emptyMonth(month: string, label: string): TaxMonth {
   return { month, label, lines: [], refunds: { label: "Partial refunds", sales: 0, tax: 0 }, exemptSales: 0, sales: 0, tax: 0 };
 }
 
+// Owner-tab sales (lib/register-totals.ts) are counted in the month they're
+// rung, at the owner rate, with the tax charged on them, whether or not the
+// owner has paid the tab yet, the same as a sale on account. (Andrew to
+// confirm that treatment with the accountant.)
 const TAX_SOURCES = {
   register: "Register sales (food, drinks, register tickets)",
+  owner: "Owner tab (at cost, paid monthly)",
   web: "Website orders",
   tickets: "Online ticket sales",
   booths: "Booth bookings",
@@ -1021,7 +1143,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   const start = businessDayWindow(`${months[0]}-01`).start;
   const end = businessDayWindow(`${nextMonth(months[months.length - 1])}-01`).start;
 
-  type OrderRow = { source: string; tax_free: boolean; tax: number; tip: number; total: number; completed_at: string };
+  type OrderRow = { source: string; tax_free: boolean; tax: number; tip: number; total: number; completed_at: string; payment_method: string | null };
   type BookingRow = { quantity: number; unit_price: number; tax_amount: number; created_at: string };
   type BoothRow = { fee_amount: number; tax_amount: number | null; created_at: string };
   type GiftRow = { price: number; tax_amount: number; paid_at: string };
@@ -1029,7 +1151,14 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   let giftsTracked = true;
   const [orders, bookings, booths, memberships, partials] = await Promise.all([
     fetchAll<OrderRow>((from, to) =>
-      supabase.from("orders").select("source, tax_free, tax, tip, total, completed_at").eq("status", "completed").gte("completed_at", start).lt("completed_at", end).order("id").range(from, to),
+      supabase
+        .from("orders")
+        .select("source, tax_free, tax, tip, total, completed_at, payment_method")
+        .eq("status", "completed")
+        .gte("completed_at", start)
+        .lt("completed_at", end)
+        .order("id")
+        .range(from, to),
     ),
     // Register tickets (order_id set) are taxed on their order, counted above.
     fetchAll<BookingRow>((from, to) =>
@@ -1066,7 +1195,7 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
 
   for (const o of orders) {
     const sales = Number(o.total) - Number(o.tax) - Number(o.tip);
-    add(o.completed_at, o.source === "pos" ? "register" : "web", sales, Number(o.tax));
+    add(o.completed_at, isOwnerTab(o) ? "owner" : o.source === "pos" ? "register" : "web", sales, Number(o.tax));
     const m = o.tax_free ? monthOf(o.completed_at) : undefined;
     if (m) m.exempt += sales;
   }

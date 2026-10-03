@@ -7,6 +7,9 @@ export const TICKETS_LABEL = "Movie tickets";
 export const BOOTHS_LABEL = "Booths";
 // Insiders+ charges and gift memberships (Stripe billing, not the register).
 export const MEMBERSHIPS_LABEL = "Insiders+ memberships";
+// Sales put on an owner's monthly tab at the owner rate (lib/register-totals.ts):
+// their own line, at what the owners pay, never folded into Food or Alcohol.
+export const OWNER_TAB_LABEL = "Owner tab";
 
 // What Nathan's inventory and expense rules count ("Where the money goes").
 export const FOOD_AND_DRINK = "Food & drink";

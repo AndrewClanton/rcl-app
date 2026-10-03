@@ -198,11 +198,11 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
     // only (refunded ones don't count), less anything given back in a
     // partial refund, the same as the reports.
     quietly(async () => {
-      const rows: { id: string; completed_at: string; total: number; tip: number }[] = [];
+      const rows: { id: string; completed_at: string; total: number; tip: number; payment_method: string | null }[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await db
           .from("orders")
-          .select("id, completed_at, total, tip")
+          .select("id, completed_at, total, tip, payment_method")
           .eq("employee_id", employeeId)
           .eq("status", "completed")
           .gte("completed_at", periodFrom)
@@ -211,7 +211,7 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
           .order("id")
           .range(from, from + 999);
         if (error) throw error;
-        rows.push(...(data as { id: string; completed_at: string; total: number; tip: number }[]));
+        rows.push(...(data as { id: string; completed_at: string; total: number; tip: number; payment_method: string | null }[]));
         if (!data || data.length < 1000) break;
       }
       const mine = new Set(rows.map((o) => o.id));
@@ -227,7 +227,8 @@ export async function getAccount(employeeId: string): Promise<AccountData | null
       for (const o of rows) {
         const add = (t: SalesTotals) => {
           t.orders += 1;
-          t.taken += Number(o.total) - (givenBack.get(o.id) ?? 0);
+          // An order put on an owner's monthly tab took no money.
+          if (o.payment_method !== "owner_tab") t.taken += Number(o.total) - (givenBack.get(o.id) ?? 0);
           t.tips += Number(o.tip);
         };
         add(period);
