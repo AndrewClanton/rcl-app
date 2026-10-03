@@ -1,6 +1,7 @@
 // Checks "one minute to undo" on Ready to send (src/lib/email/undo.ts,
 // undoWave in src/lib/email/campaign-send.ts, and the Ready to send
-// actions) against the same in-memory stand-ins for Supabase and Resend as
+// actions), and that a Send's first wave goes to only 25 (send-plan.ts
+// FIRST_WAVE), against the same in-memory stand-ins for Supabase and Resend as
 // check-email-marketing.mjs (scripts/check-email-marketing-fakes.mjs). No
 // database, no network, nothing is sent: fetch is replaced before anything
 // loads.
@@ -363,6 +364,78 @@ let c2;
     r2.ok && r2.message.startsWith(`Undone: all ${wave.length} called back`) && wave.every((x) => resend.cancelled.includes(x.resend_email_id)) && campaign().status === before.status && campaign().error === before.error,
     JSON.stringify([r2, campaign().status, campaign().error]),
   );
+}
+
+// ===================== 11. the first wave goes to 25 =====================
+{
+  // A fresh list: 60 members with no login, waves of 100.
+  const fresh = (plan) => {
+    for (const t of ["email_sends", "email_campaigns", "members", "member_claims"]) db[t].length = 0;
+    db.email_settings.find((x) => x.key === "resend_plan").value = plan;
+    for (let i = 0; i < 60; i++) {
+      db.members.push({ id: randomUUID(), name: `Guest ${i}`, email: `guest${i}@example.com`, tier: "Insiders", email_opt_in: true, erased_at: null, created_at: "2026-09-25T12:00:00Z", legacy_user_id: null, auth_user_id: null, phone: null });
+    }
+    // The three who came in lately are the most engaged: first in line.
+    const active = db.members.slice(57).map((m) => m.id);
+    db.members.slice(57).forEach((m) => (m.last_activity_at = "2026-10-19T18:00:00Z"));
+    return active;
+  };
+  const active = fresh({ daily: 102, monthly: 100000, reserve: 2 });
+  setClock("2026-10-20T10:00:00-05:00"); // a Tuesday
+  eq("first wave: 25, or the wave size if that's smaller", [sendPlan.FIRST_WAVE, sendPlan.firstWaveSize({ daily: 102, monthly: 3000, reserve: 2 }), sendPlan.firstWaveSize({ daily: 12, monthly: 3000, reserve: 2 })], [25, 25, 10]);
+  eq("first wave: the estimate counts it (60 at 100 a day: 25, then 35 the next day; the old figures unchanged)", [sendPlan.sendingDays(60, 100, 100, 25), sendPlan.sendingDays(300, 80, 50), sendPlan.sendingDays(300, 80, 0, 25)], [2, 5, 5]);
+  const counts = await ready.countAudiences({ [KEY]: null }, new Date(), { [KEY]: 25 });
+  eq("first wave: the screen's 'who's first' is 25 of the 60", [counts[KEY].next.n, counts[KEY].willSend], [25, 60]);
+
+  const k1 = randomUUID();
+  const s1 = await actions.sendDesign(KEY, k1);
+  let c = campaign();
+  check("first wave: Send sends to 25, not a full wave", s1.ok && rowsOf(c).length === 25 && s1.message.startsWith("25 handed to Resend"), JSON.stringify(s1));
+  check("first wave: most engaged first (the three who came in lately are in it)", active.every((id) => rowsOf(c).some((r) => r.member_id === id)));
+  check("first wave: once it's gone, the next is a full one", !paceOf(c).firstWave);
+  const u1 = await actions.undoDesignWave(KEY, c.id, k1);
+  check("first wave undone: all 25 called back", u1.ok && u1.message.startsWith("Undone: all 25 called back"), JSON.stringify(u1));
+  tick();
+  const s2 = await actions.sendDesign(KEY, randomUUID());
+  c = campaign();
+  check("first wave undone: Send again is a first wave of 25 again", s2.ok && rowsOf(c).length === 25, JSON.stringify(s2));
+  advance(10 * 60_000); // it arrives
+  for (const r of rowsOf(c)) Object.assign(r, { status: "delivered", delivered_at: new Date().toISOString() });
+  setClock("2026-10-21T10:00:00-05:00");
+  const s3 = await actions.sendNextWave(KEY, randomUUID());
+  check("next wave: a full one (the 35 left, under the wave size of 100)", s3.ok && rowsOf(campaign()).length === 60, JSON.stringify([s3, rowsOf(campaign()).length]));
+  advance(10 * 60_000);
+  for (const r of rowsOf(campaign())) Object.assign(r, { status: "delivered", delivered_at: new Date().toISOString() });
+
+  // Sent before: the same email again to whoever's new starts with 25 again.
+  for (let i = 0; i < 40; i++) db.members.push({ id: randomUUID(), name: `New ${i}`, email: `new${i}@example.com`, tier: "Insiders", email_opt_in: true, erased_at: null, created_at: "2026-10-21T12:00:00Z", legacy_user_id: null, auth_user_id: null, phone: null });
+  campaign().status = "sent"; // as when its last wave went
+  setClock("2026-10-22T10:00:00-05:00");
+  const before = rowsOf(campaign()).length;
+  const s4 = await actions.sendDesign(KEY, randomUUID());
+  check("send again: a Send of one that went before starts with 25 again", s4.ok && rowsOf(campaign()).length - before === 25, JSON.stringify([s4, rowsOf(campaign()).length - before]));
+
+  // Waves that go by themselves: the first is 25 too, and no full wave
+  // follows the same day.
+  fresh({ daily: 102, monthly: 100000, reserve: 2 });
+  db.email_settings.push({ key: "design_waves", value: { auto: true } });
+  setClock("2026-10-26T10:00:00-05:00"); // a Monday
+  const a1 = await actions.sendDesign(KEY, randomUUID());
+  c = campaign();
+  check("automatic waves: the first wave is 25 too", a1.ok && rowsOf(c).length === 25, JSON.stringify(a1));
+  advance(10 * 60_000);
+  const sameDay = await sender.runCampaign(c.id, Date.now() + 30_000);
+  check("automatic waves: no full wave the same day as the first (75 of today's share left)", rowsOf(campaign()).length === 25 && /The next wave goes Tuesday/.test(campaign().error ?? ""), JSON.stringify([sameDay, campaign().error]));
+  setClock("2026-10-27T08:05:00-05:00"); // Tuesday's morning run
+  await sender.runCampaign(c.id, Date.now() + 30_000);
+  check("automatic waves: the next morning, a full wave (the 35 left)", rowsOf(campaign()).length === 60, String(rowsOf(campaign()).length));
+  db.email_settings.splice(db.email_settings.findIndex((x) => x.key === "design_waves"), 1);
+
+  // Waves set smaller than 25: the first is that size.
+  fresh({ daily: 12, monthly: 100000, reserve: 2 });
+  setClock("2026-10-28T10:00:00-05:00");
+  const w1 = await actions.sendDesign(KEY, randomUUID());
+  check("wave size 10: the first wave is 10, not 25", w1.ok && rowsOf(campaign()).length === 10, JSON.stringify(w1));
 }
 
 await flushAfter();

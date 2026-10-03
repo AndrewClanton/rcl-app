@@ -6,7 +6,7 @@ import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
-import { finishDate, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
+import { finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
 import type { CampaignRow } from "@/lib/email/campaign";
 import ReadyToSend, { type CardData, type UndoCard } from "./ReadyToSend";
 
@@ -36,9 +36,13 @@ export default async function ReadyToSendPage() {
   const monthLeft = Math.max(0, perMonth(plan) - usage.month);
   const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
   // The next wave is as many as today's share allows (a full wave once
-  // today's has gone).
+  // today's has gone); a Send that starts afresh has the small first wave.
+  const first = firstWaveSize(plan);
+  const share = todayLeft > 0 ? todayLeft : daily;
+  const startsAfresh = (c: CampaignRow | null) => !c || c.status === "sent" || c.status === "failed" || !!((c.content as { pace?: Pace }).pace ?? {}).firstWave;
+  const sizes = Object.fromEntries(DESIGN_KEYS.map((k) => [k, startsAfresh(rows[k]) ? Math.min(first, share) : share])) as Record<DesignKey, number>;
   const [counts, results, atResend] = await Promise.all([
-    countAudiences(rows, now, todayLeft > 0 ? todayLeft : daily).catch(() => null),
+    countAudiences(rows, now, sizes).catch(() => null),
     Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
       (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
     ),
@@ -70,7 +74,7 @@ export default async function ReadyToSendPage() {
     const c = rows[key];
     const count: AudienceCount | null = counts?.[key] ?? null;
     const n = count?.willSend ?? 0;
-    const days = sendingDays(n, daily, todayLeft);
+    const days = sendingDays(n, daily, todayLeft, startsAfresh(c) ? first : daily);
     const preview = previewHtml(key, "claim");
     // The next wave if pressed now: how long it waits at Resend so it can
     // be undone (none for one too big to call back in time).
@@ -130,6 +134,7 @@ export default async function ReadyToSendPage() {
         plan={{
           ...plan,
           perDay: daily,
+          firstWave: first,
           perMonth: perMonth(plan),
           usedToday: usage.today,
           usedMonth: usage.month,

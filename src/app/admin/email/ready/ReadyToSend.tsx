@@ -62,6 +62,7 @@ export interface PlanData {
   monthly: number;
   reserve: number;
   perDay: number;
+  firstWave: number; // a Send that starts afresh goes to only this many first (25, or the wave size if smaller)
   perMonth: number;
   usedToday: number;
   usedMonth: number;
@@ -424,7 +425,8 @@ function Card({
           )}
           {!going && !paused && card.count && count > 0 && (
             <p className="text-xs text-[var(--muted)]">
-              Goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first.{" "}
+              Goes out in waves, the members most used to hearing from us first: the first wave to {n(Math.min(next.n || plan.firstWave, count))}
+              {count > (next.n || plan.firstWave) ? `, then ${n(plan.perDay)} at a time` : ""}.{" "}
               {plan.auto
                 ? "After the first, one goes each morning (Monday to Saturday); check how wave 1 did, and Pause if something's wrong."
                 : "After the first, each wave goes only when someone presses Send the next wave here, so check how the last one did first."}
@@ -820,9 +822,10 @@ export default function ReadyToSend({
           </li>
           <li>
             <strong>Send, a wave at a time.</strong> The send button shows exactly who&apos;s first and how many, and asks you to confirm. Each person gets it once,
-            with their own first name and their own button. It goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first (whoever came in,
-            bought or tapped an email most lately, then whoever said yes to email most recently, then our longest-standing members), so if something&apos;s wrong, few
-            people see it.{" "}
+            with their own first name and their own button. It goes out in waves, the members most used to hearing from us first (whoever came in, bought or tapped
+            an email most lately, then whoever said yes to email most recently, then our longest-standing members):{" "}
+            {plan.firstWave < plan.perDay ? `the first wave to just ${n(plan.firstWave)}, then ${n(plan.perDay)} at a time` : `${n(plan.perDay)} at a time`}, so if
+            something&apos;s wrong, few people see it.{" "}
             {plan.auto
               ? "After the first wave, one goes each morning (Monday to Saturday) until everyone has it. You can pause it any time."
               : "After the first wave, nothing more goes until someone presses Send the next wave (at most one wave a day). You can pause it any time."}{" "}
@@ -847,7 +850,7 @@ export default function ReadyToSend({
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
         <h2 className="font-semibold">
-          Waves of {n(plan.perDay)} ·{" "}
+          {plan.firstWave < plan.perDay ? `First wave ${n(plan.firstWave)}, then waves of ${n(plan.perDay)}` : `Waves of ${n(plan.perDay)}`} ·{" "}
           {!cards.some((c) => c.status === "scheduled" || c.status === "sending")
             ? "the first goes when you press Send"
             : plan.auto

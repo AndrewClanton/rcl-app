@@ -132,6 +132,13 @@ export async function saveWaveMode(mode: WaveMode, employeeId: string | null): P
   if (error) throw new Error("Couldn't save it.");
 }
 
+// The first wave of each ready-made email (and of each Send again) goes to
+// only this many, the most engaged, so a small wave can be judged before a
+// full one (Andrew, 10/3). Waves after it are the wave size; the first is
+// never bigger than that either.
+export const FIRST_WAVE = 25;
+export const firstWaveSize = (p: SendPlan) => Math.min(FIRST_WAVE, perDay(p));
+
 // Wave size is the plan's list share a day: setting it keeps what's held
 // back for receipts and makes Resend's daily figure the two added up.
 export async function saveWaveSize(size: number, employeeId: string | null): Promise<SendPlan> {
@@ -142,13 +149,15 @@ export async function saveWaveSize(size: number, employeeId: string | null): Pro
 }
 
 // About how many sending days (Monday to Saturday) `n` people take, with
-// `today` left today. Ignores the month's limit (the screen says so when
-// that's the one that bites).
-export function sendingDays(n: number, daily: number, today: number): number {
+// `today` left today, one wave a day, the first no bigger than `first`
+// (FIRST_WAVE for a Send that starts afresh). Ignores the month's limit
+// (the screen says so when that's the one that bites).
+export function sendingDays(n: number, daily: number, today: number, first = daily): number {
   if (n <= 0) return 0;
   if (daily <= 0) return Infinity;
-  const first = Math.min(n, Math.max(0, today));
-  return (first > 0 ? 1 : 0) + Math.ceil((n - first) / daily);
+  // The first wave goes today if there's room, otherwise on the next day.
+  const day1 = Math.min(n, Math.max(1, first), today > 0 ? today : daily);
+  return 1 + Math.ceil((n - day1) / daily);
 }
 
 // The date the last wave would go, counting Sundays off.

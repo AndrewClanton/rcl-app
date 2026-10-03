@@ -15,7 +15,7 @@ import { sealArtName } from "./designs/art-token";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
 import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE, legacyNeedsSetup } from "@/lib/legacy-plus";
-import { getSendPlan, getWaveMode, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
+import { firstWaveSize, getSendPlan, getWaveMode, nextMorningWave, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
 import { cancelEmail, deliver, getEmail, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
@@ -1042,6 +1042,7 @@ export interface Pace {
   brakeCheck?: { what: string; by: string; at: string } | null; // what they said they checked
   undo?: WaveUndo | null; // the last wave staff pressed for, while it can be undone (undo.ts)
   undone?: UndoDone | null; // what the last Undo called back
+  firstWave?: boolean; // a Send started it afresh: the next wave is the small first one (send-plan.ts FIRST_WAVE)
 }
 
 // Ready-made emails stay at least this far apart for each person: someone
@@ -1139,11 +1140,18 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
     return { c: { ...c, ...patch, status: "paused" }, more: true, note: brake.reason };
   }
 
-  const room = await roomToday(now);
+  const plan = await getSendPlan();
+  const room = await roomToday(now, plan);
   const later = (why: string) => ({ more: true, note: why });
+  // Waves that go by themselves: one a day, so the small first wave isn't
+  // followed by a full one the same day before anyone could look at it.
+  const pressed = !!pace.go && utcDay(new Date(pace.go)) === utcDay(now);
+  const lastAt = ((c.content as { waves?: { at: string }[] }).waves ?? []).at(-1)?.at;
+  const waveToday = !!lastAt && utcDay(new Date(lastAt)) === utcDay(now);
   let verdict: { more: boolean; note: string | null } | null = null;
   if (!waveCanGoToday(now)) verdict = later(manual ? `${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)` : `The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
   else if (room <= 0) verdict = later(manual ? `Today's share of Resend's daily limit is used up. ${WAVE_WAITING}` : DAILY_LIMIT);
+  else if (!manual && !pressed && waveToday) verdict = later(`The next wave goes ${dayName(nextMorningWave(now, false))}.`);
   if (verdict) {
     patch.content = { ...c.content, pace: { ...pace, note: verdict.note } } as CampaignRow["content"];
     await save();
@@ -1154,7 +1162,10 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   // Anyone who had one of the other ready-made emails lately waits.
   const key = designOf(c.content);
   const spacing = key ? { others: otherDesigns(await designCampaignIds(), key), days: DESIGN_GAP_DAYS } : undefined;
-  const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit: room, spacing });
+  // The first wave of a Send is small (FIRST_WAVE, the most engaged); the
+  // rest are as many as today's share allows.
+  const limit = pace.firstWave ? Math.min(room, firstWaveSize(plan)) : room;
+  const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit, spacing });
   const spaced = resolved.excluded.design_gap ?? 0;
   const left = (resolved.excluded.wave_limit ?? 0) + spaced;
   if (!resolved.send.length && spaced > 0) {
@@ -1214,7 +1225,8 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   const waves = [...(((c.content as { waves?: { at: string; n: number }[] }).waves ?? []) as { at: string; n: number }[]), { at: now.toISOString(), n }];
   const note = manual && left > 0 ? WAVE_WAITING : null;
   // A wave nobody can undo drops the last one's record (long over by now).
-  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note, go: null, undo } } as CampaignRow["content"];
+  // The first wave has gone (if anyone was queued): the next is a full one.
+  patch.content = { ...c.content, waves, pace: { ...pace, remaining: left, note, go: null, undo, firstWave: n > 0 ? undefined : pace.firstWave } } as CampaignRow["content"];
   patch.recipients = (c.recipients ?? 0) + resolved.willSend;
   patch.held_out = (c.held_out ?? 0) + resolved.heldOut;
   patch.excluded = resolved.excluded;

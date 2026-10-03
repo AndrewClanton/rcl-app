@@ -125,8 +125,9 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
 
 // ---------- the send ----------
 // Starts it (or, for one that went before, sends it to whoever qualifies
-// now and hasn't had it). The first wave goes now, as much as today's share
-// of Resend's daily limit allows, the most engaged first. Each later wave
+// now and hasn't had it). The first wave goes now, to the 25 most engaged
+// (send-plan.ts FIRST_WAVE; fewer if today's share or the wave size is
+// smaller), so it can be judged before a full wave. Each later wave
 // goes when staff press "Send the next wave" (sendNextWave), or, if an
 // admin set waves to go by themselves, on the morning email runs.
 export async function sendDesign(key: string, sendKey: string): Promise<Result<{ message: string }>> {
@@ -167,7 +168,7 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
   if (!c) {
     const { data, error } = await admin
       .from("email_campaigns")
-      .insert({ ...fields, content: { blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey } }, created_by: staff.employeeId })
+      .insert({ ...fields, content: { blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, firstWave: true } }, created_by: staff.employeeId })
       .select("id")
       .single();
     if (error || !data) return { ok: false, error: "Couldn't start it. Try again." };
@@ -179,7 +180,7 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
     const brakeOk = ((c.content as { pace?: Pace }).pace ?? {}).brakeOk ?? null;
     const { data, error } = await admin
       .from("email_campaigns")
-      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, brakeOk } } })
+      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, brakeOk, firstWave: true } } })
       .eq("id", c.id)
       .in("status", ["sent", "failed"])
       .select("id");

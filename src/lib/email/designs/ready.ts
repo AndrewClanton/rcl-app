@@ -55,9 +55,10 @@ function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n
 }
 
 // Who each would go to right now (and who's left out, by reason), and who
-// the next wave of `waveSize` would be. One read of the member list (and
-// of the engagement extras) for all three.
-export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date(), waveSize = 100): Promise<Record<DesignKey, AudienceCount>> {
+// the next wave of `waveSize` would be (one size for all, or each its own:
+// a Send that starts afresh has the small first wave). One read of the
+// member list (and of the engagement extras) for all three.
+export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date(), waveSize: number | Partial<Record<DesignKey, number>> = 100): Promise<Record<DesignKey, AudienceCount>> {
   const [facts, extras, designIds] = await Promise.all([loadFacts(), orderExtras(), designCampaignIds()]);
   const out = {} as Record<DesignKey, AudienceCount>;
   // The next wave would arrive at the next send slot (the 3-day gap is
@@ -68,7 +69,8 @@ export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow
     const c = rows[key];
     const shape = { id: c?.id ?? UUID_ZERO, kind: d.kind, category: d.category, automation: null, alert: null };
     const spacing = { others: otherDesigns(designIds, key), days: DESIGN_GAP_DAYS };
-    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at, now, facts, extras, limit: Math.max(1, waveSize), withRank: true, spacing });
+    const size = typeof waveSize === "number" ? waveSize : (waveSize[key] ?? 100);
+    const r = await resolveAudience({ ...shape, audience: d.audience, holdoutPct: 0 }, { at, now, facts, extras, limit: Math.max(1, size), withRank: true, spacing });
     const groups = ENGAGEMENT_GROUPS.map(() => 0);
     for (const s of r.send) groups[engagementGroup(r.rank?.get(s.facts.memberId) ?? [4, 3])]++;
     out[key] = {
