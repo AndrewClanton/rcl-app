@@ -47,9 +47,11 @@ export default function DisplayError({ error, retry }: { error: Error & { digest
 
 // The ramp TV is a landscape stick on a screen stood upright, and its page
 // turns itself to match (ramp/RampCountdown.tsx, same ?rotate= options).
-// This screen turns the same way, so it isn't on its side.
+// This screen turns the same way, so it isn't on its side. The page may be
+// at /display/ramp or, once it's renamed, /display/now-playing.
 function rampTurn(): number {
-  if (!window.location.pathname.startsWith("/display/ramp")) return 0;
+  const path = window.location.pathname;
+  if (!path.startsWith("/display/ramp") && !path.startsWith("/display/now-playing")) return 0;
   const rotate = new URLSearchParams(window.location.search).get("rotate");
   if (rotate === "off" || window.innerWidth <= window.innerHeight) return 0;
   return rotate === "ccw" ? -90 : 90;
