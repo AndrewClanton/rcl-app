@@ -48,45 +48,64 @@ async function assertReader(readerId: string) {
   if (!reader || ("deleted" in reader && reader.deleted)) throw new UserFacingError("That card reader isn't registered in Stripe anymore. Pick another under Devices.");
 }
 
-// tipEligibleCents: the pre-tax amount the reader's suggested tip
-// percentages are based on, or null to skip the tip screen (a tab already
-// asked for its tip on the register).
-export async function startReaderPayment(amountCents: number, readerId: string, tipEligibleCents: number | null): Promise<ReaderStart> {
+// UserFacingError is ours; Stripe's own messages ("Reader is currently
+// offline...") are written for merchants, so both are fine to show.
+function chargeError(e: unknown): string {
+  const stripeMessage = e && typeof e === "object" && "type" in e && typeof (e as { message?: unknown }).message === "string" ? (e as unknown as { message: string }).message : null;
+  return e instanceof UserFacingError ? e.message : (stripeMessage ?? "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.");
+}
+
+// A reader charge is two steps, so the register can keep the payment's id
+// (keepPendingReaderSale) before the reader shows it: a reload at any point
+// after step 1 still finds the payment, and stops it or records it.
+//
+// Step 1: the payment, not on the reader yet. Nothing can charge it until
+// step 2.
+export async function createReaderPayment(amountCents: number, readerId: string): Promise<ReaderStart> {
   await assertStaff();
   if (!(amountCents > 0)) return { ok: false, error: "Nothing to charge." };
   try {
     await assertReader(readerId);
-    return { ok: true, paymentIntentId: await sendToReader(amountCents, readerId, tipEligibleCents) };
+    const paymentIntent = await getStripe().paymentIntents.create({
+      amount: amountCents,
+      currency: "usd",
+      payment_method_types: ["card_present"],
+      capture_method: "automatic",
+      metadata: { source: "pos", reader_id: readerId },
+    });
+    return { ok: true, paymentIntentId: paymentIntent.id };
   } catch (e) {
-    // UserFacingError is ours; Stripe's own messages ("Reader is currently
-    // offline...") are written for merchants, so both are fine to show.
-    const stripeMessage = e && typeof e === "object" && "type" in e && typeof (e as { message?: unknown }).message === "string" ? (e as unknown as { message: string }).message : null;
-    return { ok: false, error: e instanceof UserFacingError ? e.message : (stripeMessage ?? "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.") };
+    return { ok: false, error: chargeError(e) };
   }
 }
 
-async function sendToReader(amountCents: number, readerId: string, tipEligibleCents: number | null): Promise<string> {
+// Step 2: show it on the reader. tipEligibleCents: the pre-tax amount the
+// reader's suggested tip percentages are based on, or null to skip the tip
+// screen (a tab already asked for its tip on the register). If the reader
+// won't take it, the payment is canceled; canceled says whether that took
+// (if not, the register keeps it to look up again).
+export async function sendReaderPayment(
+  paymentIntentId: string,
+  readerId: string,
+  tipEligibleCents: number | null,
+): Promise<{ ok: true } | { ok: false; error: string; canceled: boolean }> {
+  await assertStaff();
+  if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) return { ok: false, error: "That isn't a card payment.", canceled: false };
   const stripe = getStripe();
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount: amountCents,
-    currency: "usd",
-    payment_method_types: ["card_present"],
-    capture_method: "automatic",
-    metadata: { source: "pos", reader_id: readerId },
-  });
-
   try {
     await stripe.terminal.readers.processPaymentIntent(readerId, {
-      payment_intent: paymentIntent.id,
+      payment_intent: paymentIntentId,
       // Stripe errors if a tip-eligible amount is sent while skipping tips.
       process_config: tipEligibleCents && tipEligibleCents > 0 ? { tipping: { amount_eligible: tipEligibleCents } } : { skip_tipping: true },
     });
+    return { ok: true };
   } catch (e) {
-    await stripe.paymentIntents.cancel(paymentIntent.id).catch(() => {});
-    throw e;
+    const canceled = await stripe.paymentIntents.cancel(paymentIntentId).then(
+      () => true,
+      () => false,
+    );
+    return { ok: false, error: chargeError(e), canceled };
   }
-
-  return paymentIntent.id;
 }
 
 // Once it succeeds, `amount` includes any tip picked on the reader, and the
@@ -103,10 +122,20 @@ export async function checkReaderPayment(paymentIntentId: string): Promise<{ sta
   };
 }
 
+// Also used when the register reloads mid-payment and finds this payment
+// still open, by which time the reader may have moved on to the next sale:
+// its screen is only cleared while it's still showing this payment.
 export async function cancelReaderPayment(paymentIntentId: string, readerId: string): Promise<void> {
   await assertStaff();
   const stripe = getStripe();
-  if (readerId) await stripe.terminal.readers.cancelAction(readerId).catch(() => {});
+  if (readerId) {
+    // No answer about the reader: clear it anyway, as before.
+    const reader = await stripe.terminal.readers.retrieve(readerId).catch(() => null);
+    const action = reader && !("deleted" in reader && reader.deleted) ? reader.action : null;
+    const pi = action?.type === "process_payment_intent" ? action.process_payment_intent?.payment_intent : null;
+    const showing = typeof pi === "string" ? pi : (pi?.id ?? null);
+    if (!reader || showing === paymentIntentId) await stripe.terminal.readers.cancelAction(readerId).catch(() => {});
+  }
   await stripe.paymentIntents.cancel(paymentIntentId).catch(() => {});
 }
 

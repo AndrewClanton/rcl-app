@@ -7,7 +7,7 @@ import SwitchToYearly from "../../SwitchToYearly";
 import { dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
 import { giftEndsWithoutRenewal, plusNeedsCard } from "@/lib/plus-status";
-import { Panel, SpecPanel } from "../ui";
+import { Panel, SpecPanel, STACK, TAP } from "../ui";
 
 const STATUS_LABEL: Record<string, string> = {
   active: "Active",
@@ -26,10 +26,10 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
   const giftEnds = giftEndsWithoutRenewal(member);
 
   return (
-    <div className="space-y-10">
+    <div className={STACK}>
       {plusNeedsCard(member) ? (
         // Set to Insiders+ at the box office, with nothing paying for it yet.
-        <section className="sheet halftone halftone-hero flex flex-wrap items-center justify-between gap-4 bg-[var(--gold)] p-6">
+        <section className="sheet halftone halftone-hero flex flex-wrap items-center justify-between gap-4 bg-[var(--gold)] p-5 sm:p-6">
           <div className="relative z-[1]">
             <span className="ctag ctag-red">Insiders+</span>
             <p className="font-display mt-3 text-2xl">Your Insiders+ has no card on file.</p>
@@ -38,12 +38,12 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
               the meantime.
             </p>
           </div>
-          <PlusLink next="/account/billing" className="btn-primary relative z-[1] px-5 py-3">
+          <PlusLink next="/account/billing" className={`btn-primary ${TAP} relative z-[1] w-full px-5 py-3 sm:w-auto`}>
             Add a card
           </PlusLink>
         </section>
       ) : plus && giftEnds ? (
-        <section className="sheet halftone halftone-hero bg-[var(--gold)] p-6">
+        <section className="sheet halftone halftone-hero bg-[var(--gold)] p-5 sm:p-6">
           <div className="relative z-[1]">
             <span className="ctag ctag-red">A gift</span>
             <p className="font-display mt-3 text-2xl">
@@ -53,11 +53,11 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
             <p className="mt-4 max-w-lg text-[15px]">
               Want to keep it after that? Join now and your first charge waits until {dateShort(giftEnds)}: ${RATE_PRICE[rate]}/month or {dollars(ANNUAL_PRICE[rate])}/year (15% off), plus tax.
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <PlusLink next="/account/billing" className="btn-primary px-5 py-3">
+            <div className="mt-3 grid gap-3 sm:flex sm:flex-wrap">
+              <PlusLink next="/account/billing" className={`btn-primary ${TAP} px-5 py-3`}>
                 Keep it monthly
               </PlusLink>
-              <PlusLink next="/account/billing" annual className="btn-secondary px-5 py-3">
+              <PlusLink next="/account/billing" annual className={`btn-secondary ${TAP} px-5 py-3`}>
                 Keep it yearly
               </PlusLink>
             </div>
@@ -82,7 +82,8 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
                 k: billing?.cancelAtPeriodEnd ? "Ends on" : "Next bill",
                 v: billing?.nextBillDate ? `${dateShort(billing.nextBillDate)}${billing.nextBillAmount !== null ? ` · ${money(billing.nextBillAmount)}` : ""}` : "—",
               },
-              { k: "Card", v: billing?.cardLabel ?? "—" },
+              // "Visa •••• 4242" keeps its last four with the dots on a phone.
+              { k: "Card", v: billing?.cardLabel?.replace(/ (?=\d+$)/, " ") ?? "—" },
             ]}
             stamp={
               status === "active" || status === "trialing" ? (
@@ -101,7 +102,7 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
           {member.stripe_subscription_id && member.billing_interval !== "year" && !billing?.cancelAtPeriodEnd && ["active", "trialing"].includes(billing?.status ?? "") && (
             <SwitchToYearly yearlyLabel={`${dollars(ANNUAL_PRICE[rate])}/year instead of $${RATE_PRICE[rate] * 12} for twelve months`} />
           )}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
             <p className="max-w-lg text-sm text-[var(--muted)]">
               Billed {member.billing_interval === "year" ? "once a year" : "monthly"} on the day you joined. Update your card, change billing details or cancel anytime. Senior and student rates
               are set at the box office with an ID.
@@ -110,7 +111,7 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
           </div>
         </div>
       ) : (
-        <section className="sheet flex flex-wrap items-center justify-between gap-4 !bg-[var(--foreground)] p-6 text-[var(--background)]">
+        <section className="sheet flex flex-wrap items-center justify-between gap-4 !bg-[var(--foreground)] p-5 text-[var(--background)] sm:p-6">
           <div>
             <span className="ctag ctag-yellow">Insiders+</span>
             <p className="font-display mt-3 text-2xl text-[var(--gold)]">Walk in free, every time.</p>
@@ -118,7 +119,7 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
               Insiders+ is ${RATE_PRICE[rate]}/month, or {dollars(ANNUAL_PRICE[rate])}/year paid up front (15% off), plus tax. Cancel anytime.
             </p>
           </div>
-          <PlusLink next="/account/billing" className="btn-primary px-5 py-3">
+          <PlusLink next="/account/billing" className={`btn-primary ${TAP} w-full px-5 py-3 sm:w-auto`}>
             Get Insiders+
           </PlusLink>
         </section>
@@ -126,27 +127,31 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
 
       {billing && billing.invoices.length > 0 && (
         <Panel title="Insiders+ invoices" aside={`${billing.invoices.length}`}>
+          {/* The invoice number column is left off on a phone, so the rest
+              fits without scrolling sideways (it's on the PDF). */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px] text-[15px]">
+            <table className="w-full text-[15px]">
               <thead>
                 <tr className="border-b-2 border-[var(--foreground)] text-left">
-                  <th className="spec-k px-4 py-3">Date</th>
-                  <th className="spec-k px-4 py-3">Invoice</th>
-                  <th className="spec-k px-4 py-3">Status</th>
-                  <th className="spec-k px-4 py-3 text-right">Amount</th>
-                  <th className="px-4 py-3" />
+                  <th className="spec-k px-3 py-3 sm:px-4">Date</th>
+                  <th className="spec-k hidden px-4 py-3 sm:table-cell">Invoice</th>
+                  <th className="spec-k px-3 py-3 sm:px-4">Status</th>
+                  <th className="spec-k px-3 py-3 text-right sm:px-4">Amount</th>
+                  <th className="px-3 py-3 sm:px-4">
+                    <span className="sr-only">PDF</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {billing.invoices.map((i) => (
                   <tr key={i.id} className="border-t border-[var(--border)]">
-                    <td className="spec-code whitespace-nowrap px-4 py-3">{dateShort(i.date)}</td>
-                    <td className="px-4 py-3 text-[var(--muted)]">{i.number ?? "—"}</td>
-                    <td className="px-4 py-3 font-bold capitalize">{i.status}</td>
-                    <td className="font-display px-4 py-3 text-right tabular-nums">{money(i.amount)}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <td className="spec-code whitespace-nowrap px-3 py-3 sm:px-4">{dateShort(i.date)}</td>
+                    <td className="hidden px-4 py-3 text-[var(--muted)] sm:table-cell">{i.number ?? "—"}</td>
+                    <td className="px-3 py-3 font-bold capitalize sm:px-4">{i.status}</td>
+                    <td className="font-display px-3 py-3 text-right tabular-nums sm:px-4">{money(i.amount)}</td>
+                    <td className="whitespace-nowrap px-3 py-1 text-right sm:px-4">
                       {i.pdfUrl && (
-                        <a href={i.pdfUrl} className="font-bold text-[var(--accent)] hover:underline" target="_blank" rel="noopener noreferrer">
+                        <a href={i.pdfUrl} className="inline-flex min-h-11 items-center font-bold text-[var(--accent)] hover:underline" target="_blank" rel="noopener noreferrer">
                           PDF
                         </a>
                       )}
@@ -165,9 +170,9 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
             One PDF per year with every purchase on your account, the sales tax you paid, your Insiders+ billing and your points. Handy for your own records or
             expense reports.
           </p>
-          <div className="mt-4 flex flex-wrap gap-3">
+          <div className="mt-4 grid gap-3 sm:flex sm:flex-wrap">
             {years.map((y) => (
-              <a key={y} href={`/account/statements/${y}`} className="btn-secondary px-4 py-2 text-sm">
+              <a key={y} href={`/account/statements/${y}`} className={`btn-secondary ${TAP} px-4 py-2 text-sm`}>
                 {y} statement (PDF)
               </a>
             ))}

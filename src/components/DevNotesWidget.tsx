@@ -1,35 +1,47 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { submitDevNote } from "@/app/admin/dev-notes/actions";
+import DevNoteDialog, { NoteIcon } from "@/components/dev-notes/DevNoteDialog";
 
-// Admin-only feedback tool, mounted once in the root layout (src/app/layout.tsx)
-// so it's available on every page. The root layout itself stays a plain
-// static Server Component (no cookie/session read) so public pages keep
-// their static generation -- this component checks admin status itself, via
-// a tiny API route, rather than the layout gating it server-side. Captures
-// the page the admin was on automatically, so a note never loses its context.
+// Where "Leave a dev note" lives on each screen. It used to be one button
+// floating in the bottom-right corner of every page, on top of whatever was
+// there (on the register, the menu buttons). Now:
+//   - Back office (/admin): in the menu (AdminShell).
+//   - Register (/pos): on the shift bar (ShiftBar), with a choice of the
+//     register or the customer screen beside it.
+//   - Display screens (/display/...): none. They're signage or face the
+//     customer, and often have nobody at them.
+//   - Everywhere else (the public site, Help, Training, member profiles): a
+//     slim staff bar across the top of the page, in the page's flow, so it
+//     never covers anything. Customers never see it.
+//
+// Mounted once in the root layout (src/app/layout.tsx). The root layout
+// stays a plain static Server Component (no cookie/session read) so public
+// pages keep their static generation -- this checks admin status itself,
+// via a tiny API route.
+function hasOwnHome(pathname: string) {
+  return pathname === "/admin" || pathname.startsWith("/admin/") || pathname === "/pos" || pathname.startsWith("/pos/") || pathname.startsWith("/display/");
+}
+
 export default function DevNotesWidget() {
   const pathname = usePathname();
+  const elsewhere = hasOwnHome(pathname);
   const [authorized, setAuthorized] = useState(false);
   const [open, setOpen] = useState(false);
-  const [message, setMessage] = useState("");
-  const [sent, setSent] = useState(false);
-  const [pending, startTransition] = useTransition();
 
   // Re-checks on every client-side navigation (pathname change), not just
   // once on first mount -- the root layout persists across navigations
   // (that's the point of a layout), so a mount-once check would only ever
-  // reflect whatever the auth state was on the very first page load. That
-  // was the real bug behind "sometimes I have to reload the page for it to
-  // show up": land on a page before signing in (or before the session
-  // cookie is readable yet) and it stays hidden for the rest of the visit,
-  // even after logging in, since logging in redirects to a *different*
-  // route rather than remounting this component. A retry also covers a
-  // plain transient fetch failure, which used to be silently swallowed
-  // forever.
+  // reflect whatever the auth state was on the very first page load: land
+  // on a page before signing in and it stayed hidden for the rest of the
+  // visit. A retry also covers a plain transient fetch failure.
   useEffect(() => {
+    // Pages with their own button don't need to ask. Nor does a page shown
+    // inside another one (the register's training window), which would get
+    // a second bar.
+    if (elsewhere || window.self !== window.top) return;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -52,75 +64,35 @@ export default function DevNotesWidget() {
       cancelled = true;
       clearTimeout(retryTimer);
     };
-  }, [pathname]);
+  }, [pathname, elsewhere]);
 
-  useEffect(() => {
-    if (!sent) return;
-    const t = setTimeout(() => {
-      setSent(false);
-      setOpen(false);
-    }, 1400);
-    return () => clearTimeout(t);
-  }, [sent]);
-
-  function submit() {
-    const trimmed = message.trim();
-    if (!trimmed) return;
-    startTransition(async () => {
-      await submitDevNote({ pagePath: pathname, pageTitle: document.title, message: trimmed });
-      setMessage("");
-      setSent(true);
-    });
-  }
-
-  // Full-screen display screens (TVs, the kitchen/bar boards) are often
-  // logged in as an admin but have no one at them to leave a note -- a
-  // floating button would just sit on top of the signage.
-  const onDisplayScreen = pathname.startsWith("/display/");
-  if (!authorized || onDisplayScreen) return null;
-
+  if (!authorized || elsewhere) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-50 font-sans print:hidden">
-      {open ? (
-        <div className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 shadow-lg">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Dev Notes</span>
-            <button onClick={() => setOpen(false)} aria-label="Close" className="text-[var(--muted)] hover:text-[var(--foreground)]">
-              ✕
-            </button>
-          </div>
-          {sent ? (
-            <p className="py-4 text-center text-sm text-[var(--muted)]">Sent -- thanks.</p>
-          ) : (
-            <>
-              <p className="mb-1.5 truncate rounded border border-[var(--border)] bg-[var(--surface-hover)] px-2 py-1 font-mono text-[11px] text-[var(--muted)]" title={pathname}>
-                {pathname}
-              </p>
-              <textarea
-                autoFocus
-                rows={3}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder="Bug, typo, or a change you want on this page..."
-                className="input mb-2 resize-none text-sm"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
-                }}
-              />
-              <button onClick={submit} disabled={pending || !message.trim()} className="btn-primary w-full !py-1.5 text-sm">
-                {pending ? "Sending…" : "Send note"}
-              </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <button
-          onClick={() => setOpen(true)}
-          className="rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium shadow-lg hover:border-[var(--accent)]"
-        >
-          Dev note
+    <>
+      <StaffBar onNote={() => setOpen(true)} />
+      {open && <DevNoteDialog onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+// order-first: the root layout's <body> is a flex column, so this sits
+// above the page even though it's mounted after it.
+export function StaffBar({ onNote }: { onNote: () => void }) {
+  return (
+    <div className="order-first w-full border-b border-[var(--border)] bg-[var(--surface)] font-sans text-sm print:hidden">
+      <div className="mx-auto flex max-w-5xl items-center gap-1 px-2 sm:px-4">
+        <span className="min-w-0 flex-1 truncate px-2 text-xs text-[var(--muted)]">
+          <strong className="font-bold uppercase tracking-wide">Staff</strong>
+          <span className="hidden sm:inline"> · only admins see this bar</span>
+        </span>
+        <button type="button" onClick={onNote} className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 font-semibold hover:bg-[var(--surface-hover)]">
+          <NoteIcon size={16} />
+          Leave a dev note
         </button>
-      )}
+        <Link href="/admin" className="inline-flex min-h-11 shrink-0 items-center rounded-lg px-3 font-semibold text-[var(--muted)] hover:bg-[var(--surface-hover)] hover:text-[var(--foreground)]">
+          Back office
+        </Link>
+      </div>
     </div>
   );
 }

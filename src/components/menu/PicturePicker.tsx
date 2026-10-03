@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { creditLine, isFound, previewUrl, type CandidateView, type PictureResult, type PictureState, type SearchResult } from "@/lib/menu-pictures/shared";
+import {
+  creditLine,
+  isFound,
+  previewUrl,
+  SOURCE_NAMES,
+  type CandidateView,
+  type FoundSource,
+  type PictureResult,
+  type PictureState,
+  type SearchResult,
+} from "@/lib/menu-pictures/shared";
 
 // Browsing free-to-use pictures for a register button or tab: one at a time,
 // big enough to judge on an iPad, with ◀ ▶ to go through the results, its
@@ -11,8 +21,35 @@ import { creditLine, isFound, previewUrl, type CandidateView, type PictureResult
 //
 // Shared by the register's item settings and Back office → Menu, which
 // hand in their own `find` and `pick` (each checks who's asking its own way).
+//
+// Pixabay and Pexels ask to be named wherever their pictures are shown, and
+// Pexels's photographers credited with a link: both are under the picture,
+// and the libraries that answered a search are listed at the bottom.
 
-type Found = { query: string; candidates: CandidateView[] };
+type Found = { query: string; candidates: CandidateView[]; sources: FoundSource[] };
+
+// The libraries' own sites, for the links they ask for.
+const HOME: Partial<Record<FoundSource, string>> = { pixabay: "https://pixabay.com/", pexels: "https://www.pexels.com/" };
+
+function SourceName({ source }: { source: FoundSource }) {
+  const home = HOME[source];
+  if (!home) return <>{SOURCE_NAMES[source]}</>;
+  return (
+    <a className="underline" href={home} target="_blank" rel="noopener noreferrer">
+      {SOURCE_NAMES[source]}
+    </a>
+  );
+}
+
+// "Pixabay, Pexels and Openverse"
+function SourceList({ sources }: { sources: FoundSource[] }) {
+  return sources.map((s, i) => (
+    <span key={s}>
+      {i > 0 && (i === sources.length - 1 ? " and " : ", ")}
+      <SourceName source={s} />
+    </span>
+  ));
+}
 
 export default function PicturePicker({
   current,
@@ -43,13 +80,17 @@ export default function PicturePicker({
     try {
       const r = await find(query);
       if (!r.ok) return setError(r.error);
-      setFound({ query: r.query, candidates: r.candidates });
+      setFound({ query: r.query, candidates: r.candidates, sources: r.sources ?? [] });
       setWords(r.query);
       setBroken(new Set());
       // Looking again at the same search starts on the next one along: the
-      // one on the button is what they want to replace.
-      const same = isFound(current.image_source) && current.image_query === r.query && current.image_index !== null;
-      setAt(same ? (current.image_index! + 1) % r.candidates.length : 0);
+      // one on the button is what they want to replace. Found by its page
+      // (a picture found on its own came from a list without Pixabay), else
+      // by its place.
+      const same = isFound(current.image_source) && current.image_query === r.query;
+      const page = current.image_credit?.page;
+      const on = same && page ? r.candidates.findIndex((c) => c.credit.page === page) : -1;
+      setAt(on >= 0 ? (on + 1) % r.candidates.length : same && current.image_index !== null ? (current.image_index + 1) % r.candidates.length : 0);
     } catch {
       setError("The picture search didn't answer. Check the connection and try again.");
     } finally {
@@ -72,7 +113,8 @@ export default function PicturePicker({
   useEffect(() => {
     if (!found || n < 2) return;
     const img = new window.Image();
-    img.src = previewUrl(found.query, (at + 1) % n);
+    const next = (at + 1) % n;
+    img.src = previewUrl(found.query, next, found.candidates[next].credit.page);
   }, [found, at, n]);
 
   function step(d: number) {
@@ -112,7 +154,7 @@ export default function PicturePicker({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={`${found.query}#${at}`}
-              src={previewUrl(found.query, at)}
+              src={previewUrl(found.query, at, shown.credit.page)}
               alt={shown.credit.title ?? "Picture"}
               className="absolute inset-0 h-full w-full object-cover"
               onError={() => setBroken((b) => new Set(b).add(at))}
@@ -142,12 +184,24 @@ export default function PicturePicker({
           <span className="font-bold tabular-nums">
             {at + 1} of {n}
           </span>
-          {credit && <> · {credit}</>}
-          {shown.credit.page && (
+          {credit && (
             <>
-              {" "}
-              <a className="underline" href={shown.credit.page} target="_blank" rel="noopener noreferrer">
-                source ↗
+              {" · "}
+              {/* The credit links to the picture's own page ("Photo by Jane on Pexels"). */}
+              {shown.credit.page ? (
+                <a className="underline" href={shown.credit.page} target="_blank" rel="noopener noreferrer">
+                  {credit} ↗
+                </a>
+              ) : (
+                credit
+              )}
+            </>
+          )}
+          {shown.source === "pexels" && (
+            <>
+              {" · "}
+              <a className="font-bold underline" href="https://www.pexels.com/" target="_blank" rel="noopener noreferrer">
+                Photos provided by Pexels
               </a>
             </>
           )}
@@ -192,8 +246,13 @@ export default function PicturePicker({
         </p>
       )}
       <p className="text-[11px] leading-snug" style={{ color: "var(--muted)" }}>
-        Only pictures free for a business to use (public domain and Creative Commons) from Open Food Facts, Openverse and Wikimedia Commons. The one you pick is copied
-        to our own server.
+        Only pictures free for a business to use
+        {found && found.sources.length > 0 ? (
+          <>
+            , from <SourceList sources={found.sources} />
+          </>
+        ) : null}
+        . The one you pick is copied to our own server.
       </p>
     </div>
   );

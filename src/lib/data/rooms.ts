@@ -1,8 +1,11 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { Room, RoomAddon } from "@/lib/types";
 
-export async function getRooms(): Promise<Room[]> {
-  const supabase = await createClient();
+// `client`: the public website passes a cookie-less client
+// (lib/supabase/public.ts) so its private events page can be cached.
+export async function getRooms(client?: SupabaseClient): Promise<Room[]> {
+  const supabase = client ?? (await createClient());
 
   const [{ data: rooms, error: roomErr }, { data: addons, error: addonErr }] = await Promise.all([
     supabase.from("rooms").select("*").order("hourly_rate"),

@@ -1,20 +1,33 @@
 import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 import { LOYALTY_SUMMARY } from "@/lib/loyalty";
+import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
 import Image from "next/image";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
 import PlusLink from "@/components/PlusLink";
 import { Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
-import { getSignedInMember } from "@/lib/member-auth";
-import { hasPlusPerks } from "@/lib/plus-checkout";
 import type { Screening } from "@/lib/types";
 import { businessDay, businessDayWindow } from "@/lib/ops/time";
+import { DIRECTIONS_URL, SITE_DESCRIPTION } from "@/lib/site";
+import { pageMeta } from "@/lib/seo/page-meta";
 
-export const dynamic = "force-dynamic";
+// The same page for everyone, drawn per request: "Tonight", "Today" and
+// "Tomorrow" and which showings are listed (started? this year's release?)
+// depend on the clock, and a cached copy of the page could be hours old on a
+// quiet night (Next serves the old copy first and rebuilds it afterwards).
+// The database rows behind it are cached instead (getPubliclyVisibleScreenings
+// in lib/data/screenings.ts), and it reads no cookies. What differs for
+// Insiders+ members is switched in their browser (the plus-show / plus-hide
+// classes, see components/site/plus-hint.ts).
+
+export const metadata = pageMeta({
+  title: { absolute: "Royale Cinema Lounge · Cinema, bar & lounge in Joplin, MO" },
+  description: SITE_DESCRIPTION,
+  path: "/",
+});
 
 const TZ = "America/Chicago";
-const DIRECTIONS_URL = "https://www.google.com/maps/search/?api=1&query=715+E+Broadway,+Joplin,+MO+64801";
 
 const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: TZ });
 function whenLabel(iso: string) {
@@ -103,11 +116,11 @@ function Perk({ children, off = false }: { children: React.ReactNode; off?: bool
 }
 
 export default async function HomePage() {
-  const [allScreenings, member] = await Promise.all([getPubliclyVisibleScreenings(), getSignedInMember()]);
-  const plus = !!member && hasPlusPerks(member);
+  const allScreenings = await getPubliclyVisibleScreenings();
   // Visitors get the Insiders+ tile as the last spot in the grid, so the
-  // offer sits right among the showings it pays for.
-  const films = nextFilms(allScreenings, plus ? 6 : 5);
+  // offer sits right among the showings it pays for; Insiders+ members get
+  // a sixth film there instead.
+  const films = nextFilms(allScreenings, 6);
   const today = laterToday(allScreenings);
 
   return (
@@ -115,17 +128,17 @@ export default async function HomePage() {
       {/* Panel Pop: the loud one, with its registration mark at the corner. */}
       <section className="sheet overflow-hidden !border-[3px] !shadow-[7px_7px_0_var(--foreground)]">
         <div className="halftone halftone-hero relative bg-[var(--gold)] px-6 pt-16 pb-14 text-center sm:px-12 sm:pt-20 sm:pb-16">
-          <Starburst className="starburst-red absolute top-5 right-6 hidden sm:block">
+          <Starburst className="starburst-red absolute top-5 right-6 z-[2] hidden sm:block">
             Route
             <br />
             66
           </Starburst>
           <div className="relative z-[1]">
-            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="mx-auto mb-6 h-auto w-40 sm:w-48" style={{ filter: "invert(1) brightness(0.08)" }} />
+            <Image src="/photos/logo.png" alt="Royale Cinema Lounge" width={1434} height={505} priority className="mx-auto mb-6 h-auto w-52 sm:w-64" style={{ filter: "invert(1) brightness(0.08)" }} />
             <span className="ctag ctag-red">Joplin, MO</span>
             <h1 className="font-display mx-auto mt-5 max-w-3xl text-4xl leading-[0.98] text-balance sm:text-6xl">micro cinema, third space, film archive</h1>
             <p className="mx-auto mt-5 max-w-xl text-[15px] font-medium sm:text-base">
-              Royale Cinema Lounge is a dine-in cinema and bar. Grab a seat, order off the menu, and catch a show.
+              Royale Cinema Lounge is a cinema, bar and members&apos; lounge. Grab a drink and a bite at the bar, find your seat, and catch a show.
             </p>
             <div className="mt-8 flex flex-wrap justify-center gap-3">
               <Link href="/showtimes" className="btn-primary -rotate-[1.5deg] px-6 py-3">
@@ -160,8 +173,8 @@ export default async function HomePage() {
           <div className="sheet p-5 text-[15px]">No screenings scheduled yet. Check back soon.</div>
         ) : (
           <div className="grid gap-7 pt-2 sm:grid-cols-2 lg:grid-cols-3">
-            {films.map(({ key, first, showings }) => (
-              <article key={key} className="sheet crop relative flex flex-col">
+            {films.map(({ key, first, showings }, i) => (
+              <article key={key} className={`sheet crop relative flex flex-col ${i === 5 ? "plus-show" : ""}`}>
                 <Link href={`/showtimes/${first.id}`} className="block overflow-hidden rounded-t-[4px] border-b-2 border-[var(--foreground)]">
                   <MoviePoster posterUrl={first.movie.poster_url} title={first.movie.title} sizes="(min-width: 1024px) 300px, (min-width: 640px) 45vw, 90vw" />
                 </Link>
@@ -190,87 +203,84 @@ export default async function HomePage() {
                 <SpecFoot />
               </article>
             ))}
-            {!plus && (
-              <article className="sheet halftone halftone-hero relative flex flex-col justify-between bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-                <div className="relative z-[1] p-6">
-                  <span className="ctag ctag-red">Insiders+</span>
-                  <p className="font-display mt-5 text-3xl leading-tight text-balance">Every film here, free.</p>
-                  <div className="font-display mt-4 text-6xl leading-none tabular-nums">${RATE_PRICE.adult}</div>
-                  <div className="mt-1 text-[15px] font-bold">a month, for every screening. Or {dollars(ANNUAL_PRICE.adult)} a year.</div>
-                </div>
-                <div className="relative z-[1] px-6 pb-6">
-                  <PlusLink className="btn-primary block -rotate-[1.5deg] px-5 py-3 text-center">Get Insiders+</PlusLink>
-                  <a href="#insiders" className="mt-3 block text-center text-sm font-bold underline decoration-2 underline-offset-2">
-                    What&apos;s included
-                  </a>
-                </div>
-              </article>
-            )}
+            <article className="plus-hide sheet halftone halftone-hero relative flex flex-col justify-between bg-[var(--gold)] !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+              <div className="relative z-[1] p-6">
+                <span className="ctag ctag-red">Insiders+</span>
+                <p className="font-display mt-5 text-3xl leading-tight text-balance">Every film here, free.</p>
+                <div className="font-display mt-4 text-6xl leading-none tabular-nums">${RATE_PRICE.adult}</div>
+                <div className="mt-1 text-[15px] font-bold">a month, for every screening. Or {dollars(ANNUAL_PRICE.adult)} a year.</div>
+              </div>
+              <div className="relative z-[1] px-6 pb-6">
+                <PlusLink className="btn-primary block -rotate-[1.5deg] px-5 py-3 text-center">Get Insiders+</PlusLink>
+                <a href="#insiders" className="mt-3 block text-center text-sm font-bold underline decoration-2 underline-offset-2">
+                  What&apos;s included
+                </a>
+              </div>
+            </article>
           </div>
         )}
       </section>
 
       {/* Right under the showings: every one of them is free with Insiders+.
           Insiders+ members don't need the pitch. Same cards as /membership. */}
-      {!plus && (
-        <section id="insiders" className="scroll-mt-28">
-          <div className="eyebrow mb-2">Insiders+</div>
-          <h2 className="font-display max-w-2xl text-3xl leading-tight text-balance">See every one of these for ${RATE_PRICE.adult} a month.</h2>
-          <p className="mt-3 max-w-xl text-[15px] text-[var(--muted)]">
-            Insiders+ gets you into every screening free: all the showings above, and every one after them. No tickets, no per-show price.
-          </p>
-          <div className="mt-8 grid gap-7 md:grid-cols-[1.15fr_1fr]">
-            <div className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
-              <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
-                <div className="relative z-[1]">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="spec-k !text-[var(--foreground)]">Unlimited screenings</div>
-                      <div className="font-display text-3xl">Insiders+</div>
-                    </div>
-                    <span className="ctag ctag-red">Free entry</span>
+      <section id="insiders" className="plus-hide site-anchor">
+        <div className="eyebrow mb-2">Insiders+</div>
+        <h2 className="font-display max-w-2xl text-3xl leading-tight text-balance">See every one of these for ${RATE_PRICE.adult} a month.</h2>
+        <p className="mt-3 max-w-xl text-[15px] text-[var(--muted)]">
+          Insiders+ gets you into every screening free: all the showings above, and every one after them. No tickets, no per-show price.
+        </p>
+        <div className="mt-8 grid gap-7 md:grid-cols-[1.15fr_1fr]">
+          <div className="sheet relative flex flex-col !border-4 !shadow-[7px_7px_0_var(--foreground)]">
+            <div className="halftone halftone-hero relative rounded-t-[2px] border-b-[3px] border-[var(--foreground)] bg-[var(--gold)] px-5 py-5">
+              <div className="relative z-[1]">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="spec-k !text-[var(--foreground)]">Unlimited screenings</div>
+                    <div className="font-display text-3xl">Insiders+</div>
                   </div>
-                  <div className="mt-2 flex flex-wrap items-baseline gap-x-3">
-                    <span className="font-display text-4xl leading-none">${RATE_PRICE.adult}/mo</span>
-                    <span className="text-[15px] font-bold">or {dollars(ANNUAL_PRICE.adult)}/yr, save 15%</span>
-                  </div>
+                  <span className="ctag ctag-red">Free entry</span>
                 </div>
-              </div>
-              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
-                <Perk>
-                  <strong>Free entry to every screening</strong>, unlimited
-                </Perk>
-                <Perk>2 free booth reservations every month</Perk>
-                <Perk>Concession and merch discounts</Perk>
-                <Perk>First access to weekly titles and member events</Perk>
-              </ul>
-              <div className="px-5 pb-5">
-                <PlusLink className="btn-primary block px-5 py-3 text-center">Get Insiders+ · ${RATE_PRICE.adult}/mo</PlusLink>
-                <div className="spec-code mt-3">
-                  Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo · with ID at the box office
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-3">
+                  <span className="font-display text-4xl leading-none">${RATE_PRICE.adult}/mo</span>
+                  <span className="text-[15px] font-bold">or {dollars(ANNUAL_PRICE.adult)}/yr, save 15%</span>
                 </div>
               </div>
             </div>
-            <div className="sheet crop flex flex-col">
-              <div className="border-b-2 border-[var(--foreground)] px-5 py-5">
-                <div className="spec-k">Free forever</div>
-                <div className="font-display text-3xl">Insiders</div>
-                <div className="font-display mt-2 text-4xl leading-none">$0</div>
-              </div>
-              <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
-                <Perk>{LOYALTY_SUMMARY}</Perk>
-                <Perk>Mailing list and the weekly lineup</Perk>
-                <Perk off>Buy a ticket for each screening</Perk>
-              </ul>
-              <div className="px-5 pb-5">
-                <Link href="/membership" className="btn-secondary block px-5 py-3 text-center">
-                  Join free
-                </Link>
+            <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
+              <Perk>
+                <strong>Free entry to every screening</strong>, unlimited
+              </Perk>
+              <Perk>{DAILY_COFFEE_PERK}</Perk>
+              <Perk>2 free booth reservations every month</Perk>
+              <Perk>Concession and merch discounts</Perk>
+              <Perk>First access to weekly titles and member events</Perk>
+            </ul>
+            <div className="px-5 pb-5">
+              <PlusLink className="btn-primary block px-5 py-3 text-center">Get Insiders+ · ${RATE_PRICE.adult}/mo</PlusLink>
+              <div className="spec-code mt-3">
+                Seniors ${RATE_PRICE.senior}/mo · Students ${RATE_PRICE.student}/mo · with ID at the box office
               </div>
             </div>
           </div>
-        </section>
-      )}
+          <div className="sheet crop flex flex-col">
+            <div className="border-b-2 border-[var(--foreground)] px-5 py-5">
+              <div className="spec-k">Free forever</div>
+              <div className="font-display text-3xl">Insiders</div>
+              <div className="font-display mt-2 text-4xl leading-none">$0</div>
+            </div>
+            <ul className="flex-1 space-y-2.5 px-5 py-5 text-[15px]">
+              <Perk>{LOYALTY_SUMMARY}</Perk>
+              <Perk>Mailing list and the weekly lineup</Perk>
+              <Perk off>Buy a ticket for each screening</Perk>
+            </ul>
+            <div className="px-5 pb-5">
+              <Link href="/membership" className="btn-secondary block px-5 py-3 text-center">
+                Join free
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <Sprockets />
 

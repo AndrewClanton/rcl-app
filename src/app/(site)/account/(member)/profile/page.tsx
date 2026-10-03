@@ -2,6 +2,7 @@ import { requireMember } from "@/lib/member-auth";
 import { createClient } from "@/lib/supabase/server";
 import { googlePhotoUrl } from "@/lib/member-link";
 import { getSignInProviders } from "@/lib/auth-providers";
+import { getMyLinkedCards } from "@/lib/data/member-account";
 import ProfileView from "./ProfileView";
 
 export const metadata = { title: "Profile" };
@@ -14,6 +15,6 @@ export default async function ProfilePage() {
   } = await supabase.auth.getUser();
   const providers = [...new Set((user?.identities ?? []).map((i) => i.provider))];
   const googlePhoto = user ? googlePhotoUrl(user) : null;
-  const enabled = await getSignInProviders();
-  return <ProfileView member={member} providers={providers} googlePhoto={googlePhoto} enabled={enabled} />;
+  const [enabled, cards] = await Promise.all([getSignInProviders(), getMyLinkedCards(member.id)]);
+  return <ProfileView member={member} providers={providers} googlePhoto={googlePhoto} enabled={enabled} cards={cards} />;
 }

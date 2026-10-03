@@ -9,6 +9,8 @@ import { getTicketCounts } from "@/lib/data/screenings";
 import { getTimesheet, thisWeek } from "@/lib/data/team";
 import { getTrainingOverview } from "@/lib/training/data";
 import { getOftenOut } from "@/lib/ops/outages";
+import { openFlags } from "@/lib/member-flags-server";
+import { FLAG_REASONS } from "@/lib/member-flags";
 import type { OftenOut } from "@/lib/ops/shared";
 import type { PinStatus } from "@/lib/data/employees";
 import type { EmployeeRole } from "@/lib/types";
@@ -37,6 +39,9 @@ export interface Signals {
   printers: { offline: string[]; open: boolean } | null; // open: someone is on shift, so printers should be on
   devNotes: number | null;
   oldSite: number | null;
+  // Admins: accounts flagged at the register and not cleared yet
+  // (lib/member-flags.ts), newest first. reason: its label.
+  flagged: { memberId: string; name: string; reason: string }[] | null;
 }
 
 async function quietly<T>(read: () => Promise<T>): Promise<T | null> {
@@ -59,7 +64,7 @@ export const getSignals = cache(async (role: EmployeeRole): Promise<Signals> => 
     return n ?? 0;
   };
 
-  const [tabs, held, itemsOut, printers, devNotes, oldSite] = await Promise.all([
+  const [tabs, held, itemsOut, printers, devNotes, oldSite, flagged] = await Promise.all([
     quietly(async () => {
       const { data, error } = await db.from("orders").select("created_at").eq("status", "tab");
       if (error) throw error;
@@ -85,9 +90,20 @@ export const getSignals = cache(async (role: EmployeeRole): Promise<Signals> => 
       : null,
     hasAdminAccess(role) ? quietly(() => count(db.from("dev_notes").select("id", { count: "exact", head: true }).eq("status", "new"))) : null,
     hasAdminAccess(role) ? quietly(() => count(db.from("legacy_accounts").select("legacy_user_id", { count: "exact", head: true }).eq("decision", "review"))) : null,
+    hasAdminAccess(role)
+      ? quietly(async () => {
+          // One line per account, its newest flag.
+          const seen = new Set<string>();
+          return (await openFlags()).flatMap(({ flag, memberName }) => {
+            if (seen.has(flag.memberId)) return [];
+            seen.add(flag.memberId);
+            return [{ memberId: flag.memberId, name: memberName, reason: FLAG_REASONS[flag.reason] }];
+          });
+        })
+      : null,
   ]);
 
-  return { tabs, held, itemsOut, printers, devNotes, oldSite };
+  return { tabs, held, itemsOut, printers, devNotes, oldSite, flagged };
 });
 
 // The little counts on the menu. Red only for something broken right now

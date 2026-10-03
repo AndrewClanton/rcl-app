@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { assertStaff, getStaffSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { UserFacingError } from "@/lib/errors";
@@ -9,9 +9,12 @@ import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 import { centralToIso, shiftDate } from "@/lib/ops/time";
-import { getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
+import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
 
 function revalidate() {
+  // The rows behind Home, Showtimes and the sitemap (cached for a minute):
+  // the next visitor gets the change, not the cached copy.
+  updateTag(PUBLIC_SCREENINGS_TAG);
   revalidatePath("/admin/screenings");
   revalidatePath("/showtimes");
   revalidatePath("/");

@@ -8,7 +8,7 @@ import type { User } from "@supabase/supabase-js";
 import { emailIsProven } from "@/lib/member-link";
 import { DEFAULT_PIN_HASH, hashPin } from "@/lib/pin";
 import { pinProblem } from "@/lib/pin-rules";
-import { siteOrigin } from "@/lib/site-origin";
+import { emailPasswordReset, staffRecoveryLink, type HelpSent } from "@/lib/sign-in-help";
 
 // Roles assignable through this UI. 'owner' is deliberately excluded --
 // the co-owners (Andrew, Caleb, Nathan) are set directly against the
@@ -189,48 +189,48 @@ export async function setEmployeeActive(employeeId: string, active: boolean): Pr
 }
 
 // ---------- password reset for a staff login ----------
-// Email isn't set up yet, so "forgot password" can't reach anyone. Instead
-// the owner makes a one-time recovery link here and hands it over (text it
-// to them, or open it on their phone). It opens the site's Reset password
-// page (/account/reset-password), already signed in as them, to pick a new
-// password. Supabase sends nothing itself: generateLink only returns the
-// link. The link works once and expires on Supabase's schedule (an hour by
-// default); making a new one replaces the old.
+// Both go through lib/sign-in-help.ts, like the member page's sign-in help.
+// Usually: email them the reset (emailStaffPasswordReset), the same email
+// "Forgot password" sends, from Royale Cinema Lounge to their login's own
+// address, so nobody else ever holds the link. For when email can't reach
+// them: the owner makes a one-time recovery link here and hands it over
+// (text it to them, or open it on their phone). Either way it opens the
+// site's Reset password page (/account/reset-password), already signed in
+// as them, to pick a new password, and a staff login then lands in the
+// back office (account/actions.ts afterPasswordReset). The link works once
+// and expires on Supabase's schedule (an hour by default).
 //
-// Anyone holding the link can take over that login, so it's owner-only,
-// shown once, never stored, and each one is logged (who, for whom, when).
+// Anyone holding a made link can take over that login, so it's owner-only,
+// shown once, never stored, and each one is logged (who, for whom, when;
+// ids only).
 
 export type RecoveryLinkResult =
   | { ok: true; link: string; email: string; passwordLogin: boolean }
   | { ok: false; error: string };
 
-export async function createRecoveryLink(employeeId: string): Promise<RecoveryLinkResult> {
-  const me = await requireOwner();
-  const supabase = createAdminClient();
-  const { data: employee } = await supabase.from("employees").select("name, auth_user_id").eq("id", employeeId).maybeSingle();
+async function staffLogin(employeeId: string): Promise<{ ok: true; authUserId: string } | { ok: false; error: string }> {
+  const { data: employee } = await createAdminClient().from("employees").select("auth_user_id").eq("id", employeeId).maybeSingle();
   if (!employee) return { ok: false, error: "That person wasn't found. Reload the page." };
   if (!employee.auth_user_id) return { ok: false, error: "They don't have a login to reset. Add one with “Create a new login” above." };
+  return { ok: true, authUserId: employee.auth_user_id };
+}
 
-  const { data: userRes, error: userErr } = await supabase.auth.admin.getUserById(employee.auth_user_id);
-  const email = userRes?.user?.email;
-  if (userErr || !email) return { ok: false, error: "Couldn't find their login's email. Try again." };
-
-  const { data, error } = await supabase.auth.admin.generateLink({
-    type: "recovery",
-    email,
-    options: { redirectTo: `${await siteOrigin()}/account/reset-password` },
-  });
-  const link = data?.properties?.action_link;
-  if (error || !link) {
-    console.error("staff: recovery link not made", error?.message);
-    return { ok: false, error: "Couldn't make a reset link. Try again in a minute." };
-  }
-  console.info(`staff: recovery link made for employee ${employeeId} by ${me.employeeId} at ${new Date().toISOString()}`);
-
+export async function createRecoveryLink(employeeId: string): Promise<RecoveryLinkResult> {
+  const me = await requireOwner();
+  const login = await staffLogin(employeeId);
+  if (!login.ok) return login;
+  const r = await staffRecoveryLink(login.authUserId, me, `employee ${employeeId}`);
+  if (!r.ok) return r;
   // A Google-only login has no password yet; setting one adds email and
   // password sign-in alongside Google, which they may not need.
-  const providers = (userRes.user.app_metadata?.providers as string[] | undefined) ?? [userRes.user.app_metadata?.provider as string];
-  return { ok: true, link, email, passwordLogin: providers.includes("email") };
+  return { ok: true, link: r.link, email: r.email ?? "", passwordLogin: r.passwordLogin };
+}
+
+export async function emailStaffPasswordReset(employeeId: string): Promise<HelpSent> {
+  const me = await requireOwner();
+  const login = await staffLogin(employeeId);
+  if (!login.ok) return login;
+  return emailPasswordReset(login.authUserId, me, `employee ${employeeId}`);
 }
 
 // For someone who forgot their PIN: the owner sets a temporary one and

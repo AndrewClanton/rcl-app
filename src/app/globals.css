@@ -50,6 +50,46 @@
   --font-display: var(--font-archivo-black);
 }
 
+/* A neon text icon's slow glow (components/menu/TextIcon.tsx): opacity
+   only, so the register's browser does it without redrawing anything, and
+   only for people who haven't asked for less motion (motion-safe:). */
+@theme {
+  --animate-neon-breathe: neon-breathe 3.2s ease-in-out infinite;
+  @keyframes neon-breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  /* The register's Customers tab while a check-in waits to be confirmed:
+     a soft red ring that swells and fades, so staff notice it without
+     anything covering the menu. */
+  --animate-checkin-pulse: checkin-pulse 2.2s ease-out infinite;
+  @keyframes checkin-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgb(237 28 36 / 0.45);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 9px rgb(237 28 36 / 0);
+    }
+  }
+
+  /* A check-in popping up over the top of the order (RegisterCheckins.tsx
+     CheckinArrivals): a short drop into place, only with motion-safe:. */
+  --animate-arrive-in: arrive-in 240ms ease-out both;
+  @keyframes arrive-in {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+  }
+}
+
 body {
   background-color: var(--background);
   color: var(--foreground);
@@ -227,6 +267,10 @@ body {
   }
   .rpt-bar-light {
     background: color-mix(in srgb, var(--foreground) 12%, var(--surface));
+  }
+  /* A fifth part (card, cash, online, memberships, vouchers): stripes. */
+  .rpt-bar-hatch {
+    background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--foreground) 55%, var(--surface)) 0 2px, var(--surface) 2px 5px);
   }
 }
 
@@ -416,6 +460,36 @@ body {
     border-radius: 2px;
     transform: rotate(-1deg);
   }
+}
+
+/* Insiders+ members see their badge; everyone else sees the pitches. Both
+   are in the page; the browser picks (data-plus on .site, set by
+   components/site/SiteHeaderSync.tsx). Outside any layer so it wins over
+   display utilities like .flex. */
+.site[data-plus] .plus-hide,
+.site:not([data-plus]) .plus-show {
+  display: none !important;
+}
+
+/* The sticky header's height, so an in-page jump (#d-2026-10-02, #insiders,
+   #faq) stops just below it instead of under it. SiteHeaderSync measures
+   the real height; these are the fallbacks until it has (the phone nav
+   wraps to three rows, a tablet's to two, a desktop's to one). */
+.site {
+  --site-header-h: 9rem;
+}
+@media (min-width: 640px) {
+  .site {
+    --site-header-h: 8.75rem;
+  }
+}
+@media (min-width: 1024px) {
+  .site {
+    --site-header-h: 7.25rem;
+  }
+}
+.site-anchor {
+  scroll-margin-top: calc(var(--site-header-h) + 0.75rem);
 }
 
 @layer components {
