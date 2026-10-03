@@ -168,11 +168,21 @@ export async function addScheduledShift(input: { employeeId: string; date: strin
 }
 
 // Removed, not erased: the record stays (who removed it and when) and Undo
-// brings it back.
+// brings it back. The screen offers that Undo only when this says ok, so ok
+// means a shift really came off: not a failed write, and not one someone
+// else had already removed (that would overwrite who removed it).
 export async function deleteScheduledShift(id: string): Promise<Result> {
   const staff = await assertManager();
-  await createAdminClient().from("staff_schedule").update({ deleted_at: new Date().toISOString(), deleted_by: staff.employeeId }).eq("id", id);
+  if (typeof id !== "string" || !UUID.test(id)) return { ok: false, error: "That shift isn't there any more. Reload the page." };
+  const { data, error } = await createAdminClient()
+    .from("staff_schedule")
+    .update({ deleted_at: new Date().toISOString(), deleted_by: staff.employeeId })
+    .eq("id", id)
+    .is("deleted_at", null)
+    .select("id");
   revalidate();
+  if (error) return { ok: false, error: "Couldn't remove that shift. Try again." };
+  if (!data?.length) return { ok: false, error: "That shift isn't on the schedule any more. Reload the page." };
   return { ok: true };
 }
 
