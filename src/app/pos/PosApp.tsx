@@ -40,6 +40,7 @@ import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
 import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -83,6 +84,7 @@ import {
   loadDraftOrder,
   discardDraftOrder,
   cancelTab,
+  approveTaxExempt,
   type CheckoutPayment,
   type CheckoutTotals,
   type CompleteOrderInput,
@@ -314,6 +316,8 @@ export default function PosApp({
   }, [flourish]);
   const [tabsListOpen, setTabsListOpen] = useState(false);
   const [cancelTabId, setCancelTabId] = useState<string | null>(null);
+  // Ticking "Tax exempt" waits for a manager PIN (approveTaxExempt).
+  const [askTaxExempt, setAskTaxExempt] = useState(false);
   const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{ title: string; description?: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void } | null>(
     null
@@ -895,6 +899,15 @@ export default function PosApp({
     setToast(`Tab cancelled. ${approvalText(r)}`);
     setTimeout(() => setToast(null), 7000);
     router.refresh();
+  }
+
+  async function handleTaxExempt(pin: string) {
+    const r = await approveTaxExempt(pin, activeTabId);
+    if (!r.ok) throw new Error(r.error); // shown in the PIN box
+    setTaxFree(true);
+    setAskTaxExempt(false);
+    setToast(`Tax exempt. ${approvalText(r)}`);
+    setTimeout(() => setToast(null), 7000);
   }
 
   async function startCheckout() {
@@ -1609,7 +1622,7 @@ export default function PosApp({
             </label>
           )}
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
+            <input type="checkbox" checked={taxFree} onChange={(e) => (e.target.checked ? setAskTaxExempt(true) : setTaxFree(false))} />
             Tax exempt
           </label>
           {totals.canRedeem && (
@@ -1898,6 +1911,15 @@ export default function PosApp({
           description="Manager approval is required to cancel this tab."
           onCancel={() => setCancelTabId(null)}
           onSubmit={handleCancelTab}
+        />
+      )}
+
+      {askTaxExempt && (
+        <ManagerPinModal
+          title="Tax-exempt sale"
+          description={`Only for a customer with a Missouri tax exemption certificate. Everything else is taxed at ${SALES_TAX_PERCENT}%. A manager approves each one.`}
+          onCancel={() => setAskTaxExempt(false)}
+          onSubmit={handleTaxExempt}
         />
       )}
 

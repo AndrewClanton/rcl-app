@@ -3,6 +3,7 @@
 import { siteOrigin } from "@/lib/site-origin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStripe } from "@/lib/stripe";
+import { salesTaxRateId } from "@/lib/stripe-tax";
 import { getBoothBusyTimes, type BoothBusy } from "@/lib/data/booths";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-status";
@@ -163,6 +164,10 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
     }
   }
 
+  // Missouri sales tax goes on top of the fee (Stripe adds it, and the
+  // webhook saves it on the reservation), the same as online tickets.
+  const taxRate = await salesTaxRateId();
+
   const { data: reservation, error: insertErr } = await supabase
     .from("booth_reservations")
     .insert({
@@ -203,6 +208,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
             product_data: { name: `${booth.label} reservation — ${dateLabel} at ${fields.startTime}` },
           },
           quantity: 1,
+          tax_rates: [taxRate],
         },
       ],
       metadata: { booth_reservation_id: reservation.id },

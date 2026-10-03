@@ -19,11 +19,15 @@ function shiftQuarter(period: string, n: number) {
   return `${Math.floor(i / 4)}-Q${(i % 4) + 1}`;
 }
 
-// " This period: 2 Insiders+ charges had no tax ($30.00 of sales)."
+// " This period: 1 membership charge ($15.00) had no tax on top; it's
+// counted as tax-included, so $1.20 of it is tax." (UNTAXED_MEMBERSHIPS in
+// lib/sales-tax.ts says which.)
 function untaxedNote(report: SalesTaxReport) {
   const u = report.untaxedMemberships;
   if (!u.count) return "";
-  return ` This period: ${u.count} Insiders+ charge${u.count === 1 ? "" : "s"} had no tax (${money(u.sales)} of sales).`;
+  const what = `${u.count} membership charge${u.count === 1 ? "" : "s"} (${money(u.charged)})`;
+  if (u.taxInside > 0) return ` This period: ${what} had no tax on top; ${u.count === 1 ? "it's" : "they're"} counted as tax-included, so ${money(u.taxInside)} of it is tax.`;
+  return ` This period: ${what} had no tax.`;
 }
 
 export default function TaxScreen({ report, thisMonth, sync }: { report: SalesTaxReport; thisMonth: string; sync: PaymentSyncStatus }) {
@@ -64,8 +68,8 @@ export default function TaxScreen({ report, thisMonth, sync }: { report: SalesTa
           <p className="mt-3 text-xs text-[var(--muted)]">
             At {report.ratePercent}%, {money(taxable)} of taxable sales comes to {money(expected)}; {money(t.tax)} was collected.
             {Math.abs(expected - t.tax) >= 0.05 &&
-              " The gap is rounding, plus any sales that didn't carry tax: online tickets sold before tax was added to them, and Insiders+ subscriptions started before the evening of Sept. 28, which are billed without tax (renewals included) until tax is added to them." +
-                untaxedNote(report)}
+              " The gap is rounding, plus any sales that didn't carry tax: online tickets sold before tax was added to them, booth bookings made before tax was added to them, and Insiders+ subscriptions started before the evening of Sept. 28, which are billed without tax (renewals included) until tax is added to them."}
+            {untaxedNote(report)}
           </p>
         </Card>
 

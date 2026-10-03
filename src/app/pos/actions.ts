@@ -817,6 +817,18 @@ export async function cancelTab(id: string, pin: string): Promise<ApprovalResult
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
 
+// A manager OKs a tax-exempt sale (a customer with a Missouri exemption
+// certificate) with their PIN before the register lets the "Tax exempt"
+// box be ticked. Everything else is taxed (lib/sales-tax.ts). Who approved
+// it is in the PIN log (pin_attempts, context "tax-exempt"), with the tab
+// it was for when there is one.
+export async function approveTaxExempt(pin: string, tabId: string | null): Promise<ApprovalResult> {
+  const staff = await assertStaff();
+  const approval = await checkManagerPin(pin, "tax-exempt", staff.employeeId, tabId ?? undefined);
+  if (!approval.ok) return approval;
+  return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
+}
+
 // ---------- recent orders (reprint, refund, "what did they order?") ----------
 
 export interface RecentOrder {
