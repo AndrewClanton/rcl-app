@@ -7,6 +7,7 @@ import { startBoothCheckout, getAvailabilityForDate } from "./actions";
 import BoothPhotoGrid from "./BoothPhotoGrid";
 import PlusLink from "@/components/PlusLink";
 import Honeypot from "@/components/Honeypot";
+import { CLOSED_DAYS_NOTE, isClosedDate } from "@/lib/closed-days";
 
 const RESERVATION_HOURS = 2;
 
@@ -67,7 +68,10 @@ function BoothDetailModal({
   const titleId = useId();
   const sheetRef = useRef<HTMLDivElement>(null);
 
-  const canSubmit = date && startTime && partySize > 0 && partySize <= booth.capacity && name.trim() && email.includes("@");
+  // A closed day can't be greyed out in a native date picker, so it's
+  // flagged and the button stays off; the server refuses it too.
+  const closed = isClosedDate(date);
+  const canSubmit = date && !closed && startTime && partySize > 0 && partySize <= booth.capacity && name.trim() && email.includes("@");
   const holdWindow = /^\d{1,2}:\d{2}/.test(startTime) ? `${fmtTime(startTime)} – ${fmtTime(addHours(startTime, RESERVATION_HOURS))}` : null;
 
   // Escape closes it; the page behind stays put while it's open; keyboard
@@ -166,20 +170,25 @@ function BoothDetailModal({
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block">
                   <div className="label-xs">Day</div>
-                  <input type="date" className="input" min={minDate} value={date} onChange={(e) => onDateChange(e.target.value)} />
+                  <input type="date" className="input" min={minDate} value={date} aria-invalid={closed || undefined} onChange={(e) => onDateChange(e.target.value)} />
                 </label>
                 <label className="block">
                   <div className="label-xs">Start time (2-hour window)</div>
                   <input type="time" className="input" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
                 </label>
               </div>
-              {holdWindow && (
+              {closed && (
+                <p role="alert" className="mt-2 text-sm font-bold text-[var(--danger-text)]">
+                  {CLOSED_DAYS_NOTE} Pick another day.
+                </p>
+              )}
+              {holdWindow && !closed && (
                 <p className="mt-2 text-[15px]">
                   Holds the booth <strong className="whitespace-nowrap">{holdWindow}</strong>.
                 </p>
               )}
               <p className="mt-1 text-xs text-[var(--muted)]">
-                Booths open up starting tomorrow, so no one books a seat out from under whoever&apos;s already sitting in it.
+                {CLOSED_DAYS_NOTE} Booths open up starting tomorrow, so no one books a seat out from under whoever&apos;s already sitting in it.
               </p>
 
               {loadingAvailability ? (
