@@ -1,10 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { businessDay } from "@/lib/ops/time";
 import type { CalendarNote } from "@/lib/types";
 
-// Staff-only, same posture as events -- no public read policy.
+// Staff-only, same posture as events -- no public read policy. From
+// tonight's business day on, like events (a UTC date is tomorrow by 7 PM).
 export async function getUpcomingCalendarNotes(): Promise<CalendarNote[]> {
   const supabase = createAdminClient();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessDay().date;
   const { data, error } = await supabase
     .from("calendar_notes")
     .select("*")

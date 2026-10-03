@@ -3,13 +3,16 @@
 import { useState } from "react";
 import type { EventRecord } from "@/lib/data/events";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
+import ConfirmModal from "@/components/ConfirmModal";
 import { markEventPaid, markEventOutstanding, updateEventGuestCount, deleteEvent } from "./actions";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
 
-export default function EventsList({ events }: { events: EventRecord[] }) {
+// fullContact is false for a cashier: organizer emails arrive shortened
+// (j•••@gmail.com) from the server.
+export default function EventsList({ events, fullContact }: { events: EventRecord[]; fullContact: boolean }) {
   if (events.length === 0) {
     return (
       <div className="rounded-xl border border-[var(--border)] p-6 text-center text-sm text-[var(--muted)] ">
@@ -19,11 +22,14 @@ export default function EventsList({ events }: { events: EventRecord[] }) {
   }
 
   return (
-    // Two to a row on a computer.
-    <div className="space-y-3 xl:grid xl:grid-cols-2 xl:items-start xl:gap-3 xl:space-y-0">
-      {events.map((ev) => (
-        <EventRow key={ev.id} event={ev} />
-      ))}
+    <div>
+      {!fullContact && <p className="mb-3 text-xs text-[var(--muted)]">Organizer emails are shortened for privacy. A manager can see them in full.</p>}
+      {/* Two to a row on a computer. */}
+      <div className="space-y-3 xl:grid xl:grid-cols-2 xl:items-start xl:gap-3 xl:space-y-0">
+        {events.map((ev) => (
+          <EventRow key={ev.id} event={ev} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -31,6 +37,7 @@ export default function EventsList({ events }: { events: EventRecord[] }) {
 function EventRow({ event }: { event: EventRecord }) {
   const [pending, run] = useRefreshingAction();
   const [guests, setGuests] = useState(event.guest_count?.toString() ?? "");
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const metaLines = [
     `${event.room.name}, ${event.hours} hr`,
@@ -95,13 +102,25 @@ function EventRow({ event }: { event: EventRecord }) {
         <button
           className="ml-auto rounded border border-[var(--danger-text)] px-3 py-1 text-xs text-[var(--danger-text)] "
           disabled={pending}
-          onClick={() => {
-            if (confirm("Remove this event record?")) run(() => deleteEvent(event.id));
-          }}
+          onClick={() => setConfirmingRemove(true)}
         >
           Remove
         </button>
       </div>
+
+      {confirmingRemove && (
+        <ConfirmModal
+          title="Remove this event?"
+          description={`${event.event_name}, ${event.event_date}. The booking is deleted for good, and removing it doesn't refund a deposit.`}
+          confirmLabel="Remove"
+          danger
+          onConfirm={() => {
+            setConfirmingRemove(false);
+            run(() => deleteEvent(event.id));
+          }}
+          onCancel={() => setConfirmingRemove(false)}
+        />
+      )}
     </div>
   );
 }
