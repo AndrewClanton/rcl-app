@@ -39,6 +39,7 @@ import { centralDateTime, centralParts, nextLineupSlot, nextSendSlot, sendByFor 
 import { AUTOMATIONS, KIND_CATEGORY, PREF_CATEGORIES, type Audience, type Automation, type Category, type Exclusion } from "@/lib/email/types";
 import { designOf, type CampaignContent, type RenderData } from "@/lib/email/render";
 import type { LintResult } from "@/lib/email/lint";
+import { campaignTestKey, recordTest } from "./_studio/tests-log";
 
 // Back office -> Email. Managers and up draft, preview and send tests;
 // scheduling or sending to a list, switching automations, the never-mail
@@ -53,6 +54,9 @@ const EDITABLE = new Set(["draft", "paused", "scheduled", "active", "off"]);
 
 function revalidate(id?: string) {
   revalidatePath("/admin/email");
+  // The Email tabs (Campaigns, Settings) show the same state.
+  revalidatePath("/admin/email/campaigns");
+  revalidatePath("/admin/email/settings");
   if (id) revalidatePath(`/admin/email/${id}`);
 }
 
@@ -185,6 +189,8 @@ export async function sendCampaignTest(id: string, seeds: boolean): Promise<Resu
   if (!c) return { ok: false, error: "No such email." };
   try {
     const r = await sendTestEmail(asInput(c), { email: staff.email, name: staff.name }, { seeds });
+    // For the step track ("Tested on my phone"); never fails the test.
+    if (r.ok) await recordTest(campaignTestKey(c.id), staff);
     return r.ok ? { ok: true, sentTo: r.sentTo } : r;
   } catch {
     return { ok: false, error: "Couldn't send the test." };
@@ -628,6 +634,7 @@ export async function setEmailSender(employeeId: string, on: boolean): Promise<R
   if (error) return { ok: false, error: error.code === "42703" ? "The database update for this hasn't been applied yet." : "Couldn't save that. Try again." };
   if (!data?.length) return { ok: false, error: "That login can't send email (it has to be an active manager, admin or owner)." };
   revalidatePath("/admin/email");
+  revalidatePath("/admin/email/settings");
   revalidatePath("/admin/email/ready");
   const name = String(data[0].name ?? "").trim().split(/\s+/)[0] || "They";
   return { ok: true, message: on ? `${name} can send email to members now.` : `${name} can't send email to members any more.` };

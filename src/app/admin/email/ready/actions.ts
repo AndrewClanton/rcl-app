@@ -36,6 +36,7 @@ import { DESIGNS, isDesignKey } from "@/lib/email/designs";
 import { sealArtName } from "@/lib/email/designs/art-token";
 import { designCampaign, picturesReady } from "@/lib/email/designs/ready";
 import { getWaveMode, roomToday, saveSendPlan, saveWaveMode, saveWaveSize, waveCanGoToday } from "@/lib/email/send-plan";
+import { designTestKey, recordTest } from "../_studio/tests-log";
 
 // Back office -> Email -> Ready to send. Managers and up (the screen is
 // for staff to send these three without an owner): a test to their own
@@ -52,7 +53,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const off = (reason: string) => `Nothing goes out while sending is off, tests included. ${reason}`;
 const STOPPED =
   "Sending is stopped right now (someone pressed Emergency stop, or too many emails bounced or were marked as spam). Someone who sends email can resume it on the Email page.";
-const NO_PICTURES = "The pictures for these emails aren't on our picture server yet. The go-live checklist on the Email page shows what's missing.";
+const NO_PICTURES = "The pictures for these emails aren't on our picture server yet. The go-live checklist in Email, Settings shows what's missing.";
 
 // "Paused. 78 called back from Resend; 2 had already gone."
 function recallNote(r: RecallResult | null): string {
@@ -67,6 +68,8 @@ function recallNote(r: RecallResult | null): string {
 function revalidate() {
   revalidatePath("/admin/email/ready");
   revalidatePath("/admin/email");
+  revalidatePath("/admin/email/campaigns");
+  revalidatePath("/admin/email/settings");
 }
 
 // ---------- a test to yourself ----------
@@ -122,6 +125,8 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
     tags: [{ name: "kind", value: "test" }],
   });
   if (!sent.ok) return { ok: false, error: sent.error };
+  // For the step track ("Tested on my phone"); never fails the test.
+  await recordTest(designTestKey(key), staff);
   return { ok: true, message: `Sent to your inbox (${staff.email}). It can take a minute.` };
 }
 
