@@ -134,6 +134,24 @@ export default function AccountForm({
     }
   }
   const [help, setHelp] = useState<{ outcome: HelpOutcome; gmail: boolean } | null>(null);
+  // Supabase's "Confirm email" is on and this address hasn't been confirmed.
+  const [unconfirmed, setUnconfirmed] = useState(false);
+
+  // Where the confirmation link brings them afterwards (/account/confirm
+  // reads it; see there).
+  function confirmRedirect() {
+    return `${window.location.origin}${next ?? "/account"}`;
+  }
+
+  async function resendConfirmation() {
+    setSubmitting(true);
+    setError(null);
+    const { error } = await createClient().auth.resend({ type: "signup", email, options: { emailRedirectTo: confirmRedirect() } });
+    setSubmitting(false);
+    if (error) return setError(error.message);
+    setUnconfirmed(false);
+    setConfirmSent(true);
+  }
 
   const canSubmit = email.includes("@") && password.length >= 6 && (mode === "signin" || claiming || name.trim().length > 0);
 
@@ -147,21 +165,32 @@ export default function AccountForm({
     if (mode === "signin") {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
-        setError(error.message);
+        // They made the login but haven't opened the link we emailed yet.
+        const notConfirmed = error.code === "email_not_confirmed";
+        setUnconfirmed(notConfirmed);
+        setError(notConfirmed ? "Confirm your email first: open the link we emailed you when you made your login." : error.message);
         setSubmitting(false);
         return;
       }
     } else {
       // A new login from a claim link carries the link, so if Supabase
       // asks them to confirm their email first, that confirmation doesn't
-      // make them a second, empty account (see pendingClaimFor).
-      const { data, error } = await supabase.auth.signUp({ email, password, ...(claiming ? { options: { data: { rcl_claim: claimToken } } } : {}) });
+      // make them a second, empty account (see pendingClaimFor). Otherwise
+      // the name rides along for when they confirm (linkMemberForUser
+      // reads full_name).
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: claiming ? { rcl_claim: claimToken } : { full_name: name.trim() }, emailRedirectTo: confirmRedirect() },
+      });
       if (error) {
         setError(error.message);
         setSubmitting(false);
         return;
       }
-      if (claiming && !data.session) {
+      // With Supabase's "Confirm email" on there's no session yet: they
+      // finish by opening the link we just emailed (/account/confirm).
+      if (!data.session) {
         setConfirmSent(true);
         setSubmitting(false);
         return;
@@ -236,7 +265,9 @@ export default function AccountForm({
       <div className="notice notice-success">
         <h2 className="text-lg font-semibold">Check your email</h2>
         <p className="mt-2 text-sm opacity-90">
-          We sent a link to {email}. Open it to confirm your address, then come back to this page to finish.
+          {claiming
+            ? `We sent a link to ${email}. Open it to confirm your address, and it brings you back here to finish.`
+            : `We sent a link to ${email}. Open it to confirm your address and finish making your account. If you already have an account, sign in instead, or use “${HELP_LABEL}”`}
         </p>
       </div>
     );
@@ -297,6 +328,7 @@ export default function AccountForm({
           onClick={() => {
             setMode("signin");
             setError(null);
+            setUnconfirmed(false);
           }}
         >
           Sign in
@@ -307,6 +339,7 @@ export default function AccountForm({
           onClick={() => {
             setMode("signup");
             setError(null);
+            setUnconfirmed(false);
           }}
         >
           {claiming ? "New login" : "Create account"}
@@ -337,6 +370,11 @@ export default function AccountForm({
       </label>
 
       {error && <div className="mt-3 text-sm text-[var(--danger-text)]">{error}</div>}
+      {unconfirmed && (
+        <button type="button" className="mt-2 text-sm font-bold text-[var(--accent)] hover:underline" disabled={submitting} onClick={resendConfirmation}>
+          Send the confirmation link again
+        </button>
+      )}
 
       <button className="btn-primary mt-4 w-full" disabled={!canSubmit || submitting}>
         {submitting ? "Please wait..." : mode === "signin" ? "Sign in" : claiming ? "Create my login" : "Create account — it's free"}
