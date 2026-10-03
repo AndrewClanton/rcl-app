@@ -255,7 +255,16 @@ export const HELP_TOPICS = {
     title: "Ran out (86 it)",
     area: "Register: shift tools",
     body:
-      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does. The managers get a to-do to buy more (\"Buy Hot dog buns at Walmart\"), with a nudge to raise the par if it keeps happening, and when one marks it Bought it, everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the register shows a quiet line, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\". When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+    links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
+    trainingSlug: "par-count-and-shopping-list",
+  },
+  "ran-out-alerts": {
+    title: "Ran-out emails and Back in stock",
+    area: "Menu and inventory",
+    body:
+      "Shopping is done at the start of the week, enough for the whole week, so running out is a problem to fix, not a chore for whoever's on shift. When staff tap Ran out, the people picked under \"Ran-out alerts go to\" get one email: what ran out, when, who reported it, the par, this week's counts, and a suggestion to raise the par. Its Back in stock button opens Back office → Ran out (signed in), where marking it back in stock clears the register's line. \"Ran out this week\" lists repeats so the pars that are too low stand out. Owners and admins pick who gets the email.",
+    links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-count": {
@@ -276,7 +285,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. Bought it (here, or on the manager's to-do) clears a Ran out report and puts its menu items back on sale; Found some or False alarm clears it without buying anything.",
+      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {

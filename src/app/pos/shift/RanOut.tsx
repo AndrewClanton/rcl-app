@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import InfoTip from "@/components/help/InfoTip";
 import { searchMenu, searchPar, strongMenuMatches, suggestMenuItems } from "@/lib/ops/ran-out-search";
-import { OUT_LABEL_MAX, OUT_NOTE_MAX, midSentence, parLabel, type RanOutOptions, type RegisterOut } from "@/lib/ops/shared";
+import { OUT_LABEL_MAX, OUT_NOTE_MAX, midSentence, namesList, parLabel, type RanOutOptions, type RegisterOut } from "@/lib/ops/shared";
 import { useOpsApi } from "./api";
 import { dropOut, refreshOuts } from "./ran-out-store";
 
@@ -107,7 +107,10 @@ export function RanOutSheet({
     setBusy(false);
     if (!r || !r.ok) return setError(r && !r.ok ? r.error : "Couldn't save that. Check the connection and try again.");
     const stopped = r.stopped.length ? `${r.stopped.join(", ")} now show${r.stopped.length === 1 ? "s" : ""} OUT. ` : "";
-    onSaved(`${stopped}${r.todo ? `The managers have a to-do to buy more ${midSentence(r.name)}.` : `${r.name} is on the managers' shopping list.`}`);
+    // Nothing for the cashier to buy: the purchasers have been told.
+    onSaved(
+      `${stopped}${r.emailed.length ? `${namesList(r.emailed)} ${r.emailed.length === 1 ? "has" : "have"} been emailed.` : `No email went out about ${midSentence(r.name)}, so tell a manager.`}`,
+    );
   }
 
   const tickedItems = [...ticked].map((id) => menuById.get(id)).filter((m): m is MenuOpt => !!m);
@@ -230,7 +233,7 @@ export function RanOutSheet({
             <section>
               <h3 className="font-display text-lg">Stop selling these?</h3>
               <p className="mb-2 text-xs" style={{ color: "var(--muted)" }}>
-                Ticked items show OUT on their buttons until it&apos;s bought or someone taps It&apos;s back. The ones that need it start ticked.
+                Ticked items show OUT on their buttons until it&apos;s back in stock or someone taps It&apos;s back. The ones that need it start ticked.
               </p>
               <div className="flex flex-wrap gap-2">
                 {tickedItems.map(chip)}

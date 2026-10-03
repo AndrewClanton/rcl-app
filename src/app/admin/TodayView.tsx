@@ -60,9 +60,27 @@ function attention(s: Signals, board: TodayBoard): Attention[] {
     out.push({ tone: "danger", text: `Printer not connected: ${s.printers.offline.join(", ")}`, href: "/admin/printers", go: "Printers" });
   }
   if (s.tabs?.fromBefore) out.push({ tone: "warn", text: `${plural(s.tabs.fromBefore, "tab")} left open from before today`, href: "/pos", go: "Register" });
-  // Managers: restock to-dos from Ran out ("Buy Hot dog buns at Walmart").
+  // Managers: restock to-dos from Ran out ("Buy Hot dog buns at Walmart"),
+  // marked back in stock on Back office → Ran out.
   for (const t of board.managerTodos ?? []) {
-    out.push({ tone: "warn", text: `${t.title} · ran out ${dayTime(t.createdAt)}`, href: "/admin/team?view=todos", go: "To-dos" });
+    out.push(
+      t.ranOut
+        ? { tone: "warn", text: `${t.title} · ran out ${dayTime(t.createdAt)}`, href: "/admin/ran-out", go: "Ran out" }
+        : { tone: "warn", text: `${t.title} · ${dayTime(t.createdAt)}`, href: "/admin/team?view=todos", go: "To-dos" },
+    );
+  }
+  // Managers: running out before the week is over means the week's
+  // shopping wasn't enough. Repeats first.
+  const week = board.ranOutWeek;
+  if (week?.reports) {
+    const top = week.lines.slice(0, 3).map((l) => (l.times > 1 ? `${l.name} ×${l.times}` : l.name));
+    const more = week.lines.length - top.length;
+    out.push({
+      tone: week.lines.some((l) => l.times > 1) ? "warn" : "info",
+      text: `Ran out this week: ${plural(week.reports, "time")} (${top.join(", ")}${more > 0 ? ` and ${more} more` : ""})`,
+      href: "/admin/ran-out",
+      go: "Ran out",
+    });
   }
   if (s.itemsOut?.length) {
     const names = s.itemsOut.length > 4 ? `${s.itemsOut.slice(0, 4).join(", ")} and ${s.itemsOut.length - 4} more` : s.itemsOut.join(", ");

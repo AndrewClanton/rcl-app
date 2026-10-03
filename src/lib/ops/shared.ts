@@ -103,6 +103,43 @@ export interface ShiftStatus {
   // Menu items 86'd right now, and how many "Ran out" reports are open.
   outs: RegisterOut[];
   ranOut: number;
+  // Each open "Ran out" report, for the register's quiet "Out of …" line.
+  outNotices: OutNotice[];
+}
+
+// "Out of Heavy whipping cream · Nathan and Mary have been emailed": an open
+// report, and the first names its email reached (none if it didn't go out).
+export interface OutNotice {
+  id: string;
+  what: string;
+  emailed: string[];
+}
+
+// "Nathan", "Nathan and Mary", "Nathan, Mary and Bryce".
+export function namesList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+// The register's line for an open report. It never asks the cashier to buy
+// anything: the purchasers have been told.
+export function outNoticeText(n: OutNotice): string {
+  const told = n.emailed.length
+    ? `${namesList(n.emailed)} ${n.emailed.length === 1 ? "has" : "have"} been emailed`
+    : "the email to the buyers didn't go out, so tell a manager";
+  return `Out of ${n.what} · ${told}`;
+}
+
+// The ran-out email's suggestion. Running out before the week's shopping is
+// over means the par (what's bought for the week) is too low.
+export function ranOutSuggestion(o: { onSheet: boolean; parQty: number | null; unit: string | null; times: number }): string {
+  const fix = !o.onSheet
+    ? "Consider adding it to the par sheet."
+    : o.parQty === null
+      ? "It has no par yet. Consider setting one."
+      : `Consider raising the par from ${qtyUnit(o.parQty, o.unit)}.`;
+  const again = o.times >= 2 ? ` This is the ${ordinal(o.times)} time in ${OFTEN_OUT_DAYS} days.` : "";
+  return `Ran out before the week was over. ${fix}${again}`;
 }
 
 // ---------- "Ran out" (86 it) ----------

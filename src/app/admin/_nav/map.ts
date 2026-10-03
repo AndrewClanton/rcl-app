@@ -141,6 +141,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       badge: "itemsOut",
     },
     { href: "/admin/ingredients", label: "Ingredients & counts", about: "The ingredients recipes use, their costs, and shelf counts.", keywords: "inventory stock par counts cost pour", min: "manager" },
+    {
+      href: "/admin/ran-out",
+      label: "Ran out",
+      about: "What staff reported out, marking it back in stock, this week's ran-outs, and who gets the email.",
+      keywords: "86 out of stock restock back in stock shopping par alerts email buyers purchasing",
+      min: "manager",
+    },
   ],
   team: [
     { href: "/admin/team", label: "Schedule", about: "Who's working when, week by week.", keywords: "shifts roster week staff schedule", min: "manager" },
