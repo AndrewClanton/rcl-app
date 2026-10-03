@@ -6,15 +6,20 @@ import { useRouter } from "next/navigation";
 import type { AudienceCount, DesignResults, WaveResult } from "@/lib/email/designs/ready";
 import type { DesignKey } from "@/lib/email/designs/types";
 import { UNDO_STOP_BEFORE_MS } from "@/lib/email/undo";
-import { pauseDesign, resumeDesign, saveResendPlan, saveWaveModeAction, saveWaveSizeAction, sendDesign, sendDesignTest, sendNextWave } from "./actions";
+import { StatusChip, type ChipTone } from "../_studio/ui";
+import { pauseDesign, resumeDesign, sendDesign, sendDesignTest, sendNextWave } from "./actions";
 
-// The Ready to send screen: the three ready-made emails as cards. Each has
-// its preview (desktop, phone, plain text), who it would go to right now,
-// "Send me a test", "Send to N people" (with a confirm step), and how it
-// did, overall and wave by wave (daily waves, most engaged first, so wave 1
-// can be judged before wave 2). The words on the screen are for staff
+// The Ready to send screen: the three ready-made emails as cards, each in
+// four steps (Royale Email Studio): Look it over, Try it on your phone,
+// Start small, Watch, then carry on. The rail shows where the email really
+// is, and opens each step; what matters whatever the step (the brake, the
+// Undo bar, Pause and Carry on, how far it's got) stays above them. Each
+// card has its preview (phone, computer, plain text), who it would go to
+// right now, "Send me a test", "Send to N people" (with a confirm step),
+// and how it did, overall and wave by wave (daily waves, most engaged
+// first, so wave 1 can be judged before wave 2). The words are for staff
 // who've never sent an email campaign: plain, and nothing to configure
-// (admins get the wave size and the plan's numbers).
+// (admins set the wave size and the plan's numbers in Email, Settings).
 
 export interface CardData {
   key: DesignKey;
@@ -45,6 +50,7 @@ export interface CardData {
   // (too big to call back in time, Saturday evening, or Resend won't hold email).
   hold: { minutes: number; label: string } | null;
   nextWaveOn: string | null; // a wave went today: the next can go "tomorrow" ("Monday")
+  lastTest: { who: string; when: string } | null; // the last test of it ("You", "today 2:14 PM"), from _studio/tests-log
 }
 
 // The minute to undo, from what's saved on the email (so a reload shows the
@@ -90,7 +96,7 @@ export interface Blocker {
 
 function BlockerLink({ b }: { b: Blocker }) {
   return b.href ? (
-    <Link href={b.href} className="btn-secondary !px-3 !py-1 text-xs">
+    <Link href={b.href} className="btn-secondary inline-flex min-h-11 items-center !px-3 !py-1 text-xs">
       {b.label ?? "Go there"}
     </Link>
   ) : null;
@@ -122,7 +128,7 @@ function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; statu
   if (!canUndo) {
     if (!onItsWay || now >= undo.arrives) return null;
     return (
-      <p className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm" role="status">
+      <p className="rounded-xl bg-[var(--foreground)] px-4 py-3 text-sm text-[var(--background)]" role="status">
         <strong>Wave {undo.wave} is on its way.</strong> Arrives about {undo.arrivesLabel}.
       </p>
     );
@@ -135,14 +141,19 @@ function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; statu
         ? `Wave ${undo.wave} (${people(undo.people)}) is paused.`
         : `Wave ${undo.wave} is on its way to ${people(undo.people)}.`;
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border-2 border-[var(--foreground)] bg-[var(--background)] p-3 text-sm">
-      <p className="min-w-0 flex-1" role="status">
+    <div className="flex flex-wrap items-center gap-3 rounded-xl bg-[var(--foreground)] px-4 py-3 text-sm text-[var(--background)]">
+      <p className="min-w-0 flex-1 basis-56" role="status">
         <strong>{what}</strong>{" "}
-        <span className="text-[var(--muted)]">
+        <span className="text-[#d9d2bf]">
           {undo.started ? `Press Undo to finish calling it back before ${undo.arrivesLabel}.` : `It arrives about ${undo.arrivesLabel}. Undo calls back every one of them.`}
         </span>
       </p>
-      <button type="button" className="btn-secondary min-h-11 min-w-32 !px-5 text-base tabular-nums" disabled={busy} onClick={onUndo}>
+      <button
+        type="button"
+        className="inline-flex min-h-11 min-w-32 items-center justify-center rounded-lg border-2 border-[var(--gold)] px-5 text-base font-bold tabular-nums text-[var(--gold)] transition-colors hover:bg-[var(--gold)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={busy}
+        onClick={onUndo}
+      >
         {busy ? "Calling back…" : left > 0 ? `Undo (${mmss(left)})` : "Undo"}
       </button>
     </div>
@@ -151,9 +162,9 @@ function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; statu
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3">
-      <div className="text-xs text-[var(--muted)]">{label}</div>
-      <div className="text-xl font-semibold tabular-nums">{value}</div>
+    <div className="min-w-0 rounded-xl bg-[var(--background)] p-3.5">
+      <div className="text-[13px] text-[var(--muted)]">{label}</div>
+      <div className="font-display text-xl tabular-nums sm:text-2xl">{value}</div>
       {sub ? <div className="text-xs text-[var(--muted)]">{sub}</div> : null}
     </div>
   );
@@ -162,16 +173,18 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
 const waveDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 
 // Each wave's results, so wave 1 can be judged before wave 2 goes.
-function Waves({ waves, outcomeLabel }: { waves: WaveResult[]; outcomeLabel: string }) {
+function Waves({ waves, outcomeLabel, id }: { waves: WaveResult[]; outcomeLabel: string; id: string }) {
   const cell = (a: number, b: number) => (
     <>
       {n(a)} <span className="text-[var(--muted)]">{pct(a, b)}</span>
     </>
   );
   return (
-    <div className="mt-4 space-y-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Wave by wave</div>
-      <div className="overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--background)]">
+    <div className="space-y-2">
+      <h4 id={id} className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">
+        Wave by wave
+      </h4>
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--background)]" role="region" aria-labelledby={id} tabIndex={0}>
         <table className="w-full min-w-[560px] text-sm tabular-nums">
           <thead className="text-left text-xs text-[var(--muted)]">
             <tr>
@@ -211,46 +224,87 @@ function Waves({ waves, outcomeLabel }: { waves: WaveResult[]; outcomeLabel: str
   );
 }
 
+const chipCls = (on: boolean) => `chip inline-flex min-h-11 items-center !px-3 !text-xs ${on ? "chip-selected" : ""}`;
+
+// The email as members see it: on a phone (in a phone's frame, the email
+// at 375 wide shown at 80%), on a computer (620 wide, across the card) or
+// as plain text, with or without a website login.
 function Preview({ card }: { card: CardData }) {
-  const [view, setView] = useState<"desktop" | "phone" | "text">("desktop");
+  const [view, setView] = useState<"desktop" | "phone" | "text">("phone");
   const [as, setAs] = useState<"claim" | "login">("claim");
   const html = as === "login" && card.loginHtml ? card.loginHtml : card.desktopHtml;
   return (
-    <div className="min-w-0 space-y-2">
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
-        <div className="text-xs text-[var(--muted)]">In their inbox</div>
-        <div className="mt-1">
-          <strong>{card.subject}</strong> <span className="text-[var(--muted)]">— {card.preheader}</span>
-        </div>
-      </div>
+    <aside aria-label={`${card.title} as members see it`} className={`min-w-0 space-y-3 ${view === "phone" ? "" : "lg:col-span-full"}`}>
       <div className="flex flex-wrap items-center gap-2">
-        {(["desktop", "phone", "text"] as const).map((v) => (
-          <button key={v} type="button" className={`chip !px-3 !py-1 !text-xs ${view === v ? "chip-selected" : ""}`} onClick={() => setView(v)}>
+        {(["phone", "desktop", "text"] as const).map((v) => (
+          <button key={v} type="button" aria-pressed={view === v} className={chipCls(view === v)} onClick={() => setView(v)}>
             {v === "desktop" ? "Computer" : v === "phone" ? "Phone" : "Plain text"}
           </button>
         ))}
-        {card.loginHtml && (
-          <span className="ml-auto flex flex-wrap gap-2">
-            <button type="button" className={`chip !px-3 !py-1 !text-xs ${as === "claim" ? "chip-selected" : ""}`} onClick={() => setAs("claim")}>
-              No website login yet
-            </button>
-            <button type="button" className={`chip !px-3 !py-1 !text-xs ${as === "login" ? "chip-selected" : ""}`} onClick={() => setAs("login")}>
-              Already signed up
-            </button>
-          </span>
-        )}
       </div>
-      {view === "text" ? (
-        <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-white p-4 text-xs text-black">{card.text}</pre>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-[var(--border)] bg-[#14110c]">
-          <iframe title={`${card.title} preview`} srcDoc={html} sandbox="" className="mx-auto block h-[720px] bg-[#14110c]" style={{ width: view === "phone" ? 375 : 620, maxWidth: view === "phone" ? 375 : "none" }} />
+      {card.loginHtml && (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" aria-pressed={as === "claim"} className={chipCls(as === "claim")} onClick={() => setAs("claim")}>
+            No website login yet
+          </button>
+          <button type="button" aria-pressed={as === "login"} className={chipCls(as === "login")} onClick={() => setAs("login")}>
+            Already signed up
+          </button>
         </div>
       )}
-      <p className="text-xs text-[var(--muted)]">
+      {view === "text" ? (
+        <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-white p-4 text-xs text-black">{card.text}</pre>
+      ) : view === "phone" ? (
+        <div className="mx-auto w-[316px] max-w-full rounded-[40px] bg-[var(--foreground)] p-2 shadow-[0_20px_44px_rgba(20,17,12,0.25)]">
+          <div className="h-[600px] w-full overflow-hidden rounded-[32px] bg-[#14110c]">
+            <iframe title={`${card.title} on a phone`} srcDoc={html} sandbox="" className="block h-[750px] w-[375px] origin-top-left scale-[0.8] bg-[#14110c]" />
+          </div>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[#14110c]">
+          <iframe title={`${card.title} on a computer`} srcDoc={html} sandbox="" className="mx-auto block h-[720px] bg-[#14110c]" style={{ width: 620, maxWidth: "none" }} />
+        </div>
+      )}
+      <p className="text-center text-xs text-[var(--muted)]">
         Shown as it would look for a member named Sam. Each person sees their own first name, and their own button.
       </p>
-    </div>
+    </aside>
+  );
+}
+
+// ---------- the steps ----------
+type StepState = "done" | "current" | "attention" | "todo" | "tip";
+const STATE_WORD: Record<StepState, string> = { done: "done", current: "you're here", attention: "needs a look", todo: "not yet", tip: "suggested" };
+const STEP_TITLES = ["Look it over", "Try it on your phone", "Start small", "Watch, then carry on"] as const;
+
+function Mark({ state, i }: { state: StepState; i: number }) {
+  const cls =
+    state === "done" || state === "current"
+      ? "bg-[var(--foreground)] text-[var(--background)]"
+      : state === "attention"
+        ? "bg-[var(--accent-hover)] text-white"
+        : state === "tip"
+          ? "border-2 border-dashed border-[var(--muted)] text-[var(--foreground)]"
+          : "bg-[var(--border)] text-[#4a4336]";
+  return (
+    <span aria-hidden="true" className={`inline-flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full text-sm font-bold ${cls}`}>
+      {state === "done" ? "✓" : state === "attention" ? "!" : i + 1}
+    </span>
+  );
+}
+
+function Check({ ok, children }: { ok: boolean; children: React.ReactNode }) {
+  return (
+    <li className="flex items-start gap-3">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={ok ? "var(--success-text)" : "var(--accent-hover)"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="mt-px shrink-0" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        {ok ? <path d="M7.5 12.5l3 3 6-6.5" /> : <path d="M12 7v6M12 16.5v.5" />}
+      </svg>
+      <span>
+        <span className="sr-only">{ok ? "Checked: " : "Not yet: "}</span>
+        {children}
+      </span>
+    </li>
   );
 }
 
@@ -264,6 +318,7 @@ function Card({
   isSender,
   senderNames,
   offset,
+  picturesReady,
 }: {
   card: CardData;
   plan: PlanData;
@@ -274,6 +329,7 @@ function Card({
   isSender: boolean;
   senderNames: string; // "Nathan and Mary"
   offset: number; // the server's clock less the browser's (ms)
+  picturesReady: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -282,6 +338,8 @@ function Card({
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<"first" | "next" | null>(null);
   const [checked, setChecked] = useState("");
+  // The "On my phone" ticks: a checklist for whoever's testing, not saved.
+  const [ticks, setTicks] = useState<Record<string, boolean>>({});
   const canSend = !blocker;
   const blockedWhy = blocker?.text ?? null;
   const count = card.count?.willSend ?? 0;
@@ -365,50 +423,98 @@ function Card({
               ? `next wave when you press ${nextLabel}`
               : `next wave can go ${plan.nextWave}`;
 
-  return (
-    <section id={card.key} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-      <div className="mb-3">
-        <h2 className="text-lg font-semibold">{card.title}</h2>
-        <p className="text-sm text-[var(--muted)]">{card.about}</p>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
-        <Preview card={card} />
-        <div className="min-w-0 space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Who gets it</div>
-            <p className="mt-1">{card.who}</p>
-            {card.count ? (
-              <>
-                <div className="mt-2 text-2xl font-semibold tabular-nums">{people(count)}</div>
-                <div className="text-xs text-[var(--muted)]">{card.campaignId ? "haven't had it yet and would get it" : "would get it"}</div>
-                {spaced.map((s) => (
-                  <p key={s.title} className="mt-1 text-xs">
-                    {n(s.n)} of them got <em>{s.title}</em> in the last {SPACED_DAYS} days, so they&apos;ll get this one in a later wave.
-                  </p>
-                ))}
-                {card.count.excluded.length > 0 && (
-                  <details className="mt-2 text-xs">
-                    <summary className="cursor-pointer text-[var(--muted)]">Who&apos;s left out, and why</summary>
-                    <ul className="mt-1 space-y-0.5">
-                      {card.count.excluded.slice(0, 8).map((e) => (
-                        <li key={e.why} className="flex justify-between gap-3">
-                          <span>{e.why}</span>
-                          <span className="tabular-nums">{n(e.n)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                )}
-              </>
-            ) : (
-              <p className="mt-2 text-xs text-[var(--danger-text)]">Couldn&apos;t count them just now. Reload the page.</p>
-            )}
-          </div>
+  // Where it really is, step by step (the rail), from the same facts.
+  const waves = r?.waves ?? [];
+  const started = going || paused || card.status === "sent";
+  const firstWave = waves[0] ?? null;
+  const footerOk = card.text.includes("Unsubscribe:") && card.text.includes("715 E Broadway");
+  const raw: { sub: string; state: "done" | "attention" | "tip" | "open" }[] = [
+    picturesReady ? { sub: "Checked for you", state: "done" } : { sub: "The pictures aren't up yet", state: "attention" },
+    card.lastTest ? { sub: `${card.lastTest.who}, ${card.lastTest.when}`, state: "done" } : started ? { sub: "No test on record", state: "tip" } : { sub: "A test to your inbox", state: "open" },
+    started && firstWave ? { sub: `Wave 1: ${n(firstWave.sent)} on ${waveDay(firstWave.day)}`, state: "done" } : { sub: `${n(Math.min(next.n || plan.firstWave, count || plan.firstWave))} regulars first`, state: "open" },
+    paused && card.brake
+      ? { sub: "The brake stopped it", state: "attention" }
+      : going || paused
+        ? { sub: paused ? "Paused" : `Wave ${Math.max(1, waves.length)} · ${n(left)} to go`, state: "open" }
+        : card.status === "sent"
+          ? { sub: count > 0 ? `All sent · ${n(count)} new since` : "Everyone it's for has it", state: "done" }
+          : { sub: `${n(plan.perDay)} a day after that`, state: "open" },
+  ];
+  const firstOpen = raw.findIndex((s) => s.state === "open" || s.state === "attention");
+  const steps = raw.map((s, i) => ({ title: STEP_TITLES[i], sub: s.sub, state: (s.state === "open" ? (i === firstOpen ? "current" : "todo") : s.state) as StepState }));
+  // Opens on the step it's really at (the results once it's all gone); a
+  // step picked on the rail holds until the email moves on (sent, a new
+  // wave, an Undo), then the rail follows it again.
+  const here = firstOpen >= 0 ? firstOpen : 3;
+  const phase = `${card.status}:${waves.length}:${card.undo?.key ?? ""}`;
+  const [pick, setPick] = useState<{ step: number; phase: string } | null>(null);
+  const shown = pick && pick.phase === phase ? pick.step : here;
+  const go = (step: number) => setPick({ step, phase });
+  const panelId = `${card.key}-step`;
 
+  const chip: { label: string; tone: ChipTone } = paused
+    ? card.brake
+      ? { label: "Brake on", tone: "stopped" }
+      : { label: "Paused", tone: "paused" }
+    : going
+      ? { label: `Wave ${Math.max(1, waves.length)}`, tone: "going" }
+      : card.status === "sent"
+        ? { label: "Sent", tone: "sent" }
+        : { label: "Ready", tone: "ready" };
+
+  return (
+    <section id={card.key} aria-labelledby={`${card.key}-title`} className="scroll-mt-4 rounded-[20px] border border-[var(--border)] p-4 sm:p-6">
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 basis-72">
+          <h2 id={`${card.key}-title`} className="font-display text-[28px] leading-tight sm:text-[34px]">
+            {card.title}
+          </h2>
+          <p className="text-[15px] text-[var(--muted)]">{card.about}</p>
+          <p className="mt-1 text-[15px]">
+            {going || paused
+              ? `${n(r?.sent ?? 0)} sent so far, ${n(left)} to go`
+              : card.status === "sent"
+                ? `Sent to ${n(r?.sent ?? 0)}${count > 0 ? ` · ${people(count)} new since could get it` : ""}`
+                : card.count
+                  ? `For ${people(count)} right now`
+                  : null}
+          </p>
+        </div>
+        <StatusChip label={chip.label} tone={chip.tone} />
+      </header>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_316px] 2xl:grid-cols-[220px_minmax(0,1fr)_316px]">
+        <nav aria-label={`Steps for ${card.title}`} className="lg:col-span-2 2xl:col-span-1">
+          <ol className="grid list-none grid-cols-2 gap-2 p-0 sm:grid-cols-4 2xl:grid-cols-1">
+            {steps.map((s, i) => (
+              <li key={s.title} className="min-w-0" aria-current={s.state === "current" || s.state === "attention" ? "step" : undefined}>
+                <button
+                  type="button"
+                  aria-pressed={shown === i}
+                  aria-controls={panelId}
+                  onClick={() => go(i)}
+                  className={`flex min-h-11 w-full items-start gap-3 rounded-xl border-2 p-3 text-left ${shown === i ? "border-[var(--foreground)] bg-[var(--surface)]" : "border-transparent hover:bg-[var(--surface-hover)]"}`}
+                >
+                  <Mark state={s.state} i={i} />
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="font-bold leading-tight">{s.title}</span>
+                    <span className="text-[13px] text-[var(--muted)]">
+                      <span className="sr-only">{STATE_WORD[s.state]}: </span>
+                      {s.sub}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="min-w-0 space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-6">
+          {/* Whatever the step: the brake, how far it's got, Undo, Pause and Carry on. */}
           {paused && card.brake && (
-            <div className="space-y-2 rounded-lg border-2 border-[var(--danger-text)] bg-[var(--background)] p-3 text-sm" role="alert">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--danger-text)]">Stopped by the automatic brake</div>
-              <p className="font-semibold text-[var(--danger-text)]">{card.brake}</p>
+            <div className="space-y-2 rounded-xl border-2 border-[var(--accent-hover)] bg-[var(--background)] p-4 text-sm" role="alert">
+              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--accent-hover)]">Stopped by the automatic brake</div>
+              <p className="font-semibold text-[var(--accent-hover)]">{card.brake}</p>
               <p className="text-xs text-[var(--muted)]">
                 Nothing more of this email goes until someone carries on. Look at who bounced or complained (More detail, below): old or mistyped addresses, or
                 people who never asked for email. Bounced addresses are already on the never-mail list, so they won&apos;t be sent to again.
@@ -416,13 +522,13 @@ function Card({
               {isSender ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <input
-                    className="input !w-auto min-w-56 flex-1 text-sm"
+                    className="input min-h-11 !w-auto min-w-0 flex-1 basis-56 text-sm"
                     placeholder="What you checked (required)"
                     value={checked}
                     onChange={(e) => setChecked(e.target.value)}
                     aria-label="What you checked"
                   />
-                  <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !canSend || checked.trim().length < 5} title={blockedWhy ?? undefined} onClick={resume}>
+                  <button type="button" className="btn-send" disabled={pending || !canSend || checked.trim().length < 5} title={blockedWhy ?? undefined} onClick={resume}>
                     I&apos;ve checked: carry on
                   </button>
                 </div>
@@ -433,7 +539,7 @@ function Card({
           )}
 
           {(going || paused || card.status === "sent") && r && (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm">
+            <div className="rounded-xl bg-[var(--background)] p-4 text-sm">
               <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">{going ? "Going out in waves" : paused ? "Paused" : "Sent"}</div>
               <p className="mt-1">
                 {n(r.sent)} sent so far{going || paused ? `, ${n(left)} to go` : ""}.
@@ -446,98 +552,247 @@ function Card({
               {card.note && (going || paused) && <p className="mt-1 text-xs text-[var(--muted)]">{card.note}</p>}
             </div>
           )}
-          {!going && !paused && card.count && count > 0 && (
-            <p className="text-xs text-[var(--muted)]">
-              Goes out in waves, the members most used to hearing from us first: the first wave to {n(Math.min(next.n || plan.firstWave, count))}
-              {count > (next.n || plan.firstWave) ? `, then ${n(plan.perDay)} at a time` : ""}.{" "}
-              {plan.auto
-                ? "After the first, one goes each morning (Monday to Saturday); check how wave 1 did, and Pause if something's wrong."
-                : "After the first, each wave goes only when someone presses Send the next wave here, so check how the last one did first."}
-            </p>
-          )}
 
           {card.undo && <UndoBar undo={card.undo} status={card.status} busy={undoing} offset={offset} onUndo={undo} />}
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn-secondary !px-4 !py-2 text-sm"
-              disabled={pending || !canTest}
-              title={canTest ? `Sends this email to ${myEmail}` : (testBlocker?.text ?? undefined)}
-              onClick={() =>
-                run("Sending your test", async () => {
-                  const out = await sendDesignTest(card.key);
-                  return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
-                })
-              }
-            >
-              Send me a test
-            </button>
-            {going && !plan.auto && (
-              <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !!nextWhy} title={nextWhy ?? undefined} onClick={() => setConfirm("next")}>
-                {nextLabel}
-              </button>
-            )}
-            {paused ? (
-              <>
-                {!card.brake && (
-                  <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || !canSend} title={blockedWhy ?? undefined} onClick={resume}>
-                    Carry on sending
-                  </button>
-                )}
-                {card.atResend > 0 && (
-                  <button type="button" className="btn-secondary !px-4 !py-2 text-sm" disabled={pending} onClick={() => pause("Calling back")}>
-                    Call back the {n(card.atResend)} still waiting at Resend
-                  </button>
-                )}
-              </>
-            ) : going ? (
-              <button
-                type="button"
-                className="btn-secondary !px-4 !py-2 text-sm"
-                disabled={pending}
-                title={card.atResend > 0 ? `Also calls back the ${n(card.atResend)} handed to Resend that haven't arrived yet` : undefined}
-                onClick={() => pause("Pausing")}
-              >
-                Pause
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn-primary !px-4 !py-2 text-sm"
-                disabled={pending || !!firstWhy || count === 0}
-                title={firstWhy ?? undefined}
-                onClick={() => setConfirm("first")}
-              >
-                {firstLabel}
-              </button>
-            )}
-          </div>
-          {going && !plan.auto && nextWhy && <p className="text-xs text-[var(--muted)]">{nextWhy}</p>}
-          {msg && <p className={`text-sm ${msg.ok ? "" : "text-[var(--danger-text)]"}`}>{msg.text}</p>}
-
-          {r && r.sent > 0 && (
-            <div className="space-y-2">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">How it did</div>
-              <div className="grid grid-cols-2 gap-2">
-                <Stat label="Sent" value={n(r.sent)} sub={r.waiting ? `${n(r.waiting)} waiting to go` : undefined} />
-                <Stat label="Delivered" value={n(r.delivered)} sub={pct(r.delivered, r.sent)} />
-                <Stat label="Opened (rough)" value={n(r.opened)} sub={pct(r.opened, r.delivered)} />
-                <Stat label="Clicked" value={n(r.clicked)} sub={pct(r.clicked, r.delivered)} />
-                <Stat label={card.outcomeLabel} value={n(r.outcome)} sub={`of ${n(r.outcomeOf)} · ${card.outcomeAbout.toLowerCase()}`} />
-                <Stat label="Unsubscribed · bounced" value={`${n(r.unsubscribed)} · ${n(r.bounced)}`} />
-              </div>
-              {card.campaignId && (
-                <Link href={`/admin/email/${card.campaignId}`} className="text-xs underline">
-                  More detail (links clicked, who it didn&apos;t go to)
-                </Link>
+          {(paused || going) && (
+            <div className="flex flex-wrap gap-2">
+              {paused ? (
+                <>
+                  {!card.brake && (
+                    <button type="button" className="btn-send" disabled={pending || !canSend} title={blockedWhy ?? undefined} onClick={resume}>
+                      Carry on sending
+                    </button>
+                  )}
+                  {card.atResend > 0 && (
+                    <button type="button" className="btn-secondary min-h-11 !px-4 !py-2 text-sm" disabled={pending} onClick={() => pause("Calling back")}>
+                      Call back the {n(card.atResend)} still waiting at Resend
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary min-h-11 !px-5 !py-2 text-sm"
+                  disabled={pending}
+                  title={card.atResend > 0 ? `Also calls back the ${n(card.atResend)} handed to Resend that haven't arrived yet` : undefined}
+                  onClick={() => pause("Pausing")}
+                >
+                  Pause
+                </button>
               )}
             </div>
           )}
-        </div>
-      </div>
+          {paused && !card.brake && !canSend && blockedWhy && <p className="text-xs text-[var(--muted)]">{blockedWhy}</p>}
+          {msg && (
+            <p className={`text-sm ${msg.ok ? "" : "text-[var(--danger-text)]"}`} role="status">
+              {msg.text}
+            </p>
+          )}
 
-      {r && r.waves.length > 0 && <Waves waves={r.waves} outcomeLabel={card.outcomeLabel} />}
+          <div id={panelId} className="space-y-5 border-t border-[var(--border)] pt-5 first:border-t-0 first:pt-0">
+            <h3 className="font-display text-2xl sm:text-[28px]">{STEP_TITLES[shown]}</h3>
+
+            {shown === 0 && (
+              <>
+                <p className="text-[#4a4336]">This is how it lands in their inbox. We already checked the things that usually go wrong.</p>
+                <div className="rounded-xl bg-[var(--background)] p-4 text-sm">
+                  <div className="text-xs text-[var(--muted)]">In their inbox</div>
+                  <div className="mt-1">
+                    <strong>{card.subject}</strong> <span className="text-[var(--muted)]">— {card.preheader}</span>
+                  </div>
+                </div>
+                <ul className="list-none space-y-3 p-0">
+                  <Check ok={picturesReady}>The pictures are on our picture server{picturesReady ? "" : " (not yet: see the go-live checklist in Settings)"}</Check>
+                  <Check ok={footerOk}>The unsubscribe link and our street address are at the bottom</Check>
+                  <Check ok={card.text.trim().length > 0}>There&apos;s a plain-text version for mail apps without pictures</Check>
+                  <Check ok>Each person sees their own first name, and their own button</Check>
+                  <Check ok>Nobody who turned email off, unsubscribed, or whose address bounced ever gets it</Check>
+                </ul>
+                <div className="rounded-xl bg-[var(--background)] p-4 text-sm">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Who gets it</div>
+                  <p className="mt-1">{card.who}</p>
+                  {card.count ? (
+                    <>
+                      <div className="mt-2 font-display text-2xl tabular-nums">{people(count)}</div>
+                      <div className="text-xs text-[var(--muted)]">{card.campaignId ? "haven't had it yet and would get it" : "would get it"}</div>
+                      {spaced.map((s) => (
+                        <p key={s.title} className="mt-1 text-xs">
+                          {n(s.n)} of them got <em>{s.title}</em> in the last {SPACED_DAYS} days, so they&apos;ll get this one in a later wave.
+                        </p>
+                      ))}
+                      {card.count.excluded.length > 0 && (
+                        <details className="mt-2 text-xs">
+                          <summary className="flex min-h-11 cursor-pointer items-center text-[var(--muted)]">Who&apos;s left out, and why</summary>
+                          <ul className="mt-1 space-y-0.5">
+                            {card.count.excluded.slice(0, 8).map((e) => (
+                              <li key={e.why} className="flex justify-between gap-3">
+                                <span>{e.why}</span>
+                                <span className="tabular-nums">{n(e.n)}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs text-[var(--danger-text)]">Couldn&apos;t count them just now. Reload the page.</p>
+                  )}
+                </div>
+                <button type="button" className="btn-ink" onClick={() => go(1)}>
+                  Next: send me a test
+                </button>
+              </>
+            )}
+
+            {shown === 1 && (
+              <>
+                <p className="text-[#4a4336]">
+                  &ldquo;Send me a test&rdquo; sends it to your own inbox ({myEmail}) with your name in it. Open it on your phone and tap around. Tests never go to members.
+                  In a test, the main button opens the ordinary sign-in or membership page, not anyone&apos;s own link.
+                </p>
+                {card.lastTest && (
+                  <p className="text-sm">
+                    Last test: <strong>{card.lastTest.who}</strong>, {card.lastTest.when}.
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary min-h-11 !px-5 !py-2 text-sm"
+                    disabled={pending || !canTest}
+                    title={canTest ? `Sends this email to ${myEmail}` : (testBlocker?.text ?? undefined)}
+                    onClick={() =>
+                      run("Sending your test", async () => {
+                        const out = await sendDesignTest(card.key);
+                        return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
+                      })
+                    }
+                  >
+                    {card.lastTest?.who === "You" ? "Send me another" : "Send me a test"}
+                  </button>
+                  {!canTest && testBlocker && <span className="text-xs text-[var(--muted)]">{testBlocker.text}</span>}
+                </div>
+                <fieldset className="space-y-1 rounded-xl border border-[var(--border)] p-4">
+                  <legend className="px-1.5 font-bold">On my phone</legend>
+                  {[
+                    ["pictures", "The pictures and my name look right"],
+                    ["button", "The big button opened the website"],
+                    ["words", "The words read well"],
+                    ["unsubscribe", "Unsubscribe at the bottom works (then switch your email back on)"],
+                  ].map(([k, label]) => (
+                    <label key={k} className="flex min-h-11 cursor-pointer items-center gap-3">
+                      <input type="checkbox" className="h-[22px] w-[22px] shrink-0 accent-[var(--foreground)]" checked={!!ticks[k]} onChange={(e) => setTicks((t) => ({ ...t, [k]: e.target.checked }))} />
+                      {label}
+                    </label>
+                  ))}
+                  <p className="pt-1 text-xs text-[var(--muted)]">Just for you while you look: these ticks aren&apos;t saved.</p>
+                </fieldset>
+                <button type="button" className="btn-ink" onClick={() => go(2)}>
+                  Looks good: next
+                </button>
+              </>
+            )}
+
+            {shown === 2 && (
+              <>
+                <p className="text-[#4a4336]">The members most used to hearing from us get it first. Everyone else waits until you&apos;ve seen how these did.</p>
+                {card.count && count > 0 && (
+                  <div className="rounded-xl bg-[var(--background)] p-4 text-sm">
+                    <div className="font-bold">Who&apos;s {going || paused ? "next" : "first"}</div>
+                    <p>
+                      {n(Math.min(next.n, count))} of the {people(count)} {card.campaignId ? "left" : "it's for"}, the most engaged first:
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                      {next.mix.map((g) => (
+                        <li key={g.label} className="flex justify-between gap-3">
+                          <span>{g.label}</span>
+                          <span className="tabular-nums">{n(g.n)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {spaced.map((s) => (
+                      <p key={s.title} className="mt-1 text-xs">
+                        {n(s.n)} of these got <em>{s.title}</em> in the last {SPACED_DAYS} days. They&apos;ll get this one later.
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {!going && !paused && card.count && count > 0 && (
+                  <p className="text-sm text-[var(--muted)]">
+                    Goes out in waves, the members most used to hearing from us first: the first wave to {n(Math.min(next.n || plan.firstWave, count))}
+                    {count > (next.n || plan.firstWave) ? `, then ${n(plan.perDay)} at a time` : ""}.{" "}
+                    {plan.auto
+                      ? "After the first, one goes each morning (Monday to Saturday); check how wave 1 did, and Pause if something's wrong."
+                      : "After the first, each wave goes only when someone presses Send the next wave here, so check how the last one did first."}
+                  </p>
+                )}
+                {going || paused ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">It&apos;s already going out. See how the last wave did, then carry on from Watch, then carry on.</p>
+                    <button type="button" className="btn-ink" onClick={() => go(3)}>
+                      See how it&apos;s doing
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-start gap-2.5">
+                    <button type="button" className="btn-send !min-h-[56px] !px-7 !text-lg" disabled={pending || !!firstWhy || count === 0} title={firstWhy ?? undefined} onClick={() => setConfirm("first")}>
+                      {firstLabel}
+                    </button>
+                    {firstWhy ? (
+                      <span className="text-sm text-[var(--muted)]">{firstWhy}</span>
+                    ) : count > 0 ? (
+                      <span className="text-sm text-[var(--muted)]">
+                        {card.hold ? "You'll have a minute to undo. After that, Pause still stops the rest." : "Pause stops the rest at any time."} It asks you to confirm first.
+                      </span>
+                    ) : null}
+                  </div>
+                )}
+              </>
+            )}
+
+            {shown === 3 && (
+              <>
+                {going && !plan.auto && (
+                  <div className="space-y-2">
+                    <button type="button" className="btn-send !min-h-[52px] !px-6 !text-base" disabled={pending || !!nextWhy} title={nextWhy ?? undefined} onClick={() => setConfirm("next")}>
+                      {nextLabel}
+                    </button>
+                    {nextWhy && <p className="text-xs text-[var(--muted)]">{nextWhy}</p>}
+                  </div>
+                )}
+                {r && r.sent > 0 ? (
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">How it did</h4>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <Stat label="Sent" value={n(r.sent)} sub={r.waiting ? `${n(r.waiting)} waiting to go` : undefined} />
+                      <Stat label="Delivered" value={n(r.delivered)} sub={pct(r.delivered, r.sent)} />
+                      <Stat label="Opened (rough)" value={n(r.opened)} sub={pct(r.opened, r.delivered)} />
+                      <Stat label="Clicked" value={n(r.clicked)} sub={pct(r.clicked, r.delivered)} />
+                      <Stat label={card.outcomeLabel} value={n(r.outcome)} sub={`of ${n(r.outcomeOf)} · ${card.outcomeAbout.toLowerCase()}`} />
+                      <Stat label="Unsubscribed · bounced" value={`${n(r.unsubscribed)} · ${n(r.bounced)}`} />
+                    </div>
+                    <p className="text-sm text-[#4a4336]">
+                      Good signs: people tapping a link, and nobody marking it as spam. If a wave has trouble (unsubscribes, bounces, or nobody clicking), don&apos;t send
+                      the next one: press Pause. Results keep coming in for a day or two.
+                    </p>
+                    {card.campaignId && (
+                      <Link href={`/admin/email/${card.campaignId}`} className="inline-flex min-h-11 items-center text-sm underline">
+                        More detail (links clicked, who it didn&apos;t go to)
+                      </Link>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[#4a4336]">Nothing has gone yet. Once the first wave goes, how it did shows here, wave by wave, before the next one can go.</p>
+                )}
+                {r && r.waves.length > 0 && <Waves waves={r.waves} outcomeLabel={card.outcomeLabel} id={`${card.key}-waves`} />}
+              </>
+            )}
+          </div>
+        </div>
+
+        <Preview card={card} />
+      </div>
 
       {confirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby={`confirm-${card.key}`}>
@@ -617,12 +872,12 @@ function Card({
               someone who sends email has checked.
             </p>
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setConfirm(null)}>
+              <button type="button" className="btn-secondary min-h-11" onClick={() => setConfirm(null)}>
                 Cancel
               </button>
               <button
                 type="button"
-                className="btn-primary"
+                className="btn-send"
                 onClick={() => {
                   const which = confirm;
                   setConfirm(null);
@@ -646,112 +901,6 @@ function Card({
         </div>
       )}
     </section>
-  );
-}
-
-// Admins: how many each day's wave goes to (Resend's daily figure becomes
-// this plus what's kept back for receipts).
-function WaveSize({ plan }: { plan: PlanData }) {
-  const router = useRouter();
-  const [size, setSize] = useState(String(plan.perDay));
-  const [pending, start] = useTransition();
-  const [msg, setMsg] = useState<string | null>(null);
-  return (
-    <div className="mt-2 flex flex-wrap items-end gap-3">
-      <label className="text-xs">
-        Wave size (admins)
-        <input className="input mt-1 !w-28" inputMode="numeric" value={size} onChange={(e) => setSize(e.target.value)} />
-      </label>
-      <button
-        type="button"
-        className="btn-secondary !px-4 !py-2 text-sm"
-        disabled={pending || Number(size) === plan.perDay}
-        onClick={() =>
-          start(async () => {
-            const out = await saveWaveSizeAction(Number(size)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
-            setMsg(out.ok ? `Saved: waves of ${n(out.size)} from the next wave.` : out.error);
-            router.refresh();
-          })
-        }
-      >
-        Save
-      </button>
-      {msg && <span className="text-xs">{msg}</span>}
-    </div>
-  );
-}
-
-// Admins: whether waves after the first wait for staff to press "Send the
-// next wave" (the default) or go by themselves each morning.
-function WaveMode({ plan }: { plan: PlanData }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [msg, setMsg] = useState<string | null>(null);
-  const pick = (auto: boolean) => {
-    if (auto === plan.auto) return;
-    if (auto && !window.confirm("Waves would then go out by themselves each morning, with nobody pressing anything. Switch?")) return;
-    start(async () => {
-      const out = await saveWaveModeAction(auto).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
-      setMsg(out.ok ? "Saved." : out.error);
-      router.refresh();
-    });
-  };
-  return (
-    <div className="mt-2 text-xs">
-      <div className="text-[var(--muted)]">Waves after the first (admins)</div>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        <button type="button" className={`chip !px-3 !py-1 !text-xs ${!plan.auto ? "chip-selected" : ""}`} disabled={pending} onClick={() => pick(false)}>
-          Only when staff press Send the next wave
-        </button>
-        <button type="button" className={`chip !px-3 !py-1 !text-xs ${plan.auto ? "chip-selected" : ""}`} disabled={pending} onClick={() => pick(true)}>
-          By themselves each morning
-        </button>
-        {msg && <span>{msg}</span>}
-      </div>
-    </div>
-  );
-}
-
-function PlanEditor({ plan }: { plan: PlanData }) {
-  const router = useRouter();
-  const [daily, setDaily] = useState(String(plan.daily));
-  const [monthly, setMonthly] = useState(String(plan.monthly));
-  const [reserve, setReserve] = useState(String(plan.reserve));
-  const [pending, start] = useTransition();
-  const [msg, setMsg] = useState<string | null>(null);
-  return (
-    <details className="mt-2 text-sm">
-      <summary className="cursor-pointer text-xs text-[var(--muted)]">Upgraded the Resend plan? Change the numbers (admins)</summary>
-      <div className="mt-2 flex flex-wrap items-end gap-3">
-        <label className="text-xs">
-          A day
-          <input className="input mt-1 !w-28" inputMode="numeric" value={daily} onChange={(e) => setDaily(e.target.value)} />
-        </label>
-        <label className="text-xs">
-          A month
-          <input className="input mt-1 !w-28" inputMode="numeric" value={monthly} onChange={(e) => setMonthly(e.target.value)} />
-        </label>
-        <label className="text-xs">
-          Kept back each day for receipts
-          <input className="input mt-1 !w-28" inputMode="numeric" value={reserve} onChange={(e) => setReserve(e.target.value)} />
-        </label>
-        <button
-          type="button"
-          className="btn-secondary !px-4 !py-2 text-sm"
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const out = await saveResendPlan(Number(daily), Number(monthly), Number(reserve)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
-              setMsg(out.ok ? "Saved." : out.error);
-              router.refresh();
-            })
-          }
-        >
-          Save
-        </button>
-        {msg && <span className="text-xs">{msg}</span>}
-      </div>
-    </details>
   );
 }
 
@@ -791,34 +940,34 @@ export default function ReadyToSend({
   // in a visit, so once is enough.
   const [clock] = useState(() => ({ offset: serverNow - Date.now() }));
   // Who can fix each thing, and where (no dead ends).
-  const toSwitch = { href: "/admin/email#sending", label: "Go to Sending on/off" };
+  const toSwitch = { href: "/admin/email/settings#sending", label: "Go to Sending on/off" };
   const offBlocker: Blocker | null = sendingOn
     ? null
     : offKind === "switch"
-      ? { text: "Sending is switched off. An owner can turn it on from the Email page.", ...toSwitch }
+      ? { text: "Sending is switched off. An owner can turn it on in Email, Settings.", ...toSwitch }
       : offKind === "master"
-        ? { text: "Sending is switched off at the top level (Vercel). An owner turns that on once, then uses the switch on the Email page.", ...toSwitch }
-        : { text: `Sending isn't set up yet: ${offReason ?? "see the go-live checklist on the Email page."}`, href: "/admin/email", label: "See the go-live checklist" };
-  const senderBlocker: Blocker | null = sender.ok ? null : { text: sender.why ?? "Only the people picked to send email can send it to members.", href: "/admin/email#senders", label: "See who sends" };
+        ? { text: "Sending is switched off at the top level (Vercel). An owner turns that on once, then uses the switch in Email, Settings.", ...toSwitch }
+        : { text: `Sending isn't set up yet: ${offReason ?? "see the go-live checklist in Email, Settings."}`, href: "/admin/email/settings", label: "See the go-live checklist" };
+  const senderBlocker: Blocker | null = sender.ok ? null : { text: sender.why ?? "Only the people picked to send email can send it to members.", href: "/admin/email/settings#senders", label: "See who sends" };
   const blocker: Blocker | null =
     senderBlocker ??
     offBlocker ??
     (stopped
       ? { text: "Sending is stopped. Someone who sends email can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
       : !picturesReady
-        ? { text: "The pictures for these emails aren't on our picture server yet.", href: "/admin/email", label: "See the go-live checklist" }
+        ? { text: "The pictures for these emails aren't on our picture server yet.", href: "/admin/email/settings", label: "See the go-live checklist" }
         : null);
   const testBlocker = offBlocker ?? (stopped ? blocker : null);
   return (
     <div className="space-y-6">
       {senderBlocker && (
-        <div className="notice space-y-2 text-sm">
+        <div className="notice space-y-2 rounded-2xl text-sm">
           <p>{senderBlocker.text}</p>
           <BlockerLink b={senderBlocker} />
         </div>
       )}
       {offBlocker && (
-        <div className="notice notice-warn space-y-2 text-sm">
+        <div className="notice notice-warn space-y-2 rounded-2xl text-sm">
           <p>
             <strong>{offBlocker.text}</strong> Nothing goes out while it&apos;s off: not these emails, not tests. You can still look at each one and see who it would go to.
           </p>
@@ -827,33 +976,79 @@ export default function ReadyToSend({
         </div>
       )}
       {stopped && (
-        <div className="notice notice-warn space-y-2 text-sm">
+        <div className="space-y-2 rounded-2xl border-2 border-[var(--accent-hover)] bg-[var(--surface)] p-4 text-sm" role="alert">
           <p>
             <strong>Sending is stopped right now.</strong> {stopped} Someone who sends email can resume it on the Email page once they&apos;ve checked what happened.
           </p>
-          <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
+          <Link href="/admin/email" className="btn-secondary inline-flex min-h-11 items-center !px-3 !py-1 text-xs">
             Go to the Email page
           </Link>
         </div>
       )}
       {!picturesReady && (
-        <div className="notice notice-warn space-y-2 text-sm">
+        <div className="notice notice-warn space-y-2 rounded-2xl text-sm">
           <p>
             <strong>The pictures for these emails aren&apos;t on our picture server yet,</strong> so they can&apos;t go out (the previews below may show broken pictures). The
-            go-live checklist on the Email page shows which are missing.
+            go-live checklist in Email, Settings shows which are missing.
           </p>
-          <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
+          <Link href="/admin/email/settings" className="btn-secondary inline-flex min-h-11 items-center !px-3 !py-1 text-xs">
             See the go-live checklist
           </Link>
         </div>
       )}
-      {countsFailed && <p className="notice notice-warn text-sm">Couldn&apos;t count who each email would go to just now. Reload the page.</p>}
+      {countsFailed && <p className="notice notice-warn rounded-2xl text-sm">Couldn&apos;t count who each email would go to just now. Reload the page.</p>}
+      {noHolds && (
+        <p className="notice notice-warn rounded-2xl text-sm">
+          There&apos;s no Undo just now: Resend wouldn&apos;t hold email to send later, so each wave goes as soon as it&apos;s pressed for. Pause still stops the rest.
+        </p>
+      )}
 
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-        <h2 className="font-semibold">How this works</h2>
+      <section className="space-y-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+        <h2 className="font-bold">
+          {plan.firstWave < plan.perDay ? `First wave ${n(plan.firstWave)}, then waves of ${n(plan.perDay)}` : `Waves of ${n(plan.perDay)}`} ·{" "}
+          {!cards.some((c) => c.status === "scheduled" || c.status === "sending")
+            ? "the first goes when you press Send"
+            : plan.auto
+              ? `next wave ${plan.nextWave}`
+              : plan.todayLeft > 0
+                ? "next wave when you press Send the next wave"
+                : `next wave can go ${plan.nextWave}`}
+        </h2>
+        <p>
+          {plan.auto ? (
+            <>
+              After the first, a wave goes <strong>by itself each morning</strong> (Monday to Saturday).
+            </>
+          ) : (
+            <>
+              Each wave goes <strong>only when someone presses the button</strong> on its email below; nothing goes out by itself.
+            </>
+          )}{" "}
+          Never more than {n(plan.perDay)} a day in all (shared if more than one is going), so trouble shows up while it&apos;s small. Resend (our email service) is set to{" "}
+          {n(plan.daily)} a day and {n(plan.monthly)} a month; {n(plan.reserve)} a day are kept for receipts, tickets and the daily report.
+        </p>
+        <p className="text-[var(--muted)]">
+          Today: {n(plan.usedToday)} of {n(plan.perDay)} used ({n(plan.todayLeft)} left). This month: {n(plan.usedMonth)} of {n(plan.perMonth)}. Emails called back with
+          Undo still count, in case Resend counts them.
+        </p>
+        {noHolds && isAdmin && (
+          <p className="text-xs text-[var(--warn-text)]">
+            Resend sent at once (or refused) email it was asked to hold for later, so nothing is handed over before it&apos;s due and there&apos;s no Undo. Once
+            that&apos;s sorted with Resend, a developer clears the &ldquo;resend_scheduling&rdquo; email setting to try again.
+          </p>
+        )}
+        {isAdmin && (
+          <Link href="/admin/email/settings" className="inline-flex min-h-11 items-center text-sm font-semibold underline">
+            Change the wave size, how waves go, or the plan&apos;s numbers in Settings
+          </Link>
+        )}
+      </section>
+
+      <details className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+        <summary className="flex min-h-11 cursor-pointer items-center font-bold">How this works</summary>
         <ol className="mt-2 list-decimal space-y-1 pl-5">
           <li>
-            <strong>Look.</strong> Each email shows below as members will see it. Switch between <em>Computer</em> and <em>Phone</em>; <em>Plain text</em> is the version
+            <strong>Look.</strong> Each email shows below as members will see it. Switch between <em>Phone</em> and <em>Computer</em>; <em>Plain text</em> is the version
             for mail apps that don&apos;t show pictures.
           </li>
           <li>
@@ -894,46 +1089,7 @@ export default function ReadyToSend({
         <p className="mt-2 text-xs text-[var(--muted)]">
           Nobody who turned email off, unsubscribed, or whose address bounced ever gets these. Every email has an unsubscribe link and our street address at the bottom.
         </p>
-      </section>
-
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-        <h2 className="font-semibold">
-          {plan.firstWave < plan.perDay ? `First wave ${n(plan.firstWave)}, then waves of ${n(plan.perDay)}` : `Waves of ${n(plan.perDay)}`} ·{" "}
-          {!cards.some((c) => c.status === "scheduled" || c.status === "sending")
-            ? "the first goes when you press Send"
-            : plan.auto
-              ? `next wave ${plan.nextWave}`
-              : plan.todayLeft > 0
-                ? "next wave when you press Send the next wave"
-                : `next wave can go ${plan.nextWave}`}
-        </h2>
-        <p className="mt-1">
-          {plan.auto ? (
-            <>
-              After the first, a wave goes <strong>by itself each morning</strong> (Monday to Saturday).
-            </>
-          ) : (
-            <>
-              Each wave goes <strong>only when someone presses the button</strong> on its email below; nothing goes out by itself.
-            </>
-          )}{" "}
-          Never more than {n(plan.perDay)} a day in all (shared if more than one is going), so trouble shows up while it&apos;s small. Resend (our email service) is set to{" "}
-          {n(plan.daily)} a day and {n(plan.monthly)} a month; {n(plan.reserve)} a day are kept for receipts, tickets and the daily report.
-        </p>
-        <p className="mt-1 text-[var(--muted)]">
-          Today: {n(plan.usedToday)} of {n(plan.perDay)} used ({n(plan.todayLeft)} left). This month: {n(plan.usedMonth)} of {n(plan.perMonth)}. Emails called back with
-          Undo still count, in case Resend counts them.
-        </p>
-        {noHolds && isAdmin && (
-          <p className="mt-1 text-xs text-[var(--warn-text)]">
-            Resend sent at once (or refused) email it was asked to hold for later, so nothing is handed over before it&apos;s due and there&apos;s no Undo. Once
-            that&apos;s sorted with Resend, a developer clears the &ldquo;resend_scheduling&rdquo; email setting to try again.
-          </p>
-        )}
-        {isAdmin && <WaveMode plan={plan} />}
-        {isAdmin && <WaveSize plan={plan} />}
-        {isAdmin && <PlanEditor plan={plan} />}
-      </section>
+      </details>
 
       {cards.map((c) => (
         <Card
@@ -947,6 +1103,7 @@ export default function ReadyToSend({
           isSender={sender.ok}
           senderNames={sender.names}
           offset={clock.offset}
+          picturesReady={picturesReady}
         />
       ))}
     </div>

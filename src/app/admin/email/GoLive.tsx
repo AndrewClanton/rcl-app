@@ -39,7 +39,7 @@ function SendingSwitch({ on, masterOn, canFlip }: { on: boolean; masterOn: boole
         {canFlip ? (
           <button
             type="button"
-            className={`${on ? "btn-secondary text-[var(--danger-text)]" : "btn-primary"} !px-3 !py-1 text-xs`}
+            className={`${on ? "btn-secondary text-[var(--danger-text)]" : "btn-primary"} min-h-11 !px-3 !py-1 text-xs`}
             disabled={pending}
             onClick={() => setConfirm(true)}
           >
@@ -80,7 +80,7 @@ function UnsubscribeTick({ done }: { done: boolean }) {
     <span className="inline-flex items-center gap-2">
       <button
         type="button"
-        className="btn-secondary !px-3 !py-1 text-xs"
+        className="btn-secondary min-h-11 !px-3 !py-1 text-xs"
         disabled={pending}
         onClick={() =>
           start(async () => {
@@ -101,9 +101,9 @@ export default function GoLive({ data, isOwner }: { data: GoLiveData; isOwner: b
   const done = data.items.filter((i) => i.ok === true).length;
   const all = done === data.items.length;
   return (
-    <details open={!all} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-      <summary className="cursor-pointer">
-        <span className="font-semibold">Go-live checklist</span>{" "}
+    <details open={!all} className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+      <summary className="min-h-11 cursor-pointer py-2">
+        <span className="font-display text-xl">Go-live checklist</span>{" "}
         <span className="text-[var(--muted)]">
           · {done} of {data.items.length} done{all ? ", ready to send" : ""} · sending is {data.switchOn && data.masterOn ? "on" : "off"}
         </span>

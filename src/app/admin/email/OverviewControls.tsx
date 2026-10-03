@@ -50,10 +50,10 @@ export function ResumeSending() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <input className="input !w-auto min-w-64 flex-1 text-sm" placeholder="What you checked (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <input className="input min-h-11 !w-auto min-w-0 flex-1 basis-56 text-sm" placeholder="What you checked (required)" aria-label="What you checked" value={reason} onChange={(e) => setReason(e.target.value)} />
       <button
         type="button"
-        className="btn-primary !px-4 !py-2 text-sm"
+        className="btn-send"
         disabled={pending || reason.trim().length < 5}
         onClick={() =>
           start(async () => {
@@ -115,7 +115,7 @@ export function RecallWaiting({ waiting, running }: { waiting: number; running: 
     <div className="flex flex-wrap items-center gap-2">
       <button
         type="button"
-        className="btn-secondary !px-4 !py-2 text-sm"
+        className="btn-secondary min-h-11 !px-4 !py-2 text-sm"
         disabled={pending || waiting === 0}
         onClick={() =>
           start(async () => {
@@ -149,12 +149,28 @@ export function StopSending() {
   const [pending, start] = useTransition();
   const [confirm, setConfirm] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Quiet until it's wanted: the first press only asks why.
+  const [armed, setArmed] = useState(false);
+  if (!armed && !pending && !msg)
+    return (
+      <button type="button" className="btn-quiet" aria-expanded={false} onClick={() => setArmed(true)}>
+        Emergency stop: pause every email
+      </button>
+    );
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <input className="input !w-auto min-w-64 flex-1 text-sm" placeholder="Why (required)" value={reason} onChange={(e) => setReason(e.target.value)} />
-      <button type="button" className="btn-secondary !px-4 !py-2 text-sm text-[var(--danger-text)]" disabled={pending || reason.trim().length < 5} onClick={() => setConfirm(true)}>
+    <div className="flex w-full flex-wrap items-center gap-2">
+      <label className="sr-only" htmlFor="stop-why">
+        Why you&apos;re stopping all sending
+      </label>
+      <input id="stop-why" className="input min-h-11 !w-auto min-w-0 flex-1 basis-56 text-sm" placeholder="Why (required)" value={reason} autoFocus={armed && !msg} onChange={(e) => setReason(e.target.value)} />
+      <button type="button" className="btn-quiet !border-[var(--accent-hover)]" disabled={pending || reason.trim().length < 5} onClick={() => setConfirm(true)}>
         {pending ? "Stopping…" : "Stop all sending"}
       </button>
+      {!pending && !msg && (
+        <button type="button" className="btn-secondary min-h-11 !px-4 !py-2 text-sm" onClick={() => setArmed(false)}>
+          Cancel
+        </button>
+      )}
       {msg && <span className={`text-sm ${msg.ok ? "" : "text-[var(--danger-text)]"}`}>{msg.text}</span>}
       {confirm && (
         <ConfirmModal

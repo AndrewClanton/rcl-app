@@ -1,6 +1,6 @@
 import { requireAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import PageHeader from "@/components/admin/PageHeader";
+import EmailHeader from "../_studio/EmailHeader";
 import SuppressionTools from "./SuppressionTools";
 
 export const dynamic = "force-dynamic";
@@ -29,14 +29,12 @@ export default async function SuppressionsPage() {
   );
   return (
     <div className="space-y-4">
-      <PageHeader
-        area="guests"
-        back={{ href: "/admin/email", label: "Email" }}
-        title="Never-mail list"
-        purpose="Addresses we never send marketing to. A hard bounce stops receipts too. Kept even after someone's account is removed, so they're never emailed again."
-      />
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
-        <h2 className="mb-2 font-semibold">On the list</h2>
+      <EmailHeader tab="suppressions" isAdmin />
+      <p className="max-w-3xl text-sm text-[var(--muted)]">
+        Addresses we never send marketing to. A hard bounce stops receipts too. Kept even after someone&apos;s account is removed, so they&apos;re never emailed again.
+      </p>
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5">
+        <h2 className="mb-2 font-display text-xl">On the list</h2>
         <ul className="grid gap-1 text-sm sm:grid-cols-2">
           {counts.map(([reason, n]) => (
             <li key={reason} className="flex justify-between gap-3">

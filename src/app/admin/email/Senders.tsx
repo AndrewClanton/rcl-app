@@ -29,8 +29,8 @@ export default function Senders({ rows, canEdit }: { rows: SenderItem[] | null; 
     });
 
   return (
-    <section id="senders" className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
-      <h2 className="font-semibold">Who sends email to members</h2>
+    <section id="senders" className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
+      <h2 className="font-display text-xl">Who sends email to members</h2>
       <p className="mt-1 text-[var(--muted)]">
         Only the people ticked here can send an email to members, carry one on after a pause, or switch on an automation. Anyone can still look, write a draft and
         send themselves a test, and any manager can pause or stop.

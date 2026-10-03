@@ -105,8 +105,8 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     {
       href: "/admin/email",
       label: "Email",
-      about: "Member emails: the weekly lineup, campaigns, automations and results.",
-      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders",
+      about: "Member emails: what's up next, campaigns, how the list is doing and what each email brought in.",
+      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders overview up next results",
       min: "manager",
     },
     {
@@ -114,6 +114,20 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       label: "Ready to send",
       about: "Three finished member emails (the new Royale, Come in, Press play): preview, test and send them, and see who signed up.",
       keywords: "email invite send claim password new royale come in press play unlimited restart insiders ready test",
+      min: "manager",
+    },
+    {
+      href: "/admin/email/campaigns",
+      label: "Email campaigns",
+      about: "Every email as a card: drafts, the Monday lineup, what's going out and what went.",
+      keywords: "email campaigns drafts lineup newsletter sent scheduled new email weekly",
+      min: "manager",
+    },
+    {
+      href: "/admin/email/settings",
+      label: "Email settings",
+      about: "The go-live checklist and Sending on/off, who sends email, waves and our plan, Emergency stop.",
+      keywords: "email settings sending switch on off go live checklist who sends senders resend plan wave size emergency stop",
       min: "manager",
     },
     {
@@ -216,6 +230,23 @@ function shortcuts(dates: { yesterday: string; lastWeek: string }): (MapLink & {
     { area: "money", href: "/admin/reports/members", label: "Members report", about: "Reports → Members: who our members are, free members by program.", keywords: "grant impact community analytics" },
     { area: "money", href: "/admin/reports/usage", label: "Website usage", about: "Reports → Website usage: visits to the public site.", keywords: "analytics traffic visitors page views site" },
     { area: "money", href: "/admin/reports/daily", label: "Daily email", about: "Preview the end-of-day email the owners get each morning.", keywords: "digest morning email report send" },
+    // The Email tabs, so Find anything reaches each one.
+    {
+      area: "guests",
+      href: "/admin/email/automations",
+      label: "Email automations",
+      about: "Email → Automations: welcome, birthday, win-backs, switched on or off.",
+      keywords: "email automations welcome birthday win back winback nudge automatic",
+      min: "manager",
+    },
+    {
+      area: "guests",
+      href: "/admin/email/suppressions",
+      label: "Never-mail list",
+      about: "Email → Never-mail list: addresses we never send marketing to.",
+      keywords: "email suppressions never mail block unsubscribe bounce spam complaint",
+      min: "admin",
+    },
     { area: "guests", href: "/admin/members", label: "Add a member", about: "Members → + Add member.", keywords: "new member sign up join" },
     { area: "guests", href: "/admin/members?comped=1", label: "Free & community members", about: "Members, showing only the free ones.", keywords: "comped community programs grant" },
     {
