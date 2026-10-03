@@ -381,7 +381,9 @@ export function createAdminClient() {
 // An address containing "reject" is refused (422), the way Resend refuses
 // a malformed `to`: the whole batch, or that one email alone. onBatch runs
 // after each accepted batch (to change things mid-run).
-export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, cancelFailNext: 0, onBatch: null };
+// cancelGone: ids Resend has already sent (a cancel is refused with 422).
+// onCancel runs before each cancel request (to move a test's clock on).
+export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, cancelFailNext: 0, cancelGone: new Set(), onBatch: null, onCancel: null };
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 export async function fakeFetch(url, init = {}) {
@@ -423,13 +425,21 @@ export async function fakeFetch(url, init = {}) {
     return json(200, { id: `re_${randomUUID()}` });
   }
   if ((m = path.match(/^\/emails\/([^/]+)\/cancel$/)) && method === "POST") {
+    if (resend.onCancel) await resend.onCancel(m[1]);
     // cancelFailNext: Resend busy for that many cancel requests.
     if (resend.cancelFailNext > 0) {
       resend.cancelFailNext--;
       return json(503, { name: "application_error", message: "busy" });
     }
+    if (resend.cancelGone.has(m[1]) || resend.cancelled.includes(m[1])) return json(422, { name: "validation_error", message: "This email can't be canceled." });
     resend.cancelled.push(m[1]);
     return json(200, { object: "email", id: m[1] });
+  }
+  if ((m = path.match(/^\/emails\/([^/]+)$/)) && method === "GET") {
+    const known = resend.sent.find((e) => e.id === m[1]);
+    if (!known) return json(404, { name: "not_found", message: "Email not found" });
+    const last = resend.cancelled.includes(m[1]) ? "canceled" : resend.cancelGone.has(m[1]) ? "delivered" : known.scheduled_at ? "scheduled" : "sent";
+    return json(200, { object: "email", id: m[1], last_event: last, scheduled_at: known.scheduled_at ?? null });
   }
   return json(404, { name: "not_found", message: `fake has no ${method} ${path}` });
 }

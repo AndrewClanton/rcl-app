@@ -9,6 +9,7 @@ import {
   asInput,
   BRAKE_PREFIX,
   enforceWaveBrake,
+  getCampaign,
   guardrailPause,
   lastWave,
   lintStored,
@@ -16,12 +17,18 @@ import {
   replyTo,
   runCampaign,
   sendingGate,
+  undoPending,
+  undoSnapshot,
+  undoUnderWay,
+  undoWave,
   type Pace,
   type RecallResult,
+  type UndoOutcome,
 } from "@/lib/email/campaign-send";
 import { sendEmail } from "@/lib/email/send";
 import { firstNameOf } from "@/lib/email/format";
-import { renderCampaign, type Recipient } from "@/lib/email/render";
+import { designOf, renderCampaign, type Recipient } from "@/lib/email/render";
+import { arrivalLabel } from "@/lib/email/undo";
 import { listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "@/lib/email/tokens";
 import { DESIGNS, isDesignKey } from "@/lib/email/designs";
 import { sealArtName } from "@/lib/email/designs/art-token";
@@ -133,7 +140,10 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
   const admin = createAdminClient();
   const now = new Date().toISOString();
   const c = await designCampaign(key);
+  if (c && ((c.content as { pace?: Pace }).pace ?? {}).undone?.key === sendKey) return { ok: false, error: UNDONE_KEY };
   if (c?.send_key === sendKey) return { ok: true, message: "Already started." };
+  // Its last wave can still be undone (a wave that was everyone reads "sent").
+  if (c && undoPending(c)) return { ok: false, error: "It was just sent, and can still be undone. Reload the page." };
   if (c && (c.status === "scheduled" || c.status === "sending")) return { ok: false, error: "It's already going out in waves. Reload the page to see the next wave." };
   if (c && c.status === "paused") return { ok: false, error: "It's paused. Press Carry on to send the rest." };
 
@@ -183,12 +193,24 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
     revalidate();
     return { ok: false, error: lint ? `Something's wrong with the email: ${lint.errors[0]}` : "Couldn't check the email. Try again." };
   }
-  const r = await runCampaign(id, Date.now() + 240_000);
+  // The wave this starts can be undone for a minute (undoDesignWave).
+  const r = await runCampaign(id, Date.now() + 240_000, new Date(), { press: { key: sendKey, before: undoSnapshot(c), first: true } });
   revalidate();
   if (r.status === "paused") return { ok: false, error: (await pausedWhy(id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody new to send it to: everyone it's for has had it." };
   if (!r.submitted) return { ok: true, message: (await paceNote(id)) ?? `Nothing handed over just now.${await restNote(r)}` };
-  return { ok: true, message: `${r.submitted} handed to Resend now.${await restNote(r)}` };
+  return { ok: true, message: `${await handedNote(id, sendKey, r.submitted)}${await restNote(r)}` };
+}
+
+const UNDONE_KEY = "That send was undone. Reload the page to send it again.";
+
+// "80 handed to Resend now.", or for a wave that waits for the minute to
+// undo, when it arrives.
+async function handedNote(id: string, key: string, submitted: number): Promise<string> {
+  const c = await getCampaign(id).catch(() => null);
+  const u = c ? undoPending(c) : null;
+  if (u?.key === key) return `${submitted} handed to Resend, to arrive about ${arrivalLabel(u.arrives)}. You have a minute to undo it.`;
+  return `${submitted} handed to Resend now.`;
 }
 
 // Why it's paused (its error), without the brake's label.
@@ -222,9 +244,12 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
   if (await guardrailPause()) return { ok: false, error: STOPPED };
   if (!(await picturesReady())) return { ok: false, error: NO_PICTURES };
   const c = await designCampaign(key);
+  const pace = ((c?.content as { pace?: Pace } | undefined)?.pace ?? {}) as Pace;
+  if (pace.undone?.key === pageKey) return { ok: false, error: UNDONE_KEY };
+  if (c && undoUnderWay(c)) return { ok: false, error: UNDO_UNDER_WAY };
   if (!c || !["scheduled", "sending"].includes(c.status)) return { ok: false, error: c?.status === "paused" ? "It's paused. Press Carry on sending first." : "It isn't going out right now." };
-  const pace = ((c.content as { pace?: Pace }).pace ?? {}) as Pace;
   if (pace.goKey === pageKey) return { ok: true, message: "Already sent." };
+  if (undoPending(c)) return { ok: false, error: "The last wave can still be undone. Try again once its minute is up." };
   // The brake: how the last wave did, before another goes.
   const brake = await enforceWaveBrake(c, { recall: "now" });
   if (brake) {
@@ -244,13 +269,69 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
     .in("status", ["scheduled", "sending"])
     .select("id");
   if (error || !data?.length) return { ok: false, error: "Couldn't start the next wave. Reload the page and try again." };
-  const r = await runCampaign(c.id, Date.now() + 240_000);
+  // The wave this starts can be undone for a minute (undoDesignWave).
+  const r = await runCampaign(c.id, Date.now() + 240_000, new Date(), { press: { key: pageKey, before: undoSnapshot(c), first: false } });
   revalidate();
   if (r.status === "paused") return { ok: false, error: (await pausedWhy(c.id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.ran) return { ok: false, error: r.note ?? "Couldn't send it just now. Try again in a minute." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody left to send it to: everyone it's for has had it." };
   if (!r.submitted) return { ok: true, message: (await paceNote(c.id)) ?? `Nothing handed over just now.${await restNote(r)}` };
-  return { ok: true, message: `${r.submitted} handed to Resend now.${await restNote(r)}` };
+  return { ok: true, message: `${await handedNote(c.id, pageKey, r.submitted)}${await restNote(r)}` };
+}
+
+// ---------- one minute to undo ----------
+// Undo, for the minute after Send or Send the next wave: calls back the
+// whole wave (it waits a few minutes at Resend for just this; undo.ts) and
+// puts the email back as it was before the press. Whoever may press Send
+// may press Undo. The sending switches and a stop don't hold it back:
+// calling back is always allowed, like Pause. The minute is checked here,
+// by the server's clock, not the page's.
+const UNDO_UNDER_WAY = "Undo is calling back the last wave. Reload the page in a moment.";
+
+export async function undoDesignWave(key: string, campaignId: string, undoKey: string): Promise<Result<{ message: string }>> {
+  await assertManager();
+  if (!isDesignKey(key) || !UUID.test(campaignId ?? "") || !UUID.test(undoKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  const c = await getCampaign(campaignId);
+  if (c && designOf(c.content) !== key) return { ok: false, error: "Reload the page and try again." };
+  let r: UndoOutcome;
+  try {
+    r = await undoWave(campaignId, undoKey);
+  } catch (e) {
+    revalidate();
+    return { ok: false, error: `${e instanceof Error ? e.message : "Something went wrong."} Press Undo again.` };
+  }
+  revalidate();
+  return undoMessage(r);
+}
+
+// Exactly how many were called back, and honestly what wasn't.
+function undoMessage(r: UndoOutcome): Result<{ message: string }> {
+  const n = (x: number) => x.toLocaleString("en-US");
+  const went = (x: number) => (x ? ` ${n(x)} had already gone out, so ${x === 1 ? "that person has" : "those people have"} it (and won't get it again).` : "");
+  switch (r.kind) {
+    case "none":
+      return { ok: true, message: "Nothing to undo now: it's already been called back, or it isn't going out. Reload the page." };
+    case "late":
+      return { ok: false, error: `Too late to undo: the minute is up. It arrives about ${arrivalLabel(r.arrives)}. Pause still calls back any of it that hasn't arrived.` };
+    case "stopped":
+      return { ok: false, error: "It was stopped from the Email page, so there's nothing to undo." };
+    case "busy":
+      return { ok: false, error: "Another call-back is running. Press Undo again in a few seconds." };
+    case "already":
+      return { ok: true, message: `Already undone: ${n(r.done.calledBack)} called back.${went(r.done.went)}` };
+    case "done": {
+      if (r.waiting) {
+        return {
+          ok: false,
+          error: `Called back ${n(r.calledBack)}.${went(r.went)} ${n(r.waiting)} couldn't be called back yet (Resend didn't answer in time). Press Undo again, or they arrive about ${arrivalLabel(r.u.arrives)}.`,
+        };
+      }
+      const after = r.u.first ? "You can send it again whenever you're ready." : "It's waiting for Send the next wave again.";
+      if (r.went) return { ok: true, message: `Called back ${n(r.calledBack)} of ${n(r.calledBack + r.went)}.${went(r.went)} ${after}` };
+      const all = r.calledBack === 1 ? "the 1 email" : `all ${n(r.calledBack)}`;
+      return { ok: true, message: `Undone: ${all} called back before anyone got it. ${r.u.first ? "Nothing was sent, and you can send it again whenever you're ready." : after}` };
+    }
+  }
 }
 
 // ---------- pause and carry on ----------
@@ -285,6 +366,7 @@ export async function resumeDesign(key: string, checked?: string): Promise<Resul
   if (await guardrailPause()) return { ok: false, error: STOPPED };
   const c = await designCampaign(key);
   if (!c || c.status !== "paused") return { ok: false, error: "It isn't paused." };
+  if (undoUnderWay(c)) return { ok: false, error: UNDO_UNDER_WAY };
   let content = c.content;
   if ((c.error ?? "").startsWith(BRAKE_PREFIX)) {
     if (!hasAdminAccess(staff.role)) return { ok: false, error: "The automatic brake stopped this one. An admin or owner can carry on after checking the list." };
