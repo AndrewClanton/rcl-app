@@ -2,6 +2,8 @@ import { requireStaff } from "@/lib/auth";
 import { getPeriodReport } from "@/lib/data/period-report";
 import { businessDay } from "@/lib/ops/time";
 import { isMonth, monthLabel, monthOf, rangeLabel, shiftMonth } from "@/lib/report-periods";
+import { ensureMemberPaymentsFresh } from "@/lib/membership-payments/sync";
+import { getPaymentSyncStatus } from "@/lib/membership-payments/read";
 import DateJump from "../DateJump";
 import PeriodView from "../PeriodView";
 import { PeriodNav, Pill } from "../ui";
@@ -15,7 +17,10 @@ export default async function MonthReportPage({ searchParams }: { searchParams: 
   const thisMonth = today.slice(0, 7);
   const month = isMonth(asked) && asked <= thisMonth ? asked : thisMonth;
   const period = monthOf(month);
-  const [, report] = await Promise.all([requireStaff(), getPeriodReport(period)]);
+  await requireStaff();
+  // Membership payments are read from Stripe first if it's been a while.
+  await ensureMemberPaymentsFresh();
+  const [report, sync] = await Promise.all([getPeriodReport(period), getPaymentSyncStatus()]);
 
   const link = (m: string) => (m === thisMonth ? "/admin/reports/month" : `/admin/reports/month?month=${m}`);
   const next = shiftMonth(month, 1);
@@ -37,7 +42,7 @@ export default async function MonthReportPage({ searchParams }: { searchParams: 
         </Pill>
         <DateJump type="month" param="month" date={month} max={thisMonth} path="/admin/reports/month" label="Pick a month" />
       </PeriodNav>
-      <PeriodView report={report} noun="month" boxOfficeHref={`/admin/reports/box-office?range=month&month=${month}`} />
+      <PeriodView report={report} noun="month" boxOfficeHref={`/admin/reports/box-office?range=month&month=${month}`} sync={sync} />
     </div>
   );
 }

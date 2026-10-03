@@ -7,7 +7,7 @@ const DISPLAYS: { href: string; title: string; description: string; variants?: {
   { href: "/display/prep", title: "Kitchen & bar", description: "Every food and drink ticket on one screen, each marked Kitchen or Bar -- tap an item to mark it ready." },
   { href: "/display/kitchen", title: "Kitchen", description: "Food prep tickets -- tap an item to mark it ready." },
   { href: "/display/bar", title: "Bar", description: "Drink prep tickets -- tap an item to mark it ready." },
-  { href: "/display/customer", title: "Customer-facing", description: "Point-of-service tablet: this week's lineup, sign in by phone, live order as it's rung up." },
+  { href: "/display/customer", title: "Customer-facing", description: "Point-of-service tablet: this week's lineup, check in by phone or email, live order as it's rung up." },
   { href: "/display/box-office", title: "Box office signage", description: "Lobby showtimes board. Public -- no sign-in needed on this one." },
   {
     href: "/display/ramp",

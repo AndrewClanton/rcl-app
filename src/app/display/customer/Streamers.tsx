@@ -31,7 +31,8 @@ export function makeStreamers(count = 70): StreamerPiece[] {
 
 // The register's "Celebrate" Easter egg on the customer screen: a burst of
 // streamers, confetti and sparkles with a big "Woo!" for a few seconds.
-export default function Streamers({ pieces, onDone }: { pieces: StreamerPiece[]; onDone: () => void }) {
+// banner: null for no "Woo!" (when another moment has the words, like Rewind).
+export default function Streamers({ pieces, onDone, banner = "Woo!" }: { pieces: StreamerPiece[]; onDone: () => void; banner?: string | null }) {
   useEffect(() => {
     const timer = setTimeout(onDone, 5200);
     return () => clearTimeout(timer);
@@ -58,7 +59,7 @@ export default function Streamers({ pieces, onDone }: { pieces: StreamerPiece[];
           {p.kind === "sparkle" ? "✦" : null}
         </span>
       ))}
-      <div className={styles.banner}>Woo!</div>
+      {banner && <div className={styles.banner}>{banner}</div>}
     </div>
   );
 }

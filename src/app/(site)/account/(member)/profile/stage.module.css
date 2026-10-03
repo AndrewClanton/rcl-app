@@ -1,0 +1,16 @@
+/* The check-in preview's "checked in" banner drops in each time an
+   entrance plays, like the real one on the screen at the door. */
+.toast {
+  animation: toastIn 320ms ease-out both;
+}
+@keyframes toastIn {
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

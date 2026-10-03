@@ -55,6 +55,28 @@ export default async function AdminMembersPage({
           <span className="text-[var(--muted)]">Review →</span>
         </Link>
       )}
+      {session && hasAdminAccess(session.role) && (
+        <Link
+          href="/admin/members/duplicates"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Possible duplicates</span> · two accounts for one person (often one made at the door tablet), to merge
+          </span>
+          <span className="text-[var(--muted)]">Review →</span>
+        </Link>
+      )}
+      {session && hasManagerAccess(session.role) && (
+        <Link
+          href="/admin/members/former-unlimited"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">Former unlimited members</span> · paid for unlimited on the old website: who&apos;s set up here yet
+          </span>
+          <span className="text-[var(--muted)]">See the list →</span>
+        </Link>
+      )}
       {session && hasManagerAccess(session.role) && (
         <Link
           href="/admin/members/regulars"
@@ -64,6 +86,18 @@ export default async function AdminMembersPage({
             <span className="font-semibold">Top regulars</span> · who came in most and spent most this month, for prizes
           </span>
           <span className="text-[var(--muted)]">See the list →</span>
+        </Link>
+      )}
+      {session && hasManagerAccess(session.role) && (
+        <Link
+          href="/admin/members/past-purchases"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-sm hover:border-[var(--foreground)]"
+        >
+          <span>
+            <span className="font-semibold">◀◀ Rewind: points from past card purchases</span> · find a regular&apos;s visits from before the new system and
+            surprise them with the points
+          </span>
+          <span className="text-[var(--muted)]">{hasAdminAccess(session.role) ? "Review →" : "Rewind →"}</span>
         </Link>
       )}
       <MemberManager

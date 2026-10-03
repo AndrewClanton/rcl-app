@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { yearOf, type MemberScreening } from "@/lib/data/member-account";
 import TicketCard from "@/components/TicketCard";
-import { Empty, TicketStub } from "../ui";
+import { Empty, SectionHead, STACK, TicketStub } from "../ui";
 
 export default function MoviesView({ upcoming, past, tonight = [] }: { upcoming: MemberScreening[]; past: MemberScreening[]; tonight?: MemberScreening[] }) {
   // Tonight's first (including a show that started a few minutes ago, for
@@ -18,16 +18,16 @@ export default function MoviesView({ upcoming, past, tonight = [] }: { upcoming:
   const distinctTitles = new Set(watched.map((s) => s.title)).size;
 
   return (
-    <div className="space-y-12">
+    <div className={STACK}>
       {watched.length > 0 && (
-        <p className="font-display max-w-[30ch] text-3xl leading-tight">
+        <p className="font-display max-w-[30ch] text-2xl leading-tight text-balance sm:text-3xl">
           You&apos;ve been to <span className="bg-[var(--gold)] px-1.5">{watched.length}</span> screening{watched.length === 1 ? "" : "s"} at the Royale
           {distinctTitles !== watched.length ? ` (${distinctTitles} different films)` : ""}.
         </p>
       )}
 
       <section>
-        <h2 className="font-display mb-4 text-2xl">Upcoming</h2>
+        <SectionHead title="Upcoming" />
         {current.length === 0 ? (
           <Empty>
             No tickets for upcoming screenings.{" "}
@@ -36,7 +36,7 @@ export default function MoviesView({ upcoming, past, tonight = [] }: { upcoming:
             </Link>
           </Empty>
         ) : (
-          <div className="grid items-start gap-7 sm:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-6 sm:grid-cols-2 sm:gap-7">
             {current.map((s) => (
               <TicketCard key={s.bookingId} t={s} />
             ))}
@@ -46,10 +46,10 @@ export default function MoviesView({ upcoming, past, tonight = [] }: { upcoming:
 
       {[...byYear.entries()].map(([year, list]) => (
         <section key={year}>
-          <h2 className="font-display mb-4 flex items-baseline gap-3 text-2xl">
+          <h2 className="font-display mb-4 flex flex-wrap items-baseline gap-x-3 text-xl leading-tight sm:text-2xl">
             {year} <span className="spec-code">{list.length} screening{list.length === 1 ? "" : "s"}</span>
           </h2>
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
             {list.map((s) => (
               <TicketStub key={s.bookingId} s={s} past />
             ))}

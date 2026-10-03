@@ -63,6 +63,10 @@ export default function LegalPage({
           <Link href="/data-deletion" className="hover:text-[var(--accent)]">
             Deleting your data
           </Link>
+          {" · "}
+          <Link href="/terms" className="hover:text-[var(--accent)]">
+            Terms of service
+          </Link>
         </div>
       </footer>
     </article>

@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import type { MenuCategory, MenuItem, ModifierGroup, ModifierOption } from "@/lib/types";
 
@@ -6,8 +7,10 @@ import type { MenuCategory, MenuItem, ModifierGroup, ModifierOption } from "@/li
 // shape of rcl-pos.html's MENU_DATA. Four flat queries + in-memory assembly
 // instead of one deeply nested PostgREST embed, so ordering and the
 // self-referential category->subcategory relationship stay simple.
-export async function getMenuTree(): Promise<MenuCategory[]> {
-  const supabase = await createClient();
+// `client`: the public website passes a cookie-less client
+// (lib/supabase/public.ts) so its menu page can be cached.
+export async function getMenuTree(client?: SupabaseClient): Promise<MenuCategory[]> {
+  const supabase = client ?? (await createClient());
 
   const [{ data: categories, error: catErr }, { data: items, error: itemErr }, { data: groups, error: grpErr }, { data: options, error: optErr }] =
     await Promise.all([

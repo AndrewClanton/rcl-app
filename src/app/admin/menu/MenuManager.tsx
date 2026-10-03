@@ -9,6 +9,7 @@ import ItemRecipe from "./ItemRecipe";
 import MenuPhoto from "./MenuPhoto";
 import MenuPictures from "./MenuPictures";
 import CategoryIcon from "@/components/menu/CategoryIcon";
+import InfoTip from "@/components/help/InfoTip";
 import { pictureOf } from "@/lib/menu-pictures/shared";
 
 // canEdit is false for cashiers: the same screens, read-only, so they can
@@ -410,6 +411,18 @@ function ItemRow({
         ) : (
           item.is_alcohol && <span className="text-xs text-[var(--warn-text)]">alcohol</span>
         )}
+        {/* The Insiders+ free daily coffee can be this item (lib/daily-perk.ts). */}
+        {canEdit ? (
+          <span className="flex items-center">
+            <label className="flex items-center gap-1 text-xs" title="Insiders+ members get one of these free each day (its menu price; add-ons are still charged).">
+              <input type="checkbox" checked={!!item.daily_perk} disabled={pending} onChange={(e) => run(() => updateItem(item.id, { daily_perk: e.target.checked }))} />
+              Insiders+ daily coffee
+            </label>
+            <InfoTip topic="daily-coffee" />
+          </span>
+        ) : (
+          item.daily_perk && <span className="text-xs">Insiders+ daily coffee</span>
+        )}
         {/* Any item can have a recipe (popcorn: kernels, oil, the bag).
             Cashiers see the button where there's one to read. */}
         {(canEdit || item.is_alcohol || recipe) && (
@@ -452,7 +465,7 @@ function ItemRow({
       </div>
       {/* The picture on its register button. */}
       <div className="mt-2">
-        <MenuPhoto target="item" id={item.id} name={item.name} picture={pictureOf(item)} category={section} canEdit={canEdit} />
+        <MenuPhoto target="item" id={item.id} name={item.name} price={Number(item.price)} picture={pictureOf(item)} category={section} canEdit={canEdit} />
       </div>
       {deleteRefused && (
         <div className="notice notice-warn mt-2 flex flex-wrap items-center gap-2 !p-2.5 text-sm">
