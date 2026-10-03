@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { businessDay } from "@/lib/ops/time";
 
 export interface EventRecord {
   id: string;
@@ -26,7 +27,7 @@ export interface EventRecord {
 // action's own return value, never a general listing.
 export async function getUpcomingEvents(): Promise<EventRecord[]> {
   const supabase = createAdminClient();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessDay().date;
   const { data, error } = await supabase
     .from("events")
     .select("*, room:rooms(id, name, capacity)")
