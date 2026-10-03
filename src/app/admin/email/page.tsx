@@ -7,6 +7,8 @@ import GoLive from "./GoLive";
 import { CONSENT_LABEL, KIND_LABEL, type ConsentSource } from "@/lib/email/types";
 import { whenLabel } from "@/lib/email/format";
 import { NewEmailButtons, RecallWaiting, ResumeSending, StopSending } from "./OverviewControls";
+import Senders from "./Senders";
+import { joinNames, senderCheck, senderRows } from "@/lib/email/senders";
 
 export const dynamic = "force-dynamic";
 // "Stop all sending", "Call back" and "Resume sending" call back or hand
@@ -63,7 +65,12 @@ function CampaignRowView({ s }: { s: CampaignSummary }) {
 export default async function EmailPage() {
   const staff = await requireManager();
   const admin = hasAdminAccess(staff.role);
-  const [o, goLive] = await Promise.all([getOverview(), goLiveChecklist()]);
+  const [o, goLive, senderList, sender] = await Promise.all([
+    getOverview(),
+    goLiveChecklist(),
+    senderRows().catch(() => null),
+    senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: null })),
+  ]);
   const r = o.rates30;
   const complaintRate = r.delivered ? r.complaints / r.delivered : 0;
   const bounceRate = r.delivered ? r.hardBounces / r.delivered : 0;
@@ -96,7 +103,7 @@ export default async function EmailPage() {
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
             <strong>{o.paused_by_guardrail.by === "Stopped" ? "Sending is stopped." : "Sending was paused automatically."}</strong> {o.paused_by_guardrail.reason.replace(/[.!?]?\s*$/, ".")}{" "}
-            Nothing goes to a list until an admin or owner has looked and resumed it. Check the latest emails below and Google Postmaster Tools first.
+            Nothing goes to a list until someone who sends email has looked and resumed it. Check the latest emails below and Google Postmaster Tools first.
           </p>
           <p>
             {o.waitingAtResend > 0
@@ -104,7 +111,11 @@ export default async function EmailPage() {
               : "Nothing is waiting at Resend to go out later."}
           </p>
           {o.waitingAtResend > 0 && <RecallWaiting waiting={o.waitingAtResend} running={o.recallRunning} />}
-          {admin ? <ResumeSending /> : <p className="text-xs">An admin or owner can resume sending here once they&apos;ve checked.</p>}
+          {sender.ok ? (
+            <ResumeSending />
+          ) : (
+            <p className="text-xs">{sender.names.length ? joinNames(sender.names) : "Whoever sends email"} can resume sending here once they&apos;ve checked.</p>
+          )}
         </div>
       )}
       {!o.gate.ok && (
@@ -120,6 +131,7 @@ export default async function EmailPage() {
         </div>
       )}
       <GoLive data={goLive} isOwner={isOwner(staff.role)} />
+      <Senders rows={senderList} canEdit={isOwner(staff.role)} />
       {o.pausedEmails.length > 0 && (
         <div className="notice notice-warn text-sm">
           <p className="font-semibold">Paused, waiting for someone to decide:</p>
@@ -142,7 +154,7 @@ export default async function EmailPage() {
         </summary>
         <p className="my-2 text-[var(--muted)]">
           Pauses every email to a list and calls back everything our email service (Resend) is holding to send later (a big list takes a few minutes; it carries on
-          until none is left). Anyone who can send can press it, and it can be pressed again. Only an admin or owner can resume afterwards.
+          until none is left). Any manager can press it, and it can be pressed again. Only someone who sends email can resume afterwards.
         </p>
         <StopSending />
       </details>

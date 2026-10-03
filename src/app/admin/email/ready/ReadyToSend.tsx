@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AudienceCount, DesignResults, WaveResult } from "@/lib/email/designs/ready";
 import type { DesignKey } from "@/lib/email/designs/types";
+import { UNDO_STOP_BEFORE_MS } from "@/lib/email/undo";
 import { pauseDesign, resumeDesign, saveResendPlan, saveWaveModeAction, saveWaveSizeAction, sendDesign, sendDesignTest, sendNextWave } from "./actions";
 
 // The Ready to send screen: the three ready-made emails as cards. Each has
@@ -38,6 +39,26 @@ export interface CardData {
   outcomeLabel: string;
   outcomeAbout: string;
   sendKey: string; // a fresh one each time the page loads: a double click reuses it
+  undo: UndoCard | null; // the wave just pressed for, while it can be undone or is on its way
+  // If pressed now, the next wave waits at Resend so it can be undone: in
+  // about `minutes`, or (held overnight) at `label`. Null: no Undo for it
+  // (too big to call back in time, Saturday evening, or Resend won't hold email).
+  hold: { minutes: number; label: string } | null;
+  nextWaveOn: string | null; // a wave went today: the next can go "tomorrow" ("Monday")
+}
+
+// The minute to undo, from what's saved on the email (so a reload shows the
+// same time left). Times are the server's (ms).
+export interface UndoCard {
+  key: string;
+  wave: number;
+  people: number;
+  until: number; // the end of the minute
+  arrives: number; // when it's due in their inboxes
+  arrivesLabel: string; // "5:12 PM"
+  first: boolean;
+  started: boolean; // Undo was pressed and hasn't finished (pressing again carries on)
+  undoing: boolean; // ...and is calling back right now
 }
 
 export interface PlanData {
@@ -45,6 +66,7 @@ export interface PlanData {
   monthly: number;
   reserve: number;
   perDay: number;
+  firstWave: number; // a Send that starts afresh goes to only this many first (25, or the wave size if smaller)
   perMonth: number;
   usedToday: number;
   usedMonth: number;
@@ -75,6 +97,57 @@ function BlockerLink({ b }: { b: Blocker }) {
 }
 
 const SPACED_DAYS = 3;
+
+// The browser's clock, a few times a second. The countdown adds the
+// difference from the server's clock (it's the one that decides whether
+// the minute is up), worked out when the page arrives, before the first tick.
+const subscribeClock = (cb: () => void) => {
+  const id = setInterval(cb, 250);
+  return () => clearInterval(id);
+};
+const getTick = () => Math.floor(Date.now() / 250);
+const getZero = () => 0;
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+// "Wave 2 is on its way to 80 people. Undo (0:59)", then "On its way.
+// Arrives about 5:12 PM." until it's due.
+function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; status: string | null; busy: boolean; offset: number; onUndo: () => void }) {
+  const tick = useSyncExternalStore(subscribeClock, getTick, getZero);
+  // Nothing time-dependent on the server's render (no flash of the wrong time).
+  if (!tick) return null;
+  const now = tick * 250 + offset;
+  const left = Math.max(0, Math.ceil((undo.until - now) / 1000));
+  const canUndo = left > 0 || (undo.started && now < undo.arrives - UNDO_STOP_BEFORE_MS);
+  const onItsWay = status === "scheduled" || status === "sending" || status === "sent";
+  if (!canUndo) {
+    if (!onItsWay || now >= undo.arrives) return null;
+    return (
+      <p className="rounded-lg border border-[var(--border)] bg-[var(--background)] p-3 text-sm" role="status">
+        <strong>Wave {undo.wave} is on its way.</strong> Arrives about {undo.arrivesLabel}.
+      </p>
+    );
+  }
+  const what = undo.undoing
+    ? `Calling back wave ${undo.wave}…`
+    : undo.started
+      ? `Wave ${undo.wave} isn't all called back yet.`
+      : status === "paused"
+        ? `Wave ${undo.wave} (${people(undo.people)}) is paused.`
+        : `Wave ${undo.wave} is on its way to ${people(undo.people)}.`;
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border-2 border-[var(--foreground)] bg-[var(--background)] p-3 text-sm">
+      <p className="min-w-0 flex-1" role="status">
+        <strong>{what}</strong>{" "}
+        <span className="text-[var(--muted)]">
+          {undo.started ? `Press Undo to finish calling it back before ${undo.arrivesLabel}.` : `It arrives about ${undo.arrivesLabel}. Undo calls back every one of them.`}
+        </span>
+      </p>
+      <button type="button" className="btn-secondary min-h-11 min-w-32 !px-5 text-base tabular-nums" disabled={busy} onClick={onUndo}>
+        {busy ? "Calling back…" : left > 0 ? `Undo (${mmss(left)})` : "Undo"}
+      </button>
+    </div>
+  );
+}
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
@@ -188,7 +261,9 @@ function Card({
   canTest,
   testBlocker,
   myEmail,
-  isAdmin,
+  isSender,
+  senderNames,
+  offset,
 }: {
   card: CardData;
   plan: PlanData;
@@ -196,10 +271,14 @@ function Card({
   canTest: boolean;
   testBlocker: Blocker | null;
   myEmail: string;
-  isAdmin: boolean;
+  isSender: boolean;
+  senderNames: string; // "Nathan and Mary"
+  offset: number; // the server's clock less the browser's (ms)
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Undo has its own, so nothing else running on the card holds it up.
+  const [undoing, startUndo] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirm, setConfirm] = useState<"first" | "next" | null>(null);
   const [checked, setChecked] = useState("");
@@ -223,10 +302,18 @@ function Card({
       ? "Everyone it's for has had it."
       : waiting > 0
         ? "The last wave is still going out."
-        : plan.todayLeft <= 0
-          ? `Today's share has gone. The next wave can go ${plan.nextWave}.`
-          : allSpaced;
-  const firstWhy = !canSend ? blockedWhy : !plan.auto && plan.todayLeft <= 0 ? `Today's share has gone. The first wave can go ${plan.nextWave}.` : allSpaced;
+        : card.nextWaveOn
+          ? `The next wave can go ${card.nextWaveOn}, once you've seen how this one did.`
+          : plan.todayLeft <= 0
+            ? `Today's share has gone. The next wave can go ${plan.nextWave}.`
+            : allSpaced;
+  const firstWhy = !canSend
+    ? blockedWhy
+    : card.nextWaveOn
+      ? `It went out today. It can go again ${card.nextWaveOn}, once you've seen how it did.`
+      : !plan.auto && plan.todayLeft <= 0
+        ? `Today's share has gone. The first wave can go ${plan.nextWave}.`
+        : allSpaced;
   const run = (what: string, fn: () => Promise<{ ok: boolean; text: string }>) =>
     start(async () => {
       setMsg({ ok: true, text: `${what}…` });
@@ -244,6 +331,22 @@ function Card({
       const out = await pauseDesign(card.key);
       return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
     });
+  // Undo goes to its own address (/api/email/undo), not a Server Action:
+  // the browser sends those one at a time, and Undo mustn't wait behind
+  // another.
+  const undo = () => {
+    const u = card.undo;
+    if (!u || !card.campaignId) return;
+    const body = JSON.stringify({ key: card.key, campaignId: card.campaignId, undoKey: u.key });
+    startUndo(async () => {
+      setMsg({ ok: true, text: "Calling back the wave…" });
+      const res = await fetch("/api/email/undo", { method: "POST", headers: { "Content-Type": "application/json" }, body, cache: "no-store" }).catch(() => null);
+      const out = ((await res?.json().catch(() => null)) ?? null) as { ok?: boolean; message?: string; error?: string } | null;
+      if (!out) setMsg({ ok: false, text: "Couldn't reach the server. Press Undo again." });
+      else setMsg(out.ok ? { ok: true, text: out.message ?? "Undone." } : { ok: false, text: out.error ?? "Couldn't undo it. Press Undo again." });
+      router.refresh();
+    });
+  };
   const firstLabel = count === 0 ? "Nobody to send it to" : plan.auto || count <= next.n ? `Send to ${people(count)}` : `Send the first ${n(next.n)} (of ${n(count)})`;
   const nextLabel = `Send the next ${n(Math.min(next.n, count) || plan.perDay)}`;
   const waveLine = paused
@@ -253,12 +356,14 @@ function Card({
     : left === 0
       ? "the last wave has gone"
       : plan.auto
-        ? `next wave ${plan.nextWave}`
+        ? `next wave ${card.nextWaveOn ?? plan.nextWave}`
         : waiting > 0
           ? "this wave is still going out"
-          : plan.todayLeft > 0
-            ? `next wave when you press ${nextLabel}`
-            : `next wave can go ${plan.nextWave}`;
+          : card.nextWaveOn
+            ? `next wave can go ${card.nextWaveOn}`
+            : plan.todayLeft > 0
+              ? `next wave when you press ${nextLabel}`
+              : `next wave can go ${plan.nextWave}`;
 
   return (
     <section id={card.key} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -308,7 +413,7 @@ function Card({
                 Nothing more of this email goes until someone carries on. Look at who bounced or complained (More detail, below): old or mistyped addresses, or
                 people who never asked for email. Bounced addresses are already on the never-mail list, so they won&apos;t be sent to again.
               </p>
-              {isAdmin ? (
+              {isSender ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     className="input !w-auto min-w-56 flex-1 text-sm"
@@ -322,7 +427,7 @@ function Card({
                   </button>
                 </div>
               ) : (
-                <p className="text-xs">An admin or owner can carry on here once they&apos;ve checked the list.</p>
+                <p className="text-xs">{senderNames || "Whoever sends email"} can carry on here once they&apos;ve checked the list.</p>
               )}
             </div>
           )}
@@ -343,12 +448,15 @@ function Card({
           )}
           {!going && !paused && card.count && count > 0 && (
             <p className="text-xs text-[var(--muted)]">
-              Goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first.{" "}
+              Goes out in waves, the members most used to hearing from us first: the first wave to {n(Math.min(next.n || plan.firstWave, count))}
+              {count > (next.n || plan.firstWave) ? `, then ${n(plan.perDay)} at a time` : ""}.{" "}
               {plan.auto
                 ? "After the first, one goes each morning (Monday to Saturday); check how wave 1 did, and Pause if something's wrong."
                 : "After the first, each wave goes only when someone presses Send the next wave here, so check how the last one did first."}
             </p>
           )}
+
+          {card.undo && <UndoBar undo={card.undo} status={card.status} busy={undoing} offset={offset} onUndo={undo} />}
 
           <div className="flex flex-wrap gap-2">
             <button
@@ -478,7 +586,13 @@ function Card({
               <div>
                 <dt className="text-xs text-[var(--muted)]">When</dt>
                 <dd>
-                  {plan.goesAt === "now" ? "Now." : `It goes ${plan.goesAt} (email only goes out 9 AM to 7 PM, Monday to Saturday).`}{" "}
+                  {plan.goesAt !== "now"
+                    ? `It goes ${plan.goesAt} (email only goes out 9 AM to 7 PM, Monday to Saturday).`
+                    : !card.hold
+                      ? "Now."
+                      : card.hold.minutes <= 15
+                        ? `In about ${card.hold.minutes} minutes (it waits at Resend first, so it can be undone).`
+                        : `It arrives about ${card.hold.label} (it waits at Resend so it can be undone, and email only goes out 9 AM to 7 PM, Monday to Saturday).`}{" "}
                   {confirm === "next" || !plan.auto
                     ? `After this wave, nothing more goes until someone presses Send the next wave here (at most ${n(plan.perDay)} a day).`
                     : `Then one wave of up to ${n(plan.perDay)} each morning, so about ${card.days ?? "?"} sending ${card.days === 1 ? "day" : "days"}${card.finish ? `, finishing around ${card.finish}` : ""}.`}
@@ -492,10 +606,15 @@ function Card({
                 </div>
               )}
             </dl>
+            {card.hold && (
+              <p className="mt-3 text-sm">
+                <strong>You&apos;ll have one minute to undo it.</strong> Undo calls back the whole wave before anyone gets it.
+              </p>
+            )}
             <p className="mt-3 text-xs text-[var(--muted)]">
               A wave can&apos;t be taken back once it arrives. Anyone who no longer fits by then (signed up meanwhile, turned email off) is skipped. You can pause at any
-              time, and Pause also calls back any of the wave still waiting to arrive. If too many bounce or anyone marks it as spam, the next wave won&apos;t go until an
-              admin or owner has checked.
+              time, and Pause also calls back any of the wave still waiting to arrive. If too many bounce or anyone marks it as spam, the next wave won&apos;t go until
+              someone who sends email has checked.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" className="btn-secondary" onClick={() => setConfirm(null)}>
@@ -646,7 +765,10 @@ export default function ReadyToSend({
   countsFailed,
   plan,
   isAdmin,
+  sender,
   myEmail,
+  serverNow,
+  noHolds,
 }: {
   cards: CardData[];
   sendingOn: boolean;
@@ -657,8 +779,17 @@ export default function ReadyToSend({
   countsFailed: boolean;
   plan: PlanData;
   isAdmin: boolean;
+  // Whether this person may send to members, who may, and if not, why
+  // (lib/email/senders.ts).
+  sender: { ok: boolean; names: string; why: string | null };
   myEmail: string;
+  serverNow: number;
+  noHolds: boolean; // Resend won't hold email for later: no Undo, email goes only when due
 }) {
+  // The server's clock less this browser's, worked out as the page arrives
+  // (before the countdown's first tick). The two clocks don't drift apart
+  // in a visit, so once is enough.
+  const [clock] = useState(() => ({ offset: serverNow - Date.now() }));
   // Who can fix each thing, and where (no dead ends).
   const toSwitch = { href: "/admin/email#sending", label: "Go to Sending on/off" };
   const offBlocker: Blocker | null = sendingOn
@@ -668,16 +799,24 @@ export default function ReadyToSend({
       : offKind === "master"
         ? { text: "Sending is switched off at the top level (Vercel). An owner turns that on once, then uses the switch on the Email page.", ...toSwitch }
         : { text: `Sending isn't set up yet: ${offReason ?? "see the go-live checklist on the Email page."}`, href: "/admin/email", label: "See the go-live checklist" };
+  const senderBlocker: Blocker | null = sender.ok ? null : { text: sender.why ?? "Only the people picked to send email can send it to members.", href: "/admin/email#senders", label: "See who sends" };
   const blocker: Blocker | null =
+    senderBlocker ??
     offBlocker ??
     (stopped
-      ? { text: "Sending is stopped. An admin or owner can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
+      ? { text: "Sending is stopped. Someone who sends email can resume it on the Email page.", href: "/admin/email", label: "Go to the Email page" }
       : !picturesReady
         ? { text: "The pictures for these emails aren't on our picture server yet.", href: "/admin/email", label: "See the go-live checklist" }
         : null);
   const testBlocker = offBlocker ?? (stopped ? blocker : null);
   return (
     <div className="space-y-6">
+      {senderBlocker && (
+        <div className="notice space-y-2 text-sm">
+          <p>{senderBlocker.text}</p>
+          <BlockerLink b={senderBlocker} />
+        </div>
+      )}
       {offBlocker && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
@@ -690,7 +829,7 @@ export default function ReadyToSend({
       {stopped && (
         <div className="notice notice-warn space-y-2 text-sm">
           <p>
-            <strong>Sending is stopped right now.</strong> {stopped} An admin or owner can resume it on the Email page once they&apos;ve checked what happened.
+            <strong>Sending is stopped right now.</strong> {stopped} Someone who sends email can resume it on the Email page once they&apos;ve checked what happened.
           </p>
           <Link href="/admin/email" className="btn-secondary !px-3 !py-1 text-xs">
             Go to the Email page
@@ -723,19 +862,30 @@ export default function ReadyToSend({
           </li>
           <li>
             <strong>Send, a wave at a time.</strong> The send button shows exactly who&apos;s first and how many, and asks you to confirm. Each person gets it once,
-            with their own first name and their own button. It goes out in waves of {n(plan.perDay)}, the members most used to hearing from us first (whoever came in,
-            bought or tapped an email most lately, then whoever said yes to email most recently, then our longest-standing members), so if something&apos;s wrong, few
-            people see it.{" "}
+            with their own first name and their own button. It goes out in waves, the members most used to hearing from us first (whoever came in, bought or tapped
+            an email most lately, then whoever said yes to email most recently, then our longest-standing members):{" "}
+            {plan.firstWave < plan.perDay ? `the first wave to just ${n(plan.firstWave)}, then ${n(plan.perDay)} at a time` : `${n(plan.perDay)} at a time`}, so if
+            something&apos;s wrong, few people see it.{" "}
             {plan.auto
               ? "After the first wave, one goes each morning (Monday to Saturday) until everyone has it. You can pause it any time."
-              : "After the first wave, nothing more goes until someone presses Send the next wave (at most one wave a day). You can pause it any time."}
+              : "After the first wave, nothing more goes until someone presses Send the next wave (at most one wave a day). You can pause it any time."}{" "}
+            {noHolds ? (
+              <>
+                There&apos;s no Undo just now: Resend wouldn&apos;t hold email to send later, so each wave goes as soon as it&apos;s pressed for. Pause still stops the rest.
+              </>
+            ) : (
+              <>
+                For one minute after you press Send (or Send the next wave), <strong>Undo</strong> calls the whole wave back before anyone gets it: a wave you send waits a
+                few minutes at Resend first, just for this (waves that go by themselves don&apos;t).
+              </>
+            )}
           </li>
           <li>
             <strong>Read the results, wave by wave.</strong> <em>Delivered</em> reached their inbox. <em>Opened</em> is rough (some phones open every email by
             themselves). <em>Clicked</em> tapped something. The number that matters is the last one: who <em>signed in</em> (the first two emails) or{" "}
             <em>set up Insiders+</em> (the third) since it went. If a wave has trouble (unsubscribes, bounces, or nobody clicking), don&apos;t send the next one: press
-            Pause. The automatic brake also stops an email by itself if more than 5 in 100 of a wave bounce or anyone marks it as spam; an admin or owner carries on
-            after checking.
+            Pause. The automatic brake also stops an email by itself if more than 5 in 100 of a wave bounce or anyone marks it as spam; someone who sends email
+            carries on after checking.
           </li>
         </ol>
         <p className="mt-2 text-xs text-[var(--muted)]">
@@ -748,7 +898,7 @@ export default function ReadyToSend({
 
       <section className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm">
         <h2 className="font-semibold">
-          Waves of {n(plan.perDay)} ·{" "}
+          {plan.firstWave < plan.perDay ? `First wave ${n(plan.firstWave)}, then waves of ${n(plan.perDay)}` : `Waves of ${n(plan.perDay)}`} ·{" "}
           {!cards.some((c) => c.status === "scheduled" || c.status === "sending")
             ? "the first goes when you press Send"
             : plan.auto
@@ -771,15 +921,33 @@ export default function ReadyToSend({
           {n(plan.daily)} a day and {n(plan.monthly)} a month; {n(plan.reserve)} a day are kept for receipts, tickets and the daily report.
         </p>
         <p className="mt-1 text-[var(--muted)]">
-          Today: {n(plan.usedToday)} of {n(plan.perDay)} used ({n(plan.todayLeft)} left). This month: {n(plan.usedMonth)} of {n(plan.perMonth)}.
+          Today: {n(plan.usedToday)} of {n(plan.perDay)} used ({n(plan.todayLeft)} left). This month: {n(plan.usedMonth)} of {n(plan.perMonth)}. Emails called back with
+          Undo still count, in case Resend counts them.
         </p>
+        {noHolds && isAdmin && (
+          <p className="mt-1 text-xs text-[var(--warn-text)]">
+            Resend sent at once (or refused) email it was asked to hold for later, so nothing is handed over before it&apos;s due and there&apos;s no Undo. Once
+            that&apos;s sorted with Resend, a developer clears the &ldquo;resend_scheduling&rdquo; email setting to try again.
+          </p>
+        )}
         {isAdmin && <WaveMode plan={plan} />}
         {isAdmin && <WaveSize plan={plan} />}
         {isAdmin && <PlanEditor plan={plan} />}
       </section>
 
       {cards.map((c) => (
-        <Card key={c.key} card={c} plan={plan} blocker={blocker} canTest={!testBlocker} testBlocker={testBlocker} myEmail={myEmail} isAdmin={isAdmin} />
+        <Card
+          key={c.key}
+          card={c}
+          plan={plan}
+          blocker={blocker}
+          canTest={!testBlocker}
+          testBlocker={testBlocker}
+          myEmail={myEmail}
+          isSender={sender.ok}
+          senderNames={sender.names}
+          offset={clock.offset}
+        />
       ))}
     </div>
   );

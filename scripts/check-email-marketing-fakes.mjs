@@ -23,9 +23,15 @@ export const db = {
   movies: [],
   menu_items: [],
   house_events: [],
-  employees: [],
+  // The signed-in test admin (staff, below), picked to send email
+  // (lib/email/senders.ts).
+  employees: [{ id: "e0000000-0000-4000-8000-000000000001", name: "Test Admin", role: "admin", active: true, sends_email: true }],
   legacy_billing_payers: [],
 };
+
+// Requests that fail once, on purpose: {table, op} ("select", "insert",
+// "update", "delete", "upsert").
+export const faults = [];
 
 // Unique keys per table (nulls never clash), like the migration's.
 const UNIQUE = {
@@ -143,6 +149,12 @@ class Query {
   run() {
     const rows = db[this.table];
     if (!rows) return { data: null, error: { message: `no table ${this.table}` } };
+    // A failure a check asked for: the next such request on that table.
+    const fault = faults.findIndex((f) => f.table === this.table && f.op === this.op);
+    if (fault >= 0) {
+      faults.splice(fault, 1);
+      return { data: null, error: { message: "fake: failed on purpose" }, count: null };
+    }
     const match = (r) => this.filters.every((f) => f(r));
     if (this.op === "insert" || this.op === "upsert") {
       const made = [];
@@ -381,8 +393,36 @@ export function createAdminClient() {
 // An address containing "reject" is refused (422), the way Resend refuses
 // a malformed `to`: the whole batch, or that one email alone. onBatch runs
 // after each accepted batch (to change things mid-run).
-export const resend = { sent: [], batches: 0, keys: new Map(), calls: [], cancelled: [], acceptThenFail: 0, failNext: 0, cancelFailNext: 0, onBatch: null };
+// cancelGone: ids Resend has already sent (a cancel is refused with 422).
+// cancel404Once: ids whose next cancel answers 404 though Resend still
+// holds them (a lost or early answer). onCancel runs before each cancel
+// request (to move a test's clock on).
+// batchRejectsSchedule / singleRejectsSchedule: the batch endpoint, or
+// POST /emails, refuses scheduled_at (422). ignoreSchedule: Resend takes
+// scheduled_at but sends at once (GET shows no scheduled_at).
+// acceptThenTimeout: the next batch is taken, but the answer never comes
+// (a network error). rateLimitNext: that many batch requests answer 429.
+export const resend = {
+  sent: [],
+  batches: 0,
+  keys: new Map(),
+  calls: [],
+  cancelled: [],
+  acceptThenFail: 0,
+  acceptThenTimeout: 0,
+  rateLimitNext: 0,
+  failNext: 0,
+  cancelFailNext: 0,
+  cancelGone: new Set(),
+  cancel404Once: new Set(),
+  batchRejectsSchedule: false,
+  singleRejectsSchedule: false,
+  ignoreSchedule: false,
+  onBatch: null,
+  onCancel: null,
+};
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const SCHEDULE_REFUSED = { name: "validation_error", message: "The `scheduled_at` field is not supported here." };
 
 export async function fakeFetch(url, init = {}) {
   const u = new URL(url);
@@ -392,7 +432,17 @@ export async function fakeFetch(url, init = {}) {
   const headers = Object.fromEntries(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
   resend.calls.push(`${method} ${path}`);
   let m;
+  const take = (item) => {
+    const id = `re_${randomUUID()}`;
+    resend.sent.push({ ...item, id, ...(resend.ignoreSchedule ? { scheduled_at: undefined, ignored: item.scheduled_at } : {}) });
+    return id;
+  };
   if (method === "POST" && path === "/emails/batch") {
+    // (A lost answer comes first: then the 429s, on the tries after it.)
+    if (resend.rateLimitNext > 0 && !resend.acceptThenTimeout) {
+      resend.rateLimitNext--;
+      return new Response(JSON.stringify({ name: "rate_limit_exceeded", message: "Too many requests" }), { status: 429, headers: { "content-type": "application/json", "retry-after": "1" } });
+    }
     const key = headers["idempotency-key"];
     const bodyHash = sha(init.body);
     if (key && resend.keys.has(key)) {
@@ -406,34 +456,61 @@ export async function fakeFetch(url, init = {}) {
     }
     const items = JSON.parse(init.body);
     if (items.some((it) => it.to.some((t) => t.includes("reject")))) return json(422, { name: "validation_error", message: "Invalid `to` field. The email address needs to follow the `email@example.com` format." });
-    const response = { data: items.map(() => ({ id: `re_${randomUUID()}` })) };
+    if (resend.batchRejectsSchedule && items.some((it) => it.scheduled_at)) return json(422, SCHEDULE_REFUSED);
+    const response = { data: items.map((it) => ({ id: take(it) })) };
     resend.batches++;
-    items.forEach((it, i) => resend.sent.push({ ...it, id: response.data[i].id }));
     if (key) resend.keys.set(key, { bodyHash, response });
     if (resend.onBatch) await resend.onBatch(items);
     if (resend.acceptThenFail > 0) {
       resend.acceptThenFail--;
       return json(502, { name: "application_error", message: "lost on the way back" });
     }
+    if (resend.acceptThenTimeout > 0) {
+      resend.acceptThenTimeout--;
+      throw new TypeError("fetch failed (timed out)");
+    }
     return json(200, response);
   }
   if (method === "POST" && path === "/emails") {
     const body = JSON.parse(init.body);
-    resend.sent.push({ ...body, single: true });
-    return json(200, { id: `re_${randomUUID()}` });
+    const key = headers["idempotency-key"];
+    const bodyHash = sha(init.body);
+    if (key && resend.keys.has(key)) {
+      const prior = resend.keys.get(key);
+      if (prior.bodyHash !== bodyHash) return json(409, { name: "invalid_idempotent_request", message: "different payload" });
+      return json(200, prior.response);
+    }
+    if (resend.singleRejectsSchedule && body.scheduled_at) return json(422, SCHEDULE_REFUSED);
+    const id = take(body);
+    resend.sent[resend.sent.length - 1].single = true;
+    const response = { id };
+    if (key) resend.keys.set(key, { bodyHash, response });
+    return json(200, response);
   }
   if ((m = path.match(/^\/emails\/([^/]+)\/cancel$/)) && method === "POST") {
+    if (resend.onCancel) await resend.onCancel(m[1]);
     // cancelFailNext: Resend busy for that many cancel requests.
     if (resend.cancelFailNext > 0) {
       resend.cancelFailNext--;
       return json(503, { name: "application_error", message: "busy" });
     }
+    if (resend.cancel404Once.has(m[1])) {
+      resend.cancel404Once.delete(m[1]);
+      return json(404, { name: "not_found", message: "Email not found" });
+    }
+    const known = resend.sent.find((e) => e.id === m[1]);
+    if (resend.cancelGone.has(m[1]) || resend.cancelled.includes(m[1]) || (known && !known.scheduled_at)) return json(422, { name: "validation_error", message: "This email can't be canceled." });
     resend.cancelled.push(m[1]);
     return json(200, { object: "email", id: m[1] });
   }
+  if ((m = path.match(/^\/emails\/([^/]+)$/)) && method === "GET") {
+    const known = resend.sent.find((e) => e.id === m[1]);
+    if (!known) return json(404, { name: "not_found", message: "Email not found" });
+    const last = resend.cancelled.includes(m[1]) ? "canceled" : resend.cancelGone.has(m[1]) ? "delivered" : known.scheduled_at ? "scheduled" : "sent";
+    return json(200, { object: "email", id: m[1], last_event: last, scheduled_at: known.scheduled_at ?? null });
+  }
   return json(404, { name: "not_found", message: `fake has no ${method} ${path}` });
 }
-
 // ---------------- next/server, next/cache ----------------
 const pending = [];
 export function after(fn) {

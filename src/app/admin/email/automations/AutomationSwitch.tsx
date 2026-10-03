@@ -28,7 +28,7 @@ export default function AutomationSwitch({ automation, on, canChange }: { automa
         />
         {on ? "On" : "Off"}
       </label>
-      {!canChange && <div className="text-xs text-[var(--muted)]">Admins switch these</div>}
+      {!canChange && <div className="text-xs text-[var(--muted)]">Whoever sends email switches these on</div>}
       {error && <div className="text-xs text-[var(--danger-text)]">{error}</div>}
     </div>
   );

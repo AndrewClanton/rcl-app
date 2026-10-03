@@ -54,6 +54,9 @@ process.env.EMAIL_FROM = "Royale Cinema Lounge <hello@royalecinemajoplin.com>";
 process.env.EMAIL_TOKEN_SECRET = randomBytes(32).toString("base64url");
 process.env.EMAIL_SENDING_ENABLED = "true";
 process.env.EMAIL_SCHEDULE_AHEAD_HOURS = "60";
+// The fake Resend has no rate limit: calls go 10 a second, not 1.5, so the
+// call-backs here don't take minutes.
+process.env.RESEND_RPS = "10";
 // The Back office switch (email_settings), on for these checks; it's off by default.
 db.email_settings.push({ key: "sending_switch", value: { on: true, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
 const WEBHOOK_SECRET = `whsec_${randomBytes(24).toString("base64")}`;
