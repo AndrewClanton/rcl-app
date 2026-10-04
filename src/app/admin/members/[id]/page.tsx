@@ -4,6 +4,7 @@ import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberCards, 
 import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { currentGiftFrom, getGiftsForMember } from "@/lib/gift-membership";
 import { getPaidThrough, oldSitePlan, prepaidInForce } from "@/lib/paid-through";
+import { getUpcomingRenewalNotice } from "@/lib/renewal-notice";
 import { getPointsHistory } from "@/lib/data/points-history";
 import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import { getMemberEmailPanel } from "@/lib/email/member-panel";
@@ -50,6 +51,8 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     ? [null, null, null]
     : await Promise.all([getPaidThrough(id), currentGiftFrom(id), oldSitePlan(member as { legacy_user_id?: number | null })]);
   const inForce = prepaidInForce(member, paidRec);
+  // "Renewal notice sent <date>" for a yearly member's next renewal.
+  const renewalNotice = member.erased_at ? null : await getUpcomingRenewalNotice(id).catch(() => null);
   const paidThrough: PaidThroughInfo = {
     inForce: inForce?.paidThrough ? { paidThrough: inForce.paidThrough, renewsAs: inForce.renewsAs } : null,
     last: paidRec,
@@ -79,6 +82,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       canUndoCardMatch={!!session && hasManagerAccess(session.role)}
       paidThroughCard={member.erased_at ? null : <PaidThroughCard member={member} info={paidThrough} canEdit={!!session && hasAdminAccess(session.role)} />}
       prepaidRenewsAs={paidThrough.inForce?.renewsAs ?? null}
+      renewalNotice={renewalNotice}
       flags={flags.length ? <FlagBox flags={flags} canAct={!!session && hasAdminAccess(session.role)} today={visitBusinessDate(new Date())} /> : null}
     />
     {emailPanel && (

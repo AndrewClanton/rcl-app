@@ -384,6 +384,12 @@ export const HELP_TOPICS = {
     ],
     links: [{ label: "Members", href: "/admin/members" }],
   },
+  "renewal-notice": {
+    title: "Yearly renewal notices",
+    area: "Members and memberships",
+    body:
+      "A week before a yearly Insiders+ renews, the member gets an email: the date, the exact charge from Stripe (price + tax, like $153 + $13.35 tax = $166.35), the card it goes on, and a Manage or cancel button to My Account → Billing. It's a billing notice, so it goes even to people who turned off our emails, and each renewal gets it only once. That includes paid-through members, a week before their first charge. Their member page shows \"Renewal notice sent\" and the date once it's gone. To cancel, they press Manage or cancel, or you open Stripe's billing page from Billing on their member page with them.",
+  },
   "member-billing": {
     title: "Putting a card on a membership",
     area: "Members and memberships",

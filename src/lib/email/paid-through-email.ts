@@ -15,7 +15,7 @@
 import { ANNUAL_PRICE, RATE_PRICE, dollars, type BillingInterval } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import { esc, firstNameOf } from "./format";
-import { C, DEV, band, blk, bleed, button, h1, label, mono, pic, red, shell, txt, type Dev } from "./designs/kit";
+import { C, DEV, accountFooter, band, blk, bleed, button, h1, label, mono, pic, red, shell, txt, type Dev } from "./designs/kit";
 
 export interface PaidThroughEmail {
   name: string | null;
@@ -146,21 +146,6 @@ ${blk("The Royale crew", 20, 24, C.ink, "margin-top:4px;")}`,
   );
 }
 
-// The invites' footer without the unsubscribe line: this one is about
-// their own membership, sent only when they've asked about it.
-function footer(dev: Dev): string {
-  const d = DEV[dev];
-  return `${bleed(C.ink, "common/sprockets", dev)}
-${band(
-  C.ink,
-  `${pic("common/footer-logo", dev)}
-${txt("715 E Broadway, Joplin, MO 64801 &middot; On Route 66", 13, 20, C.cream, "margin-top:20px;")}
-${txt(`417-281-4172 &middot; <a href="https://www.royalecinemajoplin.com" style="color:${C.cream};text-decoration:none;">royalecinemajoplin.com</a>`, 13, 20, C.cream)}
-${txt("You're getting this because your Insiders+ was paid ahead on our old website.", 13, 20, C.inkMute, "margin-top:12px;")}`,
-  `${dev === "m" ? 32 : 40}px ${d.G}px`,
-)}`;
-}
-
 export function paidThroughHtml(e: PaidThroughEmail): string {
   const p = parts(e);
   const build = (dev: Dev) =>
@@ -170,7 +155,9 @@ export function paidThroughHtml(e: PaidThroughEmail): string {
       steps(e, dev),
       next(e, dev),
       close(dev),
-      footer(dev),
+      // The invites' footer without the unsubscribe line: this one is about
+      // their own membership, sent only when they've asked about it.
+      accountFooter(dev, "You're getting this because your Insiders+ was paid ahead on our old website."),
     ].join("\n");
   return shell({
     subject: paidThroughSubject(e),

@@ -67,6 +67,7 @@ export default function MemberDetail({
   flags = null,
   paidThroughCard = null,
   prepaidRenewsAs = null,
+  renewalNotice = null,
 }: {
   // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
   flags?: React.ReactNode;
@@ -74,6 +75,8 @@ export default function MemberDetail({
   // prepaid year renews as (the card page offers it first).
   paidThroughCard?: React.ReactNode;
   prepaidRenewsAs?: "month" | "year" | null;
+  // The yearly renewal notice for their next renewal, if it went (lib/renewal-notice.ts).
+  renewalNotice?: { sentAt: string; chargeAt: string } | null;
   member: Member;
   gifts: GiftMembership[];
   purchases: MemberPurchase[];
@@ -149,7 +152,7 @@ export default function MemberDetail({
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} canManage={canManage} />
       <div className="space-y-6">
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} canManage={canManage} />
-        <BillingCard member={member} prepaidRenewsAs={prepaidRenewsAs} />
+        <BillingCard member={member} prepaidRenewsAs={prepaidRenewsAs} renewalNotice={renewalNotice} />
         {paidThroughCard}
         <LinkedCardsCard member={member} cards={cards} canRelink={canUndoCardMatch} />
         <GiftCard member={member} gifts={gifts} />
@@ -577,7 +580,18 @@ function FreeMembershipCard({ member, communityPrograms, canManage }: { member: 
   );
 }
 
-function BillingCard({ member, prepaidRenewsAs }: { member: Member; prepaidRenewsAs: "month" | "year" | null }) {
+// "Mar 6, 2027", on Chicago's calendar.
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+
+function BillingCard({
+  member,
+  prepaidRenewsAs,
+  renewalNotice,
+}: {
+  member: Member;
+  prepaidRenewsAs: "month" | "year" | null;
+  renewalNotice: { sentAt: string; chargeAt: string } | null;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [firstCharge, setFirstCharge] = useState("");
@@ -671,6 +685,12 @@ function BillingCard({ member, prepaidRenewsAs }: { member: Member; prepaidRenew
       ) : member.stripe_customer_id ? (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm text-[var(--muted)]">Subscription: {member.subscription_status ?? "unknown"}</span>
+          {renewalNotice && (
+            <span className="text-sm" title={`For the ${shortDay(renewalNotice.chargeAt)} renewal`}>
+              Renewal notice sent {shortDay(renewalNotice.sentAt)}
+              <InfoTip topic="renewal-notice" />
+            </span>
+          )}
           <button
             className="rounded border border-[var(--border)] px-3 py-1.5 text-sm "
             disabled={pending}
