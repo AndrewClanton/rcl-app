@@ -150,7 +150,6 @@ export default function DevicesPanel({
   const stationLabel = STATION_LABEL[settings.station];
   // What the customer screen plays: as set here, else its own default.
   const sound = { on: settings.tabletSound ?? TABLET_SOUND_DEFAULT.on, volume: settings.tabletVolume ?? TABLET_SOUND_DEFAULT.volume };
-  const readerSide = settings.readerSide ?? "right";
 
   return (
     <>
@@ -239,28 +238,6 @@ export default function DevicesPanel({
                   ))}
                 </div>
               )}
-              <div className="pt-1 text-sm">
-                <div className="flex items-center">
-                  Card reader is to the left or right of the customer screen
-                  <InfoTip topic="pay-on-reader" />
-                </div>
-                <div className="mt-1.5 flex gap-2" role="radiogroup" aria-label="Card reader is to the left or right of the customer screen">
-                  {(["left", "right"] as const).map((side) => (
-                    <button
-                      key={side}
-                      role="radio"
-                      aria-checked={readerSide === side}
-                      className={`chip flex-1 !px-3 !py-2 text-sm ${readerSide === side ? "chip-selected font-bold" : ""}`}
-                      onClick={() => saveDeviceSettings({ readerSide: side })}
-                    >
-                      {side === "left" ? "← Left" : "Right →"}
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                  As the guest faces it. The customer screen&apos;s &quot;Finish on the card reader&quot; arrow points this way.
-                </p>
-              </div>
             </section>
 
             <section className="space-y-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>

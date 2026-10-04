@@ -186,9 +186,8 @@ export const HELP_TOPICS = {
     title: "\"Finish on the card reader\" on the customer screen",
     area: "Register: payments",
     body:
-      "Guests kept tapping their card on the customer screen, and tapping it on the reader before picking a tip (the reader asks for the tip first, so that tap does nothing). So once a card payment reaches the reader, the customer screen says \"Finish on the card reader\" in big letters, with a drawing of the reader, a big arrow pointing at it and a soft chime, the order shrunk to a strip below. It shows two steps: pick a tip on the reader, then tap, insert or swipe the card. Stripe doesn't say when the tip is picked, so both stay up; step 2 lights up once a card has been tried. No tip asked (taken on the register already): only the card step. A tab's card on file: only the tip. Cash and vouchers never show it.",
+      "Guests kept tapping their card on the customer screen, and tapping it on the reader before picking a tip (the reader asks for the tip first, so that tap does nothing). So once a card payment reaches the reader, the customer screen says \"Finish on the card reader\" in big letters, with a drawing of the reader and a soft chime, the order shrunk to a strip below. It shows two steps: pick a tip on the reader, then tap, insert or swipe the card. Stripe doesn't say when the tip is picked, so both stay up; step 2 lights up once a card has been tried. No tip asked (taken on the register already): only the card step. A tab's card on file: only the tip. Cash and vouchers never show it.",
     steps: [
-      "Point the arrow: Devices → Card reader → Left or Right, as the guest faces the screen. It's saved on this register and sent with every card payment; right to start.",
       "Approved: the screen says so, with the usual happy sound. Cancel on the register and it goes back to the order.",
     ],
   },

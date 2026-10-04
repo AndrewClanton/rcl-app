@@ -349,9 +349,8 @@ export default function PosApp({
     [checkReader],
   );
   // A card payment waiting on the reader (PaymentModal): the customer
-  // screen says "Finish on the card reader", its arrow toward the side
-  // Devices says the reader sits.
-  const [readerPrompt, setReaderPrompt] = useState<Omit<ReaderPrompt, "side"> | null>(null);
+  // screen says "Finish on the card reader".
+  const [readerPrompt, setReaderPrompt] = useState<ReaderPrompt | null>(null);
   // A scanner at the counter: an online ticket's QR prints its tickets right
   // away (one print per ticket, ever); a member card checks them in. An empty
   // register also picks up the scanned member so the order goes on their
@@ -666,7 +665,7 @@ export default function PosApp({
     // The payment screen is up: "ready to pay" on the customer screen.
     paying: payOpen,
     readerWaking: payOpen && readerWaking,
-    reader: payOpen && readerPrompt ? { ...readerPrompt, side: devices.readerSide ?? "right" } : null,
+    reader: payOpen && readerPrompt ? readerPrompt : null,
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const sendToTablet = useCallback((event: string, payload: object) => {
@@ -752,7 +751,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking, readerPrompt, devices.readerSide]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking, readerPrompt]);
 
   function resetOrder() {
     setCart([]);

@@ -60,16 +60,11 @@ export interface RegisterCartSnapshot {
 // the reader only asks for the tip).
 // step: "card" once the register can tell they're past the tip (a card was
 // tried); missing while it can't, so both steps stay up.
-// side: the reader is to this side of the customer screen (the register's
-// Devices), so the big arrow points at it.
 export interface ReaderPrompt {
   tip: boolean;
   card: boolean;
   step?: "card";
-  side: ReaderSide;
 }
-
-export type ReaderSide = "left" | "right";
 
 // Checked, since it comes off the channel: null for anything else.
 export function parseReaderPrompt(p: unknown): ReaderPrompt | null {
@@ -78,7 +73,7 @@ export function parseReaderPrompt(p: unknown): ReaderPrompt | null {
   const tip = r.tip === true;
   const card = r.card !== false;
   if (!tip && !card) return null;
-  return { tip, card, step: card && r.step === "card" ? "card" : undefined, side: r.side === "left" ? "left" : "right" };
+  return { tip, card, step: card && r.step === "card" ? "card" : undefined };
 }
 
 // The customer screen's sound effects (display/customer/sounds.ts): on or

@@ -1,4 +1,4 @@
-import type { ReaderPrompt, ReaderSide, RegisterCartSnapshot } from "@/lib/registerChannel";
+import type { ReaderPrompt, RegisterCartSnapshot } from "@/lib/registerChannel";
 import { isGuestName } from "@/lib/member-name";
 import p from "./payreader.module.css";
 
@@ -7,8 +7,9 @@ import p from "./payreader.module.css";
 // cart, as `reader`). Guests kept tapping their card on this screen, and
 // tapping it on the reader before the tip (the reader asks for the tip
 // first, so that tap does nothing). So: one big instruction, a drawing of
-// the reader with a big arrow toward where it sits (Devices: left or
-// right), and the steps in order. The order shrinks to a strip at the foot.
+// the reader, and the steps in order. No arrow: the reader sits on the
+// counter below the screen's stand, so any arrow pointed the wrong way.
+// The order shrinks to a strip at the foot.
 //
 // Steps: "Pick a tip on the reader", then "Then tap, insert or swipe your
 // card". No tip asked (taken on the register already): only the card. A
@@ -26,7 +27,7 @@ export default function PayOnReader({ prompt, cart, approved = false }: { prompt
   const numbered = steps.length > 1;
 
   return (
-    <div className={`${p.screen} ${prompt.side === "left" ? p.left : ""} ${approved ? p.approved : ""}`} role="status" aria-live="polite">
+    <div className={`${p.screen} ${approved ? p.approved : ""}`} role="status" aria-live="polite">
       <div className={p.head}>
         {approved ? (
           <>
@@ -46,7 +47,6 @@ export default function PayOnReader({ prompt, cart, approved = false }: { prompt
 
       <div className={p.art} aria-hidden="true">
         <ReaderArt tip={prompt.tip && !approved} card={prompt.card} />
-        {!approved && <Arrow side={prompt.side} />}
       </div>
 
       {!approved && (
@@ -135,15 +135,6 @@ function ReaderArt({ tip, card }: { tip: boolean; card: boolean }) {
         </>
       )}
       <rect x="64" y="210" width="92" height="10" rx="5" fill="#14110c" />
-    </svg>
-  );
-}
-
-// Big and chunky, toward the edge the reader sits past.
-function Arrow({ side }: { side: ReaderSide }) {
-  return (
-    <svg className={`${p.arrow} ${side === "left" ? p.arrowLeft : ""}`} viewBox="0 0 120 100">
-      <path d="M6 34 H62 V8 L114 50 L62 92 V66 H6 Z" fill="#ffc72c" stroke="#14110c" strokeWidth="5" strokeLinejoin="round" />
     </svg>
   );
 }
