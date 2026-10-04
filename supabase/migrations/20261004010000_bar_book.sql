@@ -86,3 +86,45 @@ update ingredients i
 set family = g.family
 from guess g
 where i.id = g.id and g.family is not null and i.family is null;
+
+-- ---------- The Bar Book: recipes that stand on their own ----------
+-- A recipe still belongs to at most one menu item (unique), but can now
+-- belong to none: a drink in the book we don't sell yet. Such a drink needs
+-- its own name.
+--   name         the drink's name when there's no menu item (a menu item's
+--                recipe goes by the item's name)
+--   method       build, shake, stir or blend
+--   garnishes    the garnishes, one per entry ("Salt rim", "Lime wheel");
+--                the old free-text garnish column stays for menu recipes
+--   ice          none, cubes or crushed; empty goes by the glass
+--   source       menu (a menu item's own), house (ours, added in Back
+--                office) or seed (the starter list, scripts/seed-bar-book.mjs)
+--   description  a line about the drink, for the recipe card
+-- recipe_ingredients.optional: a line that never stops the drink being made
+-- (a garnish, a float).
+
+alter table recipes alter column menu_item_id drop not null;
+alter table recipes add column if not exists name text;
+alter table recipes add column if not exists method text;
+alter table recipes add column if not exists garnishes text[] not null default '{}';
+alter table recipes add column if not exists ice text;
+alter table recipes add column if not exists source text not null default 'menu';
+alter table recipes add column if not exists description text;
+
+alter table recipes drop constraint if exists recipes_method_check;
+alter table recipes add constraint recipes_method_check check (method is null or method in ('build', 'shake', 'stir', 'blend'));
+alter table recipes drop constraint if exists recipes_ice_check;
+alter table recipes add constraint recipes_ice_check check (ice is null or ice in ('none', 'cubes', 'crushed'));
+alter table recipes drop constraint if exists recipes_source_check;
+alter table recipes add constraint recipes_source_check check (source in ('menu', 'house', 'seed'));
+alter table recipes drop constraint if exists recipes_name_check;
+alter table recipes add constraint recipes_name_check check (name is null or char_length(btrim(name)) between 1 and 80);
+alter table recipes drop constraint if exists recipes_named_check;
+alter table recipes add constraint recipes_named_check check (menu_item_id is not null or name is not null);
+alter table recipes drop constraint if exists recipes_description_check;
+alter table recipes add constraint recipes_description_check check (description is null or char_length(description) <= 400);
+
+-- One book drink per name (the seed script inserts by lower(name)).
+create unique index if not exists recipes_book_name_idx on recipes (lower(btrim(name))) where menu_item_id is null;
+
+alter table recipe_ingredients add column if not exists optional boolean not null default false;

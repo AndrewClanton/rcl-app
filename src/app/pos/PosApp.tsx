@@ -27,7 +27,10 @@ import { ItemOutDialog } from "./shift/RanOut";
 import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
 import BarTab from "./BarTab";
+import BarBook from "./BarBook";
+import { loadBarBook } from "./bar-book-actions";
 import { isBarCategory } from "@/lib/bar/menu";
+import { countMakeable, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
@@ -481,6 +484,49 @@ export default function PosApp({
   }
   // The bar's category draws as the one-screen Bar tab (BarTab.tsx).
   const barTab = !!category && isBarCategory(category) && !builderItem && categoryId !== MOVIES_TAB && categoryId !== CUSTOMERS_TAB;
+
+  // The Bar Book (BarBook.tsx): read when the Bar tab first shows, and again
+  // each time it opens. Until the Bar Book migration is applied it reports
+  // not ready and the Bar tab shows no book button.
+  const [book, setBook] = useState<{ state: "idle" | "ready" | "not-ready" | "error"; recipes: BookRecipe[]; stock: BookStock[] }>({ state: "idle", recipes: [], stock: [] });
+  const [bookOpen, setBookOpen] = useState(false);
+  const [bookLoading, setBookLoading] = useState(false);
+  const bookAsked = useRef(false);
+  // State changes only once the answer is back (the opening tap shows
+  // "checking stock" itself).
+  const refreshBook = useCallback(() => {
+    loadBarBook()
+      .then(
+        (r) =>
+          setBook((prev) =>
+            r.ok ? { state: "ready", recipes: r.recipes, stock: r.stock } : prev.state === "ready" && !r.notReady ? prev : { state: r.notReady ? "not-ready" : "error", recipes: [], stock: [] },
+          ),
+        () => setBook((prev) => (prev.state === "ready" ? prev : { ...prev, state: "error" })),
+      )
+      .finally(() => setBookLoading(false));
+  }, []);
+  useEffect(() => {
+    if (!barTab || bookAsked.current) return;
+    bookAsked.current = true;
+    refreshBook();
+  }, [barTab, refreshBook]);
+  // The book rings up register items, so it knows only the alcohol ones
+  // that are on the register (not hidden).
+  const bookMenu = useMemo<MenuRef[]>(() => {
+    const list: MenuRef[] = [];
+    const walk = (cs: MenuCategory[]) => {
+      for (const c of cs) {
+        for (const i of c.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price) });
+        walk(c.subcategories);
+      }
+    };
+    walk(categories);
+    return list;
+  }, [categories]);
+  const bookMakeable = useMemo(() => {
+    if (book.state !== "ready") return 0;
+    return countMakeable(book.recipes, book.stock, bookMenu);
+  }, [book, bookMenu]);
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
@@ -1848,7 +1894,31 @@ export default function PosApp({
         ) : builderItem ? (
           <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
         ) : barTab && category ? (
-          <BarTab category={category} recipesByItem={recipesByItem} outs={outs} onTap={tapItem} onCustom={() => setCustomOpen(true)} />
+          <BarTab
+            category={category}
+            recipesByItem={recipesByItem}
+            outs={outs}
+            onTap={tapItem}
+            onCustom={() => setCustomOpen(true)}
+            book={
+              book.state === "ready" ? (
+                <button
+                  className="flex min-h-14 shrink-0 items-center justify-between gap-2 rounded-lg border-2 px-3 py-2 text-left"
+                  style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
+                  onClick={() => {
+                    setBookOpen(true);
+                    setBookLoading(true);
+                    refreshBook();
+                  }}
+                >
+                  <span className="font-display text-lg leading-none">Bar Book</span>
+                  <span className="rounded-full px-2 py-1 text-xs font-bold" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
+                    {bookMakeable} we can make
+                  </span>
+                </button>
+              ) : null
+            }
+          />
         ) : (
           <div className="space-y-4">
             {menuSections.map((section, i) => (
@@ -1992,6 +2062,22 @@ export default function PosApp({
       )}
 
       {noteOpen && <DevNoteDialog about={NOTE_ABOUT} onClose={() => setNoteOpen(false)} />}
+
+      {bookOpen && book.state === "ready" && (
+        <BarBook
+          recipes={book.recipes}
+          stock={book.stock}
+          menuItems={bookMenu}
+          outs={outs}
+          updating={bookLoading}
+          onClose={() => setBookOpen(false)}
+          // Exactly what tapping its button on the Bar tab does.
+          onRingUp={(id) => {
+            setBookOpen(false);
+            tapItem(id);
+          }}
+        />
+      )}
 
       {confirmState && (
         <ConfirmModal

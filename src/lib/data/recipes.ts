@@ -8,20 +8,26 @@ interface RecipeRow {
   instructions: string | null;
   glassware: string | null;
   garnish: string | null;
+  method?: string | null;
+  garnishes?: string[] | null;
+  ice?: string | null;
+  description?: string | null;
   ingredients: {
     id: string;
     ingredient_id: string;
     quantity: number;
     sort_order: number;
+    optional?: boolean | null;
     ingredient: { name: string; unit: string; family?: string | null; kind?: string | null } | null;
   }[];
 }
 
 const BASE = "id, menu_item_id, instructions, glassware, garnish";
 const LINES = "id, ingredient_id, quantity, sort_order";
-// What the drink icons read (each ingredient's color family) once the Bar
-// Book migration (20261004010000) is in; the plain columns before it.
-const WITH_BAR_BOOK = `${BASE}, ingredients:recipe_ingredients(${LINES}, ingredient:ingredients(name, unit, family, kind))`;
+// What the drink icons and recipe cards read (each ingredient's color
+// family, the method, garnishes, ice) once the Bar Book migration
+// (20261004010000) is in; the plain columns before it.
+const WITH_BAR_BOOK = `${BASE}, method, garnishes, ice, description, ingredients:recipe_ingredients(${LINES}, optional, ingredient:ingredients(name, unit, family, kind))`;
 const PLAIN = `${BASE}, ingredients:recipe_ingredients(${LINES}, ingredient:ingredients(name, unit))`;
 
 // Recipes are staff-only (no public-read policy) and fetched separately
@@ -45,6 +51,7 @@ export async function getRecipesByItem(): Promise<Record<string, Recipe>> {
       instructions: r.instructions,
       glassware: r.glassware,
       garnish: r.garnish,
+      ...(r.method !== undefined ? { method: r.method, garnishes: r.garnishes ?? [], ice: r.ice ?? null, description: r.description ?? null } : {}),
       ingredients: r.ingredients
         .filter((ri) => ri.ingredient)
         .map((ri) => ({
@@ -54,7 +61,7 @@ export async function getRecipesByItem(): Promise<Record<string, Recipe>> {
           unit: ri.ingredient!.unit as Recipe["ingredients"][number]["unit"],
           quantity: Number(ri.quantity),
           sort_order: ri.sort_order,
-          ...(ri.ingredient!.family !== undefined ? { family: ri.ingredient!.family, kind: ri.ingredient!.kind ?? null } : {}),
+          ...(ri.ingredient!.family !== undefined ? { family: ri.ingredient!.family, kind: ri.ingredient!.kind ?? null, optional: ri.optional === true } : {}),
         })),
     };
   }

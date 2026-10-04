@@ -156,6 +156,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     },
     { href: "/admin/ingredients", label: "Ingredients & counts", about: "The ingredients recipes use, their costs, and shelf counts.", keywords: "inventory stock par counts cost pour", min: "manager" },
     {
+      href: "/admin/bar-book",
+      label: "Bar Book",
+      about: "What the bar carries, each ingredient's icon color, and our own drinks for the register's Bar Book.",
+      keywords: "cocktails drinks recipes bar book carried makeable icons colors house drinks starter list spirits",
+      min: "manager",
+    },
+    {
       href: "/admin/ran-out",
       label: "Ran out",
       about: "What staff reported out, marking it back in stock, this week's ran-outs, and who gets the email.",

@@ -736,7 +736,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   // Paged, and read in one go through the order (a list of thousands of
   // order ids used to be pasted into a second request, after the first had
   // already stopped at 1,000 orders).
-  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }] = await Promise.all([
+  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }, notCarriedRead] = await Promise.all([
     supabase.from("ingredients").select("id, name, unit, unit_cost").eq("active", true).order("category").order("name"),
     fetchAll<{ menu_item_id: string | null; quantity: number }>((from, to) =>
       supabase
@@ -753,9 +753,13 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     ),
     getRecipesByItem(),
     supabase.from("menu_items").select("id").eq("is_alcohol", true),
+    // Ingredients the bar doesn't carry (the Bar Book's starter list adds
+    // them). An error, like before the Bar Book migration, means none.
+    supabase.from("ingredients").select("id").eq("carried", false),
   ]);
   if (ingErr) throw ingErr;
   if (drinkErr) throw drinkErr;
+  const notCarried = new Set(notCarriedRead.error ? [] : (notCarriedRead.data ?? []).map((i) => i.id as string));
 
   // The bar only. Food has recipes too (a hot dog's bun, popcorn kernels),
   // so "Ran out" knows which buttons to stop; those amounts are placeholders
@@ -791,7 +795,11 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     return best;
   }
 
-  const rows: AlcoholUsageRow[] = (ingredients ?? []).filter((ing) => barIngredients.has(ing.id) || !foodIngredients.has(ing.id)).map((ing) => {
+  // Not-carried ingredients no menu drink uses and nobody counts stay off.
+  const rows: AlcoholUsageRow[] = (ingredients ?? [])
+    .filter((ing) => barIngredients.has(ing.id) || !foodIngredients.has(ing.id))
+    .filter((ing) => !notCarried.has(ing.id) || barIngredients.has(ing.id) || countsByIngredient.has(ing.id))
+    .map((ing) => {
     const list = countsByIngredient.get(ing.id) ?? [];
     const startCount = latestAtOrBefore(list, since);
     const endCount = latestAtOrBefore(list, now);

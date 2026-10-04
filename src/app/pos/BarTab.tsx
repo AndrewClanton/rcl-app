@@ -113,7 +113,7 @@ export default function BarTab({
   );
 
   return (
-    <div className="grid gap-2.5 md:min-h-0 md:flex-1 md:grid-cols-[176px_minmax(0,1fr)] lg:grid-cols-[208px_minmax(0,1fr)]">
+    <div className="grid gap-2.5 md:min-h-0 md:flex-1 md:grid-cols-[176px_minmax(0,1fr)] md:grid-rows-[minmax(0,1fr)] lg:grid-cols-[208px_minmax(0,1fr)]">
       {/* Left rail: beer, wine, the Bar Book. */}
       <div className="flex min-w-0 flex-col gap-2.5 md:min-h-0 md:overflow-y-auto md:overscroll-contain">
         {parts.beer.length > 0 && (
