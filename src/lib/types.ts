@@ -137,6 +137,10 @@ export interface RecipeIngredientLine {
   unit: IngredientUnit;
   quantity: number;
   sort_order: number;
+  // From the Bar Book migration (20261004010000); missing before it.
+  family?: string | null; // its color on the drink icons
+  kind?: string | null;
+  optional?: boolean; // never stops the drink being made (a garnish)
 }
 
 // Recipes are fetched separately from the public menu tree (see
@@ -149,6 +153,11 @@ export interface Recipe {
   glassware: string | null;
   garnish: string | null;
   ingredients: RecipeIngredientLine[];
+  // From the Bar Book migration (20261004010000); missing before it.
+  method?: string | null; // build, shake, stir, blend
+  garnishes?: string[] | null;
+  ice?: string | null; // none, cubes, crushed
+  description?: string | null;
 }
 
 export interface RoomAddon {

@@ -170,6 +170,25 @@ body {
     color: var(--accent);
   }
 
+  /* The register's Bar tab: a button tinted by its drink's spirit. --sp is
+     the spirit's color from the fixed legend (src/lib/bar/icons.ts);
+     --sp-soft and --sp-line are plain rgba versions for iPad Safari before
+     16.2, which has no color-mix(). Set by tintVars (src/lib/bar/menu.ts). */
+  .bar-tint {
+    background: var(--sp-soft, var(--surface));
+    border-color: var(--sp-line, var(--border));
+    transition: filter 120ms;
+  }
+  @supports (background: color-mix(in oklab, red 50%, white)) {
+    .bar-tint {
+      background: color-mix(in oklab, var(--sp) 16%, var(--surface));
+      border-color: color-mix(in oklab, var(--sp) 45%, var(--border));
+    }
+  }
+  .bar-tint:active {
+    filter: brightness(0.94);
+  }
+
   .notice {
     @apply rounded-lg border p-6;
   }

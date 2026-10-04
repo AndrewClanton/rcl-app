@@ -12,6 +12,9 @@ export interface PrepTicket {
   order_number: number;
   order_name: string | null;
   station: Station;
+  // The menu item it was rung up as (null for a custom line), so the bar
+  // board can show its drink icon and recipe (lib/data/barBook.ts).
+  menu_item_id: string | null;
 }
 
 export type Station = "kitchen" | "bar";
@@ -45,7 +48,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
   const { data, error } = await supabase
     .from("order_items")
     .select(
-      "id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at)"
+      "id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item_id, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at)"
     )
     .eq("is_event", false)
     .eq("order.status", "completed")
@@ -64,6 +67,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
     ready_at: string | null;
     created_at: string;
     is_alcohol: boolean;
+    menu_item_id: string | null;
     menu_item: { category: { key: string } | null } | null;
     order: { order_number: number; order_name: string | null };
   }[];
@@ -84,6 +88,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       order_number: row.order.order_number,
       order_name: row.order.order_name,
       station: station as Station,
+      menu_item_id: row.menu_item_id ?? null,
     }));
 }
 

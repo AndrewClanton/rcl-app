@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
 import { reprintOrderTicket, setItemReady } from "./actions";
+import DrinkIcon from "@/components/bar/DrinkIcon";
+import { FAMILY_COLOR } from "@/lib/bar/icons";
+import { boardEntryFor, type BoardEntry } from "@/lib/bar/book";
 
 function timeAgo(iso: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -17,8 +20,26 @@ function timeAgo(iso: string) {
 // and interactive: tapping an item marks it ready, which also broadcasts to
 // every other tablet watching the same board (another kitchen screen, or
 // the customer-facing display if it's ever extended to show prep status).
-export default function PrepTicketBoard({ title, station, initialTickets }: { title: string; station: Board; initialTickets: PrepTicket[] }) {
+//
+// The bar and both-at-once boards also get `drinks`: each alcohol menu
+// item's drink icon and recipe card, read once when the page loads. A line
+// with one shows its icon, and a Recipe button when it has a recipe; a line
+// without (coffee, sodas, a custom line, an item added since the page
+// loaded) looks exactly as it always did. The kitchen board gets none.
+export default function PrepTicketBoard({
+  title,
+  station,
+  initialTickets,
+  drinks,
+}: {
+  title: string;
+  station: Board;
+  initialTickets: PrepTicket[];
+  drinks?: Record<string, BoardEntry>;
+}) {
   const [tickets, setTickets] = useState(initialTickets);
+  // The recipe open on screen, if any.
+  const [recipe, setRecipe] = useState<{ name: string; entry: BoardEntry } | null>(null);
   const [connected, setConnected] = useState(false);
   const [, forceTick] = useState(0);
   // "Reprint ticket" on a card: which order is printing, and how it went.
@@ -103,6 +124,7 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                   order_number: order.order_number,
                   order_name: order.order_name,
                   station: rowStation,
+                  menu_item_id: row.menu_item_id ?? null,
                 },
                 ...prev,
               ].slice(0, 60)
@@ -190,17 +212,11 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                   )}
                 </div>
                 <div className="space-y-2">
-                  {items.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => toggleReady(item)}
-                      className="flex w-full items-start justify-between gap-2 rounded-lg border p-2 text-left transition-colors"
-                      style={{
-                        borderColor: item.ready ? "var(--success-border)" : "var(--border)",
-                        background: item.ready ? "var(--success-bg)" : "transparent",
-                      }}
-                    >
-                      <div className="min-w-0">
+                  {items.map((item) => {
+                    const drink = boardEntryFor(drinks, item.menu_item_id);
+                    // Name and choices, as they've always been.
+                    const text = (
+                      <>
                         {station === "all" && (
                           <span
                             className="mr-1.5 rounded px-1 py-px align-middle text-[10px] font-bold uppercase tracking-wide"
@@ -218,7 +234,28 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                             {item.modifiers.join(", ")}
                           </div>
                         )}
-                      </div>
+                      </>
+                    );
+                    const line = (
+                    <button
+                      key={item.id}
+                      onClick={() => toggleReady(item)}
+                      className={`flex w-full items-start justify-between gap-2 rounded-lg border p-2 text-left transition-colors${drink ? " min-w-0 flex-1" : ""}`}
+                      style={{
+                        borderColor: item.ready ? "var(--success-border)" : "var(--border)",
+                        background: item.ready ? "var(--success-bg)" : "transparent",
+                      }}
+                    >
+                      {drink ? (
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span style={{ color: "var(--foreground)", opacity: item.ready ? 0.5 : 1 }}>
+                            <DrinkIcon spec={drink.spec} size={40} />
+                          </span>
+                          <div className="min-w-0">{text}</div>
+                        </div>
+                      ) : (
+                        <div className="min-w-0">{text}</div>
+                      )}
                       <span
                         className="shrink-0 rounded-full border-2 text-xs font-bold"
                         style={{
@@ -234,13 +271,86 @@ export default function PrepTicketBoard({ title, station, initialTickets }: { ti
                         {item.ready ? "✓" : ""}
                       </span>
                     </button>
-                  ))}
+                    );
+                    if (!drink) return line;
+                    // The line marks it ready; Recipe, beside it, only opens the card.
+                    return (
+                      <div key={item.id} className="flex items-stretch gap-2">
+                        {line}
+                        {drink.card && (
+                          <button
+                            className="min-h-11 shrink-0 rounded-lg border-2 px-3 text-sm font-bold"
+                            style={{ borderColor: "var(--foreground)", color: "var(--foreground)", background: "var(--surface)" }}
+                            onClick={() => setRecipe({ name: item.name, entry: drink })}
+                          >
+                            Recipe
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
           })}
         </div>
       )}
+
+      {recipe && <RecipeOverlay name={recipe.name} entry={recipe.entry} onClose={() => setRecipe(null)} />}
+    </div>
+  );
+}
+
+// A drink's recipe, big enough to read from arm's length while making it.
+function RecipeOverlay({ name, entry, onClose }: { name: string; entry: BoardEntry; onClose: () => void }) {
+  const card = entry.card;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  if (!card) return null;
+  const facts = [card.method, card.glass, card.garnish ? `Garnish: ${card.garnish}` : null].filter(Boolean).join(" · ");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div
+        className="card flex max-h-[92vh] w-full max-w-4xl flex-col gap-5 overflow-y-auto shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${name} recipe`}
+        onClick={(e) => e.stopPropagation()}
+        style={{ color: "var(--foreground)" }}
+      >
+        <div className="flex items-start gap-6">
+          <span className="shrink-0" style={{ color: "var(--foreground)" }}>
+            <DrinkIcon spec={entry.spec} size={160} label={name} />
+          </span>
+          <div className="min-w-0">
+            <h2 className="font-display text-4xl leading-tight">{name}</h2>
+            {facts && <p className="mt-2 text-xl" style={{ color: "var(--muted)" }}>{facts}</p>}
+          </div>
+        </div>
+        {card.lines.length > 0 && (
+          <ul className="space-y-1">
+            {card.lines.map((l, i) => (
+              <li key={i} className="flex items-center gap-3 border-b py-2 text-2xl" style={{ borderColor: "var(--border)" }}>
+                <span className="h-5 w-5 shrink-0 rounded" style={{ background: l.family ? FAMILY_COLOR[l.family] : "var(--border)" }} aria-hidden />
+                <span className="min-w-0 flex-1">
+                  {l.name}
+                  {l.optional && <span className="ml-2 text-lg" style={{ color: "var(--muted)" }}>optional</span>}
+                </span>
+                <span className="shrink-0 font-bold tabular-nums">{l.amount}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {card.instructions && <p className="text-2xl leading-snug">{card.instructions}</p>}
+        <button className="btn-primary min-h-16 w-full !text-2xl" onClick={onClose}>
+          Close
+        </button>
+      </div>
     </div>
   );
 }
