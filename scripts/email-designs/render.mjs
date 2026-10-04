@@ -15,11 +15,13 @@
 //
 // Re-run it whenever the canvas designs change, then upload.mjs. Old
 // pictures stay in the bucket, so emails already sent keep working.
+// `--only=<design>` renders just one design's pictures (e.g. paid-through)
+// and leaves the rest of the manifest alone.
 //
 // Uses headless Chrome with one reused profile folder (chrome.mjs) and
 // sharp for compression. Needs network for the Google fonts the canvas uses.
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
 import { withChrome } from "./chrome.mjs";
@@ -76,13 +78,36 @@ async function snapNow(page, piece, dev) {
   return { rect: r, png };
 }
 
+// --only=<design>: render just that design's pictures (no shared or art
+// pieces) and keep everything else in the manifest as it is, so the other
+// emails' pictures don't change.
+const ONLY = process.argv.find((a) => a.startsWith("--only="))?.slice(7) ?? null;
+
+// The manifest as it stands: its PIECES and ART lines (one JSON object each).
+function readManifest() {
+  const src = readFileSync(MANIFEST, "utf8");
+  const [piecePart, artPart = ""] = src.split("export const ART");
+  const pieces = {};
+  for (const m of piecePart.matchAll(/^ {2}("[^"]+"): (\{.*\}),$/gm)) pieces[JSON.parse(m[1])] = JSON.parse(m[2]);
+  const art = {};
+  for (const m of artPart.matchAll(/^ {2}([A-Za-z0-9_-]+): (\{.*\}),$/gm)) art[m[1]] = JSON.parse(m[2]);
+  return { pieces, art };
+}
+
 async function main() {
-  rmSync(OUT, { recursive: true, force: true });
+  if (ONLY && !DESIGN_PIECES[ONLY]) throw new Error(`No design "${ONLY}" in pieces.mjs`);
+  const kept = ONLY ? readManifest() : { pieces: {}, art: {} };
+  if (ONLY) {
+    for (const id of Object.keys(kept.pieces)) if (id.startsWith(`${ONLY}/`)) delete kept.pieces[id];
+    rmSync(join(OUT, ONLY), { recursive: true, force: true });
+  } else {
+    rmSync(OUT, { recursive: true, force: true });
+    rmSync(ART_DIR, { recursive: true, force: true });
+  }
   mkdirSync(OUT, { recursive: true });
-  rmSync(ART_DIR, { recursive: true, force: true });
   mkdirSync(ART_DIR, { recursive: true });
-  const pieces = {}; // "design/name" -> { alt, d, m }
-  const art = {}; // kind -> { d, m }
+  const pieces = kept.pieces; // "design/name" -> { alt, d, m }
+  const art = kept.art; // kind -> { d, m }
   let total = 0;
 
   const save = async (id, dev, png, fmt, alt, rect) => {
@@ -99,12 +124,15 @@ async function main() {
   await withChrome(async (page) => {
     for (const dev of DEVICES) {
       // Shared pieces, from the first design.
-      await page.open(designUrl("RoyaleIsHere", dev.name), { width: dev.width, height: 900, scale: SCALE });
-      for (const p of COMMON) {
-        const { rect, png } = await snap(page, p, dev.name);
-        await save(`common/${p.name}`, dev, png, p.fmt, p.alt, rect);
+      if (!ONLY) {
+        await page.open(designUrl("RoyaleIsHere", dev.name), { width: dev.width, height: 900, scale: SCALE });
+        for (const p of COMMON) {
+          const { rect, png } = await snap(page, p, dev.name);
+          await save(`common/${p.name}`, dev, png, p.fmt, p.alt, rect);
+        }
       }
       for (const [key, d] of Object.entries(DESIGN_PIECES)) {
+        if (ONLY && key !== ONLY) continue;
         await page.open(designUrl(d.stem, dev.name), { width: dev.width, height: 900, scale: SCALE });
         for (const p of d.pieces) {
           if (p.only && p.only !== dev.name) continue;

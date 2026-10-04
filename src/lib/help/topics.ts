@@ -372,6 +372,18 @@ export const HELP_TOPICS = {
     ],
     links: [{ label: "Members", href: "/admin/members" }],
   },
+  "paid-through": {
+    title: "Paid-through dates (Insiders+ paid ahead)",
+    area: "Members and memberships",
+    body:
+      "For a member who already paid for Insiders+ another way, like a whole year on the old website. Until the date they count as paid-for Insiders+ everywhere: gold at the register, every perk, no \"no card on file\" warning. When they add a card (My Account → Billing, the card page from their member page, or the register), nothing is charged until the date; then it renews on the plan picked here (yearly for an old-site annual), at that day's price plus tax. If no card is on by the date, the perks stop the next day. Owners and admins set or change the date; the page shows who set it and when. A member already billed by their own card, or complimentary, or on a gifted year can't get one.",
+    steps: [
+      "Members → find them → open their page.",
+      "Paid through → Set a paid-through date: pick the date, Yearly or Monthly, and add a note (e.g. old-site annual, confirmed 10/3). Save.",
+      "To tell them how to add their card without being charged early: Send paid-through explainer. It emails just them the 3 steps, with their date.",
+    ],
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
   "member-billing": {
     title: "Putting a card on a membership",
     area: "Members and memberships",

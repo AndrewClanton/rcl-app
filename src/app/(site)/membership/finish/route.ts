@@ -1,6 +1,7 @@
 import { NextResponse, after, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
+import { firstChargeHold } from "@/lib/plus-status";
 import { openFinishToken } from "@/lib/plus-finish-token";
 import { allowFromConnection } from "@/lib/public-form-guard";
 import { recordPersonalClick } from "@/lib/email/clicks";
@@ -47,6 +48,9 @@ export async function GET(req: NextRequest) {
     priceTier: token.tier,
     interval: token.interval,
     returnTo: null,
+    // On a gifted or prepaid year (lib/paid-through.ts): nothing charged
+    // until it ends.
+    firstChargeAt: firstChargeHold(member),
     // Made for this member (by staff, or in their own email): the card is theirs.
     linkCard: true,
     // From staff at the register ("phone"); from the email, they did it

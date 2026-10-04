@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSignedInMember } from "@/lib/member-auth";
 import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
+import { firstChargeHold } from "@/lib/plus-status";
 import { safePath } from "@/lib/safe-path";
 
 // Every "Get Insiders+" button on the site points here.
@@ -40,17 +41,13 @@ export async function GET(req: NextRequest) {
     priceTier: member.price_tier ?? "adult",
     returnTo: next,
     interval: annual ? "year" : "month",
-    firstChargeAt: giftEnds ? heldUntil(giftEnds) : null,
+    // A gifted or prepaid year (lib/paid-through.ts): the first charge waits
+    // until it ends (Stripe holds one only 48+ hours out; sooner just
+    // starts billing now).
+    firstChargeAt: firstChargeHold(member),
     // Signed in as themselves: the card they pay with is theirs.
     linkCard: true,
   }).catch(() => null);
   if (!checkoutUrl) return go("/membership?checkout=unavailable#join");
   return NextResponse.redirect(checkoutUrl, 303);
-}
-
-// Stripe holds a first charge only 48+ hours out; a gift ending sooner than
-// that just starts billing now.
-function heldUntil(giftEnds: string): Date | null {
-  const at = new Date(giftEnds);
-  return at.getTime() > Date.now() + 49 * 3_600_000 ? at : null;
 }

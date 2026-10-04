@@ -2,7 +2,7 @@
 // copied here as the canvas exported them (source/*.dc.html), and how to
 // open one in Chrome: the canvas's /_blob/ pictures are our own photos in
 // public/, so each is pointed at the file here.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -34,8 +34,13 @@ export const DESIGNS = [
 
 // A local copy of one design (device "Desktop" or "Phone") that Chrome can
 // open: pictures pointed at public/, the canvas runtime script left out.
+// A design drawn by hand rather than on the canvas (PaidThrough) is one file
+// for both: data-dev="Desktop" or "Phone" on <html> picks the size.
 export function designUrl(stem, device) {
-  let html = readFileSync(join(HERE, "source", `${stem}-${device}.dc.html`), "utf8");
+  const own = join(HERE, "source", `${stem}-${device}.dc.html`);
+  let html = existsSync(own)
+    ? readFileSync(own, "utf8")
+    : readFileSync(join(HERE, "source", `${stem}.dc.html`), "utf8").replace(/<html\b/, `<html data-dev="${device}"`);
   html = html.replace(/\/_blob\/([0-9a-f]{32})/g, (m, id) => {
     if (!BLOBS[id]) throw new Error(`Unknown canvas picture ${id} in ${stem}-${device}`);
     return pathToFileURL(join(ROOT, BLOBS[id])).href;
