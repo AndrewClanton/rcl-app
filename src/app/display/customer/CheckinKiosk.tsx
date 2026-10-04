@@ -106,6 +106,13 @@ const BADGE_REWARD_MS = 10_000;
 
 // A member's entrance over the whole screen (lib/flair.ts): `key` remounts
 // it, `at` is when staff confirmed them.
+// Their entrance again (CheckinKiosk `encore`): flair keys off their card.
+export interface Encore {
+  key: number;
+  entrance: string | null;
+  color: string | null;
+}
+
 interface Entrance {
   key: number;
   at: number;
@@ -204,6 +211,8 @@ const MAX_ENTRY = 100;
 // on it); otherwise the banner here says so.
 // home: bumped when they tap "Done" or "That's not me" under their card
 // (CustomerDisplay): a "Thanks!" still up goes, back to the keypad.
+// encore: their entrance again (a new `key` plays it), as they tap "Show my
+// card" on the red "add your card" card. Not over one still playing.
 export default function CheckinKiosk({
   registerTopic,
   home = 0,
@@ -212,6 +221,7 @@ export default function CheckinKiosk({
   onRewind,
   onFinish,
   onPlusWelcome: onPlusWelcomeShown,
+  encore,
 }: {
   registerTopic: string;
   home?: number;
@@ -220,6 +230,7 @@ export default function CheckinKiosk({
   onRewind?: () => void;
   onFinish?: (shown: FinishShown | null) => void;
   onPlusWelcome?: (firstName: string) => boolean;
+  encore?: Encore | null;
 }) {
   const [step, setStep] = useState<CheckinStep>(initialStep ?? { name: "phone" });
   // "Phone or email", as typed.
@@ -297,6 +308,21 @@ export default function CheckinKiosk({
     }
     waiting.current = [...waiting.current, next].slice(-ENTRANCE_QUEUE);
   }
+
+  // Their entrance again, from their card's flair keys (looked up in our
+  // own catalog, as at check-in): never over one still playing.
+  const playEncore = useEffectEvent((e: Encore) => {
+    if (entrancePlaying.current) return;
+    const party = e.entrance === "party";
+    const flair = parseFlair({ color: e.color, effect: party ? "classic" : e.entrance });
+    const show: EntranceKey = party ? "party" : flair.effect;
+    if (show !== "classic") playEntrance({ entrance: show, color: flairHex(flair), sticker: flair.sticker });
+  });
+  const encoreKey = encore?.key ?? null;
+  useEffect(() => {
+    if (encoreKey && encore) playEncore(encore);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per key
+  }, [encoreKey]);
 
   function nextEntrance() {
     const now = Date.now();
