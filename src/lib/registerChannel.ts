@@ -46,6 +46,39 @@ export interface RegisterCartSnapshot {
   // A card charge couldn't start because the reader is offline: the screen
   // says "Card reader is waking up, one moment" (never an error to guests).
   readerWaking?: boolean;
+  // A card payment is waiting on the card reader: the customer screen
+  // takes over with "Finish on the card reader" (PayOnReader.tsx), so
+  // guests stop tapping their card on the tablet. Missing otherwise (cash,
+  // a voucher, a card on file charged without asking).
+  reader?: ReaderPrompt | null;
+}
+
+// What the guest does on the card reader, and where it sits.
+// tip: the reader asks for a tip first (off when the tip was already
+// taken on the register, or a tab asked for it when it closed).
+// card: they tap, insert or swipe there (false: a tab's card on file, where
+// the reader only asks for the tip).
+// step: "card" once the register can tell they're past the tip (a card was
+// tried); missing while it can't, so both steps stay up.
+// side: the reader is to this side of the customer screen (the register's
+// Devices), so the big arrow points at it.
+export interface ReaderPrompt {
+  tip: boolean;
+  card: boolean;
+  step?: "card";
+  side: ReaderSide;
+}
+
+export type ReaderSide = "left" | "right";
+
+// Checked, since it comes off the channel: null for anything else.
+export function parseReaderPrompt(p: unknown): ReaderPrompt | null {
+  if (!p || typeof p !== "object") return null;
+  const r = p as Partial<ReaderPrompt>;
+  const tip = r.tip === true;
+  const card = r.card !== false;
+  if (!tip && !card) return null;
+  return { tip, card, step: card && r.step === "card" ? "card" : undefined, side: r.side === "left" ? "left" : "right" };
 }
 
 // The customer screen's sound effects (display/customer/sounds.ts): on or

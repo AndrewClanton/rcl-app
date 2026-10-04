@@ -173,7 +173,7 @@ export const HELP_TOPICS = {
     title: "Customer screen sounds",
     area: "Register: devices",
     body:
-      "The customer screen plays short arcade-style sounds so guests hear what's happening: a coin for checking in (+5), two notes for \"Welcome back\", a blip for each item rung up and a tick when the total changes, a little run when the payment screen opens and a happy one when the sale goes through, sparkles for streamers and entrances, a tape clunking into the VCR for the Rickroll, and a soft \"hmm\" for a number it doesn't know. Turn them on or off and set the volume under Devices → Customer screen sounds; it's on at 40% to start, and kept low because the cinema is next door. The register sends the setting to the screen, and both remember it. Turning on reduced motion on the screen only calms the animations: sound has its own switch here.",
+      "The customer screen plays short arcade-style sounds so guests hear what's happening: a coin for checking in (+5), two notes for \"Welcome back\", a blip for each item rung up and a tick when the total changes, a little run when the payment screen opens, a soft chime when it's the card reader's turn and a happy one when the sale goes through, sparkles for streamers and entrances, a tape clunking into the VCR for the Rickroll, and a soft \"hmm\" for a number it doesn't know. Turn them on or off and set the volume under Devices → Customer screen sounds; it's on at 40% to start, and kept low because the cinema is next door. The register sends the setting to the screen, and both remember it. Turning on reduced motion on the screen only calms the animations: sound has its own switch here.",
     steps: [
       "Tap Devices (bottom row of the order), scroll to Customer screen sounds.",
       "Move the volume and let go: the screen plays a sample at that level. Play a test sound does the same.",
@@ -182,6 +182,16 @@ export const HELP_TOPICS = {
   },
 
   // ---------- register: payments ----------
+  "pay-on-reader": {
+    title: "\"Finish on the card reader\" on the customer screen",
+    area: "Register: payments",
+    body:
+      "Guests kept tapping their card on the customer screen, and tapping it on the reader before picking a tip (the reader asks for the tip first, so that tap does nothing). So once a card payment reaches the reader, the customer screen says \"Finish on the card reader\" in big letters, with a drawing of the reader, a big arrow pointing at it and a soft chime, the order shrunk to a strip below. It shows two steps: pick a tip on the reader, then tap, insert or swipe the card. Stripe doesn't say when the tip is picked, so both stay up; step 2 lights up once a card has been tried. No tip asked (taken on the register already): only the card step. A tab's card on file: only the tip. Cash and vouchers never show it.",
+    steps: [
+      "Point the arrow: Devices → Card reader → Left or Right, as the guest faces the screen. It's saved on this register and sent with every card payment; right to start.",
+      "Approved: the screen says so, with the usual happy sound. Cancel on the register and it goes back to the order.",
+    ],
+  },
   "card-on-file-tip": {
     title: "The tip on a card on file",
     area: "Register: payments",

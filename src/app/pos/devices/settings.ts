@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { RegisterStation } from "@/lib/print/stations";
+import type { ReaderSide } from "@/lib/registerChannel";
 
 // Which register this is (the bar, or the outdoor stand), and which card
 // reader and receipt printer sit next to it. That's a fact about the device,
@@ -25,6 +26,9 @@ export interface DeviceSettings {
   // own (on, at 40), and this register doesn't send anything.
   tabletSound?: boolean;
   tabletVolume?: number; // 0–100
+  // Which side of the customer screen the card reader sits on, so the
+  // screen's "Finish on the card reader" arrow points at it. Unset: right.
+  readerSide?: ReaderSide;
 }
 
 const KEY = "rcl.register-devices.v1";
@@ -40,7 +44,12 @@ function read(): DeviceSettings {
   try {
     const raw = localStorage.getItem(KEY);
     const saved = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-    cached = { ...saved, station: saved.station === "outdoor" ? "outdoor" : "bar", printVia: saved.printVia === "station" ? "station" : "direct" };
+    cached = {
+      ...saved,
+      station: saved.station === "outdoor" ? "outdoor" : "bar",
+      printVia: saved.printVia === "station" ? "station" : "direct",
+      readerSide: saved.readerSide === "left" ? "left" : saved.readerSide === "right" ? "right" : undefined,
+    };
   } catch {
     cached = DEFAULTS;
   }
