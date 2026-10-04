@@ -254,7 +254,7 @@ const INSIDER_PERKS: [string, string][] = [
   ["Check in, get points", "Scan in at the door: every visit earns 5 points, and badges earn more."],
   ["The weekly lineup", "Every week's films, including the Film Archive classics we only share with members."],
 ];
-const PLUS_PERKS = ["Free entry to every screening", DAILY_COFFEE_PERK, "2 free booth reservations a month", "10% off everything at the register", "First dibs on special events"];
+export const PLUS_PERKS = ["Free entry to every screening", DAILY_COFFEE_PERK, "2 free booth reservations a month", "10% off everything at the register", "First dibs on special events"];
 
 function perksHtml(kind: "insiders" | "plus", L: RenderLinks): string {
   if (kind === "insiders") {
