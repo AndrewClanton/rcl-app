@@ -43,6 +43,9 @@ export interface RegisterCartSnapshot {
   // The register's payment screen is open: the customer screen plays its
   // "ready to pay" sound. (A sale that saved sends "paid" on its own.)
   paying?: boolean;
+  // A card charge couldn't start because the reader is offline: the screen
+  // says "Card reader is waking up, one moment" (never an error to guests).
+  readerWaking?: boolean;
 }
 
 // The customer screen's sound effects (display/customer/sounds.ts): on or

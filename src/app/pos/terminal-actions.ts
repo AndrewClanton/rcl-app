@@ -3,6 +3,8 @@
 import { getStripe } from "@/lib/stripe";
 import { assertStaff } from "@/lib/auth";
 import { UserFacingError } from "@/lib/errors";
+import { POLL_MAX_AGE_MS, readerHealth } from "@/lib/terminal/reader-health";
+import { READER_OFFLINE_MESSAGE, type ReaderHealth } from "@/lib/terminal/reader-status";
 
 // Server-driven Stripe Terminal integration: the POS never talks to the
 // reader directly (no local-network requirement, unlike the JS SDK) -- it
@@ -18,7 +20,9 @@ import { UserFacingError } from "@/lib/errors";
 // error's message, and "the reader is offline" is exactly what staff need
 // to see.
 
-export type ReaderStart = { ok: true; paymentIntentId: string } | { ok: false; error: string };
+// offline: the reader is offline, so nothing was sent (the customer screen
+// says "waking up" instead of a failure).
+export type ReaderStart = { ok: true; paymentIntentId: string } | { ok: false; error: string; offline?: boolean };
 
 export interface ReaderOption {
   id: string;
@@ -40,19 +44,42 @@ export async function listReaders(): Promise<{ ok: true; readers: ReaderOption[]
   }
 }
 
+// The register's reader monitor (Devices, and the "Card reader offline"
+// strip): Stripe's answer shared by every register for ~45 s, or a fresh
+// one for "Check now". Read-only.
+export async function getReaderHealth(readerId: string, force = false): Promise<ReaderHealth | null> {
+  await assertStaff();
+  if (!/^tmr_[A-Za-z0-9]+$/.test(readerId)) return null;
+  return readerHealth(readerId, force ? 3_000 : POLL_MAX_AGE_MS);
+}
+
+class ReaderOfflineError extends UserFacingError {}
+
+// Right before a charge: the shared answer if it's a few seconds old, else
+// Stripe's. Only Stripe's own "offline" stops it here (not "not seen for a
+// while", and not a slow Stripe): that charge would fail anyway, and this
+// says why at once instead of after a payment is made and canceled.
 async function assertReader(readerId: string) {
   if (!readerId) throw new UserFacingError("No card reader is chosen for this register. Pick one under Devices.");
-  const reader = await getStripe()
-    .terminal.readers.retrieve(readerId)
-    .catch(() => null);
-  if (!reader || ("deleted" in reader && reader.deleted)) throw new UserFacingError("That card reader isn't registered in Stripe anymore. Pick another under Devices.");
+  const health = await readerHealth(readerId, 5_000);
+  if (!health.found) throw new UserFacingError("That card reader isn't registered in Stripe anymore. Pick another under Devices.");
+  if (health.online === false && !health.stripeError) throw new ReaderOfflineError(READER_OFFLINE_MESSAGE);
+}
+
+function stripeCode(e: unknown): string | null {
+  return e && typeof e === "object" && typeof (e as { code?: unknown }).code === "string" ? (e as { code: string }).code : null;
+}
+
+function isOffline(e: unknown): boolean {
+  return e instanceof ReaderOfflineError || stripeCode(e) === "terminal_reader_offline";
 }
 
 // UserFacingError is ours; Stripe's own messages ("Reader is currently
 // offline...") are written for merchants, so both are fine to show.
 function chargeError(e: unknown): string {
   const stripeMessage = e && typeof e === "object" && "type" in e && typeof (e as { message?: unknown }).message === "string" ? (e as unknown as { message: string }).message : null;
-  return e instanceof UserFacingError ? e.message : (stripeMessage ?? "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.");
+  if (stripeCode(e) === "terminal_reader_offline") return READER_OFFLINE_MESSAGE;
+  return e instanceof UserFacingError ? e.message : (stripeMessage ??"Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.");
 }
 
 // A reader charge is two steps, so the register can keep the payment's id
@@ -75,7 +102,7 @@ export async function createReaderPayment(amountCents: number, readerId: string)
     });
     return { ok: true, paymentIntentId: paymentIntent.id };
   } catch (e) {
-    return { ok: false, error: chargeError(e) };
+    return { ok: false, error: chargeError(e), offline: isOffline(e) };
   }
 }
 
@@ -88,7 +115,7 @@ export async function sendReaderPayment(
   paymentIntentId: string,
   readerId: string,
   tipEligibleCents: number | null,
-): Promise<{ ok: true } | { ok: false; error: string; canceled: boolean }> {
+): Promise<{ ok: true } | { ok: false; error: string; canceled: boolean; offline?: boolean }> {
   await assertStaff();
   if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) return { ok: false, error: "That isn't a card payment.", canceled: false };
   const stripe = getStripe();
@@ -104,7 +131,7 @@ export async function sendReaderPayment(
       () => true,
       () => false,
     );
-    return { ok: false, error: chargeError(e), canceled };
+    return { ok: false, error: chargeError(e), canceled, offline: isOffline(e) };
   }
 }
 
@@ -234,6 +261,7 @@ export async function cancelReaderQuestion(readerId: string): Promise<void> {
 
 function readerError(e: unknown): string {
   if (e instanceof UserFacingError) return e.message;
-  const m = e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string" ? (e as { message: string }).message : null;
+  if (stripeCode(e) === "terminal_reader_offline") return READER_OFFLINE_MESSAGE;
+  const m =e && typeof e === "object" && "message" in e && typeof (e as { message?: unknown }).message === "string" ? (e as { message: string }).message : null;
   return m ?? "Couldn't reach the card reader. Check that it's on and connected to Wi-Fi.";
 }

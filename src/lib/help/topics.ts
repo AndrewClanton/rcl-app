@@ -149,6 +149,18 @@ export const HELP_TOPICS = {
       "The register never connects to the card reader directly. It tells Stripe which reader to wake up, and the reader takes the payment over the internet, so the two only need to be online, not connected to each other. There's more than one reader, so each register picks the one sitting next to it; the choice is saved on this iPad. \"Offline\" means Stripe can't reach that reader: check that it's on and connected.",
     steps: ["A brand-new reader is registered first in the Stripe dashboard (Terminal → Readers), then picked here."],
   },
+  "card-reader-status": {
+    title: "Card reader",
+    area: "Register: devices",
+    body:
+      "The register asks Stripe about its card reader about once a minute, and again right before every card charge. If Stripe says the reader is offline, or hasn't heard from it for over 2 minutes, a red strip says \"Card reader offline\" above the order and Devices gets a red dot; it clears by itself when the reader is back. Devices shows the reader's name, model, software, IP address, what it's doing, and how many times it went offline today. Stripe doesn't share the battery level, so a reader that keeps dropping off is the sign its battery is low: keep it on its charger or dock (a full battery lasts about 8 hours).",
+    steps: [
+      "Offline: plug it in or set it on its dock, then check its Wi-Fi (swipe in from the left edge → Settings → Wi-Fi).",
+      "Still offline: hold the power button to restart it, then tap Check now in Devices.",
+      "To see the battery: swipe in from the left edge → Settings (the passcode is on Stripe's WisePOS E page) → Diagnostics.",
+    ],
+    links: [{ label: "Stripe's WisePOS E page", href: "https://docs.stripe.com/terminal/payments/setup-reader/bbpos-wisepos-e#settings" }],
+  },
   "devices-print-via": {
     title: "Print through the website",
     area: "Register: devices",

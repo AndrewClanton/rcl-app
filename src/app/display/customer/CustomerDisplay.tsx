@@ -558,6 +558,11 @@ export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartS
           <span className={k.grandLabel}>Total</span>
           <span className={k.grandAmount}>{money(cart.total)}</span>
         </div>
+        {cart.paying && cart.readerWaking && (
+          <div className={k.totalRow} style={{ color: "#6b6455", justifyContent: "center" }} role="status">
+            Card reader is waking up, one moment
+          </div>
+        )}
       </div>
       {who ? (
         <AccountPanel member={who} earn={earn} onNotMe={onNotMe} onAddCard={onAddCard} />
