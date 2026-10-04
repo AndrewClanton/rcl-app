@@ -368,6 +368,45 @@ export const DESIGN_PIECES = {
       },
     ],
   },
+  // "Your Insiders+ year is already paid" (lib/email/paid-through-email.ts),
+  // drawn by hand (source/PaidThrough.dc.html). A transactional email, not
+  // one of the invites: render just these with
+  //   node scripts/email-designs/render.mjs --only=paid-through
+  "paid-through": {
+    stem: "PaidThrough",
+    pieces: [
+      {
+        name: "hero",
+        fmt: "png",
+        alt: "An Insiders+ membership card for a year, stamped PAID.",
+        rect: (R) => R.box(R.sec("hero")),
+      },
+      {
+        name: "step-1",
+        fmt: "png",
+        alt: "Our website, royalecinemajoplin.com, with My Account circled and an arrow pointing at it.",
+        rect: (R) => R.pad(R.box(R.kids(R.sec("step1"), 0)), 8),
+      },
+      {
+        name: "step-2",
+        fmt: "png",
+        alt: "My Account, on the Billing tab: Your yearly Insiders+ is already paid, with the Add a card button circled.",
+        rect: (R) => R.pad(R.box(R.kids(R.sec("step2"), 0)), 8),
+      },
+      {
+        name: "step-3",
+        fmt: "png",
+        alt: "Billing after adding a card: Active, card on file, and No charge until your date, circled.",
+        rect: (R) => R.pad(R.box(R.kids(R.sec("step3"), 0)), 8),
+      },
+      {
+        name: "arrow",
+        fmt: "png",
+        alt: "",
+        rect: (R) => R.box(R.kids(R.sec("arrow"), 0)),
+      },
+    ],
+  },
 };
 
 // The per-person pictures: what to hide in the base (the words the name is

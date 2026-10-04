@@ -65,9 +65,15 @@ export default function MemberDetail({
   canUndoCardMatch,
   canManage,
   flags = null,
+  paidThroughCard = null,
+  prepaidRenewsAs = null,
 }: {
   // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
   flags?: React.ReactNode;
+  // Insiders+ paid ahead until a date (PaidThroughCard.tsx), and the plan a
+  // prepaid year renews as (the card page offers it first).
+  paidThroughCard?: React.ReactNode;
+  prepaidRenewsAs?: "month" | "year" | null;
   member: Member;
   gifts: GiftMembership[];
   purchases: MemberPurchase[];
@@ -143,7 +149,8 @@ export default function MemberDetail({
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} canManage={canManage} />
       <div className="space-y-6">
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} canManage={canManage} />
-        <BillingCard member={member} />
+        <BillingCard member={member} prepaidRenewsAs={prepaidRenewsAs} />
+        {paidThroughCard}
         <LinkedCardsCard member={member} cards={cards} canRelink={canUndoCardMatch} />
         <GiftCard member={member} gifts={gifts} />
         {signInHelp && <SignInHelpCard memberId={member.id} memberName={member.name} info={signInHelp} />}
@@ -570,11 +577,12 @@ function FreeMembershipCard({ member, communityPrograms, canManage }: { member: 
   );
 }
 
-function BillingCard({ member }: { member: Member }) {
+function BillingCard({ member, prepaidRenewsAs }: { member: Member; prepaidRenewsAs: "month" | "year" | null }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [firstCharge, setFirstCharge] = useState("");
-  const [annual, setAnnual] = useState(false);
+  // A prepaid year renews as the plan they had (yearly for an old-site annual).
+  const [annual, setAnnual] = useState(prepaidRenewsAs === "year");
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // Stripe won't hold a first charge less than 2 days out. The date is
@@ -609,8 +617,11 @@ function BillingCard({ member }: { member: Member }) {
           <p className="text-sm">
             {giftEnds ? (
               <>
-                <strong>Covered by a gift until {new Date(giftEnds).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}.</strong>{" "}
-                To keep Insiders+ going after that, put their own card on now. The first charge waits until the gift ends.
+                <strong>
+                  {prepaidRenewsAs ? "Paid through" : "Covered by a gift until"}{" "}
+                  {new Date(giftEnds).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}.
+                </strong>{" "}
+                To keep Insiders+ going after that, put their own card on now. The first charge waits until {prepaidRenewsAs ? "that day" : "the gift ends"}.
               </>
             ) : needsCard ? (
               <>

@@ -1,10 +1,10 @@
 import Link from "next/link";
 import type { MembershipBilling } from "@/lib/data/member-billing";
 import type { Member } from "@/lib/types";
-import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice } from "@/lib/membership-rates";
+import { ANNUAL_PRICE, RATE_LABEL, RATE_PRICE, dollars, planPrice, type BillingInterval } from "@/lib/membership-rates";
 import BillingPortalButton from "../../BillingPortalButton";
 import SwitchToYearly from "../../SwitchToYearly";
-import { dateShort, money } from "../format";
+import { dateLong, dateShort, money } from "../format";
 import PlusLink from "@/components/PlusLink";
 import { giftEndsWithoutRenewal, plusNeedsCard } from "@/lib/plus-status";
 import { Panel, SpecPanel, STACK, TAP } from "../ui";
@@ -18,11 +18,25 @@ const STATUS_LABEL: Record<string, string> = {
   incomplete: "Waiting on payment",
 };
 
-export default function BillingView({ member, billing, years, giftFrom }: { member: Member; billing: MembershipBilling | null; years: number[]; giftFrom: string | null }) {
+export default function BillingView({
+  member,
+  billing,
+  years,
+  giftFrom,
+  prepaid = null,
+}: {
+  member: Member;
+  billing: MembershipBilling | null;
+  years: number[];
+  giftFrom: string | null;
+  // Paid ahead (a year on the old website) until a date, and the plan it
+  // renews as (lib/paid-through.ts).
+  prepaid?: { paidThrough: string; renewsAs: BillingInterval } | null;
+}) {
   const rate = member.price_tier ?? "adult";
   const plus = member.tier === "Insiders+";
   const status = billing?.status ?? member.subscription_status ?? "";
-  // A gifted year with nothing lined up after it.
+  // A gifted (or prepaid) year with nothing lined up after it.
   const giftEnds = giftEndsWithoutRenewal(member);
 
   return (
@@ -41,6 +55,24 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
           <PlusLink next="/account/billing" className={`btn-primary ${TAP} relative z-[1] w-full px-5 py-3 sm:w-auto`}>
             Add a card
           </PlusLink>
+        </section>
+      ) : plus && giftEnds && prepaid ? (
+        // Paid ahead: a card added now isn't charged until the date, then
+        // renews on the plan they had, at today's price plus tax.
+        <section className="sheet halftone halftone-hero bg-[var(--gold)] p-5 sm:p-6">
+          <div className="relative z-[1]">
+            <span className="ctag ctag-red">Paid through</span>
+            <p className="font-display mt-3 text-2xl">
+              Your {prepaid.renewsAs === "year" ? "yearly " : ""}Insiders+ is paid through {dateLong(giftEnds)}.
+            </p>
+            <p className="mt-1 max-w-lg text-[15px]">
+              Add a card now and you won&apos;t be charged until then. On {dateLong(giftEnds)} your {prepaid.renewsAs === "year" ? "next year renews at" : "membership renews at"}{" "}
+              {prepaid.renewsAs === "year" ? `${dollars(ANNUAL_PRICE[rate])}` : `$${RATE_PRICE[rate]}/month`} + tax.
+            </p>
+            <PlusLink next="/account/billing" annual={prepaid.renewsAs === "year"} className={`btn-primary ${TAP} mt-4 inline-block px-5 py-3`}>
+              Add a card
+            </PlusLink>
+          </div>
         </section>
       ) : plus && giftEnds ? (
         <section className="sheet halftone halftone-hero bg-[var(--gold)] p-5 sm:p-6">
@@ -95,6 +127,13 @@ export default function BillingView({ member, billing, years, giftFrom }: { memb
               ) : undefined
             }
           />
+          {/* A card added while paid ahead (or with a later first charge):
+              Stripe's trial until the first bill. */}
+          {status === "trialing" && billing?.nextBillDate && !billing.cancelAtPeriodEnd && (
+            <p className="notice notice-success">
+              No charge until {dateLong(billing.nextBillDate)}.{billing.nextBillAmount !== null ? ` Then ${money(billing.nextBillAmount)}, tax included.` : ""}
+            </p>
+          )}
           {status === "past_due" && <p className="notice notice-warn">Your last payment didn&apos;t go through. Update your card below to keep Insiders+.</p>}
           {billing?.cancelAtPeriodEnd && (
             <p className="notice notice-warn">Your Insiders+ is set to end on {billing.nextBillDate ? dateShort(billing.nextBillDate) : "the end of this period"}. You can turn it back on below.</p>

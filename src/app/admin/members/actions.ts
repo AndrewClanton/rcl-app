@@ -11,7 +11,9 @@ import { adjustPoints } from "@/lib/points";
 import { getPointsHistory, type PointsHistoryRow } from "@/lib/data/points-history";
 import { eraseMember, type EraseResult } from "@/lib/member-erase";
 import { createPlusCheckout, plusPaidFor } from "@/lib/plus-checkout";
-import { giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
+import { firstChargeHold, giftActive, giftEndsWithoutRenewal } from "@/lib/plus-status";
+import { sendPaidThroughExplainer, setPaidThrough, type PaidThroughResult } from "@/lib/paid-through";
+import type { BillingInterval } from "@/lib/membership-rates";
 import { createGiftCheckout, type GiftCheckoutResult } from "@/lib/gift-membership";
 import { seesFullContact } from "@/lib/contact-mask";
 import { birthdayFromInput } from "@/lib/visits";
@@ -520,13 +522,14 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
     .maybeSingle();
   if (!m || m.erased_at) return { ok: false, error: "Member not found." };
   if (!m.email) return { ok: false, error: "Add the member's email first. Stripe sends their receipts there." };
-  // On a gifted year with nothing after it: the card goes on now and the
-  // first charge waits until the gift runs out.
+  // On a gifted or prepaid year with nothing after it (lib/paid-through.ts):
+  // the card goes on now and the first charge waits until the year ends.
   const giftEnds = giftEndsWithoutRenewal(m);
   if (plusPaidFor(m) && !giftEnds) return { ok: false, error: m.comped ? "This membership is complimentary, so there's nothing to pay." : "This member already has a card and an active membership. Use the card-on-file button to change it." };
 
-  let firstChargeAt: Date | null = giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null;
-  if (firstChargeDate) {
+  let firstChargeAt: Date | null = firstChargeHold(m);
+  // A typed date never brings the first charge before a paid-for year ends.
+  if (firstChargeDate && !giftEnds) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(firstChargeDate) || Number.isNaN(Date.parse(`${firstChargeDate}T12:00:00Z`))) return { ok: false, error: "Pick a valid first-charge date." };
     firstChargeAt = new Date(centralToIso(firstChargeDate, "12:00")); // noon Central, CDT or CST
     // Stripe won't hold a first charge for less than 48 hours.
@@ -547,6 +550,21 @@ export async function createMemberCardLink(memberId: string, firstChargeDate: st
     linkCard: true,
   }).catch(() => null);
   return url ? { ok: true, url } : { ok: false, error: "Couldn't open Stripe's card page. Try again." };
+}
+
+// Insiders+ paid ahead another way, until a date (lib/paid-through.ts).
+// Owners and admins only; who and when is recorded. date null takes it off.
+export async function setMemberPaidThrough(memberId: string, date: string | null, renewsAs: BillingInterval, note: string): Promise<PaidThroughResult> {
+  const staff = await assertAdmin();
+  const r = await setPaidThrough({ memberId, date, renewsAs, note, staffId: staff.employeeId ?? null });
+  if (r.ok) revalidate();
+  return r;
+}
+
+// "Your Insiders+ year is already paid", to this one member. Any staff.
+export async function sendPaidThroughExplainerEmail(memberId: string): Promise<PaidThroughResult> {
+  await assertStaff();
+  return sendPaidThroughExplainer(memberId);
 }
 
 export async function createMemberBillingPortalLink(memberId: string): Promise<{ url: string }> {

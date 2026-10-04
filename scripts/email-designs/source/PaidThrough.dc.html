@@ -1,0 +1,237 @@
+<!doctype html>
+<!-- "Your Insiders+ year is already paid" (lib/email/paid-through-email.ts):
+     the pictures, drawn by hand rather than on the Design canvas. One file
+     for both sizes: source.mjs sets data-dev="Desktop" (600 wide) or
+     "Phone" (390 wide) on the html element. Illustrated mockups of our own pages, no
+     member's details anywhere: the personal bits (first name, date, price)
+     are live text in the email. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:wght@400;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root { --ink:#14110c; --cream:#f3ecd9; --paper:#f8f5ec; --red:#ed1c24; --redD:#d4141b; --gold:#ffc72c; --mute:#5a5246; --line:#d9d0bb; --cw:520px; }
+[data-dev="Phone"] { --cw:342px; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); font-family:Archivo,Arial,sans-serif; color:var(--ink); }
+#root { width:100%; }
+section { width:var(--cw); margin:0 auto; padding:12px 0; position:relative; }
+.fb { font-family:'Archivo Black','Arial Black',sans-serif; }
+.fm { font-family:'Space Mono',monospace; font-weight:700; letter-spacing:2px; }
+
+/* ---- hero: the membership card with a PAID stamp, on ink ---- */
+section[data-sec="hero"] { background:var(--ink); width:100%; padding:0; }
+.hero { width:var(--cw); height:230px; margin:0 auto; position:relative; }
+[data-dev="Phone"] .hero { height:190px; }
+.card { position:absolute; left:50%; top:28px; width:340px; height:176px; margin-left:-170px; background:var(--gold); border:3px solid var(--cream); border-radius:14px; transform:rotate(-4deg); box-shadow:8px 8px 0 #000; overflow:hidden; }
+[data-dev="Phone"] .card { width:268px; height:142px; margin-left:-134px; top:22px; }
+.card .stripe { position:absolute; left:0; right:0; top:0; height:42px; background:var(--ink); }
+[data-dev="Phone"] .card .stripe { height:34px; }
+.card .brand { position:absolute; left:18px; top:12px; color:var(--gold); font-size:13px; }
+[data-dev="Phone"] .card .brand { font-size:10px; top:11px; left:14px; }
+.card .tier { position:absolute; left:18px; top:60px; font-size:38px; line-height:38px; }
+[data-dev="Phone"] .card .tier { font-size:30px; line-height:30px; top:48px; left:14px; }
+.card .plan { position:absolute; left:20px; top:108px; font-size:12px; color:var(--ink); }
+[data-dev="Phone"] .card .plan { font-size:10px; top:86px; left:15px; }
+.card .bars { position:absolute; left:20px; bottom:16px; width:120px; height:10px; background:repeating-linear-gradient(90deg,var(--ink) 0 3px,transparent 3px 6px); opacity:.55; }
+[data-dev="Phone"] .card .bars { width:90px; bottom:12px; }
+.stamp { position:absolute; right:20px; top:102px; transform:rotate(-12deg); border:5px solid var(--red); color:var(--red); border-radius:10px; padding:2px 12px 0; font-size:40px; line-height:46px; background:rgba(248,245,236,.92); }
+[data-dev="Phone"] .stamp { right:12px; top:82px; font-size:30px; line-height:34px; border-width:4px; padding:1px 9px 0; }
+.star { position:absolute; color:var(--gold); font-size:26px; }
+
+/* ---- the three steps: a page mockup each ---- */
+.shot { position:relative; background:#fff; border:3px solid var(--ink); border-radius:12px; overflow:hidden; box-shadow:6px 6px 0 var(--ink); }
+.bar { height:34px; background:var(--cream); border-bottom:3px solid var(--ink); display:flex; align-items:center; padding:0 12px; gap:6px; }
+.dot { width:10px; height:10px; border-radius:50%; border:2px solid var(--ink); }
+.url { margin-left:10px; flex:1; height:22px; border-radius:11px; background:#fff; border:2px solid var(--ink); display:flex; align-items:center; padding:0 10px; font-size:12px; gap:6px; }
+[data-dev="Phone"] .url { font-size:10px; margin-left:6px; }
+.page { padding:14px 16px 18px; background:var(--paper); }
+.logo { text-align:center; font-size:22px; line-height:24px; }
+[data-dev="Phone"] .logo { font-size:16px; line-height:18px; }
+.nav { margin-top:10px; display:flex; justify-content:center; flex-wrap:wrap; gap:4px 14px; font-weight:700; font-size:12px; color:var(--mute); }
+[data-dev="Phone"] .nav { font-size:10px; gap:3px 9px; }
+.nav b { color:var(--ink); }
+.grey { height:10px; border-radius:5px; background:var(--line); }
+.tabs { display:flex; gap:6px; flex-wrap:nowrap; }
+.tab { padding:6px 10px; border:2px solid var(--ink); border-radius:999px; font-weight:700; font-size:12px; background:#fff; white-space:nowrap; }
+[data-dev="Phone"] .tab { padding:4px 7px; font-size:10px; }
+.tab.on { background:var(--ink); color:var(--gold); }
+.goldpanel { margin-top:14px; background:var(--gold); border:3px solid var(--ink); padding:12px 14px 14px; position:relative; background-image:radial-gradient(rgba(20,17,12,.14) 1px, transparent 1.4px); background-size:7px 7px; }
+.ctag { display:inline-block; background:var(--red); color:#fff; font-size:10px; padding:3px 8px; border:2px solid var(--ink); transform:rotate(-2deg); }
+.ptitle { margin-top:8px; font-size:18px; line-height:21px; }
+[data-dev="Phone"] .ptitle { font-size:14px; line-height:17px; }
+.btn { display:inline-block; margin-top:12px; background:var(--redD); color:#fff; border:2px solid var(--ink); padding:9px 16px; font-size:14px; border-radius:6px; box-shadow:3px 3px 0 var(--ink); }
+[data-dev="Phone"] .btn { font-size:12px; padding:7px 12px; }
+.spec { margin-top:14px; border:3px solid var(--ink); background:#fff; }
+.spec .hd { background:var(--ink); color:var(--cream); padding:7px 12px; font-size:13px; display:flex; justify-content:space-between; }
+[data-dev="Phone"] .spec .hd { font-size:11px; }
+.spec .row { display:flex; border-top:2px solid var(--line); }
+.spec .k { width:38%; padding:7px 12px; font-size:10px; color:var(--mute); }
+.spec .v { padding:6px 12px; font-size:13px; font-weight:700; display:flex; align-items:center; gap:8px; }
+[data-dev="Phone"] .spec .v { font-size:11px; }
+.pill { display:inline-block; background:#e6f4ea; color:#14532d; border:2px solid #14532d; border-radius:999px; padding:1px 8px; font-size:11px; }
+.notice { margin-top:16px; margin-left:18px; display:inline-flex; align-items:center; gap:10px; background:var(--gold); border:3px solid var(--ink); padding:9px 12px; }
+.notice .t { font-size:15px; }
+[data-dev="Phone"] .notice .t { font-size:12px; }
+.cal { width:30px; height:30px; border:3px solid var(--ink); border-radius:5px; background:#fff; position:relative; flex:none; }
+.cal:before { content:""; position:absolute; left:0; right:0; top:0; height:8px; background:var(--red); }
+.cal:after { content:"$0"; position:absolute; left:0; right:0; top:9px; text-align:center; font:700 11px/14px 'Space Mono',monospace; }
+.field { margin-top:10px; height:30px; border:2px solid var(--ink); border-radius:6px; background:#fff; }
+.signin { margin:14px auto 0; width:62%; border:3px solid var(--ink); background:#fff; padding:10px 12px 12px; }
+[data-dev="Phone"] .signin { width:78%; }
+svg.mark { position:absolute; left:0; top:0; overflow:visible; pointer-events:none; }
+
+/* ---- the arrow between steps ---- */
+section[data-sec="arrow"] { width:56px; padding:4px 0; }
+</style>
+</head>
+<body>
+<div id="root">
+
+<section data-sec="hero">
+  <div class="hero">
+    <span class="star" style="left:8%;top:30px;">&#9733;</span>
+    <span class="star" style="right:9%;top:150px;font-size:20px;">&#9733;</span>
+    <span class="star" style="left:16%;top:160px;font-size:16px;color:#ed1c24;">&#9733;</span>
+    <div class="card">
+      <div class="stripe"></div>
+      <div class="brand fm">ROYALE CINEMA LOUNGE</div>
+      <div class="tier fb">INSIDERS+</div>
+      <div class="plan fm">ONE YEAR</div>
+      <div class="bars"></div>
+      <div class="stamp fb">PAID</div>
+    </div>
+  </div>
+</section>
+
+<!-- Step 1: royalecinemajoplin.com, "My Account" circled -->
+<section data-sec="step1">
+  <div class="shot" id="s1">
+    <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <div class="url"><span>&#128274;</span><span class="fm" style="letter-spacing:0;">royalecinemajoplin.com</span></div></div>
+    <div class="page">
+      <div class="logo fb">ROYALE CINEMA LOUNGE</div>
+      <div class="nav"><span>Showtimes</span><span>Booths</span><span>Menu</span><span>Insiders</span><b id="s1-target">My Account</b></div>
+      <div class="signin">
+        <div class="fb" style="font-size:14px;">Sign in</div>
+        <div class="field"></div>
+        <div class="field"></div>
+        <div class="grey" style="margin-top:10px;width:46%;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Step 2: My Account -> Billing -> Add a card -->
+<section data-sec="step2">
+  <div class="shot" id="s2">
+    <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <div class="url"><span>&#128274;</span><span class="fm" style="letter-spacing:0;">royalecinemajoplin.com/account</span></div></div>
+    <div class="page">
+      <div class="tabs"><span class="tab">Overview</span><span class="tab">Points</span><span class="tab">Purchases</span><span class="tab on" id="s2-tab">Billing</span></div>
+      <div class="goldpanel">
+        <span class="ctag fm" style="letter-spacing:1px;">PAID THROUGH</span>
+        <div class="ptitle fb">Your yearly Insiders+<br>is already paid.</div>
+        <div class="grey" style="margin-top:8px;width:72%;background:rgba(20,17,12,.25);"></div>
+        <span class="btn fb" id="s2-target">Add a card</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Step 3: billing after the card: "No charge until ..." circled -->
+<section data-sec="step3">
+  <div class="shot" id="s3">
+    <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      <div class="url"><span>&#128274;</span><span class="fm" style="letter-spacing:0;">royalecinemajoplin.com/account/billing</span></div></div>
+    <div class="page">
+      <div class="spec">
+        <div class="hd fb"><span>Insiders+ membership</span><span class="fm" style="font-size:9px;letter-spacing:1px;">BILLED YEARLY</span></div>
+        <div class="row"><div class="k fm">STATUS</div><div class="v"><span class="pill">Active</span></div></div>
+        <div class="row"><div class="k fm">CARD</div><div class="v">&#8226;&#8226;&#8226;&#8226; on file &#10003;</div></div>
+      </div>
+      <div class="notice" id="s3-target"><span class="cal"></span><span class="t fb">No charge until your date</span></div>
+    </div>
+  </div>
+</section>
+
+<section data-sec="arrow">
+  <svg width="56" height="44" viewBox="0 0 56 44"><path d="M28 2 V30" stroke="#14110c" stroke-width="9" stroke-linecap="round"/><path d="M10 22 L28 40 L46 22" fill="none" stroke="#14110c" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><path d="M28 2 V30" stroke="#ffc72c" stroke-width="4" stroke-linecap="round"/><path d="M10 22 L28 40 L46 22" fill="none" stroke="#ffc72c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+</section>
+
+</div>
+<script>
+// The red circle around each step's target, and a bold arrow pointing at
+// it, drawn from where the target actually sits.
+(function () {
+  const phone = document.documentElement.dataset.dev === "Phone";
+  const NS = "http://www.w3.org/2000/svg";
+  function mark(shotId, targetId, from) {
+    const shot = document.getElementById(shotId);
+    const t = document.getElementById(targetId);
+    const s = shot.getBoundingClientRect();
+    const r = t.getBoundingClientRect();
+    const cx = r.left - s.left + r.width / 2;
+    const cy = r.top - s.top + r.height / 2;
+    const rx = r.width / 2 + (phone ? 10 : 14);
+    const ry = r.height / 2 + (phone ? 8 : 10);
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "mark");
+    svg.setAttribute("width", s.width);
+    svg.setAttribute("height", s.height);
+    // A hand-drawn ring: an ellipse that overshoots its start a little.
+    const ring = document.createElementNS(NS, "path");
+    const a0 = -2.6, a1 = a0 + Math.PI * 2 + 0.45;
+    let d = "";
+    for (let i = 0; i <= 48; i++) {
+      const a = a0 + ((a1 - a0) * i) / 48;
+      const k = 1 + 0.06 * (i / 48);
+      d += (i ? " L" : "M") + (cx + Math.cos(a) * rx * k).toFixed(1) + " " + (cy + Math.sin(a) * ry * k).toFixed(1);
+    }
+    ring.setAttribute("d", d);
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "#ed1c24");
+    ring.setAttribute("stroke-width", phone ? 4 : 5);
+    ring.setAttribute("stroke-linecap", "round");
+    ring.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(ring);
+    // The arrow, from `from` (a point in the shot) to the ring's edge.
+    const [fx, fy] = from(s.width, s.height, cx, cy, rx, ry);
+    const ang = Math.atan2(cy - fy, cx - fx);
+    const ex = cx - Math.cos(ang) * (rx + 6);
+    const ey = cy - Math.sin(ang) * (ry + 6);
+    const midx = (fx + ex) / 2 + Math.sin(ang) * 18;
+    const midy = (fy + ey) / 2 - Math.cos(ang) * 18;
+    const w = phone ? 6 : 8;
+    const shaft = document.createElementNS(NS, "path");
+    shaft.setAttribute("d", `M${fx} ${fy} Q${midx} ${midy} ${ex} ${ey}`);
+    shaft.setAttribute("fill", "none");
+    shaft.setAttribute("stroke", "#ed1c24");
+    shaft.setAttribute("stroke-width", w);
+    shaft.setAttribute("stroke-linecap", "round");
+    svg.appendChild(shaft);
+    const ha = Math.atan2(ey - midy, ex - midx);
+    const hl = phone ? 16 : 22;
+    const head = document.createElementNS(NS, "path");
+    const p1 = [ex - Math.cos(ha - 0.5) * hl, ey - Math.sin(ha - 0.5) * hl];
+    const p2 = [ex - Math.cos(ha + 0.5) * hl, ey - Math.sin(ha + 0.5) * hl];
+    head.setAttribute("d", `M${p1[0]} ${p1[1]} L${ex} ${ey} L${p2[0]} ${p2[1]}`);
+    head.setAttribute("fill", "none");
+    head.setAttribute("stroke", "#ed1c24");
+    head.setAttribute("stroke-width", w);
+    head.setAttribute("stroke-linecap", "round");
+    head.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(head);
+    shot.appendChild(svg);
+  }
+  function draw() {
+    mark("s1", "s1-target", (w, h, cx, cy) => [w - 24, h - 26]);
+    mark("s2", "s2-target", (w, h, cx, cy, rx) => [Math.min(w - 26, cx + rx + (phone ? 70 : 120)), h - 14]);
+    mark("s3", "s3-target", (w, h, cx, cy, rx, ry) => [w - 22, cy - ry - (phone ? 46 : 60)]);
+  }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+  else window.addEventListener("load", draw);
+})();
+</script>
+</body>
+</html>

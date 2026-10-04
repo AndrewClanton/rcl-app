@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { getCommunityPrograms, getEraseLogEntry, getMemberById, getMemberCards, getMemberPurchaseHistory } from "@/lib/data/members";
 import { getStaffInfoForMembers } from "@/lib/data/employees";
-import { getGiftsForMember } from "@/lib/gift-membership";
+import { currentGiftFrom, getGiftsForMember } from "@/lib/gift-membership";
+import { getPaidThrough, oldSitePlan, prepaidInForce } from "@/lib/paid-through";
 import { getPointsHistory } from "@/lib/data/points-history";
 import { maskEmail, seesFullContact } from "@/lib/contact-mask";
 import { getMemberEmailPanel } from "@/lib/email/member-panel";
@@ -13,6 +14,7 @@ import { visitBusinessDate } from "@/lib/visits";
 import MemberDetail from "./MemberDetail";
 import EmailPanel from "./EmailPanel";
 import FlagBox from "./FlagBox";
+import PaidThroughCard, { type PaidThroughInfo } from "./PaidThroughCard";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +45,17 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     member.erased_at ? Promise.resolve([]) : memberFlags(id),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
+  // Insiders+ paid ahead until a date (lib/paid-through.ts).
+  const [paidRec, giftFrom, oldPlan] = member.erased_at
+    ? [null, null, null]
+    : await Promise.all([getPaidThrough(id), currentGiftFrom(id), oldSitePlan(member as { legacy_user_id?: number | null })]);
+  const inForce = prepaidInForce(member, paidRec);
+  const paidThrough: PaidThroughInfo = {
+    inForce: inForce?.paidThrough ? { paidThrough: inForce.paidThrough, renewsAs: inForce.renewsAs } : null,
+    last: paidRec,
+    defaultRenewsAs: oldPlan ?? "year",
+    gifted: !!giftFrom,
+  };
   // Cashiers get the on/off switch only; the email history, engagement and
   // never-mail reason are for staff who see full contact details.
   const emailPanel = member.erased_at ? null : await getMemberEmailPanel(id, { detail: fullContact }).catch(() => null);
@@ -64,6 +77,8 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       signInHelp={signInHelp}
       cards={cards}
       canUndoCardMatch={!!session && hasManagerAccess(session.role)}
+      paidThroughCard={member.erased_at ? null : <PaidThroughCard member={member} info={paidThrough} canEdit={!!session && hasAdminAccess(session.role)} />}
+      prepaidRenewsAs={paidThrough.inForce?.renewsAs ?? null}
       flags={flags.length ? <FlagBox flags={flags} canAct={!!session && hasAdminAccess(session.role)} today={visitBusinessDate(new Date())} /> : null}
     />
     {emailPanel && (
