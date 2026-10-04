@@ -26,6 +26,8 @@ import { publishCashier, useRanOut } from "./shift/ran-out-store";
 import { ItemOutDialog } from "./shift/RanOut";
 import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
+import BarTab from "./BarTab";
+import { isBarCategory } from "@/lib/bar/menu";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
@@ -471,6 +473,14 @@ export default function PosApp({
     return (id: string | null) => (id ? (byId.get(id) ?? null) : null);
   }, [categories]);
   const builderItem = findItem(builderItemId);
+  // A menu button's tap, wherever it is (a tile, the Bar tab): its choices,
+  // or for an 86'd item the question first (sell anyway, or it's back).
+  function tapItem(id: string) {
+    if (outs.get(id)) setOutPromptId(id);
+    else setBuilderItemId(id);
+  }
+  // The bar's category draws as the one-screen Bar tab (BarTab.tsx).
+  const barTab = !!category && isBarCategory(category) && !builderItem && categoryId !== MOVIES_TAB && categoryId !== CUSTOMERS_TAB;
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
@@ -1789,7 +1799,8 @@ export default function PosApp({
             >
               {/* An icon reads at this size where a tiny photo doesn't. */}
               <CategoryIcon category={c.key} label={c.label} />
-              {c.label}
+              {/* The bar's category is "Alcohol" in Back office and Bar here. */}
+              {isBarCategory(c) ? "Bar" : c.label}
             </button>
           ))}
           {/* Last, so the menu tabs keep their places. A dot when there's
@@ -1816,7 +1827,12 @@ export default function PosApp({
           />
         )}
 
-        <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
+        <div
+          ref={menuScrollRef}
+          data-menu-scroll
+          // The Bar tab fills this box exactly and scrolls inside its own parts.
+          className={`md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain ${barTab ? "md:flex md:flex-col" : ""}`}
+        >
         {categoryId === CUSTOMERS_TAB ? (
           // Its "New phone account" shows on the customer screen as it's typed.
           <TabletSetupContext value={tabletSetup}>
@@ -1831,6 +1847,8 @@ export default function PosApp({
           />
         ) : builderItem ? (
           <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
+        ) : barTab && category ? (
+          <BarTab category={category} recipesByItem={recipesByItem} outs={outs} onTap={tapItem} onCustom={() => setCustomOpen(true)} />
         ) : (
           <div className="space-y-4">
             {menuSections.map((section, i) => (
@@ -1854,7 +1872,7 @@ export default function PosApp({
                         {...tileExtras(item, category, section.label, out)}
                         out={out}
                         // An 86'd item asks first: sell anyway, or it's back.
-                        onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}
+                        onClick={() => tapItem(item.id)}
                       />
                     );
                   })}
