@@ -14,6 +14,7 @@ import {
 } from "@/lib/bar/book";
 import { barSectionOf, itemIconSpec } from "@/lib/bar/menu";
 import { iconSpecFor } from "@/lib/bar/icons";
+import { DEFAULT_TARGET_POUR_COST, TARGET_POUR_COST_SETTING, drinkCost, validTarget, type DrinkCost } from "@/lib/bar/pricing";
 
 // The Bar Book's data (server only: it reads with the service role). The
 // "can we make it?" logic is plain functions in src/lib/bar/book.ts, so the
@@ -76,18 +77,28 @@ function toRecipe(r: RecipeRow): BookRecipe | null {
 export interface BarBookData {
   recipes: BookRecipe[];
   stock: BookStock[];
+  target: number; // the target pour cost for suggested prices
+}
+
+// The pour cost suggested prices aim for (Back office → Bar Book, owners
+// and admins): settings.bar_target_pour_cost, 20% until someone sets it.
+export async function getTargetPourCost(): Promise<number> {
+  const { data, error } = await createAdminClient().from("settings").select("value").eq("key", TARGET_POUR_COST_SETTING).maybeSingle();
+  if (error || !data) return DEFAULT_TARGET_POUR_COST;
+  return validTarget(data.value) ?? DEFAULT_TARGET_POUR_COST;
 }
 
 // Every recipe (menu, house and the starter list) and what the bar has.
 export async function getBarBookData(): Promise<BarBookData | null> {
   const supabase = createAdminClient();
-  const [rec, ing, outs, counts] = await Promise.all([
+  const [rec, ing, outs, counts, target] = await Promise.all([
     supabase.from("recipes").select(BOOK_COLUMNS),
-    supabase.from("ingredients").select("id, name, carried, active, par_item_id"),
+    supabase.from("ingredients").select("id, name, carried, active, par_item_id, unit_cost"),
     supabase.from("stock_outages").select("par_item_id, label").is("resolved_at", null).not("par_item_id", "is", null),
     // The latest count per ingredient is all that matters; the newest few
     // thousand counts cover every ingredient anyone still counts.
     supabase.from("inventory_counts").select("ingredient_id, quantity_on_hand, counted_at").order("counted_at", { ascending: false }).limit(5000),
+    getTargetPourCost(),
   ]);
   if (schemaMissing(rec.error) || schemaMissing(ing.error)) return null;
   if (rec.error) throw rec.error;
@@ -104,9 +115,10 @@ export async function getBarBookData(): Promise<BarBookData | null> {
     carried: i.carried !== false && i.active !== false,
     outLabel: i.par_item_id ? (outByPar.get(i.par_item_id as string) ?? null) : null,
     lastCount: lastCount.has(i.id as string) ? lastCount.get(i.id as string)! : null,
+    unitCost: i.unit_cost === null || i.unit_cost === undefined ? null : Number(i.unit_cost),
   }));
   const recipes = ((rec.data ?? []) as unknown as RecipeRow[]).map(toRecipe).filter((r): r is BookRecipe => !!r);
-  return { recipes, stock };
+  return { recipes, stock, target };
 }
 
 export interface BarIngredient {
@@ -118,42 +130,57 @@ export interface BarIngredient {
   family: string | null;
   carried: boolean;
   active: boolean;
+  unit_cost: number | null; // per unit (per oz for oz)
+  bottle_size: number | null; // in its unit (25.4 oz for a 750 ml bottle)
 }
 
 // Back office → Bar Book: every ingredient with its kind, family and
 // carried, and the book's drinks that aren't on the menu (house and the
 // starter list). Null before the migration.
-export async function getBarBookAdmin(): Promise<{ ingredients: BarIngredient[]; drinks: BookRecipe[] } | null> {
+export async function getBarBookAdmin(): Promise<{ ingredients: BarIngredient[]; drinks: BookRecipe[]; target: number } | null> {
   const supabase = createAdminClient();
-  const [ing, rec] = await Promise.all([
-    supabase.from("ingredients").select("id, name, unit, category, kind, family, carried, active").order("name"),
+  const [ing, rec, target] = await Promise.all([
+    supabase.from("ingredients").select("id, name, unit, category, kind, family, carried, active, unit_cost, bottle_size").order("name"),
     supabase.from("recipes").select(BOOK_COLUMNS).is("menu_item_id", null).order("name"),
+    getTargetPourCost(),
   ]);
   if (schemaMissing(ing.error) || schemaMissing(rec.error)) return null;
   if (ing.error) throw ing.error;
   if (rec.error) throw rec.error;
   return {
-    ingredients: (ing.data ?? []) as BarIngredient[],
+    ingredients: ((ing.data ?? []) as BarIngredient[]).map((i) => ({
+      ...i,
+      unit_cost: i.unit_cost === null ? null : Number(i.unit_cost),
+      bottle_size: i.bottle_size === null ? null : Number(i.bottle_size),
+    })),
     drinks: ((rec.data ?? []) as unknown as RecipeRow[]).map(toRecipe).filter((r): r is BookRecipe => !!r),
+    target,
   };
 }
 
-// The bar display's map: menu item id → its icon and recipe card, for every
-// alcohol item on the menu. A beer or wine with no recipe gets its glass and
-// no card; a cocktail with no recipe of its own borrows the book drink of
-// the same name. Read once when the board loads.
-export async function getBoardEntries(): Promise<Record<string, BoardEntry>> {
+export interface BoardEntries {
+  items: Record<string, BoardEntry>; // by menu item id
+  recipes: Record<string, BoardEntry>; // by recipe id: Bar Book drinks rung up off the menu
+}
+
+// The bar display's maps, read once when the board loads: each alcohol menu
+// item's icon and recipe card (a beer or wine with no recipe gets its glass
+// and no card; a cocktail with no recipe of its own borrows the book drink
+// of the same name), and each off-menu Bar Book drink's, for the lines rung
+// up from the book (order_items.recipe_id).
+export async function getBoardEntries(): Promise<BoardEntries> {
   const supabase = createAdminClient();
   const [items, newer] = await Promise.all([
     supabase.from("menu_items").select("id, name, category:menu_categories(key, label)").eq("is_alcohol", true),
     supabase.from("recipes").select(BOOK_COLUMNS),
   ]);
-  if (items.error) return {};
+  const none: BoardEntries = { items: {}, recipes: {} };
+  if (items.error) return none;
   let rows = newer.data as unknown as RecipeRow[] | null;
   if (newer.error) {
-    if (!schemaMissing(newer.error)) return {};
+    if (!schemaMissing(newer.error)) return none;
     const older = await supabase.from("recipes").select(OLD_COLUMNS);
-    if (older.error) return {};
+    if (older.error) return none;
     rows = older.data as unknown as RecipeRow[];
   }
 
@@ -181,5 +208,57 @@ export async function getBoardEntries(): Promise<Record<string, BoardEntry>> {
     const hasCard = r.lines.length > 0 || !!r.instructions;
     map[it.id] = { spec, card: hasCard ? recipeCard({ ...r, name: it.name }) : null };
   }
-  return map;
+
+  // The board's recipe overlay doesn't show the description, so it stays home.
+  const byRecipe: Record<string, BoardEntry> = {};
+  for (const r of recipes) {
+    if (r.menuItemId) continue;
+    const spec = iconSpecFor(
+      { glassware: r.glassware, garnishes: r.garnishes, ice: r.ice, ingredients: r.lines.map((l) => ({ name: l.name, quantity: l.quantity, unit: l.unit, family: l.family, kind: l.kind })) },
+      "cocktails",
+    );
+    byRecipe[r.id] = { spec, card: r.lines.length > 0 || r.instructions ? { ...recipeCard(r), description: null } : null };
+  }
+  return { items: map, recipes: byRecipe };
+}
+
+// ---------- Bar Book drinks on an order ----------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The recipes a register order's lines may carry (order_items.recipe_id):
+// only a one-off line (no menu item, not a ticket) naming a real Bar Book
+// drink that isn't on the menu. Anything else is dropped by the caller.
+// Each with what it costs, for the below-cost check. Never throws: an empty
+// map means every recipe_id is dropped and the lines save as plain custom
+// lines, exactly as before.
+export async function bookRecipesFor(
+  lines: readonly { menu_item_id: string | null; screening_id?: string | null; recipe_id?: string | null }[],
+): Promise<Map<string, { name: string; cost: DrinkCost }>> {
+  const ids = [
+    ...new Set(lines.filter((l) => !l.menu_item_id && !l.screening_id && typeof l.recipe_id === "string" && UUID.test(l.recipe_id)).map((l) => (l.recipe_id as string).toLowerCase())),
+  ];
+  const found = new Map<string, { name: string; cost: DrinkCost }>();
+  if (!ids.length) return found;
+  try {
+    const { data, error } = await createAdminClient()
+      .from("recipes")
+      .select("id, name, menu_item_id, ingredients:recipe_ingredients(quantity, optional, ingredient:ingredients(name, unit_cost))")
+      .in("id", ids)
+      .is("menu_item_id", null);
+    if (error) return found;
+    for (const r of (data ?? []) as unknown as {
+      id: string;
+      name: string | null;
+      ingredients: { quantity: number; optional: boolean | null; ingredient: { name: string; unit_cost: number | null } | null }[];
+    }[]) {
+      const cost = drinkCost(
+        (r.ingredients ?? []).map((l) => ({ name: l.ingredient?.name ?? "?", quantity: Number(l.quantity), unitCost: l.ingredient?.unit_cost ?? null, optional: l.optional === true })),
+      );
+      found.set(r.id.toLowerCase(), { name: r.name ?? "", cost });
+    }
+  } catch {
+    // As if none were found: the lines save as plain custom lines.
+  }
+  return found;
 }

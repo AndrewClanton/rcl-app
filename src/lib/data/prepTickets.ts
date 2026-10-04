@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { schemaMissing } from "@/lib/schema-missing";
 
 export interface PrepTicket {
   id: string;
@@ -15,6 +16,9 @@ export interface PrepTicket {
   // The menu item it was rung up as (null for a custom line), so the bar
   // board can show its drink icon and recipe (lib/data/barBook.ts).
   menu_item_id: string | null;
+  // A Bar Book drink rung up off the menu: its recipe (null otherwise, and
+  // before migration 20261004030000_order_item_recipe.sql).
+  recipe_id: string | null;
 }
 
 export type Station = "kitchen" | "bar";
@@ -45,16 +49,19 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
   const supabase = createAdminClient();
   const since = new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString();
 
-  const { data, error } = await supabase
-    .from("order_items")
-    .select(
-      "id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item_id, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at)"
-    )
-    .eq("is_event", false)
-    .eq("order.status", "completed")
-    .gte("order.created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(120);
+  const read = (extra: string) =>
+    supabase
+      .from("order_items")
+      .select(
+        `id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item_id${extra}, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at)`
+      )
+      .eq("is_event", false)
+      .eq("order.status", "completed")
+      .gte("order.created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(120);
+  let { data, error } = await read(", recipe_id");
+  if (error && schemaMissing(error)) ({ data, error } = await read(""));
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as {
@@ -68,6 +75,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
     created_at: string;
     is_alcohol: boolean;
     menu_item_id: string | null;
+    recipe_id?: string | null;
     menu_item: { category: { key: string } | null } | null;
     order: { order_number: number; order_name: string | null };
   }[];
@@ -89,6 +97,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       order_name: row.order.order_name,
       station: station as Station,
       menu_item_id: row.menu_item_id ?? null,
+      recipe_id: row.recipe_id ?? null,
     }));
 }
 

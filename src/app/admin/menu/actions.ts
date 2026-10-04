@@ -8,10 +8,10 @@ import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
 import { logOpsChange } from "@/lib/ops/changes";
 import { putBackOnSale } from "@/lib/ops/outages";
-import { after } from "next/server";
 import { deleteStoredPhotos, jpegFromForm, photoTable, removePhoto, storePhoto, storeTextIcon } from "@/lib/menu-pictures/store";
 import { approvePicture, defaultQuery, fillMissingPictures, storeFoundPicture, type FillReport } from "@/lib/menu-pictures/found";
 import { findCandidates, toView } from "@/lib/menu-pictures/sources";
+import { findPictureLater, insertMenuItem } from "@/lib/menu-items";
 import { cleanQuery } from "@/lib/menu-pictures/query";
 import type { PhotoTarget, PictureResult, SearchResult } from "@/lib/menu-pictures/shared";
 
@@ -174,13 +174,11 @@ export async function addItem(categoryId: string, name: string, price: number, i
   const trimmed = name.trim();
   if (!trimmed) return { ok: false, error: "Give the item a name." };
   if (!(price >= 0)) return { ok: false, error: "Enter a price of $0.00 or more." };
-  const supabase = createAdminClient();
-  const { count } = await supabase.from("menu_items").select("id", { count: "exact", head: true }).eq("category_id", categoryId);
-  const { data: added, error } = await supabase.from("menu_items").insert({ category_id: categoryId, name: trimmed, price, is_alcohol: isAlcohol, sort_order: count ?? 0 }).select("id").maybeSingle();
+  const { id: addedId, error } = await insertMenuItem({ categoryId, name: trimmed, price, isAlcohol });
   const f = failed(error, "add that item");
   if (f) return f;
   // Its picture follows in a few seconds (the label tile until then).
-  findPictureLater("item", added?.id as string | undefined);
+  findPictureLater("item", addedId);
   revalidate();
   return { ok: true };
 }
@@ -326,20 +324,6 @@ export async function fillMenuPictures(skip: string[]): Promise<{ ok: true; repo
   const report = await fillMissingPictures({ limit: 6, skip: Array.isArray(skip) ? skip.slice(0, 500) : [] });
   if (report.lines.some((l) => l.ok)) revalidate();
   return { ok: true, report };
-}
-
-// A new item gets a picture on its own, once the page has its
-// answer: found and put on unapproved, for the Photo walk. Never fails the
-// add: without one, the button shows its label tile.
-function findPictureLater(target: PhotoTarget, id: string | undefined) {
-  if (!id) return;
-  after(async () => {
-    try {
-      await fillMissingPictures({ only: { target, id } });
-    } catch (e) {
-      console.error("menu: no picture found for the new", target, e);
-    }
-  });
 }
 
 // ---------- modifier groups & options ----------

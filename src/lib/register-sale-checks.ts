@@ -333,7 +333,8 @@ export type SaleFlagKind =
   | "points_short"
   | "tab_closed_elsewhere"
   | "sale_abandoned"
-  | "items_not_saved";
+  | "items_not_saved"
+  | "below_cost";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

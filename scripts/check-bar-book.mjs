@@ -1,8 +1,8 @@
 // Checks the Bar Book without a database (nothing is read from or written
 // to the live one):
-//  1. The client-safe modules (icons, book, menu, the starter list, the
-//     icon component) import nothing server-side, so the register and the
-//     bar display can use them.
+//  1. The client-safe modules (icons, book, menu, pricing, the starter
+//     list, the icon component) import nothing server-side, so the
+//     register and the bar display can use them.
 //  2. The drink icons: one for every starter-list drink at 36, 56 and 96 px
 //     with no NaN, undefined or Infinity, self-contained (hex colors and
 //     currentColor, no CSS variables or color-mix), and everything escaped.
@@ -16,8 +16,12 @@
 //  6. The book: our menu's recipe wins over the starter list, a book drink
 //     rings up as the menu item of the same name, off-menu drinks don't.
 //  7. The bar display: a ticket with no recipe (coffee, a custom line, an
-//     unknown item) gets nothing and never throws.
-//  8. The migration: later than every other, columns only, idempotent.
+//     unknown item) gets nothing and never throws; an off-menu book drink
+//     gets its recipe's.
+//  8. The migrations: in order, columns only, idempotent.
+//  9. Prices: cost, suggested price, the cocktail average, rounding,
+//     unknown costs, below cost, and the order line a book drink makes
+//     (and which recipe ids the server keeps).
 //
 // Usage: node scripts/check-bar-book.mjs   (Node 22.18+ runs the .ts directly)
 import { register } from "node:module";
@@ -33,6 +37,7 @@ register(
 const I = await import("../src/lib/bar/icons.ts");
 const B = await import("../src/lib/bar/book.ts");
 const M = await import("../src/lib/bar/menu.ts");
+const P = await import("../src/lib/bar/pricing.ts");
 const { SEED_DRINKS, SEED_INGREDIENTS } = await import("../src/lib/bar/seed-drinks.ts");
 
 let failures = 0;
@@ -44,7 +49,7 @@ const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8"
 
 // ---------- 1. client-safe imports ----------
 const SERVER = [/["']server-only["']/, /@\/lib\/supabase/, /["']next\/headers["']/, /["']next\/cache["']/, /@\/lib\/data\//, /@\/lib\/auth["']/, /["']pg["']/, /["']node:/, /["']fs["']/];
-const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
+const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/pricing.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
 const seen = new Set();
 function walk(rel) {
   if (seen.has(rel)) return;
@@ -221,15 +226,32 @@ try {
   threw = e;
 }
 check("the board helpers never throw", threw === null, threw?.message);
+const maps = { items: entries, recipes: { "11111111-2222-4333-8444-555555555555": { spec: marg, card: null } } };
+let threw2 = null;
+try {
+  check("a book drink rung up off the menu gets its recipe's icon", B.boardEntryForTicket(maps, { menu_item_id: null, recipe_id: "11111111-2222-4333-8444-555555555555" })?.spec === marg);
+  check("a menu line uses its menu item, not a recipe", B.boardEntryForTicket(maps, { menu_item_id: "m-beer", recipe_id: "11111111-2222-4333-8444-555555555555" })?.card === null && B.boardEntryForTicket(maps, { menu_item_id: "m-beer" })?.spec.glass === "pint");
+  check("a ticket with no recipe gets nothing", B.boardEntryForTicket(maps, { menu_item_id: null, recipe_id: null }) === null && B.boardEntryForTicket(maps, { menu_item_id: null }) === null && B.boardEntryForTicket(maps, {}) === null);
+  check("an unknown recipe gets nothing", B.boardEntryForTicket(maps, { menu_item_id: null, recipe_id: "99999999-2222-4333-8444-555555555555" }) === null);
+  check("no maps (the kitchen board, or before the migration) gets nothing", B.boardEntryForTicket(undefined, { recipe_id: "x" }) === null && B.boardEntryForTicket({ items: {}, recipes: {} }, { menu_item_id: "m-marg" }) === null);
+} catch (e) {
+  threw2 = e;
+}
+check("the board's ticket helper never throws", threw2 === null, threw2?.message);
 const board = read("src/app/display/PrepTicketBoard.tsx");
-check("the realtime insert carries menu_item_id", /menu_item_id: row\.menu_item_id \?\? null/.test(board));
-check("the server tickets carry menu_item_id", /menu_item_id: row\.menu_item_id \?\? null/.test(read("src/lib/data/prepTickets.ts")) && /menu_item_id, menu_item:menu_items/.test(read("src/lib/data/prepTickets.ts")));
+check("the realtime insert carries menu_item_id and recipe_id", /menu_item_id: row\.menu_item_id \?\? null/.test(board) && /recipe_id: row\.recipe_id \?\? null/.test(board));
+check("the server tickets read recipe_id, and fall back without it", /read\(", recipe_id"\)/.test(read("src/lib/data/prepTickets.ts")) && /schemaMissing\(error\)\) \(\{ data, error \} = await read\(""\)\)/.test(read("src/lib/data/prepTickets.ts")));
+check("the server tickets carry menu_item_id", /menu_item_id: row\.menu_item_id \?\? null/.test(read("src/lib/data/prepTickets.ts")) && /menu_item_id\$\{extra\}, menu_item:menu_items/.test(read("src/lib/data/prepTickets.ts")));
 check("the kitchen page passes no drinks", !/drinks=/.test(read("src/app/display/kitchen/page.tsx")));
 
-// ---------- 8. the migration ----------
+// ---------- 8. the migrations ----------
 const migrations = readdirSync(new URL("../supabase/migrations/", import.meta.url)).filter((f) => f.endsWith(".sql")).sort();
 const mine = "20261004010000_bar_book.sql";
-check("the migration is the latest", migrations.at(-1) === mine, migrations.at(-1));
+const second = "20261004030000_order_item_recipe.sql";
+check("both Bar Book migrations are there, the recipe link after the book", migrations.includes(mine) && migrations.includes(second) && migrations.indexOf(second) > migrations.indexOf(mine));
+check("the recipe link is later than every migration before it", migrations.filter((f) => f < second).length === migrations.indexOf(second));
+const sql2 = read(`supabase/migrations/${second}`).replace(/--.*$/gm, "");
+check("order_items.recipe_id: columns only, safe to run twice", /alter table order_items add column if not exists recipe_id uuid references recipes\(id\) on delete set null/.test(sql2) && !/create\s+(table|function|view|sequence)/i.test(sql2) && /create index if not exists/.test(sql2));
 const sql = read(`supabase/migrations/${mine}`).replace(/--.*$/gm, "");
 check("columns only: no new table or function", !/create\s+(table|function|view|sequence)/i.test(sql));
 for (const col of ["ingredients add column if not exists kind", "ingredients add column if not exists family", "ingredients add column if not exists carried", "recipes add column if not exists name", "recipes add column if not exists method", "recipes add column if not exists garnishes", "recipes add column if not exists source", "recipes add column if not exists description", "recipe_ingredients add column if not exists optional", "alter column menu_item_id drop not null"]) {
@@ -238,6 +260,61 @@ for (const col of ["ingredients add column if not exists kind", "ingredients add
 const adds = [...sql.matchAll(/add constraint (\w+)/g)].map((m) => m[1]);
 check("every constraint is dropped first (safe to run twice)", adds.every((c) => sql.includes(`drop constraint if exists ${c}`)), adds.join(", "));
 check("the backfill only fills empty ones", /where i\.id = g\.id and g\.kind is not null and i\.kind is null/.test(sql) && /i\.family is null/.test(sql));
+
+// ---------- 9. prices ----------
+const cl = (name, quantity, unitCost, optional = false) => ({ name, quantity, unitCost, optional });
+const margCost = P.drinkCost([cl("Tequila", 2, 0.55), cl("Triple sec", 1, 0.32), cl("Lime juice", 1, 0.2), cl("Salt", 1, null, true)]);
+check("cost adds amount × unit cost", margCost.cost === 1.62 && margCost.known === 1.62 && margCost.missing.length === 0, JSON.stringify(margCost));
+check("an optional line with no cost doesn't make the cost unknown", margCost.cost !== null);
+check("an optional line with a cost counts", P.drinkCost([cl("Rum", 2, 0.5), cl("Mint", 1, 0.25, true)]).cost === 1.25);
+const partial = P.drinkCost([cl("Tequila", 2, 0.55), cl("Triple Sec", 1, null), cl("Lime juice", 1, undefined)]);
+check("a required line with no cost makes it unknown, and says which", partial.cost === null && partial.missing.join() === "Triple Sec,Lime juice" && partial.known === 1.1 && partial.anyCost);
+const none = P.drinkCost([cl("Tequila", 2, null), cl("Lime juice", 1, null)]);
+check("nothing costed", none.cost === null && !none.anyCost && none.known === 0);
+check("a cost of $0 counts as a cost", P.drinkCost([cl("Water", 4, 0)]).cost === 0);
+check("suggested: cost ÷ 20%, up to a whole dollar", P.suggestedPrice(1.62, 0.2) === 9 && P.suggestedPrice(1.6, 0.2) === 8 && P.suggestedPrice(1.61, 0.2) === 9);
+check("suggested: float noise doesn't add a dollar", P.suggestedPrice(0.3 + 0.3 + 0.3 + 0.1 + 0.6, 0.2) === 8 && P.suggestedPrice(1.8, 0.18) === 10);
+check("suggested: other targets", P.suggestedPrice(2, 0.25) === 8 && P.suggestedPrice(2.01, 0.25) === 9 && P.suggestedPrice(0.05, 0.2) === 1);
+check("suggested: nothing without a cost", P.suggestedPrice(null, 0.2) === null && P.suggestedPrice(0, 0.2) === null && P.suggestedPrice(NaN, 0.2) === null);
+check("a bad target falls back to 20%", P.suggestedPrice(1.62, 0) === 9 && P.suggestedPrice(1.62, 5) === 9 && P.suggestedPrice(1.62, "x") === 9);
+check("target bounds", P.validTarget(0.2) === 0.2 && P.validTarget("0.18") === 0.18 && P.validTarget(0.04) === null && P.validTarget(0.61) === null && P.validTarget(null) === null);
+check("pour cost", Math.abs(P.pourCost(1.62, 9) - 0.18) < 1e-12 && P.pourCost(null, 9) === null && P.pourCost(1, 0) === null);
+check("the average: menu cocktails fully costed only", Math.abs(P.averagePourCost([{ cost: 1.8, price: 9 }, { cost: 1.8, price: 10 }, { cost: null, price: 9 }, { cost: 2, price: 0 }]) - 0.19) < 1e-9);
+check("no costed cocktails, no average", P.averagePourCost([{ cost: null, price: 9 }]) === null && P.averagePourCost([]) === null);
+check("below cost, to the cent", P.isBelowCost(1.61, margCost) && !P.isBelowCost(1.62, margCost) && !P.isBelowCost(9, margCost));
+check("below what we know it costs even with some costs missing", P.isBelowCost(1.09, partial) && !P.isBelowCost(1.1, partial));
+check("never below cost with no costs", !P.isBelowCost(0.01, none));
+const sumText = P.priceSummary({ cost: margCost, target: 0.2, average: 0.19 }).text;
+check("the card line", sumText === "Cost $1.62 · Suggested $9 · Our cocktails average 19% pour cost; this would be 18%", sumText);
+const menuText = P.priceSummary({ cost: margCost, target: 0.2, menuPrice: 8, average: 0.19 }).text;
+check("a menu drink shows its price and pour cost too", menuText === "Cost $1.62 · Menu $8.00 (20% pour cost) · Suggested $9 · Our cocktails average 19% pour cost; this would be 18%", menuText);
+check("no average yet", P.priceSummary({ cost: margCost, target: 0.2, average: null }).text === "Cost $1.62 · Suggested $9 · This would be 18% pour cost");
+check("nothing costed says where to add costs", P.priceSummary({ cost: none, target: 0.2 }).text === "No bottle costs yet: add them in Back office → Bar Book." && P.priceSummary({ cost: none, target: 0.2 }).suggested === null);
+check("some costs missing names them", P.priceSummary({ cost: partial, target: 0.2 }).text === "Cost unknown: no price for Triple Sec and Lime juice.", P.priceSummary({ cost: partial, target: 0.2 }).text);
+check("many missing are counted", P.priceSummary({ cost: P.drinkCost([cl("A", 1, 0.1), cl("B", 1, null), cl("C", 1, null), cl("D", 1, null), cl("E", 1, null)]), target: 0.2 }).text === "Cost unknown: no price for B, C, D and 1 more.");
+check("bottle price ÷ size", P.unitCostFromBottle(22.6, 25.4) === 0.8898 && P.unitCostFromBottle(10, 0) === null && P.unitCostFromBottle(-1, 25.4) === null);
+// the price box
+check("prices read like money", P.readPrice("9").ok && P.readPrice("$9.50").price === 9.5 && P.readPrice(" 12 ").price === 12);
+check("bad prices are refused", ["", "0", "0.00", "abc", "9.999", "1e3", "-5", ".", "10000"].every((t) => !P.readPrice(t).ok));
+// the order line
+const RID = "11111111-2222-4333-8444-555555555555";
+const ln = P.bookOrderLine({ recipeId: RID, name: "  Mojito " }, 9.004);
+check("a book drink's line: one-off, named for the drink, alcohol, its recipe", JSON.stringify(ln) === JSON.stringify({ menuItemId: null, name: "Mojito", unit: 9, qty: 1, mods: [], isAlcohol: true, recipeId: RID }), JSON.stringify(ln));
+const known = new Set([RID]);
+check("the server keeps a known recipe on a one-off line", P.bookRecipeIdOf({ menu_item_id: null, screening_id: null, recipe_id: RID.toUpperCase() }, known) === RID);
+check("never on a menu item's line", P.bookRecipeIdOf({ menu_item_id: "m-marg", recipe_id: RID }, known) === null);
+check("never on a ticket", P.bookRecipeIdOf({ menu_item_id: null, screening_id: "s1", recipe_id: RID }, known) === null);
+check("never an unknown or menu recipe", P.bookRecipeIdOf({ menu_item_id: null, recipe_id: "99999999-2222-4333-8444-555555555555" }, known) === null);
+check("never something that isn't an id", [null, undefined, 5, "", "x", `${RID}' or 1=1`, { id: RID }].every((v) => P.bookRecipeIdOf({ menu_item_id: null, recipe_id: v }, { has: () => true }) === null));
+const actions = read("src/app/pos/actions.ts");
+check("the server looks recipes up before saving and drops what it can't find", /bookRecipesFor\(lines\)/.test(actions) && /bookRecipeIdOf\(l, book\)/.test(actions));
+check("before the recipe migration it saves without the link", /schemaMissing\(insertErr\) && withRecipes !== rows/.test(actions));
+check("only off-menu recipes count (menu_item_id is null)", /\.in\("id", ids\)\s*\.is\("menu_item_id", null\)/.test(read("src/lib/data/barBook.ts")));
+const bb = read("src/app/admin/bar-book/actions.ts");
+check("making a menu item and the target are owners and admins, on the server", /export async function makeMenuItemFromRecipe[\s\S]*?await notOwner\(\)/.test(bb) && /export async function setTargetPourCost[\s\S]*?await notOwner\(\)/.test(bb) && /hasAdminAccess\(staff\.role\)/.test(bb));
+check("costs are managers and up, on the server", /export async function setIngredientCost[\s\S]*?await denied\(\)/.test(bb));
+check("below cost asks the register's manager PIN", /checkManagerPin\(pin, "below-cost-drink"/.test(read("src/app/pos/bar-book-actions.ts")));
+check("sale math untouched: register-totals.ts isn't imported by the pricing", !/register-totals/.test(read("src/lib/bar/pricing.ts")));
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll Bar Book checks passed.");
 process.exit(failures ? 1 : 0);

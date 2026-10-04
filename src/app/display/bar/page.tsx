@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export default async function BarDisplayPage() {
   await requireStaff();
   // Drink icons and recipes: a board with none still works as before.
-  const [tickets, drinks] = await Promise.all([getBarTickets(), getBoardEntries().catch(() => ({}))]);
+  const [tickets, drinks] = await Promise.all([getBarTickets(), getBoardEntries().catch(() => ({ items: {}, recipes: {} }))]);
   return <PrepTicketBoard title="Bar" station="bar" initialTickets={tickets} drinks={drinks} />;
 }

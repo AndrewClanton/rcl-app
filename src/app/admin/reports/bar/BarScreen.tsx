@@ -1,4 +1,4 @@
-import type { AlcoholUsageRow, PourCostRow } from "@/lib/data/reports";
+import type { AlcoholUsageRow, BookDrinkSale, PourCostRow } from "@/lib/data/reports";
 import { Card, Pill, money } from "../ui";
 
 // Reports -> Bar usage, as drawn: the page (./page.tsx) checks the sign-in
@@ -10,9 +10,31 @@ function unitLabel(unit: string) {
   return unit === "count" ? "ct" : unit;
 }
 
-export default function BarScreen({ days, usage, pour }: { days: number; usage: AlcoholUsageRow[]; pour: PourCostRow[] }) {
+export default function BarScreen({ days, usage, pour, book = [] }: { days: number; usage: AlcoholUsageRow[]; pour: PourCostRow[]; book?: BookDrinkSale[] }) {
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+      {book.length > 0 && (
+        <Card title="Bar Book drinks sold" subtitle={`Drinks rung up from the Bar Book that aren't on the menu, last ${days} days. Their pours count below.`}>
+          <table className="w-full text-sm tabular-nums">
+            <thead>
+              <tr className="text-left text-xs text-[var(--muted)]">
+                <th className="pb-1.5 font-medium">Drink</th>
+                <th className="pb-1.5 text-right font-medium">Sold</th>
+                <th className="pb-1.5 text-right font-medium">Sales</th>
+              </tr>
+            </thead>
+            <tbody>
+              {book.map((row) => (
+                <tr key={row.recipeId} className="border-t border-[var(--border)]">
+                  <td className="py-1.5 pr-2">{row.name}</td>
+                  <td className="py-1.5 text-right">{row.sold}</td>
+                  <td className="py-1.5 text-right">{money(row.revenue)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
       <Card title="Pour cost by drink" subtitle="Ingredient cost ÷ menu price. Bars aim for 16–20%; red is over 20%.">
         {pour.length === 0 ? (
           <p className="text-sm text-[var(--muted)]">No drinks on the menu yet.</p>
