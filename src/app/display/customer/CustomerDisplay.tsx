@@ -7,11 +7,11 @@ import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import type { PlusFinish } from "@/lib/checkin";
 import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
-import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
+import CheckinKiosk, { type CheckinStep, type Encore } from "./CheckinKiosk";
 import FinishCard, { finishShown, type FinishShown } from "./FinishCard";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
-import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
+import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard, type TabletMember } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
 import { parseTabletSound, type MemberOff, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
 import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
@@ -29,6 +29,11 @@ export interface PromoMovie {
 // (the register closed mid-way) goes after this.
 const SETUP_DONE_MS = 4_500;
 const SETUP_STALE_MS = 4 * 60_000;
+
+// The red "add your card" card, untouched, gives way to their own card
+// after this; brought back from the chip on their card, after this.
+const RED_MS = 10_000;
+const RED_AGAIN_MS = 20_000;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -49,8 +54,10 @@ function showtime(iso: string) {
 //   points, what's left to make it theirs); once something's rung up, their
 //   account sits at the foot of the order. A paying Insiders+ member gets
 //   the gold badge; a former unlimited member with nothing paying for it,
-//   or Insiders+ with no card on file, gets a red "add your card" card until
-//   it's set up (MemberCards.tsx).
+//   or Insiders+ with no card on file, gets a red "add your card" card
+//   (MemberCards.tsx). It never locks the screen: "✕ Show my card", or ten
+//   seconds untouched, puts it down for their own card, and a chip on that
+//   brings it back.
 // The register's ✨ Celebrate throws streamers across the whole screen, and
 // so does Rewind (Back office found a regular's visits from before the new
 // system), under the kiosk's "Welcome back".
@@ -183,6 +190,27 @@ export default function CustomerDisplay({
     const timer = setTimeout(() => setWelcome(null), 9_000);
     return () => clearTimeout(timer);
   }, [welcome]);
+  // The red card can always be put down (Andrew 10/3): "✕ Show my card",
+  // or RED_MS untouched. `redDown`: the first name it's down for, until
+  // they're off the order or tap "Add a card" on their card (`redAgain`:
+  // up again, for RED_AGAIN_MS). This screen only: the register keeps its
+  // red signal, and a card setup on the reader carries on (once it goes
+  // through, the welcome plays as ever). `encore`: their entrance again as
+  // they tap "Show my card".
+  const [redDown, setRedDown] = useState<string | null>(null);
+  const [redAgain, setRedAgain] = useState<{ firstName: string; key: number } | null>(null);
+  const [encore, setEncore] = useState<Encore | null>(null);
+  const putDown = useCallback((m: TabletMember, withCard: boolean) => {
+    setRedDown(m.firstName);
+    const entrance = m.profile?.entrance ?? null;
+    if (withCard && entrance && entrance !== "classic") setEncore({ key: Date.now(), entrance, color: m.profile?.color ?? null });
+    else playSound("card");
+  }, []);
+  const bringBack = useCallback((firstName: string) => {
+    setRedDown(null);
+    setRedAgain({ firstName, key: Date.now() });
+    playSound("card");
+  }, []);
   const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
   // The last cart, so each new one can make its sound (sounds.ts cartSound).
   const lastCart = useRef<RegisterCartSnapshot | null>(previewCart ?? null);
@@ -206,6 +234,9 @@ export default function CustomerDisplay({
       setCart(next);
       // Someone they said "Done" or "That's not me" for is off the order.
       setOffFor((off) => (off && now?.firstName === off ? off : null));
+      // A red card put down stays down only while they're on the order.
+      setRedDown((d) => (d && now?.firstName === d ? d : null));
+      setRedAgain((a) => (a && now?.firstName === a.firstName ? a : null));
       const justSetUp = needsCard(before) && !!now && !needsCard(now) && now.plus && now.firstName === before?.firstName;
       if (justSetUp && celebrated.current !== now.firstName) celebrate(now.firstName, !!before?.noCard);
       if (!needsCard(now)) setSetUp(null);
@@ -325,8 +356,26 @@ export default function CustomerDisplay({
   // of the order.
   // Not someone who just said "Done" or "That's not me" (offFor).
   const who = cart?.member && cart.member.firstName !== offFor ? cart.member : null;
-  const cardFor = who && needsCard(who) && who.firstName !== setUp && !finish && !welcome ? who : null;
+  // Put down (redDown): their own card instead, with a chip to bring it back.
+  const owes = !!who && needsCard(who) && who.firstName !== setUp && !welcome;
+  const cardFor = owes && who.firstName !== redDown && !finish ? who : null;
+  const addCard = owes && who.firstName === redDown ? () => bringBack(who.firstName) : undefined;
   const cardKind = who?.unlimited ? "unlimited" : "nocard";
+  // Untouched, it gives way to their card by itself (the red's been seen).
+  const redUp = cardFor?.firstName ?? null;
+  const redLong = !!redUp && redAgain?.firstName === redUp;
+  const redAgainKey = redAgain?.key ?? 0;
+  useEffect(() => {
+    if (!redUp) return;
+    const timer = setTimeout(
+      () => {
+        setRedDown(redUp);
+        playSound("card");
+      },
+      redLong ? RED_AGAIN_MS : RED_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [redUp, redLong, redAgainKey]);
   const hero = !hasOrder && !tickets;
   // "You're all set, Sarah!": the name staff typed, or the one on the order.
   const greet = setup?.name ? setup.name.split(" ")[0] : who && !isGuestName(who.firstName) ? who.firstName : null;
@@ -341,30 +390,35 @@ export default function CustomerDisplay({
         onRewind={rewindStreamers}
         onFinish={setFinish}
         onPlusWelcome={onPlusWelcome}
+        encore={encore}
       />
       <aside className={`${k.side} ${!hero && (cardFor || welcome) ? k.sideTight : ""} ${who && !hasOrder ? k.sideCard : ""}`}>
         {finish && <FinishCard key={finish.key} shown={finish} />}
         {welcome && !hero && <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero={false} />}
-        {cardFor && !hero && <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero={false} />}
+        {cardFor && !hero && <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero={false} onDismiss={() => putDown(cardFor, false)} />}
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
         {hasOrder ? (
-          <OrderReceipt cart={who ? cart : { ...cart, member: null }} onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined} />
+          <OrderReceipt
+            cart={who ? cart : { ...cart, member: null }}
+            onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined}
+            onAddCard={finish ? undefined : addCard}
+          />
         ) : welcome && hero ? (
           <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero />
         ) : cardFor && hero ? (
           <>
-            <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero />
+            <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero onDismiss={() => putDown(cardFor, true)} />
             <AccountPanel member={cardFor} alone />
             <MemberActions onOff={(why) => memberOff(cardFor.firstName, why)} />
           </>
         ) : who && hero && !finish ? (
           <>
-            <MemberCard member={who} />
+            <MemberCard member={who} onAddCard={addCard} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : who ? (
           <>
-            <AccountPanel member={who} alone />
+            <AccountPanel member={who} alone onAddCard={finish ? undefined : addCard} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : (
@@ -452,7 +506,9 @@ function BadgePitch() {
 // it is, their account (where they stand, points and perks) and the points
 // it earns.
 // onNotMe: "That's not me" on their account, in case it isn't theirs.
-export function OrderReceipt({ cart, onNotMe }: { cart: RegisterCartSnapshot; onNotMe?: () => void }) {
+// onAddCard: their red "add your card" banner is down; the chip on their
+// account brings it back.
+export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartSnapshot; onNotMe?: () => void; onAddCard?: () => void }) {
   const who = cart.member;
   const earn = cart.pointsToEarn ?? 0;
   const count = cart.items.reduce((n, i) => n + i.quantity, 0);
@@ -504,7 +560,7 @@ export function OrderReceipt({ cart, onNotMe }: { cart: RegisterCartSnapshot; on
         </div>
       </div>
       {who ? (
-        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} />
+        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} onAddCard={onAddCard} />
       ) : (
         earn > 0 && (
           <div className={k.earn}>
