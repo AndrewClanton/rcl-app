@@ -13,7 +13,8 @@ import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
 import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard, type TabletMember } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
-import { parseTabletSound, type MemberOff, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
+import PayOnReader from "./PayOnReader";
+import { parseReaderPrompt, parseTabletSound, type MemberOff, type ReaderPrompt, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
 import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
@@ -34,6 +35,11 @@ const SETUP_STALE_MS = 4 * 60_000;
 // after this; brought back from the chip on their card, after this.
 const RED_MS = 10_000;
 const RED_AGAIN_MS = 20_000;
+
+// "Approved" on the card reader screen stays this long. A "paid" this soon
+// after it plays no second sound.
+const APPROVED_MS = 3_500;
+const APPROVED_QUIET_MS = 20_000;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -66,6 +72,9 @@ function showtime(iso: string) {
 // order and the screen goes back to normal (MemberCards.tsx MemberActions).
 // When staff set up a guest's account on the register for them, the whole
 // screen follows along as it's typed (StaffSetupView.tsx).
+// While a card payment waits on the card reader, the whole screen says
+// "Finish on the card reader" (PayOnReader.tsx), then "Approved" once the
+// register hears the card went through.
 // previewCart / previewStep / previewTickets / previewFinish / previewSetup
 // are for previews only.
 export default function CustomerDisplay({
@@ -214,6 +223,29 @@ export default function CustomerDisplay({
   const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
   // The last cart, so each new one can make its sound (sounds.ts cartSound).
   const lastCart = useRef<RegisterCartSnapshot | null>(previewCart ?? null);
+
+  // "Approved" on the card reader screen, for a moment: the register heard
+  // the card go through ("card-approved") while that screen was up. The
+  // "approved" sound plays then, so the "paid" after it (once the sale is
+  // saved) stays quiet. Any other sale's "paid" plays it as ever.
+  const [approved, setApproved] = useState<{ key: number; prompt: ReaderPrompt; cart: RegisterCartSnapshot } | null>(null);
+  const approvedAt = useRef(0);
+  useEffect(() => {
+    if (!approved) return;
+    const timer = setTimeout(() => setApproved(null), APPROVED_MS);
+    return () => clearTimeout(timer);
+  }, [approved]);
+  const onCardApproved = useCallback(() => {
+    const was = lastCart.current;
+    const prompt = onReader(was);
+    if (!was || !prompt) return;
+    approvedAt.current = Date.now();
+    setApproved({ key: approvedAt.current, prompt, cart: was });
+    playSound("approved");
+  }, []);
+  const onPaid = useCallback(() => {
+    if (Date.now() - approvedAt.current > APPROVED_QUIET_MS) playSound("approved");
+  }, []);
   const celebrated = useRef<string | null>(null);
   const celebrate = useCallback((firstName: string, renewed: boolean) => {
     celebrated.current = firstName;
@@ -290,7 +322,8 @@ export default function CustomerDisplay({
           if (s) setSoundSettings(s);
         })
         .on("broadcast", { event: "sound-test" }, () => playSound("approved"))
-        .on("broadcast", { event: "paid" }, () => playSound("approved"))
+        .on("broadcast", { event: "card-approved" }, () => onCardApproved())
+        .on("broadcast", { event: "paid" }, () => onPaid())
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
@@ -304,7 +337,7 @@ export default function CustomerDisplay({
       channelRef.current = null;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [registerTopic, onCart, onSetup, onSetupEnd]);
+  }, [registerTopic, onCart, onSetup, onSetupEnd, onCardApproved, onPaid]);
 
   // Browsers keep sound off until the page is tapped: the first tap on the
   // tablet turns it on, and any later one wakes it if the iPad let it sleep.
@@ -342,6 +375,12 @@ export default function CustomerDisplay({
   }, [ticketsKey, finishKey]);
 
   const hasOrder = !!cart && cart.items.length > 0;
+  // "Finish on the card reader", with a soft chime as it comes up.
+  const readerPrompt = onReader(cart);
+  const onReaderNow = !!readerPrompt;
+  useEffect(() => {
+    if (onReaderNow) playSound("chime");
+  }, [onReaderNow]);
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearRickroll = useCallback(() => setRickroll(null), []);
   const rewindStreamers = useCallback(() => setBurst({ id: Date.now(), pieces: makeStreamers(90), banner: null }), []);
@@ -425,14 +464,27 @@ export default function CustomerDisplay({
           <Welcome movies={movies} />
         )}
       </aside>
+      {approved ? (
+        <PayOnReader key={approved.key} prompt={approved.prompt} cart={approved.cart} approved />
+      ) : (
+        readerPrompt && <PayOnReader prompt={readerPrompt} cart={cart} />
+      )}
       {setup && <StaffSetupView setup={setup} greet={greet} onOk={setupOk} />}
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
       {version && (
-        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome} />
+        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome || !!approved} />
       )}
     </div>
   );
+}
+
+// The card reader's turn: the payment screen is up with something on the
+// order, and the register says the payment is on the reader. Null for
+// cash, a voucher, or before it reaches the reader.
+function onReader(cart: RegisterCartSnapshot | null): ReaderPrompt | null {
+  if (!cart?.paying || cart.items.length === 0) return null;
+  return parseReaderPrompt(cart.reader);
 }
 
 // Between orders: the Royale, tonight's movies, and why checking in pays.

@@ -8,6 +8,7 @@ import {
   EMPTY_CART_SNAPSHOT,
   TABLET_SOUND_DEFAULT,
   type MemberOff,
+  type ReaderPrompt,
   type RegisterCartSnapshot,
   type RickrollState,
   type TabletProfile,
@@ -347,6 +348,10 @@ export default function PosApp({
     },
     [checkReader],
   );
+  // A card payment waiting on the reader (PaymentModal): the customer
+  // screen says "Finish on the card reader", its arrow toward the side
+  // Devices says the reader sits.
+  const [readerPrompt, setReaderPrompt] = useState<Omit<ReaderPrompt, "side"> | null>(null);
   // A scanner at the counter: an online ticket's QR prints its tickets right
   // away (one print per ticket, ever); a member card checks them in. An empty
   // register also picks up the scanned member so the order goes on their
@@ -661,6 +666,7 @@ export default function PosApp({
     // The payment screen is up: "ready to pay" on the customer screen.
     paying: payOpen,
     readerWaking: payOpen && readerWaking,
+    reader: payOpen && readerPrompt ? { ...readerPrompt, side: devices.readerSide ?? "right" } : null,
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const sendToTablet = useCallback((event: string, payload: object) => {
@@ -746,7 +752,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking, readerPrompt, devices.readerSide]);
 
   function resetOrder() {
     setCart([]);
@@ -1029,6 +1035,9 @@ export default function PosApp({
     // or print the sale twice.
     if (finalizingRef.current) return;
     finalizingRef.current = true;
+    // The customer screen's "Finish on the card reader" says "Approved"
+    // (it ignores this unless that screen is up).
+    if (payment.stripePaymentIntentId) sendToTablet("card-approved", {});
     setPayOpen(false);
     setBusy(true);
     try {
@@ -1928,6 +1937,7 @@ export default function PosApp({
           onCancel={() => setPayOpen(false)}
           readerDown={readerDown}
           onReaderOffline={onReaderOffline}
+          onReaderPrompt={setReaderPrompt}
         />
       )}
 

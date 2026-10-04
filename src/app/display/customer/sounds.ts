@@ -30,7 +30,7 @@ export type SoundName =
   | "confetti" // streamers, sparkles, Rewind
   | "fanfare" // a big entrance: a new member, Insiders+, a member's entrance
   | "badge" // a new badge
-  | "chime" // a gentle "done" (checked in by staff, all set)
+  | "chime" // a small bell: a gentle "done" (checked in by staff, all set), or "over to the card reader"
   | "tapeIn" // the Rickroll starts: a tape going into the VCR
   | "tapeOut" // the Rickroll stops: the tape winding down
   | "notFound" // a number we don't know
