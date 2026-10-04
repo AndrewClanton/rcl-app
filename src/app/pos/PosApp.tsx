@@ -53,6 +53,8 @@ import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
+import { useReaderMonitor } from "./devices/reader-monitor";
+import { READER_OFFLINE_MESSAGE, readerNeedsLook } from "@/lib/terminal/reader-status";
 import { BoothsButton, StaffButton } from "./shift/StaffButton";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, {
@@ -329,6 +331,22 @@ export default function PosApp({
   // or straight to a printer IP (Devices).
   const printTarget = usePrintTarget();
   const readerId = devices.readerId || defaultReaderId;
+  // Is this register's card reader up? Checked about once a minute
+  // (devices/reader-monitor.ts): a red strip over the order while it's
+  // offline, the details under Devices.
+  const readerMonitor = useReaderMonitor(readerId || null);
+  const readerDown = !!readerId && readerNeedsLook(readerMonitor.health);
+  const checkReader = readerMonitor.check;
+  // A charge couldn't start because the reader is offline: the customer
+  // screen says it's waking up (never an error in front of the guest).
+  const [readerWaking, setReaderWaking] = useState(false);
+  const onReaderOffline = useCallback(
+    (offline: boolean) => {
+      setReaderWaking(offline);
+      if (offline) checkReader();
+    },
+    [checkReader],
+  );
   // A scanner at the counter: an online ticket's QR prints its tickets right
   // away (one print per ticket, ever); a member card checks them in. An empty
   // register also picks up the scanned member so the order goes on their
@@ -642,6 +660,7 @@ export default function PosApp({
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
     // The payment screen is up: "ready to pay" on the customer screen.
     paying: payOpen,
+    readerWaking: payOpen && readerWaking,
   };
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const sendToTablet = useCallback((event: string, payload: object) => {
@@ -727,7 +746,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking]);
 
   function resetOrder() {
     setCart([]);
@@ -1332,6 +1351,22 @@ export default function PosApp({
             </button>
           </div>
 
+          {/* One thin line, only while the reader is offline; clears by
+              itself when it's back. Tap to check again. */}
+          {readerDown && (
+            <button
+              className="notice notice-warn mb-2 flex w-full items-center gap-2 !px-3 !py-1.5 text-left text-xs font-semibold"
+              style={{ borderColor: "var(--danger-text)", color: "var(--danger-text)" }}
+              disabled={readerMonitor.checking}
+              onClick={() => checkReader(true)}
+              role="status"
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: "var(--danger-text)" }} aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{READER_OFFLINE_MESSAGE}</span>
+              <span className="shrink-0 underline">{readerMonitor.checking ? "Checking…" : "Check again"}</span>
+            </button>
+          )}
+
           <div className="mb-2 flex items-center gap-2">
             {activeTab && (
               <span className="chip chip-selected max-w-[40%] shrink-0 truncate !px-3 !py-1.5 text-sm font-bold">
@@ -1702,6 +1737,7 @@ export default function PosApp({
             <DevicesPanel
               buttonClassName="btn-secondary relative whitespace-nowrap !px-2 py-2 text-sm"
               fallbackReaderId={defaultReaderId}
+              reader={readerMonitor}
               onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
               onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
               sendToTablet={sendToTablet}
@@ -1890,6 +1926,8 @@ export default function PosApp({
           onReaderCanceled={clearPendingReaderSale}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}
+          readerDown={readerDown}
+          onReaderOffline={onReaderOffline}
         />
       )}
 
