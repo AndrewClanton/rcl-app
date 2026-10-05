@@ -1,7 +1,8 @@
 import { Fragment, Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { getMembersOnlyScreenings, getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
+import { getMembersOnlyScreenings, getMembersOnlySlots, getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
+import InsiderTeaser from "@/components/site/InsiderTeaser";
 import { getSignedInMember } from "@/lib/member-auth";
 import MoviePoster from "@/components/MoviePoster";
 import ScreenTag from "@/components/site/ScreenTag";
@@ -21,8 +22,8 @@ import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 // member's browser (plus-show / plus-hide, see components/site/plus-hint.ts).
 //
 // The one per-visitor part is MembersOnlyShowings: a signed-in member also
-// sees the members-only showings. A guest is sent nothing about them, not
-// even an empty section.
+// sees the members-only showings. A guest gets only their days and times
+// (InsiderTeaser), never a title: not in the HTML, the JSON-LD or the sitemap.
 //
 // ?screen=outdoor (and /outdoor, which redirects here) lists the outdoor
 // screen's showings only: the link to share when people ask what's on
@@ -196,10 +197,15 @@ function OutdoorWeekend({ screenings }: { screenings: Screening[] }) {
   );
 }
 
-// A signed-in member's members-only showings. A guest gets nothing at all.
+// A signed-in member's members-only showings. A guest gets the teaser: the
+// days and times, never a title (the outdoor screen and Midweek Movies
+// aren't licensed for public advertising).
 async function MembersOnlyShowings({ outdoorOnly }: { outdoorOnly: boolean }) {
   const member = await getSignedInMember();
-  if (!member) return null;
+  if (!member) {
+    const slots = await getMembersOnlySlots();
+    return <InsiderTeaser slots={outdoorOnly ? slots.filter((s) => s.outdoor) : slots} next={outdoorOnly ? "/showtimes?screen=outdoor" : "/showtimes"} />;
+  }
   const all = await getMembersOnlyScreenings(member);
   const shows = outdoorOnly ? all.filter((s) => isOutdoorRoom(s.room)) : all;
   if (shows.length === 0) return null;
@@ -229,6 +235,9 @@ export default async function ShowtimesPage({ searchParams }: { searchParams: Se
   const everything = await getPubliclyVisibleScreenings();
   const screenings = outdoorOnly ? everything.filter((s) => isOutdoorRoom(s.room)) : everything;
   const days = groupByDay(screenings);
+  // Members-only showings fill the gap (the teaser or the member's list), so
+  // "nothing on" is only said when there's truly nothing.
+  const insiderSlots = (await getMembersOnlySlots()).filter((s) => !outdoorOnly || s.outdoor);
   const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
   const todayKey = dayKey(new Date());
 
@@ -272,7 +281,7 @@ export default async function ShowtimesPage({ searchParams }: { searchParams: Se
         <MembersOnlyShowings outdoorOnly={outdoorOnly} />
       </Suspense>
 
-      {screenings.length === 0 ? (
+      {screenings.length === 0 && insiderSlots.length > 0 ? null : screenings.length === 0 ? (
         <div className="sheet mt-8 p-5 text-[15px]">
           {outdoorOnly ? (
             <>
