@@ -115,3 +115,104 @@ export function taxInside(total: number, rate = SALES_TAX_RATE): { beforeTax: nu
 }
 
 export const TAX_INCLUDED_NOTE = (orgName: string) => `Tax included for ${orgName} guests`;
+
+// Organization guests with no account (Andrew, 10/5;
+// 20261005050000_org_anonymous_comps.sql): a helper says "we're with Easter
+// Seals" and the cashier logs the group by count from "Organization
+// guests". Each person is a comp (a day pass, their movies that day), the
+// same as a named one, and the order gets tax-included pricing while it
+// carries supported guests (the cashier can switch that off per order).
+// A group that comes back later the same day is picked again from
+// "today's groups": no new comps, the org's pricing, and movie tickets up
+// to the group's size per showing.
+export const MAX_GROUP_PEOPLE = 40;
+export const GROUP_NOTE_MAX = 80;
+
+export interface OrgGroupOnOrder {
+  orgId: string;
+  orgName: string;
+  active: boolean;
+  limit: number;
+  // People comped today for the organization, not counting this group
+  // when it's new.
+  used: number;
+  // null: a new group (uses comps on this order); otherwise today's group.
+  groupId: string | null;
+  supported: number;
+  helpers: number;
+  note: string | null;
+  // Tickets already comped for this group today, by showing.
+  moviesToday: Record<string, number>;
+  // The order's tax-included pricing, switched by the cashier.
+  taxIncluded: boolean;
+}
+
+// What the register sends with a sale: the group, as the server checks it.
+export interface OrgGroupInput {
+  orgId: string;
+  groupId: string | null;
+  supported: number;
+  helpers: number;
+  note: string | null;
+  taxIncluded: boolean;
+}
+
+export const groupPeople = (g: { supported: number; helpers: number }) => g.supported + g.helpers;
+
+export function groupInput(g: OrgGroupOnOrder): OrgGroupInput {
+  return { orgId: g.orgId, groupId: g.groupId, supported: g.supported, helpers: g.helpers, note: g.note, taxIncluded: g.taxIncluded };
+}
+
+// "Easter Seals · 2 supported guests + 2 helpers · uses 4 comps (6/20 today)"
+export function groupSummary(g: OrgGroupOnOrder): string {
+  const s = `${g.supported} supported ${g.supported === 1 ? "guest" : "guests"} + ${g.helpers} ${g.helpers === 1 ? "helper" : "helpers"}`;
+  const n = groupPeople(g);
+  const uses = g.groupId ? "today's group, no new comps" : `uses ${n} ${n === 1 ? "comp" : "comps"} (${g.used + n}/${g.limit} today)`;
+  return `${g.orgName} · ${s} · ${uses}`;
+}
+
+// Tax-included pricing for the group: on when it has supported guests and
+// the cashier left it on.
+export const groupTaxIncluded = (g: OrgGroupOnOrder | null) => !!g && g.active && g.supported > 0 && g.taxIncluded;
+
+// The group's comps on the order: a new group gets a day pass for each
+// person, and each person one ticket per showing (less any already comped
+// for the group today). taken: what's already comped on each line (a
+// member's own comp), so a line isn't comped twice.
+export function groupCompPlan(lines: CompLine[], g: OrgGroupOnOrder | null, override = false, taken: number[] = []): CompPlan {
+  const none: CompPlan = { comps: lines.map(() => 0), amount: 0, newComp: false, blocked: false, overLimit: false };
+  const people = g ? groupPeople(g) : 0;
+  if (!g || !g.active || people < 1) return none;
+  const comps = lines.map(() => 0);
+  let passes = g.groupId ? 0 : people;
+  const left = new Map<string, number>();
+  lines.forEach((l, i) => {
+    const avail = Math.max(0, Math.floor(l.qty) - (taken[i] ?? 0));
+    if (avail < 1) return;
+    if (l.dayPass) {
+      comps[i] = Math.min(avail, passes);
+      passes -= comps[i];
+    } else if (l.screeningId) {
+      const has = left.get(l.screeningId) ?? Math.max(0, people - (g.moviesToday[l.screeningId] ?? 0));
+      comps[i] = Math.min(avail, has);
+      left.set(l.screeningId, has - comps[i]);
+    }
+  });
+  if (!comps.some((c) => c > 0)) return none;
+  const newComp = !g.groupId;
+  const full = newComp && g.used + people > g.limit;
+  if (full && !override) return { ...none, blocked: true };
+  const amount = cents(lines.reduce((s, l, i) => s + Math.max(0, Number(l.unit)) * comps[i], 0));
+  return { comps, amount, newComp, blocked: false, overLimit: full };
+}
+
+// A member's comps and a group's together on one order.
+export function joinPlans(a: CompPlan, b: CompPlan): CompPlan {
+  return {
+    comps: a.comps.map((c, i) => c + (b.comps[i] ?? 0)),
+    amount: cents(a.amount + b.amount),
+    newComp: a.newComp || b.newComp,
+    blocked: a.blocked || b.blocked,
+    overLimit: a.overLimit || b.overLimit,
+  };
+}

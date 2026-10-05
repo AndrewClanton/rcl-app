@@ -8,6 +8,7 @@ import { hasPlusPerks } from "@/lib/plus-status";
 import { coffeeTime } from "@/lib/daily-perk";
 import { coffeeDay, dailyCoffeeUse, type DailyCoffeeUse } from "@/lib/daily-perk-server";
 import { orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
+import type { OrgGroupInput } from "@/lib/orgs";
 import {
   DOUBLE,
   DOUBLE_DEFAULTS,
@@ -163,6 +164,8 @@ export interface SaleForCheck {
   // The organization terms (orgSaleTerms) as judged before the sale saved
   // its comps. Left out, they're looked up here.
   org?: OrgSaleTerms;
+  // Organization guests with no account on the order (lib/orgs.ts).
+  orgGroup?: OrgGroupInput | null;
 }
 
 type ServerTotals = SaleForCheck["totals"];
@@ -385,7 +388,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   // A comp past the daily limit is judged where it's approved (and flagged
   // as org_over_limit without a manager's OK), so here the limit only
   // decides whether a sale rung with no comps was right to charge.
-  const org = sale.org ?? (await orgSaleTerms(sale.memberId, sale.lines, Number(sale.totals.org_comp_discount ?? 0) > 0));
+  const org = sale.org ?? (await orgSaleTerms(sale.memberId, sale.lines, Number(sale.totals.org_comp_discount ?? 0) > 0, undefined, sale.orgGroup));
   const t = registerTotals(
     lines.map((l, i) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase, comp: org.plan.comps[i] ?? 0 })),
     member,
@@ -396,7 +399,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     { taxIncluded: org.taxIncluded },
   );
   if (!!sale.totals.tax_included !== t.taxIncluded) {
-    problems.push(t.taxIncluded ? "The member is a supported guest, so the tax should have been included in the prices." : "The tax was included in the prices, but the member isn't a supported guest.");
+    problems.push(t.taxIncluded ? "The order has a supported guest, so the tax should have been included in the prices." : "The tax was included in the prices, but the order has no supported guest.");
   }
   const server: ServerTotals = {
     subtotal: t.subtotal,

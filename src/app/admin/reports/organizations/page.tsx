@@ -65,7 +65,7 @@ export default async function OrgReportPage({ searchParams }: { searchParams: Pr
               </Link>
             </h2>
             <p className="text-sm text-[var(--muted)]">
-              {o.people} comps · {money(o.value)} at their prices ·{" "}
+              {o.people} comps{o.noAccount > 0 ? ` (${o.noAccount} no account)` : ""} · {money(o.value)} at their prices ·{" "}
               <Link href={`/admin/organizations/${o.orgId}/statement?month=${month}`} className="underline">
                 statement
               </Link>
@@ -75,7 +75,7 @@ export default async function OrgReportPage({ searchParams }: { searchParams: Pr
                 <li key={d.date} className="flex justify-between py-1.5 tabular-nums">
                   <span>{day(d.date)}</span>
                   <span>
-                    {d.people} comped · {money(d.value)}
+                    {d.people} comped{d.noAccount > 0 ? ` (${d.noAccount} no account)` : ""} · {money(d.value)}
                   </span>
                 </li>
               ))}

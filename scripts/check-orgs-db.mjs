@@ -147,12 +147,53 @@ try {
   await orgs.logOrderComps({ orderId: null, memberId: third.id, terms: over, lines, overLimitBy: staff?.id ?? null });
   check("comped past the limit is marked", (await register.getOrgOnOrder(third.id)).used === 3);
 
+  console.log("-- organization guests with no account");
+  check("the limit set to 7 for the group", (await admin.updateOrganization(orgId, { name: label, contactName: "", contactEmail: "", monthlyFee: 100, dailyCompLimit: 7, status: "active", notes: "" })).ok);
+  const choices = await register.getOrgGroupChoices();
+  check("the register lists the organization, 3/7 today", choices.orgs.some((o) => o.id === orgId && o.used === 3 && o.limit === 7));
+  const groupLines = [
+    { menu_item_id: dayPass, screening_id: null, unit_price: 5, quantity: 4, name: "Day pass", modifiers: [], is_alcohol: false },
+    ...(show ? [{ menu_item_id: null, screening_id: show.id, unit_price: 8, quantity: 4, name: "Ticket", modifiers: [], is_alcohol: false }] : []),
+  ];
+  const newGroup = { orgId, groupId: null, supported: 2, helpers: 2, note: "red shirt", taxIncluded: true };
+  const g = await register.getOrgGroup(newGroup);
+  check("2 supported + 2 helpers: a new group, 3 used before it", g?.groupId === null && g.supported === 2 && g.helpers === 2 && g.used === 3);
+  check("bad counts are refused", (await register.getOrgGroup({ ...newGroup, supported: -1 })) === null && (await register.getOrgGroup({ ...newGroup, supported: 0, helpers: 0 })) === null);
+  const gTerms = await orgs.orgSaleTerms(null, groupLines, false, undefined, newGroup);
+  check("4 day passes (and 4 tickets) comped, tax included, no member", gTerms.plan.amount === (show ? 52 : 20) && gTerms.taxIncluded && !gTerms.plan.blocked && !gTerms.org);
+  const gFields = { employeeId: who.id, memberId: null, orderName: "", taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: groupLines, orgGroup: newGroup };
+  const gTotals = { subtotal: show ? 52 : 20, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, tax: 0, total: 0, org_comp_discount: show ? 52 : 20, tax_included: true };
+  const gOk = await checkBeforePayment(gFields, gTotals, null);
+  check("the check before payment lets 7/7 through", gOk.ok, gOk.ok ? "" : gOk.error);
+  await orgs.logOrderComps({ orderId: null, memberId: null, terms: gTerms, lines: groupLines, overLimitBy: null });
+  const { data: anonRows } = await db.from("org_comps").select("member_id, anonymous, role, group_id, note, kind").eq("organization_id", orgId).eq("anonymous", true);
+  const passes = (anonRows ?? []).filter((r) => r.kind === "day_pass");
+  check(
+    "logged one row per person, no account, one group",
+    passes.length === 4 && passes.every((r) => r.member_id === null && r.note === "red shirt") && passes.filter((r) => r.role === "supported").length === 2 && new Set((anonRows ?? []).map((r) => r.group_id)).size === 1,
+  );
+  const later = await register.getOrgGroupChoices();
+  const today = later.today.find((t) => t.orgId === orgId);
+  check("7/7 used, and the group is offered for later today", later.orgs.find((o) => o.id === orgId)?.used === 7 && today?.supported === 2 && today?.helpers === 2 && today?.note === "red shirt");
+  const sameDay = { orgId, groupId: today?.groupId ?? null, supported: 0, helpers: 0, note: null, taxIncluded: true };
+  const pizzaLines = [...groupLines, { menu_item_id: null, screening_id: null, unit_price: 4, quantity: 1, name: "Pizza", modifiers: [], is_alcohol: false }];
+  const back = await orgs.orgSaleTerms(null, pizzaLines, false, undefined, sameDay);
+  check("same group later: no new comps, not blocked, tax included", back.plan.amount === 0 && !back.plan.blocked && back.taxIncluded && back.group?.groupId === sameDay.groupId);
+  check("the cashier can switch tax-included off", !(await orgs.orgSaleTerms(null, pizzaLines, false, undefined, { ...sameDay, taxIncluded: false })).taxIncluded);
+  const one = { orgId, groupId: null, supported: 1, helpers: 0, note: null, taxIncluded: true };
+  const blocked = await orgs.orgSaleTerms(null, groupLines, false, undefined, one);
+  check("a new group past the limit is blocked", blocked.plan.blocked && blocked.plan.amount === 0);
+  const gRefused = await checkBeforePayment({ ...gFields, orgGroup: one }, gTotals, null);
+  check("the check before payment refuses it", !gRefused.ok && gRefused.orgFull === true);
+  const gAllowed = await checkBeforePayment({ ...gFields, orgGroup: one }, gTotals, orgs.sealOverLimit(orgId, who.id, null));
+  check("a manager's OK lets the group through", gAllowed.ok, gAllowed.ok ? "" : gAllowed.error);
+
   console.log("-- statement, report, invite link");
   const month = orgs.orgDay().slice(0, 7);
   const st = await getOrgStatement(orgId, month);
-  check("the statement: 3 comps, over-limit one marked", st.comps === 3 && st.overLimit === 1 && st.rows.length >= 3);
+  check("the statement: 7 comps, 4 no account, over-limit one marked", st.comps === 7 && st.noAccount === 4 && st.overLimit === 1 && st.rows.filter((r) => r.noAccount && r.name.includes("no account")).length >= 4);
   const rep = (await compsByOrg(orgs.orgDay(), orgs.orgDay())).find((o) => o.orgId === orgId);
-  check("Reports: comps by organization today", rep?.people === 3);
+  check("Reports: comps by organization today, no-account ones counted", rep?.people === 7 && rep?.noAccount === 4);
   check("the invite link opens", (await readInvite(row.invite_code))?.id === orgId);
   check("a new invite link replaces it", (await admin.newInviteLink(orgId)).ok && (await readInvite(row.invite_code)) === null);
   check("taking someone out", (await admin.setPerson(orgId, third.id, null)).ok && (await register.getOrgOnOrder(third.id)) === null);
