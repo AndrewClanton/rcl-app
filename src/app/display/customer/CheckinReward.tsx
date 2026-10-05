@@ -121,8 +121,8 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
         : "You're already checked in today."
       : points.isNew
         ? who
-          ? `Welcome to the Royale, ${who}!`
-          : "Welcome to the Royale!"
+          ? `Welcome to Royale Cinema, ${who}!`
+          : "Welcome to Royale Cinema!"
         : who
           ? `Welcome back, ${who}!`
           : "Welcome back!";

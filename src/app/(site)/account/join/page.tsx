@@ -12,7 +12,7 @@ import JoinButton from "./JoinButton";
 
 // A helper's sign-up link for their organization (Back office →
 // Organizations, lib/orgs.ts). They sign up or sign in with their WORK
-// email; that login's Royale account joins the organization as a helper,
+// email; that login's Royale Cinema account joins the organization as a helper,
 // separate from any personal account (one login per email, as always).
 export const metadata: Metadata = { title: "Join your organization", robots: { index: false, follow: false } };
 
@@ -49,7 +49,7 @@ export default async function JoinOrgPage({ searchParams }: { searchParams: Prom
       <Shell title={`Join ${invite.name}`}>
         <p className="text-[15px] text-[var(--muted)]">
           For {invite.name} staff and helpers. Sign up or sign in with your <strong>work email</strong>, not a personal one: this account is for
-          bringing guests to the Royale, and it stays separate from any Royale account of your own.
+          bringing guests to Royale Cinema, and it stays separate from any Royale Cinema account of your own.
         </p>
         <div className="mt-6">
           <AccountForm providers={providers} next={here} />
@@ -73,7 +73,7 @@ export default async function JoinOrgPage({ searchParams }: { searchParams: Prom
       </Shell>
     );
   }
-  const problem = login.screen || login.staff ? "This is one of the Royale's own logins." : !m ? "We couldn't find the Royale account for this login." : m.organization_id ? "This login is already with another organization." : personal;
+  const problem = login.screen || login.staff ? "This is one of Royale Cinema's own logins." : !m ? "We couldn't find the Royale Cinema account for this login." : m.organization_id ? "This login is already with another organization." : personal;
   return (
     <Shell title={`Join ${invite.name}`}>
       <p className="text-[15px] text-[var(--muted)]">

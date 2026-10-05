@@ -61,7 +61,7 @@ export default function EmailPreferences({
         <div className="p-5">
           {state.optIn ? (
             <>
-              <p className="text-[15px] text-[var(--muted)]">Stops every marketing email from the Royale. Receipts, tickets and account emails still come.</p>
+              <p className="text-[15px] text-[var(--muted)]">Stops every marketing email from Royale Cinema. Receipts, tickets and account emails still come.</p>
               {token ? (
                 <form method="post" action={unsubscribeAction} className="mt-4">
                   <input type="hidden" name="t" value={token} />

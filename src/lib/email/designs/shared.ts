@@ -139,12 +139,12 @@ ${note}`;
 // The sign-off at the bottom of each close.
 export function signoff(line: string, dev: Dev): string {
   return `${txt(esc(line), 17, 26, C.ink, `margin-top:${dev === "m" ? 36 : 40}px;`)}
-${blk("The Royale crew", 20, 24, C.ink, "margin-top:4px;")}`;
+${blk("The RCL crew", 20, 24, C.ink, "margin-top:4px;")}`;
 }
 
 // The footer's "why you're getting this".
 export function whyOldSite(r: DesignRecipient, promotional: boolean): string {
-  const base = r.fromOldSite ? "You're getting this because you had an account on the old Royale website." : "You're getting this because you're a Royale Insider.";
+  const base = r.fromOldSite ? "You're getting this because you had an account on the old Royale Cinema website." : "You're getting this because you're a Royale Insider.";
   return promotional ? `${base} A promotional email from Royale Cinema Lounge.` : base;
 }
 

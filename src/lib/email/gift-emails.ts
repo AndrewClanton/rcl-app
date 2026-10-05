@@ -1,6 +1,6 @@
 // Gift membership emails: the friend's "you've been given Insiders+" note,
 // and the reminder two weeks before the gift runs out. Plain tables and
-// inline styles (what Gmail and phone mail apps render), in the Royale
+// inline styles (what Gmail and phone mail apps render), in Royale Cinema
 // print palette, like the booth emails.
 
 import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
@@ -48,7 +48,7 @@ function button(href: string, label: string) {
 // ---------- to the friend, once the gift is paid ----------
 
 export function giftReceivedSubject(g: GiftEmailData) {
-  return `${first(g.buyerName)} gave you a year of Insiders+ at the Royale`;
+  return `${first(g.buyerName)} gave you a year of Insiders+ at Royale Cinema`;
 }
 
 export function giftReceivedHtml(g: GiftEmailData) {

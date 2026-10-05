@@ -42,7 +42,7 @@ export const TRAININGS: TrainingModule[] = [
     quiz: [
       {
         id: "classic-post",
-        prompt: "We're showing a 1986 classic on Friday. Can you post about it on the Royale's Instagram?",
+        prompt: "We're showing a 1986 classic on Friday. Can you post about it on Royale Cinema's Instagram?",
         choices: ["Yes, if it's a story instead of a post", "No. Older titles only go to the members' email list", "Yes, as long as you don't say the time"],
         answer: 1,
         why: "Our license lets us show older movies, but only advertise this year's releases. Classics are only announced privately, by the members' email.",

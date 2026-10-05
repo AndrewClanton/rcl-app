@@ -31,7 +31,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     `DTSTAMP:${stamp(new Date().toISOString())}`,
     `DTSTART:${stamp(e.starts_at)}`,
     `DTEND:${stamp(end)}`,
-    `SUMMARY:${text(`${e.title} at the Royale`)}`,
+    `SUMMARY:${text(`${e.title} at Royale Cinema`)}`,
     `LOCATION:${text("Royale Cinema Lounge, 715 E Broadway, Joplin, MO 64801")}`,
     ...(e.note ? [`DESCRIPTION:${text(e.note)}`] : []),
     `URL:${SITE_URL}/showtimes`,

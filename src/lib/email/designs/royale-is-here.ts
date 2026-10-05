@@ -1,4 +1,4 @@
-// Email 1: "The new Royale is here" (the invite). From the canvas design
+// Email 1: "The new RCL is here" (the invite). From the canvas design
 // RoyaleIsHere-Desktop / -Phone. One job: "Set my password".
 import { esc } from "../format";
 import { C, DEV, band, bleed, blk, button, card, cols, footer, h1, h2, label, mono, pic, picWidth, red, txt, type Dev } from "./kit";
@@ -8,9 +8,9 @@ function hero(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
   const d = DEV[dev];
   if (dev === "d") out.text.push("LIVE NOW\nTHE NEW ROYALE IS HERE.\nSame booths, same bar. Brand-new website.");
-  if (dev === "d") out.bodyTexts.push("The new Royale is here.", "Same booths, same bar. Brand-new website.");
+  if (dev === "d") out.bodyTexts.push("The new RCL is here.", "Same booths, same bar. Brand-new website.");
   return `${bleed(C.ink, "royale-is-here/hero", dev)}
-${band(C.ink, `${label("LIVE NOW", C.gold, dev)}${h1(`The new Royale<br>is ${red("here")}.`, dev)}${txt("Same booths, same bar. Brand-new website.", d.lede, d.ledelh, C.cream, `margin-top:${dev === "m" ? 12 : 16}px;`)}`, `0 ${d.G}px ${dev === "m" ? 36 : 44}px`)}`;
+${band(C.ink, `${label("LIVE NOW", C.gold, dev)}${h1(`The new RCL<br>is ${red("here")}.`, dev)}${txt("Same booths, same bar. Brand-new website.", d.lede, d.ledelh, C.cream, `margin-top:${dev === "m" ? 12 : 16}px;`)}`, `0 ${d.G}px ${dev === "m" ? 36 : 44}px`)}`;
 }
 
 function rewindBox(dev: Dev): string {
@@ -113,7 +113,7 @@ function close(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
   const d = DEV[dev];
   const b = claimButton(ctx, "bottom");
-  if (dev === "d") out.text.push(`30 SECONDS\nClaim it now.\n${b.label}: ${b.href}\n\nSee you soon,\nThe Royale crew`);
+  if (dev === "d") out.text.push(`30 SECONDS\nClaim it now.\n${b.label}: ${b.href}\n\nSee you soon,\nThe RCL crew`);
   return band(
     C.paper,
     `${pic("royale-is-here/filmstrip", dev, { dark: false })}

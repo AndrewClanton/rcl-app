@@ -4,7 +4,7 @@
 // charged before that date. Transactional, to one member, only when staff
 // press "Send paid-through explainer" on their Back office page.
 //
-// The Royale's designed-email look (designs/kit.ts): a picture of a paid
+// Royale Cinema's designed-email look (designs/kit.ts): a picture of a paid
 // membership card, three illustrated steps with arrows (pictures from
 // scripts/email-designs/source/PaidThrough.dc.html, rendered and uploaded
 // like the invites' pictures), and what happens next. Their first name, the
@@ -61,7 +61,7 @@ export function paidThroughText(e: PaidThroughEmail): string {
     "Questions? 417-281-4172",
     "",
     "See you at the movies,",
-    "The Royale crew",
+    "The RCL crew",
     "",
     "Royale Cinema Lounge · 715 E Broadway, Joplin, MO 64801",
   ].join("\n");
@@ -141,7 +141,7 @@ function close(dev: Dev): string {
     C.paper,
     `${txt(`Questions? Call us at <a href="tel:+14172814172" style="color:${C.ink};font-weight:700;text-decoration:none;border-bottom:2px solid ${C.gold};">417-281-4172</a>.`, 17, 26, C.ink)}
 ${txt("See you at the movies,", 17, 26, C.ink, `margin-top:${m ? 24 : 28}px;`)}
-${blk("The Royale crew", 20, 24, C.ink, "margin-top:4px;")}`,
+${blk("The RCL crew", 20, 24, C.ink, "margin-top:4px;")}`,
     `${m ? 32 : 40}px ${d.G}px`,
   );
 }

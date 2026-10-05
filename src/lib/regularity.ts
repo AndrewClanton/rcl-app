@@ -4,7 +4,7 @@
 //
 // A visit day is a business date (4 a.m. to 4 a.m. Central). Weeks run
 // Monday to Sunday, the same as the check-in week streak (lib/visits.ts): a
-// week the Royale was closed (nobody's visit in it) doesn't count and
+// week Royale Cinema was closed (nobody's visit in it) doesn't count and
 // doesn't break a run, and the week in progress doesn't break one either,
 // since it isn't over yet.
 

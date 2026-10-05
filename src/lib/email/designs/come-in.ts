@@ -157,7 +157,7 @@ function close(ctx: Ctx, out: DesignOut): string {
   const done = claimState(ctx.r) === "account";
   const lab = done ? "YOUR ACCOUNT" : "30 SECONDS";
   const head = done ? (m ? "You're set.<br>Come in." : "You're set. Come in.") : m ? "Set it up.<br>Then come in." : "Set it up. Then come in.";
-  if (dev === "d") out.text.push(`${lab}\n${head.replace("<br>", " ")}\n${b.label}: ${b.href}\n\nSee you in the dark,\nThe Royale crew`);
+  if (dev === "d") out.text.push(`${lab}\n${head.replace("<br>", " ")}\n${b.label}: ${b.href}\n\nSee you in the dark,\nThe RCL crew`);
   return band(
     C.paper,
     `${label(lab, C.redD, dev)}${h2(head, C.ink, dev)}

@@ -161,7 +161,7 @@ export default async function PrivacyPage() {
 
       <section>
         <h2 id="share">Who we share it with</h2>
-        <p>We share information only with companies that help us run the Royale, and only what they need to do their job:</p>
+        <p>We share information only with companies that help us run Royale Cinema, and only what they need to do their job:</p>
         <ul>
           <li>
             <strong>Supabase</strong> stores our database and handles sign-in.

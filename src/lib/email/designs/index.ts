@@ -7,7 +7,7 @@
 // engagementKey), so staff can judge wave 1 before wave 2 goes.
 //
 // Andrew's rules for these: half the words, picture-led, only live
-// features, never a staff or owner name, signed "The Royale crew".
+// features, never a staff or owner name, signed "The RCL crew".
 // No server code.
 import { applyFirstName } from "../format";
 import type { Audience, CampaignKind, Category } from "../types";
@@ -40,14 +40,14 @@ export interface DesignMeta {
 export const DESIGNS: Record<DesignKey, DesignMeta> = {
   "royale-is-here": {
     key: "royale-is-here",
-    title: "The new Royale is here",
+    title: "The new RCL is here",
     about: "The invite: their account is already set up, with points. One button: Set my password.",
-    name: "Ready to send: The new Royale is here",
+    name: "Ready to send: The new RCL is here",
     // The invite: an account email (no caps, no "kind of email" switch),
     // still only to people who want email from us, with an unsubscribe.
     kind: "invite",
     category: "account",
-    subject: "{first name}, the new Royale website is here",
+    subject: "{first name}, the new Royale Cinema website is here",
     preheader: "Your account, points and badges are already set up. It takes about 30 seconds.",
     // Everyone with no login: "Set my password" links no longer need a
     // phone on file (lib/member-claim.ts, Andrew 10/1).
@@ -64,7 +64,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     name: "Ready to send: Come in",
     kind: "offer",
     category: "offers",
-    subject: "{first name}, your next night at the Royale",
+    subject: "{first name}, your next night at Royale Cinema",
     preheader: "Insiders+ is $15 a month: every movie free, 10% off, a free coffee or tea every day and 2 free booths.",
     audience: { include: [{ r: "all" }], order: "engaged" },
     who: "Everyone with an email who gets offers and Insiders+ news from us (anyone who turned those off, or all email off, is left out).",

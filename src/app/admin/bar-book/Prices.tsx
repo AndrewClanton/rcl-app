@@ -21,7 +21,7 @@ import {
 import { setBarPrices } from "./actions";
 
 // Back office → Bar Book → Prices: every bar price knob in one place (the
-// Royale rule, doubles, neat or rocks, mixers, the target pour cost and the
+// RCL rule, doubles, neat or rocks, mixers, the target pour cost and the
 // pour standard), what they come to, and what changed. Owners and admins
 // change them; managers see them. Everything shown is worked out from the
 // sheet as it's typed, the same functions the register uses.
@@ -110,7 +110,7 @@ export default function Prices({ prices, drinks, canOwn }: { prices: BarPrices; 
       <div className="mt-2 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
         <div className="space-y-2 text-sm">
           <p className="text-base">
-            <strong>The Royale rule: price = serve + level + double + mixer.</strong>
+            <strong>The RCL rule: price = serve + level + double + mixer.</strong>
           </p>
           <p>
             Menu drinks keep their menu price. The rule prices what isn&apos;t on the menu: a Bar Book drink rung up off the menu and a &quot;What&apos;s in

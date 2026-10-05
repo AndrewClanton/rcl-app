@@ -92,7 +92,7 @@ try {
       const visible = html.replace(/<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ");
       check(`${id}: no merge field or placeholder left`, !/\{\s*first|\[CLAIM|\[FINISH|_blob|undefined|NaN|\bnull\b/i.test(visible + out.text), (visible + out.text).match(/\{\s*first|\[CLAIM|\[FINISH|_blob|undefined|NaN|\bnull\b/i)?.[0]);
       check(`${id}: nobody on staff is named`, !/andrew|nathan|mary|caleb/i.test(visible + out.text + out.subject));
-      check(`${id}: signed "The Royale crew"`, visible.includes("The Royale crew") && out.text.includes("The Royale crew"));
+      check(`${id}: signed "The RCL crew"`, visible.includes("The RCL crew") && out.text.includes("The RCL crew"));
       check(`${id}: unsubscribe, preferences and street address`, html.includes(L.unsubscribeUrl.replace(/&/g, "&amp;")) && html.includes("Unsubscribe") && html.includes("715 E Broadway"));
       const imgs = [...html.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
       check(`${id}: every picture has alt text (${imgs.length})`, imgs.length > 10 && imgs.every((t) => /\salt="[^"]*"/.test(t)));

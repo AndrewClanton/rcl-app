@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { shade, tint } from "@/lib/flair";
 import s from "./flair.module.css";
 
-// The Unicorn run's unicorn: side on, facing right, drawn in the Royale's
+// The Unicorn run's unicorn: side on, facing right, drawn in Royale Cinema's
 // print style (a warm white body inside a thick ink outline), with the mane
 // and tail in the member's color. Every part that moves is its own group,
 // turned about its own joint by flair.module.css: the legs at the hip and

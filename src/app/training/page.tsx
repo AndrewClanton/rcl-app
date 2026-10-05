@@ -73,7 +73,7 @@ export default async function MyTrainingPage() {
     <div className="space-y-8">
       <header className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="page-eyebrow">Royale staff training</span>
+          <span className="page-eyebrow">RCL staff training</span>
           <span className="flex flex-wrap gap-4">
             <Link href="/help" className="text-sm font-bold text-[var(--muted)] hover:text-[var(--accent)]">
               Help &amp; FAQ →
@@ -85,7 +85,7 @@ export default async function MyTrainingPage() {
         </div>
         <h1 className="font-display text-4xl leading-none">Your training, {session.name.split(" ")[0]}</h1>
         <p className="max-w-xl text-[15px] text-[var(--muted)]">
-          Short picture-by-picture how-tos for the Royale. Work through the ones assigned to you and sign off at the end of each. Key ones end with a quick quiz.
+          Short picture-by-picture how-tos for Royale Cinema. Work through the ones assigned to you and sign off at the end of each. Key ones end with a quick quiz.
         </p>
       </header>
 

@@ -320,7 +320,7 @@ export function EmailInvite({ orgId, orgName }: { orgId: string; orgName: string
       </div>
       {sent && (
         <p className="notice notice-success text-sm" role="status">
-          Sent to {sent}: &quot;You&apos;re invited to join {orgName} at the Royale.&quot;
+          Sent to {sent}: &quot;You&apos;re invited to join {orgName} at Royale Cinema.&quot;
         </p>
       )}
       <Problem error={error} />

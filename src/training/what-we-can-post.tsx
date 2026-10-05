@@ -16,7 +16,7 @@ export default function WhatWeCanPost() {
 
       <Step n={1} title="Why: it's our movie license">
         <p>
-          The Royale plays movies under an umbrella license from MPLC. It lets us play almost anything, but it only lets us advertise the current year&apos;s
+          Royale Cinema plays movies under an umbrella license from MPLC. It lets us play almost anything, but it only lets us advertise the current year&apos;s
           releases. Posting a classic publicly breaks the license, even if the showing sells out.
         </p>
         <Tip>

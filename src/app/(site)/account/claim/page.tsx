@@ -13,7 +13,7 @@ import { FinishClaim, UseAnotherLogin } from "./ClaimSteps";
 
 // "Claim your account": where the QR code on the check-in tablet or a
 // receipt, or the link in a setup email, lands (lib/member-claim.ts).
-// Someone with a Royale account but no website login (made at the tablet,
+// Someone with a Royale Cinema account but no website login (made at the tablet,
 // or from the old site) signs in or makes a login, and that login is
 // attached to the account the link was made for.
 //
@@ -67,7 +67,7 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
     return (
       <Shell eyebrow="Claim your account" title={`Hi, ${claim.firstName}!`}>
         <p className="text-[15px] text-[var(--muted)]">
-          Put your Royale account on your phone: your points, visits and purchases, any time. Choose how you&apos;ll sign in from
+          Put your Royale Cinema account on your phone: your points, visits and purchases, any time. Choose how you&apos;ll sign in from
           now on: Google, or your email and a password.
         </p>
         <div className="mt-6">
@@ -83,7 +83,7 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
     return (
       <Shell eyebrow="Claim your account" title="Use your own phone">
         <p className="notice notice-warn text-sm">
-          This device is signed in with one of the Royale&apos;s screen logins. Scan the code with your own phone instead.
+          This device is signed in with one of Royale Cinema&apos;s screen logins. Scan the code with your own phone instead.
         </p>
       </Shell>
     );
@@ -93,7 +93,7 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
       <Shell eyebrow="Claim your account" title="Use a different login">
         <p className="notice notice-warn text-sm">
           You&apos;re signed in as <strong className="break-all">{login.email ?? "a login"}</strong>, and that login already has its
-          own Royale account. Use a different login for {claim.firstName}&apos;s account, or ask us at the box office to put the two
+          own Royale Cinema account. Use a different login for {claim.firstName}&apos;s account, or ask us at the box office to put the two
           accounts together.
         </p>
         <div className="mt-6">
@@ -106,11 +106,11 @@ export default async function ClaimPage({ searchParams }: { searchParams: Promis
   return (
     <Shell eyebrow="Claim your account" title="One last step">
       <p className="text-[15px] text-[var(--muted)]">
-        We&apos;ll attach this login to {claim.firstName}&apos;s Royale account, and it&apos;s how you&apos;ll sign in from now on.
+        We&apos;ll attach this login to {claim.firstName}&apos;s Royale Cinema account, and it&apos;s how you&apos;ll sign in from now on.
       </p>
       {login.staff && (
         <p className="notice notice-warn mt-4 text-sm">
-          This is a staff login. Only link it if this Royale account is your own; otherwise use a different login.
+          This is a staff login. Only link it if this Royale Cinema account is your own; otherwise use a different login.
         </p>
       )}
       <div className="mt-6">

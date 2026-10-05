@@ -6,7 +6,7 @@
 // scripts/check-fortis-backfill.mjs all use it.
 //
 // Most taps carried no name, so the name match in fortis-backfill.ts can't
-// place them. On the Royale's export (5,904 approved sales), a day and an
+// place them. On Royale Cinema's export (5,904 approved sales), a day and an
 // exact amount alone point at one card 59% of the time; with the last 4,
 // every time. Two purchases on exact days: 96%; with days off by one
 // (posting dates): 92%.

@@ -62,7 +62,7 @@ function bullets(items: string[], color = INK) {
 
 export function dailyDigestSubject(d: DailyDigest) {
   const orders = d.day.orders.filter((o) => o.status === "completed" && !o.ownerTab).length;
-  return `Royale ${d.label}: ${money(d.day.collected)} in, ${orders} order${orders === 1 ? "" : "s"}, ${d.day.ticketsSold} ticket${d.day.ticketsSold === 1 ? "" : "s"}`;
+  return `RCL ${d.label}: ${money(d.day.collected)} in, ${orders} order${orders === 1 ? "" : "s"}, ${d.day.ticketsSold} ticket${d.day.ticketsSold === 1 ? "" : "s"}`;
 }
 
 export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
@@ -170,7 +170,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
     </table>
   </td></tr>
 </table>
-<p style="font:12px/1.5 Arial,sans-serif;color:${MUTED};margin:14px 0 0">Sent to the Royale's admins after each business day (4 AM to 4 AM).</p>
+<p style="font:12px/1.5 Arial,sans-serif;color:${MUTED};margin:14px 0 0">Sent to Royale Cinema's admins after each business day (4 AM to 4 AM).</p>
 </td></tr></table>
 </body></html>`;
 }

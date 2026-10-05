@@ -9,14 +9,14 @@ import { openEmailToken, UNSUBSCRIBE_PATH } from "@/lib/email/tokens";
 import { currentMemberId } from "@/lib/member-forward";
 import EmailPreferences from "./EmailPreferences";
 
-// "Email from the Royale": where every email's "Email preferences" and
+// "Email from Royale Cinema": where every email's "Email preferences" and
 // "Unsubscribe" links land. The signed token in the link says whose
 // settings these are, so no sign-in is needed. It shows a first name and a
 // shortened address (s•••@gmail.com), never the whole address, and the
 // address can't be changed here.
 //
 // Private: hidden from search engines, not counted in page views.
-export const metadata: Metadata = { title: "Email from the Royale", robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: "Email from Royale Cinema", robots: { index: false, follow: false } };
 export const dynamic = "force-dynamic";
 
 function one(v: string | string[] | undefined): string {
@@ -35,7 +35,7 @@ export default async function EmailPreferencesPage({ searchParams }: { searchPar
   if (!t || !member || member.erased_at) {
     return (
       <div className="mx-auto max-w-xl">
-        <PageMasthead eyebrow="Email from the Royale" title="This link doesn't open" className="!mb-6" />
+        <PageMasthead eyebrow="Email from Royale Cinema" title="This link doesn't open" className="!mb-6" />
         <p className="text-[15px]">
           It may have been cut off when it was copied. Open the link from the email again, or{" "}
           <Link href="/account/email" className="font-bold text-[var(--accent)] hover:underline">
@@ -52,7 +52,7 @@ export default async function EmailPreferencesPage({ searchParams }: { searchPar
   return (
     <div className="mx-auto max-w-xl">
       <PageMasthead
-        eyebrow="Email from the Royale"
+        eyebrow="Email from Royale Cinema"
         title={first ? `Hi, ${first}.` : "Your emails"}
         intro={
           <>

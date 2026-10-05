@@ -29,7 +29,7 @@ export type Block =
   | { t: "ticketStub"; label: string; big: string; sub?: string }
   | { t: "signoff"; from?: string }
   | { t: "divider" }
-  | { t: "lineup" } // the week: now showing, the archive, also at the Royale
+  | { t: "lineup" } // the week: now showing, the archive, also at Royale Cinema
   | { t: "claim" } // the invite's "Set my password" (a personal link)
   | { t: "memberCard" } // "Open my member card"
   | { t: "ticketSpend" } // the upsell's "you spent $X on tickets"
@@ -328,7 +328,7 @@ export function lineupFilms(content: CampaignContent, data: RenderData) {
 export function defaultLineupSubject(content: CampaignContent, data: RenderData): string {
   const { current } = lineupFilms(content, data);
   const names = current.slice(0, 3).map((f) => f.title);
-  return names.length ? `This week at the Royale: ${names.join(", ")}` : `This week at the Royale: ${rangeLabel(data.range.start, data.range.days)}`;
+  return names.length ? `This week at Royale Cinema: ${names.join(", ")}` : `This week at Royale Cinema: ${rangeLabel(data.range.start, data.range.days)}`;
 }
 
 export function defaultLineupPreheader(content: CampaignContent, data: RenderData): string {
@@ -378,7 +378,7 @@ export function renderCampaign(c: CampaignInput, data: RenderData, r: Recipient,
   const happeningById = new Map(data.happenings.map((h) => [h.id, h]));
   const itemById = new Map(data.menuItems.map((m) => [m.id, m]));
 
-  const subject = merge(c.subject.trim() || (c.kind === "lineup" ? defaultLineupSubject(c.content, data) : "News from the Royale"));
+  const subject = merge(c.subject.trim() || (c.kind === "lineup" ? defaultLineupSubject(c.content, data) : "News from Royale Cinema"));
   const preheader = merge((c.preheader ?? "").trim() || (c.kind === "lineup" ? defaultLineupPreheader(c.content, data) : ""));
 
   for (const b of c.content.blocks ?? []) {
@@ -471,7 +471,7 @@ ${line ? `<div style="padding-top:4px;font-family:${BODY};font-size:15px;line-he
         break;
       }
       case "signoff": {
-        const from = b.from?.trim() || "The Royale crew";
+        const from = b.from?.trim() || "The RCL crew";
         html.push(row(`<div style="font-family:${BODY};font-size:16px;line-height:24px;color:${C.ink};">See you at the movies,<br><strong>${esc(from)}</strong></div>`, "padding:10px 28px 26px;"));
         text.push(`See you at the movies,\n${from}`);
         break;
@@ -492,8 +492,8 @@ ${line ? `<div style="padding-top:4px;font-family:${BODY};font-size:15px;line-he
           text.push(archiveText(archive, L));
         }
         if (happenings.length) {
-          html.push(sectionBar("Also at the Royale"), ...happenings.map((h, i) => happeningHtml(h, i === 0, L)));
-          text.push(["ALSO AT THE ROYALE", "", happenings.map((h) => happeningText(h, L)).join("\n")].join("\n"));
+          html.push(sectionBar("Also at Royale Cinema"), ...happenings.map((h, i) => happeningHtml(h, i === 0, L)));
+          text.push(["ALSO AT ROYALE CINEMA", "", happenings.map((h) => happeningText(h, L)).join("\n")].join("\n"));
         }
         if (!current.length && !archive.length && !happenings.length) {
           html.push(row(paragraphsHtml("No showtimes picked for these dates yet.", { color: C.muted })));
@@ -592,7 +592,7 @@ export function newBlock(t: BlockType): Block {
     case "ticketStub":
       return { t, label: "Welcome gift", big: "50 points", sub: "" };
     case "signoff":
-      return { t, from: "The Royale crew" };
+      return { t, from: "The RCL crew" };
     case "divider":
     case "lineup":
     case "claim":

@@ -218,12 +218,12 @@ export async function claimMemberForUser(user: User, token: string): Promise<Cla
     case "no_claim":
       return { ok: false, reason: "invalid", error: STATE_ERROR.invalid };
     case "screen":
-      return { ok: false, reason: "screen", error: "This device is signed in with one of the Royale's screen logins. Open the link on your own phone instead." };
+      return { ok: false, reason: "screen", error: "This device is signed in with one of Royale Cinema's screen logins. Open the link on your own phone instead." };
     case "user_linked":
       return {
         ok: false,
         reason: "user_linked",
-        error: `The login you're using${user.email ? ` (${user.email})` : ""} already has its own Royale account. Use a different login for this one, or ask us at the box office to put the two together.`,
+        error: `The login you're using${user.email ? ` (${user.email})` : ""} already has its own Royale Cinema account. Use a different login for this one, or ask us at the box office to put the two together.`,
       };
     default:
       return { ok: false, reason: "failed", error: "Something went wrong on our end, so nothing was changed. Try again in a minute." };

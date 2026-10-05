@@ -75,7 +75,7 @@ export default function SharingPanel({
   async function shareLink() {
     const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
     if (typeof nav.share === "function") {
-      await nav.share({ title: "My Royale profile", url }).catch(() => {});
+      await nav.share({ title: "My RCL profile", url }).catch(() => {});
       return;
     }
     await navigator.clipboard.writeText(url).then(

@@ -23,7 +23,7 @@ export interface FlairColor {
 // Picked to read on the dark check-in screen: bright, but not so pale that
 // the ink type of the check-in banner washes out on them.
 export const FLAIR_COLORS: FlairColor[] = [
-  { key: "gold", label: "Royale gold", hex: "#ffc72c" },
+  { key: "gold", label: "RCL gold", hex: "#ffc72c" },
   { key: "pink", label: "Bubblegum pink", hex: "#ff6fb5" },
   { key: "red", label: "Marquee red", hex: "#ff5a5f" },
   { key: "orange", label: "Tangerine", hex: "#ff9a3c" },
@@ -35,7 +35,7 @@ export const FLAIR_COLORS: FlairColor[] = [
   { key: "silver", label: "Silver screen", hex: "#d6dbe3" },
 ];
 
-// A member who hasn't picked one gets the Royale's own.
+// A member who hasn't picked one gets Royale Cinema's own.
 export const DEFAULT_FLAIR_COLOR: FlairColor = FLAIR_COLORS[0];
 
 export type FlairEffectKey = "classic" | "confetti" | "unicorn" | "fireworks" | "reactions";
@@ -49,7 +49,7 @@ export interface FlairEffect {
 }
 
 export const FLAIR_EFFECTS: FlairEffect[] = [
-  { key: "classic", label: "Classic", blurb: "The Royale's check-in banner, in your color. Nothing flying around." },
+  { key: "classic", label: "Classic", blurb: "Royale Cinema's check-in banner, in your color. Nothing flying around." },
   { key: "confetti", label: "Confetti", blurb: "Two confetti cannons, in your color." },
   { key: "unicorn", label: "Unicorn run", blurb: "A unicorn gallops across the screen, trailing sparkles. Its mane is your color." },
   { key: "fireworks", label: "Fireworks", blurb: "A few rockets go up and burst in your color." },

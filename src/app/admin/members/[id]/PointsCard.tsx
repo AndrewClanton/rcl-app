@@ -159,7 +159,7 @@ export function PointsBalance({ memberId, balance, canChange }: { memberId: stri
                   }}
                 />
                 <span className="mt-1 block">
-                  The member sees this on their account as &ldquo;From the Royale crew: &hellip;&rdquo;. Your name is kept for the back office only.
+                  The member sees this on their account as &ldquo;From the RCL crew: &hellip;&rdquo;. Your name is kept for the back office only.
                 </span>
               </label>
               {(amount || reason) && problem && <p className="text-sm text-[var(--danger-text)]">{problem}</p>}

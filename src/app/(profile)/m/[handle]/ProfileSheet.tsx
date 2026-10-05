@@ -13,7 +13,7 @@ export default function ProfileSheet({ p }: { p: PublicProfile }) {
     <article className="space-y-8">
       <ProfileHero displayName={p.displayName} line={p.line} photo={p.photo} initial={p.initial} memberSince={p.memberSince} flair={p.flair} />
 
-      <section className="sheet crop" aria-label="At the Royale">
+      <section className="sheet crop" aria-label="At Royale Cinema">
         <dl className="spec-grid !grid-cols-2 rounded-[4px] sm:!grid-cols-4">
           <Stat k="Visits" v={p.visits.toLocaleString("en-US")} />
           <Stat k="Weeks in a row" v={p.weekStreak ? `🔥 ${p.weekStreak}` : "0"} hot={p.weekStreak >= 4} />

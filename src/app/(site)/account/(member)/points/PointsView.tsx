@@ -47,7 +47,7 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       // tied to it; other adjustments aren't.
       if (l.orderId && what) return { title: `Earned on ${what}`, href: receipt };
       const note = adjustmentNote(l.note);
-      return { title: note ? `From the Royale crew: ${note}` : "Adjusted by the Royale crew", href: null };
+      return { title: note ? `From the RCL crew: ${note}` : "Adjusted by the RCL crew", href: null };
     }
   }
 }

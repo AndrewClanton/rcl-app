@@ -26,8 +26,8 @@ export default async function TermsPage() {
       draft={!TERMS_PUBLISHED}
       intro={
         <p>
-          These terms cover the Royale Cinema Lounge website, your Royale account, Insiders and Insiders+ memberships, and points. Royale Cinema
-          Lounge LLC, 715 E Broadway, Joplin, MO 64801 (&ldquo;we&rdquo;, &ldquo;the Royale&rdquo;) runs them. By making an account or buying
+          These terms cover the Royale Cinema Lounge website, your Royale Cinema account, Insiders and Insiders+ memberships, and points. Royale Cinema
+          Lounge LLC, 715 E Broadway, Joplin, MO 64801 (&ldquo;we&rdquo;, &ldquo;Royale Cinema&rdquo;) runs them. By making an account or buying
           something from us online, you agree to them.
         </p>
       }
@@ -88,7 +88,7 @@ export default async function TermsPage() {
       </section>
 
       <section>
-        <h2 id="visiting">At the Royale</h2>
+        <h2 id="visiting">At Royale Cinema</h2>
         <ul>
           <li>Alcohol is served only to guests 21 and over with a valid ID, and we can refuse service.</li>
           <li>Be kind to the crew and other guests, and treat the lounge, its tapes and its screens with care.</li>
@@ -131,7 +131,7 @@ export default async function TermsPage() {
         <ul>
           <li>
             We work hard to keep the site and its information right, but it&apos;s provided as is, and showtimes and menus can change. As far as the
-            law allows, the Royale isn&apos;t liable for indirect losses from using the site, and our total liability is limited to what you paid us
+            law allows, Royale Cinema isn&apos;t liable for indirect losses from using the site, and our total liability is limited to what you paid us
             in the 12 months before the claim.
           </li>
           <li>These terms are governed by the laws of Missouri.</li>

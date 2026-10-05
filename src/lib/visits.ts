@@ -12,7 +12,7 @@
 // register redeems.
 //
 // The week streak is how many Monday-to-Sunday weeks in a row (by business
-// date) they've checked in at least once. A week the Royale was closed (no
+// date) they've checked in at least once. A week Royale Cinema was closed (no
 // check-ins by anyone, no sales) doesn't break it, and neither does the
 // current week before they've come in: it isn't over yet. The database's
 // member_week_streak does the counting; weekStreak() below is the same
@@ -208,7 +208,7 @@ export function birthdayWeekYear(birthday: string | null | undefined, date: stri
 // ---------- the week streak ----------
 
 // The week streak on `date`: `visits` are the business dates they checked
-// in, and isOpenWeek says whether the Royale was open in a week (by its
+// in, and isOpenWeek says whether Royale Cinema was open in a week (by its
 // Monday). The same rule as member_week_streak in the database.
 export function weekStreak(date: string, visits: Iterable<string>, isOpenWeek: (monday: string) => boolean): number {
   const weeks = new Set<string>();

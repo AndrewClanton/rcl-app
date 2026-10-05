@@ -9,7 +9,7 @@
 // cost (a setting, 20% unless an owner changes it), rounded up to a whole
 // dollar. Nothing here changes a menu price or any sale math.
 //
-// The Prices sheet (Back office → Bar Book → Prices) and the Royale rule
+// The Prices sheet (Back office → Bar Book → Prices) and the RCL rule
 // that prices an off-menu or custom drink from it are at the bottom.
 
 import { DOUBLE, TIER_RANK, baseLines, ouncesOf, pourUpcharge, recipeUpcharge, tierOf, type DoubleSettings, type Tier } from "@/lib/bar/double";
@@ -186,7 +186,7 @@ export function bookRecipeIdOf(
 // settings.bar_target_pour_cost. Until someone saves the sheet, these
 // defaults apply; each knob that's missing or out of range is its default.
 //
-// The Royale rule: price = serve + level + double + mixer.
+// The RCL rule: price = serve + level + double + mixer.
 //   - serve, at well level: a shot (1.5 oz) $5, a highball (1.5 oz spirit
 //     and a mixer) $8, neat or on the rocks (2 oz) $7, a cocktail (up to
 //     2.5 oz of spirit) $10
@@ -391,7 +391,7 @@ export interface RulePrice {
   price: number; // base + double
 }
 
-// The Royale rule for a drink's lines (an off-menu Bar Book drink or a
+// The RCL rule for a drink's lines (an off-menu Bar Book drink or a
 // custom drink): price = serve + level + double + mixer.
 //   - serve: one spirit and nothing else is a shot (neat or rocks at 2 oz
 //     and up); one spirit with only mixers and juices (no liqueur) is a

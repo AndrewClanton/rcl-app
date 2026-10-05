@@ -52,7 +52,7 @@ export async function linkMemberForUser(user: User, nameHint?: string | null): P
       return {
         ok: false,
         reason: "unproven",
-        error: "There's already a Royale account under this email. To prove it's yours, use Continue with Google (for Gmail addresses), or ask us at the box office.",
+        error: "There's already a Royale Cinema account under this email. To prove it's yours, use Continue with Google (for Gmail addresses), or ask us at the box office.",
       };
     }
     const { error } = await admin.from("members").update({ auth_user_id: user.id }).eq("id", byEmail.id);

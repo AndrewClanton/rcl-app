@@ -24,7 +24,7 @@ export interface PointsHistoryRow {
 export const POINTS_HISTORY_PAGE = 25;
 
 // Formatted here, on the server, so the page and "Show more" read the same
-// in any browser: the Royale's clock, Central time.
+// in any browser: Royale Cinema's clock, Central time.
 const WHEN = new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
 export async function getPointsHistory(memberId: string, offset = 0, limit = POINTS_HISTORY_PAGE): Promise<{ rows: PointsHistoryRow[]; total: number }> {

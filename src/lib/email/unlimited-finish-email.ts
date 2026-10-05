@@ -37,7 +37,7 @@ export function unlimitedFinishText(e: UnlimitedFinishEmail) {
     "",
     "The link works for 7 days. Rather do it in person? Tap your card at the register next time you're in.",
     "",
-    "The Royale crew",
+    "The RCL crew",
   ].join("\n");
 }
 
@@ -54,7 +54,7 @@ export function unlimitedFinishHtml(e: UnlimitedFinishEmail) {
       </td></tr>
       <tr><td style="padding:14px 22px 22px">
         <p style="margin:0 0 10px;font:14px/1.5 Arial,Helvetica,sans-serif;color:${MUTED}">The link works for 7 days. Rather do it in person? Tap your card at the register next time you're in.</p>
-        <p style="margin:0;font:700 15px/1.5 Arial,Helvetica,sans-serif;color:${INK}">The Royale crew</p>
+        <p style="margin:0;font:700 15px/1.5 Arial,Helvetica,sans-serif;color:${INK}">The RCL crew</p>
       </td></tr>
     </table>
     <div style="max-width:560px;margin:14px auto 0;font:11px/1.5 'Courier New',monospace;color:${MUTED};letter-spacing:1px;text-transform:uppercase">Royale Cinema Lounge · 715 E Broadway, Joplin, MO 64801 · 417-281-4172</div>

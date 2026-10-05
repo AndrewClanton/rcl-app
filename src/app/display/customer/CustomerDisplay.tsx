@@ -487,7 +487,7 @@ function onReader(cart: RegisterCartSnapshot | null): ReaderPrompt | null {
   return parseReaderPrompt(cart.reader);
 }
 
-// Between orders: the Royale, tonight's movies, and why checking in pays.
+// Between orders: Royale Cinema, tonight's movies, and why checking in pays.
 function Welcome({ movies }: { movies: PromoMovie[] }) {
   return (
     <>

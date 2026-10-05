@@ -89,7 +89,7 @@ export default async function MembershipPage({
 
       <PageMasthead
         eyebrow="Membership"
-        title={isPlus ? "Your Insiders+ membership" : "Join the Royale"}
+        title={isPlus ? "Your Insiders+ membership" : "Join Royale Cinema"}
         intro={isPlus ? "Unlimited entry to every screening, no ticket cost, ever. Here's everything it includes." : "Insiders is free and earns points on everything. Insiders+ gets you into every screening free, every time."}
         className="!mb-0"
       />

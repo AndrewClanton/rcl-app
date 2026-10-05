@@ -23,7 +23,7 @@ export default async function DataDeletionPage() {
       title="Deleting your data"
       effectiveDate={LEGAL_EFFECTIVE_DATE}
       draft={!LEGAL_PAGES_PUBLISHED}
-      intro={<p>You can ask us to delete your Royale account, and the personal information attached to it, at any time.</p>}
+      intro={<p>You can ask us to delete your Royale Cinema account, and the personal information attached to it, at any time.</p>}
     >
       <section>
         <h2 id="how">How to ask</h2>
@@ -89,7 +89,7 @@ export default async function DataDeletionPage() {
       <section>
         <h2 id="facebook-google">If you signed in with Facebook or Google</h2>
         <p>
-          You can remove the Royale from your Facebook account (Settings &amp; privacy, then Settings, then Apps and websites) or your Google account
+          You can remove Royale Cinema Lounge from your Facebook account (Settings &amp; privacy, then Settings, then Apps and websites) or your Google account
           (myaccount.google.com, then Security, then your connections to third-party apps). That stops them from sharing new information with us, but
           it doesn&apos;t delete what we already have. To do that, send us the request above.
         </p>

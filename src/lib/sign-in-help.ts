@@ -27,7 +27,7 @@ import { plainResetError } from "@/lib/auth-email-errors";
 //     to /account.
 //   - A member account but no login: email a setup link (a claim link,
 //     lib/member-claim.ts) to the email on file, "Finish setting up your
-//     Royale account". Opening it goes straight to making a login for that
+//     Royale Cinema account". Opening it goes straight to making a login for that
 //     account. (It used to need a phone on file too; since the tablet's
 //     "Phone or email" check-in it doesn't, Andrew 10/1.)
 //   - Nothing under that email: the sign-in page says only "if that email

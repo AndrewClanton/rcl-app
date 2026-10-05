@@ -54,7 +54,7 @@ export default async function AccountLoginPage({ searchParams }: { searchParams:
       <PageMasthead eyebrow="My account" title="Sign in" className="!mb-6" />
       <p className="text-[15px] text-[var(--muted)]">
         {claimToken
-          ? "Last step: sign in, or make a new login, and we'll attach it to your Royale account."
+          ? "Last step: sign in, or make a new login, and we'll attach it to your Royale Cinema account."
           : "Sign in to check your points, purchase history, and membership. New here? Creating an account is free and joins you as a Royale Insider."}
       </p>
       <div className="mt-8">

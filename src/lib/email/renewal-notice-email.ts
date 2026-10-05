@@ -2,7 +2,7 @@
 // a yearly membership renews (lib/renewal-notice.ts), so the charge is no
 // surprise. Transactional: it goes whatever their email preferences say.
 //
-// The Royale's designed-email look (designs/kit.ts), picture first: a
+// Royale Cinema's designed-email look (designs/kit.ts), picture first: a
 // calendar page with the date beside a receipt with the amount and the
 // card, then the perks picture for what another year gets them. Every
 // figure is live text from Stripe's upcoming invoice, never in a picture.
@@ -65,7 +65,7 @@ export function renewalNoticeText(e: RenewalNoticeEmail): string {
     "Questions? Ask us at the box office or reply to this email.",
     "",
     "See you at the movies,",
-    "The Royale crew",
+    "The RCL crew",
     "",
     "Royale Cinema Lounge · 715 E Broadway, Joplin, MO 64801",
   ].join("\n");
@@ -143,7 +143,7 @@ function close(dev: Dev): string {
     C.cream,
     `${txt("Questions? Ask us at the box office or reply to this email.", 17, 26, C.ink)}
 ${txt("See you at the movies,", 17, 26, C.ink, `margin-top:${m ? 24 : 28}px;`)}
-${blk("The Royale crew", 20, 24, C.ink, "margin-top:4px;")}`,
+${blk("The RCL crew", 20, 24, C.ink, "margin-top:4px;")}`,
     `${m ? 32 : 40}px ${d.G}px`,
   );
 }
