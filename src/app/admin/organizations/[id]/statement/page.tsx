@@ -60,7 +60,10 @@ export default async function OrgStatementPage({ params, searchParams }: { param
           <div className="text-xl font-semibold tabular-nums">
             {s.comps} on {s.days.length} {s.days.length === 1 ? "day" : "days"}
           </div>
-          <div className="text-xs text-[var(--muted)]">Up to {s.org.daily_comp_limit} a day. One comp is one person&apos;s day.</div>
+          <div className="text-xs text-[var(--muted)]">
+            Up to {s.org.daily_comp_limit} a day. One comp is one person&apos;s day.
+            {s.noAccount > 0 ? ` ${s.noAccount} of them had no account (logged by count at the register).` : ""}
+          </div>
         </div>
         <div>
           <div className="text-sm text-[var(--muted)]">Value of comps</div>
