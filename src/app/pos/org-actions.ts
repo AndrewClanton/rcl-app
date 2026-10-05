@@ -5,8 +5,38 @@ import { assertStaff } from "@/lib/auth";
 import { checkManagerPin } from "@/lib/manager-pin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { currentMemberId } from "@/lib/member-forward";
-import { orgOnOrderFor, sealOverLimit } from "@/lib/orgs-server";
-import type { OrgOnOrder, OrgRole } from "@/lib/orgs";
+import { compsOn, orgDay, orgGroupFor, orgOnOrderFor, peopleComped, sealOverLimit, todaysGroups } from "@/lib/orgs-server";
+import type { OrgGroupInput, OrgGroupOnOrder, OrgOnOrder, OrgRole } from "@/lib/orgs";
+
+export interface OrgGroupChoices {
+  // Active organizations, with today's comps.
+  orgs: { id: string; name: string; used: number; limit: number }[];
+  // Groups with no account already comped today ("same group, later").
+  today: OrgGroupOnOrder[];
+}
+
+// "Organization guests" on the register: the organizations to pick from and
+// today's groups.
+export async function getOrgGroupChoices(): Promise<OrgGroupChoices> {
+  await assertStaff();
+  const { data, error } = await createAdminClient().from("organizations").select("id, name, daily_comp_limit").eq("status", "active").order("name");
+  if (error) throw new Error(error.message);
+  const date = orgDay();
+  const [orgs, today] = await Promise.all([
+    Promise.all(
+      (data ?? []).map(async (o) => ({ id: o.id as string, name: o.name as string, limit: Number(o.daily_comp_limit), used: peopleComped(await compsOn(o.id as string, date)) })),
+    ),
+    todaysGroups(date),
+  ]);
+  return { orgs, today };
+}
+
+// A group as the server sees it now (today's comps counted again), or null
+// if it doesn't add up.
+export async function getOrgGroup(input: OrgGroupInput): Promise<OrgGroupOnOrder | null> {
+  await assertStaff();
+  return orgGroupFor(input);
+}
 
 // The register's side of organization accounts (lib/orgs.ts): the chip and
 // comps for the member on the order, the manager override past the daily

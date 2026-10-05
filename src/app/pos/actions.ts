@@ -23,7 +23,8 @@ import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
-import { logOrderComps, openOverLimit, orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
+import { logOrderComps, openOverLimit, orgSaleTerms, termsOrg, type OrgSaleTerms } from "@/lib/orgs-server";
+import type { OrgGroupInput } from "@/lib/orgs";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -82,6 +83,10 @@ export interface DraftFields {
   lines: CheckoutLine[];
   // Which register (Devices): printed on the kitchen's order ticket.
   station?: RegisterStation | null;
+  // Organization guests with no account on the order (lib/orgs.ts): the
+  // group by count, or today's group. Checked by the server; not kept on a
+  // held order or tab.
+  orgGroup?: OrgGroupInput | null;
 }
 
 export interface DraftOrderSummary {
@@ -306,15 +311,16 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
   const staff = await assertStaff();
   // An organization's comps: today's limit, looked at again (the other
   // register may have used the last one). A manager can go past it.
-  if (Number(totals.org_comp_discount ?? 0) > 0 && fields.memberId) {
+  if (Number(totals.org_comp_discount ?? 0) > 0 && (fields.memberId || fields.orgGroup)) {
     try {
-      const memberNow = await currentMemberId(fields.memberId);
-      const terms = await orgSaleTerms(memberNow, fields.lines, false);
-      if (terms.plan.blocked && !(terms.org && openOverLimit(orgApproval, terms.org.orgId, staff.employeeId))) {
+      const memberNow = fields.memberId ? await currentMemberId(fields.memberId) : null;
+      const terms = await orgSaleTerms(memberNow, fields.lines, false, undefined, fields.orgGroup);
+      const org = termsOrg(terms);
+      if (terms.plan.blocked && !(org && openOverLimit(orgApproval, org.orgId, staff.employeeId))) {
         return {
           ok: false,
           orgFull: true,
-          error: `${terms.org?.orgName ?? "This organization"} has used all ${terms.org?.limit ?? ""} of today's comps. A manager can approve one more, or ring the day pass and tickets at their price.`,
+          error: `${org?.orgName ?? "This organization"} has used ${org?.used ?? ""} of its ${org?.limit ?? ""} comps today, not enough for this. A manager can approve going over, or ring the day pass and tickets at their price.`,
         };
       }
     } catch (e) {
@@ -396,13 +402,14 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   let orgTerms: OrgSaleTerms | undefined;
   let overLimitBy: string | null = null;
   let overLimitUnapproved = false;
-  if (memberId && orgClaimed) {
+  if ((memberId || params.orgGroup) && orgClaimed) {
     try {
       // A charged sale (no comps) is judged against the limit; a comped one
       // is let past it here and flagged below if no manager approved.
-      orgTerms = await orgSaleTerms(memberId, params.lines, compsClaimed);
-      if (compsClaimed && orgTerms.plan.overLimit && orgTerms.org) {
-        const ok = openOverLimit(params.orgApproval, orgTerms.org.orgId, staff.employeeId);
+      orgTerms = await orgSaleTerms(memberId, params.lines, compsClaimed, undefined, params.orgGroup);
+      const org = termsOrg(orgTerms);
+      if (compsClaimed && orgTerms.plan.overLimit && org) {
+        const ok = openOverLimit(params.orgApproval, org.orgId, staff.employeeId);
         overLimitBy = ok?.approverId ?? null;
         overLimitUnapproved = !ok;
       }
@@ -411,7 +418,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     }
   }
   const orgFields = orgClaimed
-    ? { organization_id: orgTerms?.org?.orgId ?? null, org_comp_discount: cents(Number(params.totals.org_comp_discount ?? 0)), tax_included: !!params.totals.tax_included }
+    ? { organization_id: termsOrg(orgTerms)?.orgId ?? null, org_comp_discount: cents(Number(params.totals.org_comp_discount ?? 0)), tax_included: !!params.totals.tax_included }
     : {};
 
   const orderFields = {
@@ -583,7 +590,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
 
   // The organization's comps on this sale, logged now so the next count
   // (the other register, the chip) includes them.
-  if (orgTerms && memberId && compsClaimed) await logOrderComps({ orderId, memberId, terms: orgTerms, lines: params.lines, overLimitBy });
+  if (orgTerms && compsClaimed) await logOrderComps({ orderId, memberId, terms: orgTerms, lines: params.lines, overLimitBy });
 
   // The member's balance before this sale moves it. A reward's points come
   // out below only if it covers them, and the log-only totals check (run
@@ -610,10 +617,11 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       });
     }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
-    if (overLimitUnapproved && orgTerms?.org) {
+    const overOrg = termsOrg(orgTerms);
+    if (overLimitUnapproved && overOrg) {
       await flagSale("org_over_limit", {
         ...saved,
-        details: { summary: `${orgTerms.org.orgName} was comped past its daily limit (${orgTerms.org.used}/${orgTerms.org.limit}) without a manager's OK.`, organizationId: orgTerms.org.orgId },
+        details: { summary: `${overOrg.orgName} was comped past its daily limit (${overOrg.used}/${overOrg.limit}) without a manager's OK.`, organizationId: overOrg.orgId },
       });
     }
     // The coffee as judged before this sale saved (once saved, its own

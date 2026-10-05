@@ -246,12 +246,24 @@ export const HELP_TOPICS = {
     steps: [
       "Back office → Organizations: make the organization, or turn a \"Group / organization\" tag into one (everyone tagged is attached).",
       "Send helpers the sign-up link from the organization's page: they sign up with their work email and join as helpers.",
-      "Supported guests without an account: make a phone account at the register, then Add to organization.",
+      "Supported guests without an account: make a phone account at the register, then Add to organization, or skip the account entirely with \"Organization guests\".",
     ],
     links: [
       { label: "Organizations", href: "/admin/organizations" },
       { label: "Organization report", href: "/admin/reports/organizations" },
     ],
+  },
+  "organization-guests": {
+    title: "Organization guests with no account",
+    area: "Register: members and the door",
+    body:
+      "There's always a way to comp an organization's group with no name, phone, email or account: some supported guests can't give details, and helpers change often. When a helper says \"we're with Easter Seals\", tap \"Organization guests\" (on the Customers tab, or beside the order's member). Tap the organization, set the supported guests and helpers with + and −, add a note if it helps (\"red shirt\"), and check the summary: \"Easter Seals · 2 supported guests + 2 helpers · uses 4 comps (6/20 today)\". It adds that many Day passes at $0; each person is one comp, logged to the organization as \"no account\", and their movie tickets today are covered too (one each per showing). Today's limit and the manager PIN to go over it work the same as for members. While the order has supported guests it says \"Tax included (Easter Seals guest)\", so a helper buying a $4 pizza for the guest pays $4.00; untick it for an order that's only the helper's. When the group comes back to the counter later the same day, open Organization guests again and tap \"Easter Seals group (today)\": it uses no new comps, covers their tickets, and gives the same pricing. Statements and Reports count these comps like named ones, marked \"no account\".",
+    steps: [
+      "Organization guests → tap the organization.",
+      "Set supported guests and helpers with + and −, then Add day passes.",
+      "Same group later today: Organization guests → the group under \"Same group, later today\".",
+    ],
+    links: [{ label: "Organization report", href: "/admin/reports/organizations" }],
   },
   "points-and-badges": {
     title: "Points, visits and badges",
