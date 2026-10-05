@@ -429,7 +429,7 @@ export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ ins
   return { ok: true };
 }
 
-// "Recipe cost is complete" (the owner rate charges an item at cost only
+// "Recipe cost is complete" (the owner rate charges an item at cost + 10% only
 // with it ticked) is a manager's word that every ingredient is on the
 // recipe. Adding or taking one off changes the recipe, so it comes off
 // until someone looks again. (No column yet, before the owner tab
@@ -479,7 +479,7 @@ export async function setRecipeCostComplete(menuItemId: string, complete: boolea
   const f = failed(error, "save that");
   if (f) return f;
   revalidate();
-  revalidatePath("/admin/owner-tab");
+  revalidatePath("/admin/owner-rate");
   return { ok: true };
 }
 

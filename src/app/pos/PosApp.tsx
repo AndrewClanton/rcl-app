@@ -103,14 +103,13 @@ import {
   dailyPerkPick,
   ENFORCE_REGISTER_TOTALS,
   memberDiscountRate,
-  OWNER_PRICING_LABEL,
+  OWNER_RATE_NAME,
   ownerCartKey,
-  ownerTabLabel,
-  ownerTabReceiptLabel,
+  ownerOrderTotals,
   pointsEarned,
   registerTotals,
 } from "@/lib/register-totals";
-import OwnerRateModal, { type OwnerRateOn } from "./OwnerRateModal";
+import { quoteOwnerRate, type OwnerRateQuote } from "./owner-rate-actions";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee, getTabletProfile } from "./member-actions";
 import { approveOrgOverLimit, getOrgOnOrder } from "./org-actions";
@@ -120,7 +119,6 @@ import { OrgGroupCard, OrgGuestsButton, OrgGuestsPicker } from "./OrgGuests";
 import {
   checkBeforePayment,
   completeOrder,
-  completeOwnerTabOrder,
   isDraftOpen,
   logAbandonedSale,
   savedOrderForPayment,
@@ -209,7 +207,7 @@ export default function PosApp({
   initialScreenings,
   registerTopic,
   canNote,
-  owners,
+  ownerMembers,
   barPrices,
 }: {
   categories: MenuCategory[];
@@ -221,7 +219,7 @@ export default function PosApp({
   initialScreenings: RegisterScreening[];
   registerTopic: string;
   canNote: boolean; // an admin is signed in: Dev note
-  owners: { id: string; name: string }[]; // who gets the owner rate (Back office, Owner tab)
+  ownerMembers: string[]; // the owners' own member accounts that get the owner rate (Back office, Owner rate)
   barPrices: BarPrices; // the Prices sheet: doubles, neat or rocks and the off-menu rule (lib/bar/pricing.ts)
 }) {
   const doubleSettings = useMemo(() => doubleSettingsOf(barPrices), [barPrices]);
@@ -463,15 +461,15 @@ export default function PosApp({
   // The last sale's movie tickets, kept for "Reprint last tickets".
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
-  // The owner rate (lib/register-totals.ts): on while an owner's own PIN
-  // approval is on this order. It never changes the order's own prices (a
-  // tab saves those), only what's shown and what goes on the owner's tab,
-  // so Undo puts the order straight back to menu prices. cartKey: the order
-  // the owner approved; any change to it after the PIN turns it off.
-  const [ownerApproval, setOwnerApproval] = useState<{ on: OwnerRateOn; cartKey: string } | null>(null);
-  const [ownerAskOpen, setOwnerAskOpen] = useState(false);
-  // What the age check opens next: payment, or the owner tab.
-  const [ageNext, setAgeNext] = useState<"pay" | "owner">("pay");
+  // The owner rate (lib/register-totals.ts): the "Owner rate" tick, shown
+  // only while an owner's own member account is on the order. ownerFor: the
+  // member it was ticked for (another member on the order turns it off).
+  // It never changes the order's own prices (a tab saves those), only what's
+  // charged, so unticking puts the order straight back to menu prices.
+  // ownerQuote: the server's prices for the order as it was (cartKey); the
+  // register asks again whenever the order changes.
+  const [ownerFor, setOwnerFor] = useState<string | null>(null);
+  const [ownerQuote, setOwnerQuote] = useState<{ cartKey: string; memberId: string; q: Extract<OwnerRateQuote, { ok: true }> } | null>(null);
 
   // Check-ins from the customer screen. Always listening, whatever's on
   // screen; nothing waits on staff (a shared family number is picked on the
@@ -740,35 +738,79 @@ export default function PosApp({
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
-  // With the owner rate on: the order exactly as the owner approved it,
-  // priced by the server (each line's owner price and how it was priced,
-  // taxed, nothing else off). Only while the order is still the one they
-  // saw: changing it (which also drops the approval) turns it off. The
-  // member and their perks stay on the order underneath, for Undo. An
-  // organization's comps and tax-included pricing are perks too: off while
-  // it's on, and the organization's banner (and its manager override) is
-  // hidden, so they can't be turned on.
-  const ownerRate = ownerApproval && ownerApproval.cartKey === ownerCartKey(cart) ? ownerApproval.on : null;
+  // The owner rate: the tick shows only for an owner's own account on the
+  // order. Ticked, the order is priced by the server (each line's owner
+  // price and how it was priced, taxed, nothing else off) for the order as
+  // it is now; while a changed order is being priced again (ownerPending),
+  // it can't be paid. Member perks, an organization's comps and tax-included
+  // pricing are off while it's on, and the organization's banner (and its
+  // manager override) is hidden, so they can't be turned on.
+  const isOwnerAccount = !!memberId && ownerMembers.includes(memberId);
+  const ownerTicked = isOwnerAccount && ownerFor === memberId;
+  const cartKeyNow = ownerCartKey(cart);
+  const ownerRate = ownerTicked && ownerQuote && ownerQuote.memberId === memberId && ownerQuote.cartKey === cartKeyNow ? ownerQuote.q : null;
+  const ownerPending = ownerTicked && !ownerRate && cart.length > 0;
   const ownerLines = ownerRate ? ownerRate.lines : null;
   const ownerTotals = ownerRate ? ownerRate.totals : null;
+  // Ticked, and the order isn't the one priced last: ask the server again.
+  // If it can't be rung at the owner rate, the tick comes off and says why.
+  useEffect(() => {
+    if (!ownerTicked || !memberId || cart.length === 0) return;
+    if (ownerQuote && ownerQuote.memberId === memberId && ownerQuote.cartKey === cartKeyNow) return;
+    let live = true;
+    const key = cartKeyNow;
+    const forMember = memberId;
+    quoteOwnerRate(forMember, currentFields().lines).then(
+      (q) => {
+        if (!live) return;
+        if (q.ok) return setOwnerQuote({ cartKey: key, memberId: forMember, q });
+        setOwnerFor(null);
+        setToast(q.error);
+      },
+      () => {
+        if (!live) return;
+        setOwnerFor(null);
+        setToast("Couldn't get the owner prices. Check the connection and tick Owner rate again.");
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownerTicked, memberId, cartKeyNow]);
+  // The tick: on, the member perks, tax exempt and an organization's
+  // override come off (they don't go with it); off, the order is back to
+  // its normal prices.
+  function tickOwnerRate(on: boolean) {
+    if (!on || !memberId) return setOwnerFor(null);
+    setOwnerFor(memberId);
+    setMonthlyMember(false);
+    setPointsRedeemed(false);
+    setTaxFree(false);
+    setOrgApproval(null);
+  }
   // A line can be the free coffee if its item is ticked as a daily coffee
   // (Back office -> Menu): its menu price comes off, its add-ons don't.
   // An organization member's comps: their day pass and one ticket per
   // showing, at $0 (lib/orgs.ts).
   const compLines = cart.map((l) => ({ dayPass: !l.screeningId && isDayPassName(findItem(l.menuItemId)?.name), screeningId: l.screeningId ?? null, qty: l.qty, unit: l.unit }));
-  const memberCompPlan = orgCompPlan(compLines, ownerRate ? null : orgOnOrder, orgOverride);
+  const memberCompPlan = orgCompPlan(compLines, ownerTicked ? null : orgOnOrder, orgOverride);
   // Organization guests with no account: a day pass each, their tickets,
   // and tax-included pricing while the cashier leaves it on.
   const orgGroup = groupState && groupState.key === activeTabId ? groupState.g : null;
   const groupOverride = !!orgGroup && orgApproval?.orgId === orgGroup.orgId;
-  const groupPlan = groupCompPlan(compLines, ownerRate ? null : orgGroup, groupOverride, memberCompPlan.comps);
+  const groupPlan = groupCompPlan(compLines, ownerTicked ? null : orgGroup, groupOverride, memberCompPlan.comps);
   const compPlan = joinPlans(memberCompPlan, groupPlan);
   const compOrgName = orgOnOrder?.orgName ?? orgGroup?.orgName;
   const totalsLines = cart.map((l, i) => {
     const item = findItem(l.menuItemId);
     return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i] };
   });
-  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: !ownerRate && (orgTaxIncluded || groupTaxIncluded(orgGroup)) });
+  // At the owner rate, what's charged is the server's owner prices, taxed,
+  // with nothing else off.
+  const totals = ownerRate
+    ? ownerOrderTotals(ownerRate.lines.map((l) => ({ unit: l.unit_price, qty: l.quantity })))
+    : registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: !ownerTicked && (orgTaxIncluded || groupTaxIncluded(orgGroup)) });
   const menuSubtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
   // Whose comps the manager PIN is for: the group's when they're the
   // blocked ones, else the member's.
@@ -806,6 +848,8 @@ export default function PosApp({
       pointsRedeemed,
       station: devices.station,
       orgGroup: orgGroup ? groupInput(orgGroup) : null,
+      // The lines stay as rung (menu prices): the server prices them.
+      ...(ownerTicked ? { ownerRate: true } : {}),
       lines: cart.map((l) => ({
         menu_item_id: l.menuItemId,
         name: l.name,
@@ -841,25 +885,20 @@ export default function PosApp({
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
     setCoffeeOffFor(null);
-    setOwnerApproval(null);
+    setOwnerFor(null);
   }
 
-  // Any change to the order after an owner's PIN turns the owner rate off:
-  // they approved the order they saw, so a changed one needs the PIN again.
   function addLine(line: BuiltLine) {
     setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, ...line }]);
-    setOwnerApproval(null);
     setBuilderItemId(null);
   }
 
   function updateQty(key: string, delta: number) {
     setCart((prev) => prev.map((l) => (l.key === key ? { ...l, qty: Math.max(1, l.qty + delta) } : l)));
-    setOwnerApproval(null);
   }
 
   function removeLine(key: string) {
     setCart((prev) => prev.filter((l) => l.key !== key));
-    setOwnerApproval(null);
   }
 
   // Which tab is on screen right now, for a save that answers after the
@@ -954,7 +993,7 @@ export default function PosApp({
         subtotal: menuSubtotal,
         tax: ownerTotals.tax,
         total: ownerTotals.total,
-        discounts: [{ label: "Owner rate, at cost", amount: cents(menuSubtotal - ownerTotals.subtotal) }].filter((d) => d.amount > 0),
+        discounts: [{ label: `Owner rate (${OWNER_RATE_NAME})`, amount: cents(menuSubtotal - ownerTotals.subtotal) }].filter((d) => d.amount > 0),
         member: null,
         pointsToEarn: 0,
       }
@@ -1098,7 +1137,7 @@ export default function PosApp({
     // Looked up again for the next order: a coffee just used shows as used.
     setCoffee(null);
     setCoffeeOffFor(null);
-    setOwnerApproval(null);
+    setOwnerFor(null);
   }
 
   // False (with nothing moved) if what's on screen couldn't be saved.
@@ -1213,8 +1252,6 @@ export default function PosApp({
       // screen keeps its own items: it's saved and the new tab starts empty.
       const fromScreen = !activeTabId;
       if (!fromScreen && !(await saveOpenTab())) return;
-      // A new tab is a new order: the owner's approval was for the one on screen.
-      setOwnerApproval(null);
       const id = fromScreen
         ? await saveDraftOrder("tab", { ...currentFields(), orderName: name }, totalsPayload(totals))
         : await saveDraftOrder("tab", { employeeId, memberId: null, orderName: name, taxFree: false, monthlyMember: false, pointsRedeemed: false, lines: [] });
@@ -1289,7 +1326,8 @@ export default function PosApp({
     // off before anyone pays. If the check can't run, the sale goes ahead.
     // An organization comp is checked again too: the other register may
     // have used today's last one.
-    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || totals.orgCompDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
+    // The owner rate is checked too: the owner's account, and the server's prices.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || totals.orgCompDiscount > 0 || ownerTicked || ENFORCE_REGISTER_TOTALS) {
       setBusy(true);
       const r = await checkBeforePayment(currentFields(), totalsPayload(totals), orgOverride || groupOverride ? orgApproval?.token : null).catch(() => null);
       setBusy(false);
@@ -1324,117 +1362,8 @@ export default function PosApp({
     setTipOpen(false);
     const hasAlcohol = cart.some((l) => l.isAlcohol);
     if (hasAlcohol) {
-      setAgeNext("pay");
       setAgeConfirmOpen(true);
     } else setPayOpen(true);
-  }
-
-  // "Put on owner tab": no card, no cash, no tip. The same checks as a sale
-  // first (the tab's still open, the seats are there, ID for alcohol). The
-  // server says if the owner's approval has run out.
-  async function putOnOwnerTab() {
-    if (!ownerRate || !employeeId || cart.length === 0) return;
-    // A tab closed on the other register mustn't be closed again from here.
-    if (activeTabId) {
-      setBusy(true);
-      const open = await isDraftOpen(activeTabId).catch(() => null);
-      setBusy(false);
-      if (open === null) return setToast("Couldn't check the tab. Check the connection and try again.");
-      if (!open) {
-        resetOrder();
-        router.refresh();
-        return setToast("That tab was already closed on another register, so it's been cleared from here. Check Recent orders.");
-      }
-    }
-    const seats = cart.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, quantity: l.qty }));
-    if (seats.length) {
-      setBusy(true);
-      const r = await checkTicketSeats(seats).catch(() => null);
-      setBusy(false);
-      if (!r || !r.ok) return setToast(r && !r.ok ? r.error : "Couldn't check seats. Check the connection and try again.");
-    }
-    if (cart.some((l) => l.isAlcohol)) {
-      setAgeNext("owner");
-      setAgeConfirmOpen(true);
-    } else void finalizeOwnerTab();
-  }
-
-  // Saves the owner-tab order. The server prices it again from the menu and
-  // the recipes and refuses it unless it's the order the owner approved, so
-  // what's saved and printed is the server's. Nothing is charged, so a
-  // failure just leaves the order on screen.
-  async function finalizeOwnerTab() {
-    if (!ownerRate || finalizingRef.current) return;
-    finalizingRef.current = true;
-    setBusy(true);
-    try {
-      const fields = currentFields();
-      const r = await completeOwnerTabOrder({
-        ...fields,
-        // No member, so no perks and no points (the member stays on screen
-        // until the order's done, for Undo).
-        memberId: null,
-        monthlyMember: false,
-        pointsRedeemed: false,
-        taxFree: false,
-        // As rung (menu prices): the server prices them itself.
-        lines: fields.lines,
-        totals: ownerRate.totals,
-        ownerRate: { ownerId: ownerRate.ownerId, token: ownerRate.token, nonce: ownerRate.nonce },
-        ageVerified: cart.some((l) => l.isAlcohol),
-        draftOrderId: activeTabId,
-      });
-      if (!r.ok) {
-        if (r.again) setOwnerApproval(null);
-        setToast(r.error);
-        return;
-      }
-      const receipt: ReceiptData = {
-        orderNumber: r.orderNumber,
-        at: new Date().toISOString(),
-        cashier: employees.find((e) => e.id === employeeId)?.name ?? null,
-        member: null,
-        orderName: orderName.trim() || null,
-        // Each line says how it was priced and its menu price, in plain ASCII for the printer.
-        lines: r.lines.map((l) => ({
-          name: l.name,
-          qty: l.quantity,
-          unit: l.unit_price,
-          mods: [...l.modifiers, ...(l.owner_pricing && l.owner_pricing !== "menu" ? [`${OWNER_PRICING_LABEL[l.owner_pricing]}, menu ${money(l.menu_unit_price ?? 0)}`] : [])],
-        })),
-        subtotal: r.totals.subtotal,
-        discounts: [],
-        tax: r.totals.tax,
-        tip: 0,
-        total: r.totals.total,
-        payments: [{ label: ownerTabReceiptLabel(r.owner), amount: r.totals.total }],
-        points: { earned: 0, rewardUsed: false },
-      };
-      setLastReceipt(receipt);
-      const tickets: TicketSale[] = r.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
-      setLastTickets(tickets.length ? { orderNumber: r.orderNumber, lines: tickets } : null);
-      void printAfterSale(receipt, false, tickets);
-      resetOrder();
-      setTip(0);
-      setTipAsked(false);
-      // already: the first try saved it and its answer got lost.
-      const done = `Order #${r.orderNumber} ${r.already ? "was already on" : "went on"} ${r.owner}'s owner tab: ${money(r.totals.total)} with tax, at cost (menu value ${money(r.menuValue)}). Nothing to charge.`;
-      setToast(done);
-      setTimeout(() => setToast((t) => (t === done ? null : t)), 10000);
-      router.refresh();
-    } catch (e) {
-      // The save may have gone through with its answer lost. Trying again is
-      // safe (one approval saves one order: a repeat finds it, not a second
-      // one), and the owner rate stays on for it.
-      setToast(
-        isStaleBuildError(e)
-          ? "The register was just updated and this didn't save. Reload the page, then ring it up again."
-          : "Couldn't reach the server. It may have gone on the tab anyway: check Recent orders first. If it isn't there, tap Put on owner tab again.",
-      );
-    } finally {
-      finalizingRef.current = false;
-      setBusy(false);
-    }
   }
 
   // Never blocks or undoes a sale: the order is already saved when this runs,
@@ -1590,8 +1519,10 @@ export default function PosApp({
       member: sale.memberName,
       orderName: order.orderName.trim() || null,
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
-      subtotal: order.totals.subtotal,
+      // At the owner rate the lines are at menu prices, and the owner rate is what came off them.
+      subtotal: order.ownerRate ? cents(order.lines.reduce((s, l) => s + l.unit_price * l.quantity, 0)) : order.totals.subtotal,
       discounts: [
+        { label: `Owner rate (${OWNER_RATE_NAME})`, amount: order.ownerRate ? cents(order.lines.reduce((s, l) => s + l.unit_price * l.quantity, 0) - order.totals.subtotal) : 0 },
         { label: "Organization comp", amount: order.totals.org_comp_discount ?? 0 },
         { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
@@ -1608,7 +1539,7 @@ export default function PosApp({
         { label: "Card", amount: payment.card },
         ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
       ],
-      points: { earned: pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0 },
+      points: { earned: order.ownerRate ? 0 : pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0 },
     };
     setLastReceipt(receipt);
     const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
@@ -2006,24 +1937,26 @@ export default function PosApp({
           )}
 
           {/* The owner rate: whose, and what it means for this order. Member
-              perks don't go with it, so their rows are hidden until Undo. */}
-          {ownerRate && ownerTotals && (
+              perks don't go with it, so their rows are hidden until it's unticked. */}
+          {ownerTicked && (
             <div className="rounded-md border-2 px-2.5 py-2 text-xs" style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }} role="status">
               <div className="flex items-baseline justify-between gap-2">
-                <strong className="text-sm">{ownerTabLabel(ownerRate.firstName)}</strong>
+                <strong className="text-sm">Owner rate{ownerRate ? ` · ${ownerRate.firstName}` : ""} · {OWNER_RATE_NAME}</strong>
                 <span className="shrink-0 tabular-nums">menu value {money(menuSubtotal)}</span>
               </div>
               <p className="mt-0.5 leading-snug">
-                Menu items at cost, or half price with no cost on file. Tickets and custom items at their normal price. Taxed as usual; no member discount, daily
-                coffee, reward or points.
+                {ownerRate
+                  ? `Menu items at ${OWNER_RATE_NAME}, or half price with no cost on file. Tickets and custom items at their normal price. Taxed as usual; no member discount, daily coffee, reward or points. Paid like any order.`
+                  : cart.length
+                    ? "Getting the owner prices…"
+                    : "Ring the order up: it's priced at the owner rate as it goes."}
               </p>
-              <p className="mt-0.5 leading-snug">Changing the order turns this off: the owner enters their PIN again for the new one.</p>
             </div>
           )}
 
           {/* The Insiders+ daily coffee: on the order with a way to take it
               off, or off with a way to put it back. */}
-          {ownerRate ? null : memberId && coffeePick && totals.dailyPerkLine !== null ? (
+          {ownerTicked ? null : memberId && coffeePick && totals.dailyPerkLine !== null ? (
             <div
               className="flex items-center gap-2 rounded-md border-2 px-2 py-1.5 text-xs"
               style={{ borderColor: "var(--foreground)", background: "var(--gold)", color: "var(--foreground)" }}
@@ -2052,7 +1985,7 @@ export default function PosApp({
 
           {/* An organization member (lib/orgs.ts): whose, today's comps,
               and what's comped or why not. */}
-          {orgOnOrder && !ownerRate && (
+          {orgOnOrder && !ownerTicked && (
             <div
               className="rounded-md border-2 px-2 py-1.5 text-xs"
               style={{ borderColor: memberCompPlan.blocked ? "var(--danger-text)" : "var(--accent)", color: "var(--foreground)" }}
@@ -2119,7 +2052,6 @@ export default function PosApp({
             employeeId={employeeId}
             onRewardLine={(label) => {
               setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: label, unit: 0, qty: 1, mods: [], isAlcohol: false }]);
-              setOwnerApproval(null);
             }}
             onFind={() => {
               pickTab(CUSTOMERS_TAB);
@@ -2131,7 +2063,19 @@ export default function PosApp({
           />
           </TabletSetupContext>
 
-          <div className={`space-y-1 pt-1 ${ownerRate ? "hidden" : ""}`}>
+          <div className="space-y-1 pt-1">
+          {/* The owner rate: only with an owner's own account on the order
+              (an owner with the owner rate on in Back office). Ticked, the
+              member perks and Tax exempt are hidden: they don't go with it. */}
+          {isOwnerAccount && (
+            <label className="flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+              <input type="checkbox" checked={ownerTicked} disabled={busy} onChange={(e) => tickOwnerRate(e.target.checked)} />
+              Owner rate ({OWNER_RATE_NAME})
+              <InfoTip topic="owner-rate" />
+            </label>
+          )}
+          </div>
+          <div className={`space-y-1 ${ownerTicked ? "hidden" : ""}`}>
           {/* With a member on the order, their discount is ticked by itself
               (Insiders+ 10%; plain Insiders earn points instead) and the
               manual Monthly member tick is hidden, so the two can't stack. */}
@@ -2167,7 +2111,7 @@ export default function PosApp({
             {ownerTotals ? (
               <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
                 <div>
-                  At cost {money(ownerTotals.subtotal)} <s>{money(menuSubtotal)}</s>
+                  Owner rate {money(ownerTotals.subtotal)} <s>{money(menuSubtotal)}</s>
                 </div>
                 <div>Tax {money(ownerTotals.tax)}</div>
               </div>
@@ -2187,7 +2131,7 @@ export default function PosApp({
             )}
             <div className="text-right">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
-                {ownerTotals ? "Owner tab" : "Total"} · {itemCount} item{itemCount === 1 ? "" : "s"}
+                {ownerTotals ? "Owner rate" : "Total"} · {itemCount} item{itemCount === 1 ? "" : "s"}
               </div>
               <div className="text-2xl font-semibold leading-tight tabular-nums" style={{ color: "var(--accent)" }}>
                 {money(ownerTotals ? ownerTotals.total : totals.total)}
@@ -2195,17 +2139,11 @@ export default function PosApp({
             </div>
           </div>
           {/* No new charges while a charged sale is unsaved: if sales aren't
-              saving, the register shouldn't keep charging cards. An owner-tab
-              order never opens the payment screen: nothing is charged. */}
-          {ownerRate ? (
-            <button className="btn-primary mt-2 min-h-12 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={() => void putOnOwnerTab()}>
-              {employeeId ? `Put on ${ownerRate.firstName}'s owner tab` : "Pick a cashier"}
-            </button>
-          ) : (
-            <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={startCheckout}>
-              {employeeId ? "Complete order" : "Pick a cashier"}
-            </button>
-          )}
+              saving, the register shouldn't keep charging cards. Nor while
+              the owner rate's prices are still coming. */}
+          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale || ownerPending} onClick={startCheckout}>
+            {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : "Complete order"}
+          </button>
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
               Start your shift (or choose a cashier above) to ring this up.
@@ -2259,18 +2197,6 @@ export default function PosApp({
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
               rickroll={rickroll}
             />
-            {/* The owner rate: only when someone is ticked for it (Back office,
-                Owner tab). On, it's the way back to normal prices. */}
-            {(owners.length > 0 || ownerRate) &&
-              (ownerRate ? (
-                <button className="btn-secondary min-h-11 !px-2 py-1 text-sm leading-tight" style={{ color: "var(--danger-text)" }} disabled={busy} onClick={() => setOwnerApproval(null)}>
-                  Undo owner rate
-                </button>
-              ) : (
-                <button className="btn-secondary min-h-11 whitespace-nowrap !px-2 py-2 text-sm" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale} onClick={() => setOwnerAskOpen(true)}>
-                  Owner rate
-                </button>
-              ))}
             {/* This register's reader, printer, drawer and the customer
                 screen's sounds. Down here in the row's spare cells, so the
                 top row has room for the Staff button. */}
@@ -2344,7 +2270,6 @@ export default function PosApp({
             onCancel={() => setCustomOpen(false)}
             onAdd={(l) => {
               setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: [], isAlcohol: l.isAlcohol }]);
-              setOwnerApproval(null);
               setCustomOpen(false);
             }}
           />
@@ -2374,7 +2299,6 @@ export default function PosApp({
             insidersPlus={member?.tier === "Insiders+"}
             onAdd={(t) => {
               setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, screeningId: t.screeningId, name: t.name, unit: t.unit, qty: t.qty, mods: t.mods, isAlcohol: false }]);
-              setOwnerApproval(null);
             }}
           />
         ) : builderItem ? (
@@ -2504,9 +2428,7 @@ export default function PosApp({
                 className="btn-primary"
                 onClick={() => {
                   setAgeConfirmOpen(false);
-                  // An owner-tab order goes on the tab; it never opens payment.
-                  if (ageNext === "owner") void finalizeOwnerTab();
-                  else setPayOpen(true);
+                  setPayOpen(true);
                 }}
               >
                 ID checked — 21+
@@ -2516,19 +2438,6 @@ export default function PosApp({
         </div>
       )}
 
-      {ownerAskOpen && (
-        <OwnerRateModal
-          owners={owners}
-          lines={currentFields().lines}
-          onCancel={() => setOwnerAskOpen(false)}
-          onApproved={(approval) => {
-            setOwnerAskOpen(false);
-            // For this order as it is now (the modal covers the register).
-            setOrgApproval(null); // an organization's comp override doesn't go with the owner rate
-            setOwnerApproval({ on: approval, cartKey: ownerCartKey(cart) });
-          }}
-        />
-      )}
 
       {payOpen && (
         <PaymentModal

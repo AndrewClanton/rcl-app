@@ -142,7 +142,7 @@ function RecipeEditor({ item, recipe, ingredients, parItems }: { item: MenuItem;
 
 // What the recipe costs from the ingredient costs, against the menu price,
 // and the manager's tick that the recipe is all there. The owner rate
-// charges an item at cost only with the tick and a cost for every
+// charges an item at cost + 10% only with the tick and a cost for every
 // ingredient; otherwise it's half the menu price.
 function RecipeCost({ item, recipe, ingredients }: { item: MenuItem; recipe: Recipe | null; ingredients: Ingredient[] }) {
   const [pending, run] = useRefreshingAction();
@@ -179,7 +179,7 @@ function RecipeCost({ item, recipe, ingredients }: { item: MenuItem; recipe: Rec
         <span>
           Recipe cost is complete
           <span className="block text-xs text-[var(--muted)]">
-            Every ingredient is on the recipe. Ticked, the owner rate charges this at cost; not ticked, half the menu price. Adding or taking off an ingredient
+            Every ingredient is on the recipe. Ticked, the owner rate charges this at cost + 10%; not ticked, half the menu price. Adding or taking off an ingredient
             unticks it.
           </span>
         </span>

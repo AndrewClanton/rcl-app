@@ -5,6 +5,7 @@ import { datesIn, rangeLabel, shortDate, weekday } from "@/lib/report-periods";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
 import MembershipsCard from "./MembershipsCard";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import { ownerRateLine } from "@/lib/register-totals";
 import { BarList, Card, Columns, Delta, Rows, SplitBar, Stat, TopItems, money, num } from "./ui";
 
 // Reports -> Week and Month: the same screen for either. Every figure has
@@ -114,12 +115,12 @@ export default function PeriodView({
                       : []),
                     ...(s.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(s.partialRefunds)}`, muted: true }] : []),
                     { label: "Net sales", value: money(s.netSales), strong: true },
-                    // Not taken off: the owner tab line is already at what the owners pay.
-                    ...(s.ownerTab.orders > 0
+                    // Not taken off: the owner-rate sales are already at what the owners paid.
+                    ...(s.ownerRate.orders > 0
                       ? [
                           {
-                            label: `Owner rate: ${money(s.ownerTab.menuValue)} at menu prices, ${money(s.ownerTab.sales)} at cost`,
-                            value: `${money(s.ownerTab.menuValue - s.ownerTab.sales)} under menu`,
+                            label: `${ownerRateLine(s.ownerRate).label} (${ownerRateLine(s.ownerRate).who})`,
+                            value: ownerRateLine(s.ownerRate).value,
                             muted: true,
                           },
                         ]

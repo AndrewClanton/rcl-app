@@ -1,7 +1,6 @@
 import "server-only";
-import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cents, isRewardLine, ownerLinePrice, ownerOffMenuPrice, ownerOrderKey, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
+import { cents, isRewardLine, ownerLinePrice, ownerOffMenuPrice, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
 import { doubleContext, menuLinePrice, type Group } from "@/lib/register-sale-checks";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, type DrinkCost } from "@/lib/bar/pricing";
@@ -11,24 +10,48 @@ import { DOUBLE, isServeMod } from "@/lib/bar/double";
 // The owner rate on the server (the math is in lib/register-totals.ts, with
 // what it is and why): who gets it, what each menu item cost, and an owner
 // order priced from the database alone. The register shows the server's
-// prices (the PIN box asks the owner about exactly that order), and putting
-// it on the tab (completeOwnerTabOrder in pos/actions.ts) prices it here
-// again: the register's word is never taken for a price.
-
-export interface OwnerPerson {
-  id: string;
-  name: string;
-}
+// prices (quoteOwnerRate in pos/owner-rate-actions.ts), and completeOrder in
+// pos/actions.ts prices it here again: the register's word is never taken
+// for a price.
 
 export const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
-// Who gets the owner rate: active staff ticked on Back office -> Owner tab
-// (employees.owner_rate). A tick on the person, not a role. null: the
-// column isn't there yet (20261003060000_owner_tab.sql) or the read failed.
-export async function ownerRatePeople(): Promise<OwnerPerson[] | null> {
-  const { data, error } = await createAdminClient().from("employees").select("id, name, role").eq("active", true).eq("owner_rate", true).order("name");
-  if (error || !data) return null;
-  return (data as { id: string; name: string; role: string }[]).filter((e) => e.role !== "display").map((e) => ({ id: e.id, name: e.name }));
+// An owner whose member account can carry the owner rate: an active
+// employee with role owner and the owner rate on (Back office -> Owner
+// rate), linked to the member account that shares their login
+// (auth_user_id, the same link Staff logins uses).
+export interface OwnerMember {
+  memberId: string;
+  employeeId: string;
+  firstName: string;
+}
+
+// Every such owner's member account (or just this one). null: the
+// owner_rate column isn't there yet (20261003060000_owner_tab.sql) or the
+// read failed.
+export async function ownerMembers(memberId?: string): Promise<OwnerMember[] | null> {
+  const db = createAdminClient();
+  const { data: staff, error } = await db.from("employees").select("id, name, auth_user_id").eq("active", true).eq("role", "owner").eq("owner_rate", true);
+  if (error || !staff) return null;
+  const byAuth = new Map((staff as { id: string; name: string; auth_user_id: string | null }[]).filter((e) => e.auth_user_id).map((e) => [e.auth_user_id as string, e]));
+  if (!byAuth.size) return [];
+  let q = db.from("members").select("id, auth_user_id").in("auth_user_id", [...byAuth.keys()]).is("erased_at", null);
+  if (memberId) q = q.eq("id", memberId);
+  const { data: members, error: memberErr } = await q;
+  if (memberErr || !members) return null;
+  return (members as { id: string; auth_user_id: string }[]).flatMap((m) => {
+    const e = byAuth.get(m.auth_user_id);
+    return e ? [{ memberId: m.id, employeeId: e.id, firstName: firstName(e.name) }] : [];
+  });
+}
+
+// The owner whose member account this is, if it carries the owner rate.
+// null: not an owner's account; undefined: it couldn't be read.
+export async function ownerForMember(memberId: string | null | undefined): Promise<OwnerMember | null | undefined> {
+  if (!memberId) return null;
+  const all = await ownerMembers(memberId);
+  if (all === null) return undefined;
+  return all.find((o) => o.memberId === memberId) ?? null;
 }
 
 // "*": cost_complete comes with the owner tab's migration; without it,
@@ -105,7 +128,7 @@ type ItemRow = { id: string; name: string; price: number; is_alcohol: boolean; c
 // An owner order, priced from the database: each line's menu price today
 // (the item's price and its options, or the showing's ticket price), then
 // the owner price from that and the recipe. Anything that can't be priced
-// from the database is a problem, and nothing goes on the tab: a custom item
+// from the database is a problem, and it isn't sold at the owner rate: a custom item
 // is the only price taken as rung (there's nothing to check it against),
 // and it's charged in full. Whether the line was rung at today's price is
 // for the caller to check (ownerSaleProblems).
@@ -165,7 +188,7 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
       // A free Insiders+ seat is a member perk, and member perks don't go
       // with the owner rate.
       if (Number(l.unit_price) === 0 && price > 0) {
-        problems.push(`"${l.name}" is a free Insiders+ ticket, and member perks don't go on the owner tab. Take it off and ring the ticket at its price.`);
+        problems.push(`"${l.name}" is a free Insiders+ ticket, and member perks don't go with the owner rate. Take it off and ring the ticket at its price.`);
         continue;
       }
       menu = price;
@@ -202,10 +225,10 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
     } else if (isRewardLine({ menu_item_id: null, screening_id: null, name: String(l.name ?? ""), unit_price: Number(l.unit_price) })) {
       // A badge reward is a member's perk, and member perks don't go with
       // the owner rate.
-      problems.push(`"${l.name}" is a member's badge reward, and member perks don't go on the owner tab. Take it off the order (Undo it on the member).`);
+      problems.push(`"${l.name}" is a member's badge reward, and member perks don't go with the owner rate. Take it off the order (Undo it on the member).`);
       continue;
     } else {
-      // A Bar Book drink or a custom drink with what's in it: at cost when
+      // A Bar Book drink or a custom drink with what's in it: cost + 10% when
       // every ingredient has a cost, else half. A plain custom item is
       // taken at its rung price (there's nothing to check it against) and
       // charged in full.
@@ -245,15 +268,9 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
   return { ok: true, lines: priced, totals: { subtotal: t.subtotal, tax: t.tax, total: t.total }, menuValue };
 }
 
-// The hash of a priced order (ownerOrderKey): what the owner's approval is
-// tied to.
-export function ownerOrderHash(lines: OwnerPricedLine[], total: number): string {
-  return createHash("sha256").update(ownerOrderKey(lines, total)).digest("base64url");
-}
-
-// Back office -> Owner tab's "Prices": every item on the menu, its price,
+// Back office -> Owner rate's "Prices": every item on the menu, its price,
 // what its recipe costs, whether that cost is confirmed complete, and what
-// an owner pays for it, so "at cost" can be seen.
+// an owner pays for it, so "cost + 10%" can be checked.
 export interface OwnerPriceRow {
   id: string;
   name: string;

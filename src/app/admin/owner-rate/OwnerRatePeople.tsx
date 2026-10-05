@@ -4,18 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { setOwnerRate } from "./actions";
 
-// "Who gets the owner rate": a tick per person (employees.owner_rate), not a
-// role, the way Email picks who sends. Owners change it; only active staff
-// logins are listed. Nobody is ticked until an owner ticks them.
+import type { OwnerRateCandidate } from "@/lib/data/owner-rate";
 
-export interface OwnerRateCandidate {
-  id: string;
-  name: string;
-  role: string;
-  ticked: boolean;
-}
-
-const ROLE: Record<string, string> = { cashier: "Staff", manager: "Manager", admin: "Admin", owner: "Owner" };
+// "Who gets the owner rate": a tick per owner (employees.owner_rate). Owners
+// change it; only active owner logins are listed.
 
 export default function OwnerRatePeople({ candidates }: { candidates: OwnerRateCandidate[] }) {
   const router = useRouter();
@@ -33,7 +25,8 @@ export default function OwnerRatePeople({ candidates }: { candidates: OwnerRateC
     <section id="who" className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-sm sm:p-5">
       <h2 className="text-base font-semibold">Who gets the owner rate</h2>
       <p className="mt-1 text-[var(--muted)]">
-        A tick on the person, not their role. Only someone ticked here shows up under Owner rate on the register, and only their own PIN puts an order on their tab.
+        When a ticked owner&apos;s own account is on an order, the register shows an Owner rate tick beside Tax exempt. Their account is the member account that
+        shares their login.
       </p>
       <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {candidates.map((c) => (
@@ -41,7 +34,7 @@ export default function OwnerRatePeople({ candidates }: { candidates: OwnerRateC
             <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2">
               <input type="checkbox" className="h-5 w-5 accent-[var(--accent)]" checked={c.ticked} disabled={pending} onChange={(e) => flip(c, e.target.checked)} />
               <span className="font-semibold">{c.name}</span>
-              <span className="ml-auto text-xs text-[var(--muted)]">{ROLE[c.role] ?? c.role}</span>
+              {!c.hasAccount && <span className="ml-auto text-xs text-[var(--danger-text)]">no member account yet</span>}
             </label>
           </li>
         ))}

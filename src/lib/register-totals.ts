@@ -145,44 +145,59 @@ export function isRewardLine(l: { menu_item_id: string | null; screening_id?: st
 }
 
 // ---------- the owner rate ----------
-// Andrew, 10/3: the owners (a tick on the person: employees.owner_rate) can
-// have anything on the menu at what it cost the business, so enjoying the
-// place doesn't dig into the bottom line invisibly. The owner types their
-// own PIN, and the order goes on their monthly owner tab instead of being
-// paid (lib/owner-rate-server.ts, Back office -> Owner tab).
+// Andrew, 10/5: an owner (an employee with role owner and the owner rate
+// switched on in Back office -> Owner rate, employees.owner_rate) pays
+// cost + 10% for anything on the menu. When that owner's own member account
+// is on the order, the register shows an "Owner rate" tick beside Monthly
+// member and Tax exempt; ticking it reprices the order, and it's paid at the
+// register like any order (card, cash or a split). No PIN: the owner's own
+// account has to be on the order (the server checks it), and the order keeps
+// who rang it (orders.employee_id) and whose account it was
+// (orders.member_id), with owner_menu_value marking it as an owner-rate sale.
+// (lib/owner-rate-server.ts prices it on the server.)
 //
 // How a line is priced:
-// - A menu item at cost: its recipe, each ingredient's amount times its
-//   unit cost (the same costs as the bar's pour cost). Only when the recipe
-//   has at least one ingredient and every one of them has a cost: a partly
-//   costed recipe would undercharge. Never more than the menu price.
+// - A menu item at cost + 10%: its recipe, each ingredient's amount times
+//   its unit cost (the same costs as the bar's pour cost), plus
+//   OWNER_RATE_MARKUP. Only when the recipe has at least one ingredient and
+//   every one of them has a cost: a partly costed recipe would undercharge.
+//   Never more than the menu price.
 // - No recipe, or an ingredient with no cost on file: half the menu price,
 //   and the line says so, so someone can add the cost.
 // - Options and add-ons (a shot of syrup, a second topping) have no recipes
 //   of their own, so whatever they add to the price is charged at half.
 //   One that takes money off takes half of that off.
 // - Movie tickets and custom items: their normal price. (A badge reward or
-//   a free Insiders+ seat is a member perk, so the server won't put one on
-//   an owner tab: lib/owner-rate-server.ts.)
+//   a free Insiders+ seat is a member perk, so the server won't price one
+//   at the owner rate: lib/owner-rate-server.ts.)
 // The order is then taxed like any sale, with no member discount, monthly
-// discount, daily coffee or points reward on top, and it earns no points.
+// discount, daily coffee, reward or organization comp on top, and it earns
+// no points.
+
+// What's added to an item's cost: one setting for the whole owner rate.
+export const OWNER_RATE_MARKUP = 0.1;
+export const OWNER_RATE_NAME = "cost + 10%";
+
+// An item's cost at the owner rate (its cost plus the markup), to the cent.
+export const ownerCostPrice = (cost: number) => cents(Number(cost) * (1 + OWNER_RATE_MARKUP));
 
 export type OwnerPricing = "cost" | "half" | "menu";
 
 export const OWNER_PRICING_LABEL: Record<OwnerPricing, string> = {
-  cost: "at cost",
+  cost: `at ${OWNER_RATE_NAME}`,
   half: "half price: no cost on file",
   menu: "normal price",
 };
 
-// Whose tab an order went on, on the register and in Recent orders.
+// An order from before 10/5 that went on an owner's monthly tab (none were
+// ever made; kept so an old one would still read right in Recent orders).
 export const ownerTabLabel = (firstName: string) => `Owner tab · ${firstName} · at cost`;
 // The same on a printed receipt: the printer only prints plain ASCII, and
 // drops a middle dot.
 export const ownerTabReceiptLabel = (firstName: string) => `Owner tab - ${firstName} - at cost`;
 
 // The register's short tag beside a line.
-export const OWNER_PRICING_TAG: Record<OwnerPricing, string> = { cost: "at cost", half: "½ price", menu: "normal price" };
+export const OWNER_PRICING_TAG: Record<OwnerPricing, string> = { cost: OWNER_RATE_NAME, half: "½ price", menu: "normal price" };
 
 // A menu item as the owner rate sees it: its menu price, and what its
 // recipe cost (null: no recipe, or an ingredient with no cost).
@@ -191,7 +206,7 @@ export interface OwnerItem {
   cost: number | null;
 }
 
-// Menu item id -> its price and cost, from the server after the owner's PIN.
+// Menu item id -> its price and cost, from the server.
 export type OwnerBook = Record<string, OwnerItem>;
 
 // What a recipe cost the business, to the cent. Null when there's nothing
@@ -222,34 +237,44 @@ export function ownerLinePrice(line: { menuItemId: string | null; screeningId?: 
   if (!item) return { unit: cents(menu / 2), how: "half" };
   // What the options added (or took off), half of it either way.
   const options = cents(menu - Number(item.price));
-  const base = item.cost !== null && item.cost !== undefined ? Number(item.cost) : Number(item.price) / 2;
+  const costed = item.cost !== null && item.cost !== undefined;
+  const base = costed ? ownerCostPrice(Number(item.cost)) : Number(item.price) / 2;
   const unit = cents(Math.max(0, Math.min(menu, base + options / 2)));
-  return { unit, how: item.cost !== null && item.cost !== undefined ? "cost" : "half" };
+  return { unit, how: costed ? "cost" : "half" };
 }
 
 // An off-menu Bar Book drink or a custom drink ("What's in it?") at the
-// owner rate: at cost when every required ingredient has a cost (drinkCost
-// in lib/bar/pricing.ts), never more than the price it was rung at; else
-// half of that price. A double on one is half too (its second pour isn't in
-// the recipe's cost). The server prices these (lib/owner-rate-server.ts) and
-// the register shows the server's figure, so there is one function.
+// owner rate: cost + 10% when every required ingredient has a cost
+// (drinkCost in lib/bar/pricing.ts), never more than the price it was rung
+// at; else half of that price. A double on one is half too (its second pour
+// isn't in the recipe's cost). The server prices these
+// (lib/owner-rate-server.ts) and the register shows the server's figure.
 export function ownerOffMenuPrice(rung: number, cost: { cost: number | null; anyCost: boolean } | null | undefined, double = false): { unit: number; how: OwnerPricing } {
   const menu = cents(Math.max(0, Number(rung) || 0));
   if (!double && cost && cost.anyCost && cost.cost !== null && cost.cost !== undefined && Number.isFinite(Number(cost.cost))) {
-    return { unit: cents(Math.min(menu, Number(cost.cost))), how: "cost" };
+    return { unit: cents(Math.min(menu, ownerCostPrice(Number(cost.cost)))), how: "cost" };
   }
   return { unit: cents(menu / 2), how: "half" };
 }
 
-// What an owner-tab order can't carry: member perks, an organization's comps
-// and tax-included pricing are all off with the owner rate (the register
-// clears them when it's turned on; the server refuses any that come anyway).
-// null: nothing in the way; else the sentence for the cashier.
-export function ownerOrderExtras(o: { memberId?: string | null; monthlyMember?: boolean; pointsRedeemed?: boolean; taxFree?: boolean; orgComps?: number | null; taxIncluded?: boolean }): string | null {
-  if (Number(o.orgComps ?? 0) > 0) return "An organization's comps don't go on the owner tab. Undo the owner rate, or ring it without the comp.";
-  if (o.taxIncluded) return "Tax-included pricing doesn't go with the owner rate: an owner tab order is taxed. Ring it up again with the owner rate.";
-  if (o.memberId || o.monthlyMember || o.pointsRedeemed) return "Member perks don't go on the owner tab. Ring it up again with the owner rate.";
-  if (o.taxFree) return "An owner tab order is taxed. Ring it up again with the owner rate.";
+// What an owner-rate order can't carry: member discounts, the monthly 10%,
+// a points reward, the daily coffee, an organization's comps, tax-exempt and
+// tax-included pricing (the register turns them off when the box is ticked;
+// the server refuses any that come anyway). The owner's member account is on
+// the order: that's what lets the owner rate on. null: nothing in the way;
+// else the sentence for the cashier.
+export function ownerOrderExtras(o: {
+  monthlyMember?: boolean;
+  pointsRedeemed?: boolean;
+  taxFree?: boolean;
+  orgComps?: number | null;
+  taxIncluded?: boolean;
+  discounts?: number | null;
+}): string | null {
+  if (Number(o.orgComps ?? 0) > 0) return "An organization's comps don't go with the owner rate. Untick Owner rate, or ring it without the comp.";
+  if (o.taxIncluded) return "Tax-included pricing doesn't go with the owner rate: an owner-rate order is taxed as usual.";
+  if (o.monthlyMember || o.pointsRedeemed || Number(o.discounts ?? 0) > 0) return "Member discounts, the daily coffee and rewards don't go with the owner rate. Untick them, or untick Owner rate.";
+  if (o.taxFree) return "An owner-rate order is taxed as usual. Untick Tax exempt.";
   return null;
 }
 
@@ -282,54 +307,25 @@ export function ownerSaleProblems(
     }
   });
   if (sent.totals && (["subtotal", "tax", "total"] as const).some((k) => offByMore(sent.totals![k], priced.totals[k]))) {
-    problems.push(`The owner tab total on the register ($${Number(sent.totals.total).toFixed(2)}) isn't what the order comes to now ($${Number(priced.totals.total).toFixed(2)}).`);
+    problems.push(`The owner-rate total on the register ($${Number(sent.totals.total).toFixed(2)}) isn't what the order comes to now ($${Number(priced.totals.total).toFixed(2)}).`);
   }
   return problems;
 }
 
-// A priced owner order, written out the same way every time: every line
-// (what it is, how many, its menu and owner price, how priced) and the
-// total. The owner's PIN approval is tied to it (hashed on the server), so
-// it covers exactly the order the owner saw in the PIN box and nothing else.
-export function ownerOrderKey(
-  lines: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[]; quantity: number; menu_unit_price: number; unit_price: number; owner_pricing: OwnerPricing }[],
-  total: number,
-): string {
-  return JSON.stringify([
-    lines.map((l) => [l.menu_item_id ?? "", l.screening_id ?? "", String(l.name), (l.modifiers ?? []).map(String), Number(l.quantity), cents(l.menu_unit_price), cents(l.unit_price), l.owner_pricing]),
-    cents(total),
-  ]);
-}
-
-// Whether a register's order (as rung) is the order an owner-tab sale
-// saved (menu_unit_price: the price it was rung at), in any order: a repeat
-// of the same sale finds its order; a different order is refused.
-export function sameOwnerLines(
-  rung: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[]; quantity: number; unit_price: number }[],
-  saved: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[] | null; quantity: number; menu_unit_price: number | null; unit_price: number }[],
-): boolean {
-  const key = (l: { menu_item_id: string | null; screening_id?: string | null; name: string; modifiers: string[] | null; quantity: number }, price: number) =>
-    JSON.stringify([l.menu_item_id ?? "", l.screening_id ?? "", String(l.name), (l.modifiers ?? []).map(String), Number(l.quantity), Math.round(Number(price) * 100)]);
-  const a = rung.map((l) => key(l, l.unit_price)).sort();
-  const b = saved.map((l) => key(l, l.menu_unit_price ?? l.unit_price)).sort();
-  return a.length === b.length && a.every((k, i) => k === b[i]);
-}
-
-// The signed approval an owner's PIN gives the register (lib/approval-token.ts):
-// for that owner, for one order (the nonce), for exactly the order they saw
-// (its key's hash), for a few minutes.
-export function ownerRateScope(ownerId: string, nonce: string, orderHash: string) {
-  return `owner-rate:${ownerId}:${nonce}:${orderHash}`;
-}
-export function parseOwnerRateScope(scope: string): { ownerId: string; nonce: string; orderHash: string } | null {
-  const m = /^owner-rate:([0-9a-f-]{36}):([0-9a-f-]{36}):([A-Za-z0-9_-]{8,64})$/i.exec(scope);
-  return m ? { ownerId: m[1], nonce: m[2], orderHash: m[3] } : null;
-}
-export const OWNER_RATE_APPROVAL_MS = 10 * 60_000;
-
-// What the register keeps of the order the owner approved, to tell when it
-// changes (a line added, taken off or changed): the owner rate goes off and
-// needs the PIN again.
+// The order the register's owner-rate prices were figured for, to tell when
+// it changes (a line added, taken off or changed): the register asks the
+// server for the new prices.
 export function ownerCartKey(lines: { menuItemId: string | null; screeningId?: string | null; name: string; unit: number; qty: number; mods: string[] }[]): string {
   return JSON.stringify(lines.map((l) => [l.menuItemId ?? "", l.screeningId ?? "", l.name, cents(l.unit), l.qty, l.mods]));
+}
+
+// The Owner rate line in Reports and the nightly email: "Owner rate: $X at
+// cost + 10%" beside "$Y off menu", and whose accounts used it.
+export function ownerRateLine(r: { sales: number; menuValue: number; who: { name: string; orders: number }[] }): { label: string; value: string; who: string } {
+  const usd = (n: number) => `$${cents(n).toFixed(2)}`;
+  return {
+    label: `Owner rate: ${usd(r.sales)} at ${OWNER_RATE_NAME}`,
+    value: `${usd(r.menuValue - r.sales)} off menu`,
+    who: r.who.map((w) => (w.orders > 1 ? `${w.name} ×${w.orders}` : w.name)).join(", "),
+  };
 }

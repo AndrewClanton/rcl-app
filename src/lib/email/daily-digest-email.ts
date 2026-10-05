@@ -1,5 +1,6 @@
 import type { DailyDigest } from "@/lib/data/daily-digest";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import { ownerRateLine } from "@/lib/register-totals";
 import type { MembershipLineKey, MembershipTotals } from "@/lib/membership-payments/rows";
 
 // The end-of-day report as an email: plain tables and inline styles, which
@@ -98,12 +99,10 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   // Comps by organization: who, how many people, and what it would have cost.
   for (const o of d.orgComps ?? []) sold.push([`<span style="color:${MUTED}">${esc(o.name)}: ${o.people} comped</span>`, `<span style="color:${MUTED}">${money(o.value)}</span>`]);
   sold.push(["Net sales", money(r.netSales), true]);
-  // Not taken off: the owner tab line is already at what the owners pay.
-  if (r.ownerTab.orders > 0) {
-    sold.push([
-      `<span style="color:${MUTED}">Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost</span>`,
-      `<span style="color:${MUTED}">${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu</span>`,
-    ]);
+  // Not taken off: the owner-rate sales are already at what the owners paid.
+  if ((r.ownerRate?.orders ?? 0) > 0) {
+    const line = ownerRateLine(r.ownerRate);
+    sold.push([`<span style="color:${MUTED}">${esc(`${line.label} (${line.who})`)}</span>`, `<span style="color:${MUTED}">${esc(line.value)}</span>`]);
   }
   sold.push([`<span style="color:${MUTED}">Tips · sales tax</span>`, `<span style="color:${MUTED}">${money(r.tips)} · ${money(r.tax)}</span>`]);
 

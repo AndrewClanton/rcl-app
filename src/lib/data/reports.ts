@@ -146,8 +146,12 @@ export interface DayOrder {
   // Each line, with the Day report's category for it ("Food", "Movie tickets").
   // An owner-tab order's lines are "Owner tab", at the owner price.
   lines: { name: string; qty: number; amount: number; category: string }[];
-  // An owner-tab order: whose tab (first name). Null for any other sale.
+  // An owner-tab order (the monthly tab before 10/5): whose tab (first
+  // name). Null for any other sale.
   ownerTab: string | null;
+  // An owner-rate sale (paid at cost + 10%): whose account was on it (first
+  // name). Null for any other sale. Optional: absent on older callers.
+  ownerRate?: string | null;
 }
 
 // A ticket booking behind the Day report's ticket figures, and a booth
@@ -231,6 +235,17 @@ export interface SalesSummary {
   accounts: { label: string; rule: string; amount: number }[];
   unassigned: number;
   ownerTab: OwnerTabSummary;
+  ownerRate: OwnerRateSummary;
+}
+
+// Owner-rate sales (lib/register-totals.ts): paid at the register like any
+// sale, so they're in Collected and what sold at the owner prices; this is
+// the line that says how much was owner rate and who used it.
+export interface OwnerRateSummary {
+  orders: number; // owner-rate orders (refunded ones aren't counted)
+  sales: number; // the goods at the owner rate, before tax (tickets left out: they're at menu price)
+  menuValue: number; // the same goods at menu prices
+  who: { name: string; orders: number }[]; // whose accounts, by first name
 }
 
 // The owner tab (lib/register-totals.ts): owner-rate sales, in what sold
@@ -308,10 +323,16 @@ type DayOrderRow = {
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
+  // The member on it (an owner-rate sale: the owner's account). Optional:
+  // a caller's rows may not have it.
+  member?: { name: string } | null;
   items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; menu_item_id: string | null; is_alcohol: boolean; screening_id: string | null }[];
 };
 
 const isOwnerTab = (o: { payment_method: string | null }) => o.payment_method === "owner_tab";
+// A sale paid at the owner rate: it keeps the menu value it replaced.
+const isOwnerRate = (o: { payment_method: string | null; owner_menu_value?: number | null }) => !isOwnerTab(o) && o.owner_menu_value !== null && o.owner_menu_value !== undefined;
+const ownerRateName = (o: { member?: { name: string } | null }) => String(o.member?.name ?? "").trim().split(/\s+/)[0] || "an owner";
 
 // First names of the owners whose tabs these orders went on (and of anyone
 // else named), for the Orders table. Best effort: empty if it can't be read.
@@ -328,7 +349,7 @@ async function firstNames(ids: (string | null | undefined)[]): Promise<Map<strin
 // The order's own columns are "*", so the reports keep working before the
 // daily coffee's migration adds daily_perk_discount.
 const DAY_ORDER_COLUMNS =
-  "*, employee:employees!orders_employee_id_fkey(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
+  "*, employee:employees!orders_employee_id_fkey(name), member:members(name), items:order_items(name, quantity, unit_price, modifiers, menu_item_id, is_alcohol, screening_id)";
 
 type RefundedParts = { amount: number; tax: number; card: number; cash: number };
 const NOTHING_REFUNDED: RefundedParts = { amount: 0, tax: 0, card: 0, cash: 0 };
@@ -347,7 +368,9 @@ function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets,
     name: o.tab_name || o.order_name || null,
     items: o.items.map((l) => (l.quantity > 1 ? `${l.quantity} ${l.name}` : l.name)).join(", "),
     // "cash + voucher" when vouchers paid part of it.
-    method: owner ? `owner tab (${owner})` : Number(o.payment_voucher_amount) > 0 && o.payment_method !== "voucher" ? `${o.payment_method} + voucher` : o.payment_method,
+    method: owner
+      ? `owner tab (${owner})`
+      : `${Number(o.payment_voucher_amount) > 0 && o.payment_method !== "voucher" ? `${o.payment_method} + voucher` : o.payment_method}${isOwnerRate(o) ? ` · owner rate (${ownerRateName(o)})` : ""}`,
     tip: Number(o.tip),
     total: Number(o.total),
     refunded,
@@ -378,6 +401,7 @@ function toDayOrder(o: DayOrderRow, parts: RefundedParts, bucketByItem: Buckets,
       category: l.screening_id ? TICKETS_LABEL : owner ? OWNER_TAB_LABEL : CATEGORY_LABEL[lineBucket(l, bucketByItem)],
     })),
     ownerTab: owner,
+    ownerRate: isOwnerRate(o) ? ownerRateName(o) : null,
   };
 }
 
@@ -550,6 +574,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   const taxIncluded = { sales: 0, tax: 0, orders: 0 };
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   const ownerTab: OwnerTabSummary = { orders: 0, sales: 0, menuValue: 0, tax: 0, owed: 0, paid: 0, payments: 0 };
+  const ownerRate = { orders: 0, sales: 0, menuValue: 0, who: new Map<string, number>() };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
   for (const o of completed) {
     // An owner-tab order took no money (its cash and card are 0), so it
@@ -577,6 +602,17 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       ownerTab.tax += Number(o.tax);
       ownerTab.owed += Number(o.total);
       ownerTab.menuValue += Number(o.owner_menu_value ?? o.subtotal) - tickets;
+    } else if (isOwnerRate(o)) {
+      // Paid like any sale (in Collected, its goods in their categories at
+      // the owner prices); counted here too, for the Owner rate line. A
+      // ticket on it is at its normal price both ways, so it's left out.
+      const tickets = o.items.filter((l) => l.screening_id).reduce((s, l) => s + Number(l.unit_price) * l.quantity, 0);
+      const goods = o.items.filter((l) => !l.screening_id).reduce((s, l) => s + Number(l.unit_price) * l.quantity, 0);
+      ownerRate.orders++;
+      ownerRate.sales += goods;
+      ownerRate.menuValue += Number(o.owner_menu_value) - tickets;
+      const who = ownerRateName(o);
+      ownerRate.who.set(who, (ownerRate.who.get(who) ?? 0) + 1);
     }
     const comp = Number(o.org_comp_discount ?? 0);
     if (comp > 0) {
@@ -727,6 +763,12 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       tax: round2(ownerTab.tax),
       owed: round2(ownerTab.owed),
       paid: round2(ownerTab.paid),
+    },
+    ownerRate: {
+      orders: ownerRate.orders,
+      sales: round2(ownerRate.sales),
+      menuValue: round2(ownerRate.menuValue),
+      who: [...ownerRate.who.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name, orders]) => ({ name, orders })),
     },
   };
 }

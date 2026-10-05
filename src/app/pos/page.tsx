@@ -14,7 +14,7 @@ import { registerTopic } from "@/lib/register-topic";
 import StaffTools from "./shift/StaffTools";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
-import { ownerRatePeople } from "@/lib/owner-rate-server";
+import { ownerMembers } from "@/lib/owner-rate-server";
 
 export const dynamic = "force-dynamic";
 
@@ -44,8 +44,8 @@ export default async function PosPage() {
     getDraftOrders("tab"),
     getRecipesByItem(),
     getRegisterScreenings(),
-    // Who gets the owner rate; nobody until its database update is applied.
-    ownerRatePeople().catch(() => null),
+    // The owners' own member accounts that get the owner rate (Back office, Owner rate).
+    ownerMembers().catch(() => null),
     getBarPrices(),
   ]);
 
@@ -91,7 +91,7 @@ export default async function PosPage() {
           registerTopic={registerTopic()}
           // Dev note only while an admin is signed in (submitting checks again).
           canNote={hasAdminAccess(session.role)}
-          owners={owners ?? []}
+          ownerMembers={(owners ?? []).map((o) => o.memberId)}
           // The Prices sheet: doubles, neat or rocks, the off-menu rule (Back office → Bar Book → Prices).
           barPrices={barPrices}
         />

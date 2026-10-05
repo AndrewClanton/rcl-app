@@ -1,34 +1,53 @@
-# Owner rate and monthly owner tab: what's left
+# Owner rate: what's left
 
-Branch: `claude/owner-tab` (main v1.36.0 merged in; package.json is 1.37.0).
-Nothing here has been run against a database or in a browser.
+v1.42.0 (Andrew, 10/5) replaced the v1.39.0 owner tab. The owner rate is now **cost + 10%**, paid at the register like any order. There's no monthly tab.
 
-## Done
+## How it works now
 
-- Review items 1-5 (approval tied to the order, retry safety, `recipes.cost_complete`, another owner's PIN to take an order off a tab, stale-price refusal).
-- Merge of main v1.36.0 (Bar Book, Double/Neat/Rocks, recipe_id/custom_recipe lines, Prices, org comps, tax-included pricing, member notes, showtimes), main's behavior unchanged.
-  - The owner rate excludes org comps and tax-included pricing: while it's on, `compPlan` and tax-included pricing are off and the organization banner is hidden (`PosApp.tsx`); approving it clears the comp override.
-  - `completeOwnerTabOrder` refuses an order carrying a member, perks, org comps or tax-included pricing (`ownerOrderExtras` in `src/lib/register-totals.ts`).
-  - Off-menu Bar Book and custom drinks are priced at cost when every required ingredient is costed (`drinkCost`), else half the rung price (`ownerOffMenuPrice`, used by `priceOwnerSale` in `src/lib/owner-rate-server.ts`). A Double on one is half.
-  - Double/Neat/Rocks on a menu line: priced like any sale (`menuLinePrice` in `src/lib/register-sale-checks.ts`), and the owner pays half of the add-on.
-- Item 6: reports redaction where the data is read (`getDayReport`, `getOrderByNumber` in `src/lib/data/reports.ts`: redacted unless the caller passes an owner; `getOwnerTabOverview`, `getOwnerStatement`, `ownerTabThisMonth` in `src/lib/data/owner-tab.ts` refuse non-owners).
-- Item 7: nightly email leaves owner-tab orders out of count, money and average; one "Owner tab: N orders, $X at cost" line.
-- Item 8: Box office `$4 x tickets` leaves owner-tab tickets out (`src/lib/data/reports.ts`).
-- Wording nits (Of it, sales tax; owed on owner tabs; taken off owner tab).
-- `scripts/check-owner-tab.mjs` updated and extended.
+- **Who.** An active employee with role owner and the owner rate switched on (Back office → Owner rate, `employees.owner_rate`). Their member account is the one that shares their login (`auth_user_id`, the same link Staff logins uses): `ownerMembers` / `ownerForMember` in `src/lib/owner-rate-server.ts`.
+- **Register.** When that owner's own account is attached to the order, an **Owner rate (cost + 10%)** checkbox shows with Monthly member / Tax exempt. Ticking it:
+  - asks the server for prices (`quoteOwnerRate`, `src/app/pos/owner-rate-actions.ts`) and asks again whenever the order changes;
+  - crosses out the menu prices;
+  - turns off and hides member discounts, the daily coffee, rewards, Tax exempt and org comps.
+  - Pay is disabled until the prices are back. Then it's paid by card, cash or a split.
+  - The always-visible Owner rate button, the PIN box (`OwnerRateModal`) and "Put on owner tab" are gone.
+- **No PIN.** The checkbox only shows for the owner's own account. The server checks the account again on `checkBeforePayment` and `completeOrder`, so a cashier can't use it for anyone else. The order records:
+  - `employee_id`: who rang it up and ticked it;
+  - `member_id`: whose account it was;
+  - `owner_menu_value`: the menu value, which marks it as an owner-rate sale;
+  - on each line, `menu_unit_price` and `owner_pricing`.
+  - It earns no points.
+- **Pricing.** `src/lib/register-totals.ts` has `OWNER_RATE_MARKUP = 0.1` (the one setting) and `ownerCostPrice`.
+  - A menu item is its recipe cost + 10%, but only when "Recipe cost is complete" is ticked and every ingredient has a cost. It's never more than the menu price.
+  - If there's no cost, the fallback is half the menu price, as before.
+  - Options are charged at half. Tickets and custom items are at their normal price.
+  - Off-menu Bar Book and custom drinks are cost + 10% when fully costed, otherwise half. A Double on one is half.
+- **Reports.** Owner-rate sales count as ordinary paid sales: they're in Collected and in their categories at owner prices. Day, Period and the nightly email show a line "Owner rate: $X at cost + 10%" / "$Y off menu" with who used it (`ownerRateLine`, `OwnerRateSummary` in `src/lib/data/reports.ts`). The Orders list marks each one "· owner rate (Name)", and the Orders filter "Owner rate" finds them.
+- **Box office.** Tickets on an owner-rate order are paid at full price, so the $4 box office carve-out counts them like any paid ticket. The "leave owner-tab tickets out" rule only applied to the old no-money tab, so it no longer matters.
+- **Back office → Owner rate** (`/admin/owner-rate`, was `/admin/owner-tab`) has:
+  - who gets it (owners only, with a flag when they have no member account);
+  - changes to that;
+  - the latest owner-rate orders (owner, who rang it up, menu value, paid);
+  - Prices;
+  - how it's priced.
+  - The month cards, statements, record-payment form and Today's "Owner tab this month" card are removed.
 
-## Checks (all pass)
+## Kept on purpose
 
-`check-owner-tab`, `check-receipt`, `check-order-ticket`, `check-card-points`, `check-daily-coffee`, `check-bar-book`, `check-grants` on the owner tab migration, `tsc --noEmit`, eslint (0 errors), and `next build --experimental-build-mode=compile --webpack`.
+- **Database.** Every column and table from `20261003060000_owner_tab.sql` stays: `owner_tab_payments`, `record_owner_tab_payment()`, `orders.owner_tab_employee_id` / `owner_rate_nonce` / `owner_tab_removed_*`, and the `owner_tab` payment method in the check constraint. Nothing new was added; no migration.
+- **Legacy reads.** Reports, Recent orders, the refund path ("Take off tab") and the nightly email still handle `payment_method = 'owner_tab'`. None were ever made (checked read-only on 10/5: 0 owner-tab orders, 0 payments), and the register can't make one now, so that code never runs. It can be deleted later along with the columns.
 
-## Migration to apply
+## Checks
 
-`supabase/migrations/20261003060000_owner_tab.sql` (apply with `scripts/apply-sql.mjs`). Its timestamp is after the grant cutoff (20261003000000), so grants are required and `check-grants` passes (tables, function grants present). It is older than main's 20261004-20261005 migrations but independent of them; apply order doesn't matter. Until it's applied the register keeps working and the owner rate shows as "not set up".
+These pass:
+
+- `scripts/check-owner-tab.mjs`, rewritten for the owner rate: the math, who gets it, quote, `checkBeforePayment`, `completeOrder` saving and refusing, and reports and email.
+- `check-org-totals`, `check-receipt`, `check-order-ticket`, `check-card-points`, `check-daily-coffee`, `check-bar-book`.
+- `tsc --noEmit`, eslint and `next build`.
 
 ## Left to do or confirm
 
-- Try it on a real register (iPad layout, `OrderLineRow` owner price, the org banner hidden under the owner rate, a held tab and a draft with the owner rate): the merge was verified by types, lint and the DB-free checks only.
-- `src/lib/data/box-office.ts` (the Box office page, separate from the Day report's Box office rule) still counts register tickets on owner-tab orders. Decide whether they should be left out there too.
-- A Double on an off-menu Bar Book drink is charged half its rung price, not its recipe cost (the double's extra pour isn't in the recipe). Confirm this with Andrew.
-- The Double/Neat/Rocks server path (`menuLinePrice` through `priceOwnerSale`) is covered by the half-add-on math and a source check, not by a run against faked categories and recipes.
-- Sales tax on owner tabs: counted in the month rung; confirm with the accountant.
+- Try it on a real register: attach Andrew's account, tick Owner rate, change the order, and pay by card on the reader and by split.
+- On 10/5 all four owners (Andrew, Caleb, Nathan, Mary) already had the owner rate on, and each has a member account. Untick anyone who shouldn't get it.
+- A Double on an off-menu Bar Book drink is still half its rung price, not cost + 10%: the extra pour isn't in the recipe. Confirm this with Andrew.
+- The owner rate doesn't go with Tax exempt. Owner orders are taxed as usual.
