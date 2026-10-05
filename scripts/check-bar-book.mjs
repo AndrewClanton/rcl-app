@@ -22,6 +22,8 @@
 //  9. Prices: cost, suggested price, the cocktail average, rounding,
 //     unknown costs, below cost, and the order line a book drink makes
 //     (and which recipe ids the server keeps).
+// 10. The Bar tab: the cocktail grid fills its box at both iPad sizes and
+//     pages when it must; quick pour names.
 //
 // Usage: node scripts/check-bar-book.mjs   (Node 22.18+ runs the .ts directly)
 import { register } from "node:module";
@@ -315,6 +317,53 @@ check("making a menu item and the target are owners and admins, on the server", 
 check("costs are managers and up, on the server", /export async function setIngredientCost[\s\S]*?await denied\(\)/.test(bb));
 check("below cost asks the register's manager PIN", /checkManagerPin\(pin, "below-cost-drink"/.test(read("src/app/pos/bar-book-actions.ts")));
 check("sale math untouched: register-totals.ts isn't imported by the pricing", !/register-totals/.test(read("src/lib/bar/pricing.ts")));
+
+// ---------- 10. the Bar tab's layout ----------
+// The cocktails' column at the register's two iPad sizes (measured in a
+// render of the real page): 1180×820 gives 452×608, 1024×768 gives 336×556.
+const fills = (p, w, h) => Math.abs(p.cols * p.tileW + (p.cols - 1) * 8 - w) < 0.5 && Math.abs(p.rows * p.tileH + (p.rows - 1) * 8 - h) < 0.5;
+for (const [w, h, label] of [
+  [452, 608, "1180×820"],
+  [336, 556, "1024×768"],
+]) {
+  for (const n of [1, 3, 8, 11, 12]) {
+    const p = M.gridPlan(w, h, n);
+    check(`${n} cocktails at ${label}: one page, filling the box edge to edge`, p && p.pages === 1 && p.perPage >= n && fills(p, w, h) && p.tileW >= M.TILE_MIN_W && p.tileH >= M.TILE_MIN_H, JSON.stringify(p));
+  }
+}
+const p11 = M.gridPlan(452, 608, 11);
+check("11 cocktails at 1180×820 are 3 × 4", p11.cols === 3 && p11.rows === 4, JSON.stringify(p11));
+const p8 = M.gridPlan(452, 608, 8);
+check("8 cocktails leave no empty cell", p8.perPage === 8, JSON.stringify(p8));
+const p16a = M.gridPlan(452, 608, 16);
+check("16 cocktails fit one page at 1180×820 (4 × 4)", p16a.pages === 1 && p16a.cols === 4 && p16a.rows === 4, JSON.stringify(p16a));
+const p16b = M.gridPlan(336, 556, 16);
+check("16 cocktails page at 1024×768: 12 a page, 2 pages", p16b.pages === 2 && p16b.perPage === 12, JSON.stringify(p16b));
+check("a page fills the box above the pager exactly", fills(p16b, 336, 556 - M.PAGER_H - 8), JSON.stringify(p16b));
+const p40 = M.gridPlan(336, 556, 40);
+check("40 cocktails: same full pages, as many as it takes", p40.perPage === 12 && p40.pages === 4);
+check("no box, no plan", M.gridPlan(0, 600, 11) === null && M.gridPlan(400, NaN, 11) === null);
+check("a tiny box still pages one at a time", M.gridPlan(120, 150, 5).pages === 5);
+check("deterministic", JSON.stringify(M.gridPlan(452, 608, 11)) === JSON.stringify(M.gridPlan(452, 608, 11)));
+const qp = [
+  ["Draft beer", "beer", "Draft"],
+  ["Canned beer", "beer", "Canned"],
+  ["Wine glass", "wine", "Glass"],
+  ["Wine bottle", "wine", "Bottle"],
+  ["Glass of wine", "wine", "Glass"],
+  ["Well shot", "shots", "Well"],
+  ["Premium shots", "shots", "Premium"],
+  ["Space Dust", "beer", "Space Dust"],
+  ["Beer", "beer", "Beer"],
+  ["Root beer float", "beer", "Root beer float"],
+  ["Well shot", "cocktails", "Well shot"],
+];
+for (const [name, section, want] of qp) check(`quick pour "${name}" under ${section} reads "${want}"`, M.quickPourName(name, section) === want, M.quickPourName(name, section));
+const tab = read("src/app/pos/BarTab.tsx");
+const pos = read("src/app/pos/PosApp.tsx");
+check("the cocktail page lives in the register, reset only by switching tabs", /const \[barPage, setBarPage\] = useState\(0\)/.test(pos) && /setBarPage\(0\)/.test(pos) && (pos.match(/setBarPage\(0\)/g) ?? []).length === 1 && /page=\{barPage\}/.test(pos));
+check("the pager's buttons are 44 px or more", (tab.match(/min-h-11 min-w-14/g) ?? []).length === 2 && /h-11 w-6/.test(tab));
+check("the Bar tab never scrolls: no overflow-y-auto in it", !/overflow-y-auto/.test(tab));
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll Bar Book checks passed.");
 process.exit(failures ? 1 : 0);

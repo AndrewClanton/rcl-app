@@ -449,6 +449,8 @@ export default function PosApp({
     setCategoryId(id);
     setBuilderItemId(null);
     setFindAt(0);
+    // The Bar tab's cocktails start on their first page again.
+    setBarPage(0);
     menuScrollRef.current?.scrollTo({ top: 0 });
   }
 
@@ -498,6 +500,12 @@ export default function PosApp({
     target: 0.2,
   });
   const [bookOpen, setBookOpen] = useState(false);
+  // What the Bar tab's "Find a drink" box opened the book searching for.
+  const [bookQuery, setBookQuery] = useState("");
+  // Which page of cocktails the Bar tab is on: kept here, so ringing a
+  // drink up (its choices replace the tab for a moment) or a change to the
+  // order doesn't lose it. Only switching tabs starts it over (pickTab).
+  const [barPage, setBarPage] = useState(0);
   const [bookLoading, setBookLoading] = useState(false);
   const bookAsked = useRef(false);
   // State changes only once the answer is back (the opening tap shows
@@ -1916,24 +1924,19 @@ export default function PosApp({
             outs={outs}
             onTap={tapItem}
             onCustom={() => setCustomOpen(true)}
-            book={
-              book.state === "ready" ? (
-                <button
-                  className="flex min-h-14 shrink-0 items-center justify-between gap-2 rounded-lg border-2 px-3 py-2 text-left"
-                  style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
-                  onClick={() => {
-                    setBookOpen(true);
-                    setBookLoading(true);
-                    refreshBook();
-                  }}
-                >
-                  <span className="font-display text-lg leading-none">Bar Book</span>
-                  <span className="rounded-full px-2 py-1 text-xs font-bold" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
-                    {bookMakeable} we can make
-                  </span>
-                </button>
-              ) : null
-            }
+            page={barPage}
+            onPage={setBarPage}
+            book={{
+              // Before the Bar Book migration (or if it can't be read) there's no strip.
+              state: book.state === "ready" ? "ready" : book.state === "idle" ? "loading" : "off",
+              count: book.state === "ready" ? bookMakeable : null,
+              onOpen: (query) => {
+                setBookQuery(query ?? "");
+                setBookOpen(true);
+                setBookLoading(true);
+                refreshBook();
+              },
+            }}
           />
         ) : (
           <div className="space-y-4">
@@ -2081,6 +2084,7 @@ export default function PosApp({
 
       {bookOpen && book.state === "ready" && (
         <BarBook
+          initialQuery={bookQuery}
           recipes={book.recipes}
           stock={book.stock}
           menuItems={bookMenu}

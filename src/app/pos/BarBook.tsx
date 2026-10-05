@@ -62,6 +62,7 @@ type Filter = "all" | "makeable" | "menu";
 // the ID check, and a manager PIN below what it costs. Every card shows
 // what the drink costs and a suggested price (src/lib/bar/pricing.ts).
 export default function BarBook({
+  initialQuery = "",
   recipes,
   stock,
   menuItems,
@@ -74,6 +75,7 @@ export default function BarBook({
   onMenuChanged,
   onClose,
 }: {
+  initialQuery?: string; // opened from the Bar tab's "Find a drink" box
   recipes: BookRecipe[];
   stock: BookStock[];
   menuItems: MenuRef[];
@@ -86,7 +88,7 @@ export default function BarBook({
   onMenuChanged: () => void;
   onClose: () => void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [filter, setFilter] = useState<Filter>("all");
   const [byStock, setByStock] = useState(false); // "Uses what we have"
   const [spirit, setSpirit] = useState<Family | null>(null);
