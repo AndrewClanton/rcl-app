@@ -97,6 +97,9 @@ export interface ShiftStatus {
   booths: { today: BoothHold[]; tomorrow: BoothHold[] };
   // Today's staff schedule, by person: "4:00 PM–10:00 PM".
   scheduled: Record<string, string>;
+  // The same shifts one by one, for the register's Schedule (who's due in,
+  // who's late). Optional so a register from before it keeps working.
+  schedule?: ScheduledShiftToday[];
   // The latest par count save and how many lines are under par across the
   // day's counts (what the Shopping tab lists).
   lastCount: { at: string; byName: string | null; today: boolean; below: number } | null;
@@ -105,6 +108,33 @@ export interface ShiftStatus {
   ranOut: number;
   // Each open "Ran out" report, for the register's quiet "Out of …" line.
   outNotices: OutNotice[];
+}
+
+// A shift on the staff schedule (Back office → Team), as the register shows it.
+export interface ScheduledShiftToday {
+  employeeId: string;
+  name: string; // first name
+  startsAt: string;
+  endsAt: string;
+}
+
+// The register's Schedule, past today: the next few days, one line per shift.
+export interface ScheduleDay {
+  date: string; // business date, YYYY-MM-DD
+  label: string; // "Sat, Oct 4"
+  shifts: { name: string; time: string; note: string | null }[];
+}
+
+// What on today's schedule needs a look at the register: people due in
+// later today who haven't started (upcoming), and people whose start has
+// passed with no shift started (late). A shift that's over is left alone.
+export function scheduleAttention(schedule: ScheduledShiftToday[], onShift: OnShift[], nowMs: number) {
+  const on = new Set(onShift.map((o) => o.employeeId));
+  const open = schedule.filter((s) => !on.has(s.employeeId) && new Date(s.endsAt).getTime() > nowMs);
+  return {
+    upcoming: open.filter((s) => new Date(s.startsAt).getTime() > nowMs),
+    late: open.filter((s) => new Date(s.startsAt).getTime() <= nowMs),
+  };
 }
 
 // "Out of Heavy whipping cream · Nathan and Mary have been emailed": an open

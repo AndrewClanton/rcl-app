@@ -7,13 +7,15 @@ import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import type { PlusFinish } from "@/lib/checkin";
 import { BADGES, VISIT_POINTS, type BadgeKey } from "@/lib/visits";
 import TicketsCard, { type TicketsShown } from "./TicketsCard";
-import CheckinKiosk, { type CheckinStep } from "./CheckinKiosk";
+import CheckinKiosk, { type CheckinStep, type Encore } from "./CheckinKiosk";
 import FinishCard, { finishShown, type FinishShown } from "./FinishCard";
 import Streamers, { makeStreamers, type StreamerPiece } from "./Streamers";
 import Rickroll from "./Rickroll";
-import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard } from "./MemberCards";
+import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard, type TabletMember } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
-import type { MemberOff, RickrollState, StaffSetup } from "@/lib/registerChannel";
+import PayOnReader from "./PayOnReader";
+import { parseReaderPrompt, parseTabletSound, type MemberOff, type ReaderPrompt, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
+import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
 import k from "./kiosk.module.css";
@@ -28,6 +30,16 @@ export interface PromoMovie {
 // (the register closed mid-way) goes after this.
 const SETUP_DONE_MS = 4_500;
 const SETUP_STALE_MS = 4 * 60_000;
+
+// The red "add your card" card, untouched, gives way to their own card
+// after this; brought back from the chip on their card, after this.
+const RED_MS = 10_000;
+const RED_AGAIN_MS = 20_000;
+
+// "Approved" on the card reader screen stays this long. A "paid" this soon
+// after it plays no second sound.
+const APPROVED_MS = 3_500;
+const APPROVED_QUIET_MS = 20_000;
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -48,8 +60,10 @@ function showtime(iso: string) {
 //   points, what's left to make it theirs); once something's rung up, their
 //   account sits at the foot of the order. A paying Insiders+ member gets
 //   the gold badge; a former unlimited member with nothing paying for it,
-//   or Insiders+ with no card on file, gets a red "add your card" card until
-//   it's set up (MemberCards.tsx).
+//   or Insiders+ with no card on file, gets a red "add your card" card
+//   (MemberCards.tsx). It never locks the screen: "✕ Show my card", or ten
+//   seconds untouched, puts it down for their own card, and a chip on that
+//   brings it back.
 // The register's ✨ Celebrate throws streamers across the whole screen, and
 // so does Rewind (Back office found a regular's visits from before the new
 // system), under the kiosk's "Welcome back".
@@ -58,6 +72,9 @@ function showtime(iso: string) {
 // order and the screen goes back to normal (MemberCards.tsx MemberActions).
 // When staff set up a guest's account on the register for them, the whole
 // screen follows along as it's typed (StaffSetupView.tsx).
+// While a card payment waits on the card reader, the whole screen says
+// "Finish on the card reader" (PayOnReader.tsx), then "Approved" once the
+// register hears the card went through.
 // previewCart / previewStep / previewTickets / previewFinish / previewSetup
 // are for previews only.
 export default function CustomerDisplay({
@@ -182,7 +199,53 @@ export default function CustomerDisplay({
     const timer = setTimeout(() => setWelcome(null), 9_000);
     return () => clearTimeout(timer);
   }, [welcome]);
+  // The red card can always be put down (Andrew 10/3): "✕ Show my card",
+  // or RED_MS untouched. `redDown`: the first name it's down for, until
+  // they're off the order or tap "Add a card" on their card (`redAgain`:
+  // up again, for RED_AGAIN_MS). This screen only: the register keeps its
+  // red signal, and a card setup on the reader carries on (once it goes
+  // through, the welcome plays as ever). `encore`: their entrance again as
+  // they tap "Show my card".
+  const [redDown, setRedDown] = useState<string | null>(null);
+  const [redAgain, setRedAgain] = useState<{ firstName: string; key: number } | null>(null);
+  const [encore, setEncore] = useState<Encore | null>(null);
+  const putDown = useCallback((m: TabletMember, withCard: boolean) => {
+    setRedDown(m.firstName);
+    const entrance = m.profile?.entrance ?? null;
+    if (withCard && entrance && entrance !== "classic") setEncore({ key: Date.now(), entrance, color: m.profile?.color ?? null });
+    else playSound("card");
+  }, []);
+  const bringBack = useCallback((firstName: string) => {
+    setRedDown(null);
+    setRedAgain({ firstName, key: Date.now() });
+    playSound("card");
+  }, []);
   const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
+  // The last cart, so each new one can make its sound (sounds.ts cartSound).
+  const lastCart = useRef<RegisterCartSnapshot | null>(previewCart ?? null);
+
+  // "Approved" on the card reader screen, for a moment: the register heard
+  // the card go through ("card-approved") while that screen was up. The
+  // "approved" sound plays then, so the "paid" after it (once the sale is
+  // saved) stays quiet. Any other sale's "paid" plays it as ever.
+  const [approved, setApproved] = useState<{ key: number; prompt: ReaderPrompt; cart: RegisterCartSnapshot } | null>(null);
+  const approvedAt = useRef(0);
+  useEffect(() => {
+    if (!approved) return;
+    const timer = setTimeout(() => setApproved(null), APPROVED_MS);
+    return () => clearTimeout(timer);
+  }, [approved]);
+  const onCardApproved = useCallback(() => {
+    const was = lastCart.current;
+    const prompt = onReader(was);
+    if (!was || !prompt) return;
+    approvedAt.current = Date.now();
+    setApproved({ key: approvedAt.current, prompt, cart: was });
+    playSound("approved");
+  }, []);
+  const onPaid = useCallback(() => {
+    if (Date.now() - approvedAt.current > APPROVED_QUIET_MS) playSound("approved");
+  }, []);
   const celebrated = useRef<string | null>(null);
   const celebrate = useCallback((firstName: string, renewed: boolean) => {
     celebrated.current = firstName;
@@ -197,9 +260,15 @@ export default function CustomerDisplay({
       const before = lastMember.current ?? null;
       const now = next.member ?? null;
       lastMember.current = now;
+      const sound = cartSound(lastCart.current, next);
+      lastCart.current = next;
+      if (sound) playSound(...sound);
       setCart(next);
       // Someone they said "Done" or "That's not me" for is off the order.
       setOffFor((off) => (off && now?.firstName === off ? off : null));
+      // A red card put down stays down only while they're on the order.
+      setRedDown((d) => (d && now?.firstName === d ? d : null));
+      setRedAgain((a) => (a && now?.firstName === a.firstName ? a : null));
       const justSetUp = needsCard(before) && !!now && !needsCard(now) && now.plus && now.firstName === before?.firstName;
       if (justSetUp && celebrated.current !== now.firstName) celebrate(now.firstName, !!before?.noCard);
       if (!needsCard(now)) setSetUp(null);
@@ -246,6 +315,15 @@ export default function CustomerDisplay({
           setRickroll(null);
           setRickrollAsked((n) => n + 1);
         })
+        // Sound on/off and volume from the register's Devices (remembered
+        // here), a sample at that level, and a sale that went through.
+        .on("broadcast", { event: "sound" }, (msg) => {
+          const s = parseTabletSound(msg.payload);
+          if (s) setSoundSettings(s);
+        })
+        .on("broadcast", { event: "sound-test" }, () => playSound("approved"))
+        .on("broadcast", { event: "card-approved" }, () => onCardApproved())
+        .on("broadcast", { event: "paid" }, () => onPaid())
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
@@ -259,9 +337,50 @@ export default function CustomerDisplay({
       channelRef.current = null;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [registerTopic, onCart, onSetup, onSetupEnd]);
+  }, [registerTopic, onCart, onSetup, onSetupEnd, onCardApproved, onPaid]);
+
+  // Browsers keep sound off until the page is tapped: the first tap on the
+  // tablet turns it on, and any later one wakes it if the iPad let it sleep.
+  useEffect(() => {
+    const wake = () => unlockSound();
+    const events = ["pointerdown", "pointerup", "touchend", "click", "keydown"] as const;
+    events.forEach((e) => window.addEventListener(e, wake, { capture: true, passive: true }));
+    return () => events.forEach((e) => window.removeEventListener(e, wake, { capture: true }));
+  }, []);
+
+  // The moments on this side of the screen, each with its sound.
+  const setupKey = setup ? `${setup.id}:${setup.stage}` : null;
+  useEffect(() => {
+    if (setupKey) playSound(setupKey.endsWith(":saved") ? "chime" : "card");
+  }, [setupKey]);
+  const burstId = burst?.id ?? null;
+  useEffect(() => {
+    if (burstId) playSound("confetti");
+  }, [burstId]);
+  const rickrollWas = useRef(false);
+  useEffect(() => {
+    // A tape in as it starts (before the video's own sound), and winding
+    // down once it's gone: never over the song.
+    if (rickrollOn !== rickrollWas.current) playSound(rickrollOn ? "tapeIn" : "tapeOut");
+    rickrollWas.current = rickrollOn;
+  }, [rickrollOn]);
+  const welcomeKey = welcome?.key ?? null;
+  useEffect(() => {
+    if (welcomeKey) playSound("fanfare");
+  }, [welcomeKey]);
+  const ticketsKey = tickets?.key ?? null;
+  const finishKey = finish?.key ?? null;
+  useEffect(() => {
+    if (ticketsKey || finishKey) playSound("card");
+  }, [ticketsKey, finishKey]);
 
   const hasOrder = !!cart && cart.items.length > 0;
+  // "Finish on the card reader", with a soft chime as it comes up.
+  const readerPrompt = onReader(cart);
+  const onReaderNow = !!readerPrompt;
+  useEffect(() => {
+    if (onReaderNow) playSound("chime");
+  }, [onReaderNow]);
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearRickroll = useCallback(() => setRickroll(null), []);
   const rewindStreamers = useCallback(() => setBurst({ id: Date.now(), pieces: makeStreamers(90), banner: null }), []);
@@ -276,8 +395,26 @@ export default function CustomerDisplay({
   // of the order.
   // Not someone who just said "Done" or "That's not me" (offFor).
   const who = cart?.member && cart.member.firstName !== offFor ? cart.member : null;
-  const cardFor = who && needsCard(who) && who.firstName !== setUp && !finish && !welcome ? who : null;
+  // Put down (redDown): their own card instead, with a chip to bring it back.
+  const owes = !!who && needsCard(who) && who.firstName !== setUp && !welcome;
+  const cardFor = owes && who.firstName !== redDown && !finish ? who : null;
+  const addCard = owes && who.firstName === redDown ? () => bringBack(who.firstName) : undefined;
   const cardKind = who?.unlimited ? "unlimited" : "nocard";
+  // Untouched, it gives way to their card by itself (the red's been seen).
+  const redUp = cardFor?.firstName ?? null;
+  const redLong = !!redUp && redAgain?.firstName === redUp;
+  const redAgainKey = redAgain?.key ?? 0;
+  useEffect(() => {
+    if (!redUp) return;
+    const timer = setTimeout(
+      () => {
+        setRedDown(redUp);
+        playSound("card");
+      },
+      redLong ? RED_AGAIN_MS : RED_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [redUp, redLong, redAgainKey]);
   const hero = !hasOrder && !tickets;
   // "You're all set, Sarah!": the name staff typed, or the one on the order.
   const greet = setup?.name ? setup.name.split(" ")[0] : who && !isGuestName(who.firstName) ? who.firstName : null;
@@ -292,44 +429,62 @@ export default function CustomerDisplay({
         onRewind={rewindStreamers}
         onFinish={setFinish}
         onPlusWelcome={onPlusWelcome}
+        encore={encore}
       />
       <aside className={`${k.side} ${!hero && (cardFor || welcome) ? k.sideTight : ""} ${who && !hasOrder ? k.sideCard : ""}`}>
         {finish && <FinishCard key={finish.key} shown={finish} />}
         {welcome && !hero && <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero={false} />}
-        {cardFor && !hero && <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero={false} />}
+        {cardFor && !hero && <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero={false} onDismiss={() => putDown(cardFor, false)} />}
         {tickets && <TicketsCard key={tickets.key} shown={tickets} />}
         {hasOrder ? (
-          <OrderReceipt cart={who ? cart : { ...cart, member: null }} onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined} />
+          <OrderReceipt
+            cart={who ? cart : { ...cart, member: null }}
+            onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined}
+            onAddCard={finish ? undefined : addCard}
+          />
         ) : welcome && hero ? (
           <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero />
         ) : cardFor && hero ? (
           <>
-            <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero />
+            <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero onDismiss={() => putDown(cardFor, true)} />
             <AccountPanel member={cardFor} alone />
             <MemberActions onOff={(why) => memberOff(cardFor.firstName, why)} />
           </>
         ) : who && hero && !finish ? (
           <>
-            <MemberCard member={who} />
+            <MemberCard member={who} onAddCard={addCard} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : who ? (
           <>
-            <AccountPanel member={who} alone />
+            <AccountPanel member={who} alone onAddCard={finish ? undefined : addCard} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : (
           <Welcome movies={movies} />
         )}
       </aside>
+      {approved ? (
+        <PayOnReader key={approved.key} prompt={approved.prompt} cart={approved.cart} approved />
+      ) : (
+        readerPrompt && <PayOnReader prompt={readerPrompt} cart={cart} />
+      )}
       {setup && <StaffSetupView setup={setup} greet={greet} onOk={setupOk} />}
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
       {version && (
-        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome} />
+        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome || !!approved} />
       )}
     </div>
   );
+}
+
+// The card reader's turn: the payment screen is up with something on the
+// order, and the register says the payment is on the reader. Null for
+// cash, a voucher, or before it reaches the reader.
+function onReader(cart: RegisterCartSnapshot | null): ReaderPrompt | null {
+  if (!cart?.paying || cart.items.length === 0) return null;
+  return parseReaderPrompt(cart.reader);
 }
 
 // Between orders: the Royale, tonight's movies, and why checking in pays.
@@ -403,7 +558,9 @@ function BadgePitch() {
 // it is, their account (where they stand, points and perks) and the points
 // it earns.
 // onNotMe: "That's not me" on their account, in case it isn't theirs.
-export function OrderReceipt({ cart, onNotMe }: { cart: RegisterCartSnapshot; onNotMe?: () => void }) {
+// onAddCard: their red "add your card" banner is down; the chip on their
+// account brings it back.
+export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartSnapshot; onNotMe?: () => void; onAddCard?: () => void }) {
   const who = cart.member;
   const earn = cart.pointsToEarn ?? 0;
   const count = cart.items.reduce((n, i) => n + i.quantity, 0);
@@ -446,16 +603,21 @@ export function OrderReceipt({ cart, onNotMe }: { cart: RegisterCartSnapshot; on
           </div>
         ))}
         <div className={k.totalRow} style={{ color: "#6b6455" }}>
-          <span>Tax</span>
+          <span>{cart.taxIncluded ? "Tax (included in prices)" : "Tax"}</span>
           <span style={{ fontFamily: "var(--mono)" }}>{money(cart.tax)}</span>
         </div>
         <div className={k.grand}>
           <span className={k.grandLabel}>Total</span>
           <span className={k.grandAmount}>{money(cart.total)}</span>
         </div>
+        {cart.paying && cart.readerWaking && (
+          <div className={k.totalRow} style={{ color: "#6b6455", justifyContent: "center" }} role="status">
+            Card reader is waking up, one moment
+          </div>
+        )}
       </div>
       {who ? (
-        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} />
+        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} onAddCard={onAddCard} />
       ) : (
         earn > 0 && (
           <div className={k.earn}>

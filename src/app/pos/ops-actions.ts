@@ -3,7 +3,7 @@
 import { trainingDueFor } from "@/lib/training/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
-import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shortDay } from "@/lib/ops/time";
+import { businessDay, businessDayWindow, centralMinutes, clock, recentBusinessDays, shiftDate, shortDay } from "@/lib/ops/time";
 import { evaluateReminders } from "@/lib/ops/reminders";
 import { boothWindow } from "@/lib/booth-time";
 import { logOpsChange } from "@/lib/ops/changes";
@@ -21,6 +21,8 @@ import {
   type ReminderKind,
   type ReminderRow,
   type Result,
+  type ScheduleDay,
+  type ScheduledShiftToday,
   type ShiftStatus,
   type ShiftTodo,
   type ShoppingLine,
@@ -115,7 +117,8 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     // mark it back in stock in Back office. The register shows a quiet
     // "Out of …" line instead (outNotices).
     supabase.from("staff_todos").select("id, title, details, assignee_id, due_date, created_by, audience, outage_id").is("done_at", null).is("outage_id", null).order("due_date", { ascending: true, nullsFirst: false }).order("created_at"),
-    supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
+    // Not a shift taken off the schedule (Team's Undo keeps it, deleted).
+    supabase.from("staff_schedule").select("employee_id, starts_at, ends_at").is("deleted_at", null).gte("starts_at", window.start).lt("starts_at", window.end).order("starts_at"),
   ]);
 
   const todos: ShiftTodo[] = (todosRes.data ?? []).map((t) => ({
@@ -131,9 +134,11 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     outageId: t.outage_id ?? null,
   }));
   const scheduled: Record<string, string> = {};
+  const schedule: ScheduledShiftToday[] = [];
   for (const s of schedRes.data ?? []) {
     const t = `${clock(s.starts_at)}–${clock(s.ends_at)}`;
     scheduled[s.employee_id] = scheduled[s.employee_id] ? `${scheduled[s.employee_id]}, ${t}` : t;
+    schedule.push({ employeeId: s.employee_id, name: names.get(s.employee_id) ?? "Someone", startsAt: s.starts_at, endsAt: s.ends_at });
   }
 
   const onShift: OnShift[] = (shiftsRes.data ?? []).map((s) => ({
@@ -185,11 +190,41 @@ export async function getShiftStatus(): Promise<ShiftStatus> {
     todos,
     training,
     scheduled,
+    schedule,
     booths: await boothHolds(today.date),
     outs: outs.outs,
     ranOut: outs.open,
     outNotices: outs.notices,
   };
+}
+
+// ---------- schedule ----------
+
+// The register's Schedule past today: the next `days` business days from
+// the staff schedule (Back office → Team), read only. Today's shifts come
+// with the status poll.
+export async function getRegisterSchedule(days = 7): Promise<Result<{ days: ScheduleDay[] }>> {
+  await assertStaff();
+  const today = businessDay().date;
+  const n = Math.min(14, Math.max(1, Math.round(days)));
+  const from = businessDayWindow(shiftDate(today, 1)).start;
+  const to = businessDayWindow(shiftDate(today, n)).end;
+  const [names, { data, error }] = await Promise.all([
+    employeeNames(),
+    db().from("staff_schedule").select("employee_id, starts_at, ends_at, note").is("deleted_at", null).gte("starts_at", from).lt("starts_at", to).order("starts_at"),
+  ]);
+  if (error) return { ok: false, error: "Couldn't load the schedule. Check the connection." };
+  const out: ScheduleDay[] = [];
+  for (const s of data ?? []) {
+    const date = businessDay(new Date(s.starts_at as string)).date;
+    let day = out.find((d) => d.date === date);
+    if (!day) {
+      day = { date, label: shortDay(`${date}T17:00:00Z`), shifts: [] };
+      out.push(day);
+    }
+    day.shifts.push({ name: names.get(s.employee_id as string) ?? "Someone", time: `${clock(s.starts_at as string)}–${clock(s.ends_at as string)}`, note: (s.note as string | null) ?? null });
+  }
+  return { ok: true, days: out };
 }
 
 // ---------- booths ----------

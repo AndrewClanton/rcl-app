@@ -1,0 +1,537 @@
+<title>Bar Pricing Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: the Bar Book's reading column and tokens. Summary first, wide tables scroll in their own box, one calculator in the middle. */
+:root{
+  --bg:#f8f5ec;--surface:#ffffff;--soft:#f1ecdd;--ink:#14110c;--muted:#5f584a;--line:#e0d9c4;
+  --red:#c81017;--gold:#ffc72c;--ok:#1f6b3a;--okbg:#e3f2e7;--warn:#8a5a0a;--warnbg:#fbf1d2;--bad:#b3141a;--badbg:#fde8e8;
+  --display:'Archivo Black','Arial Black',Arial,sans-serif;--body:Archivo,Arial,Helvetica,sans-serif;--mono:'Space Mono','Courier New',monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16130e;--surface:#211d17;--soft:#2a251d;--ink:#f3eee0;--muted:#b3aa97;--line:#3a3428;
+  --red:#ff6b70;--ok:#7fd49a;--okbg:#15301f;--warn:#f0c46a;--warnbg:#352c12;--bad:#ff8a8f;--badbg:#3b1618;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#16130e;--surface:#211d17;--soft:#2a251d;--ink:#f3eee0;--muted:#b3aa97;--line:#3a3428;
+  --red:#ff6b70;--ok:#7fd49a;--okbg:#15301f;--warn:#f0c46a;--warnbg:#352c12;--bad:#ff8a8f;--badbg:#3b1618;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;padding-inline:16px;padding-block:28px 80px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+.col{max-width:760px}
+h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;text-wrap:balance;line-height:1.05}
+h1{font-size:clamp(36px,7vw,64px)}
+h2{font-size:clamp(26px,4vw,36px)}
+h3{font-size:20px;line-height:1.2}
+p{margin:0}
+a{color:inherit;text-decoration-color:var(--red);text-underline-offset:2px}
+a:focus-visible,input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.kicker{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--red)}
+.lead{font-size:19px;max-width:62ch;margin-top:14px}
+section{display:flex;flex-direction:column;gap:18px;min-width:0}
+.sec-head{display:flex;flex-direction:column;gap:6px;border-bottom:3px solid var(--ink);padding-bottom:10px}
+ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.chip{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.c-ok{background:var(--okbg);color:var(--ok)}.c-warn{background:var(--warnbg);color:var(--warn)}.c-bad{background:var(--badbg);color:var(--bad)}.c-soft{background:var(--soft);color:var(--muted)}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14.5px}
+th,td{text-align:left;padding:11px 14px;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.group td{background:var(--soft);font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.price{font-weight:700}
+.sub{display:block;font-size:12.5px;color:var(--muted);font-weight:400}
+.summary{background:var(--gold);color:#14110c;border-radius:20px;padding:28px;display:flex;flex-direction:column;gap:16px}
+.summary h2{color:#14110c}
+.summary ul{margin:0;padding:0;list-style:none;display:grid;gap:14px 28px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.summary li{color:#3d3528;border-top:2px solid rgba(20,17,12,.25);padding-top:10px;min-width:0}
+.summary li strong{color:#14110c;display:block;font-size:17px}
+.num{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.1em}
+code{font-family:var(--mono);font-size:13px;background:var(--soft);padding:1px 5px;border-radius:5px}
+.src{font-size:14px;color:var(--muted)}
+.src a{color:var(--muted)}
+.note{background:var(--warnbg);color:var(--ink);border-radius:12px;padding:14px 16px;font-size:15px}
+.note b{color:var(--warn)}
+.formula{font-family:var(--mono);background:var(--soft);border-radius:12px;padding:16px;font-size:15px;line-height:1.7;overflow-x:auto}
+.formula b{font-family:var(--display);font-weight:400;font-size:18px}
+/* the one rule */
+.rule{background:var(--surface);border:2px solid var(--ink);border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.eq{font-family:var(--display);font-size:clamp(20px,3.6vw,28px);line-height:1.2}
+.eq span{color:var(--red)}
+.parts{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.parts > div{background:var(--soft);border-radius:12px;padding:12px 14px;min-width:0}
+.parts dl{margin:6px 0 0;display:grid;grid-template-columns:1fr auto;gap:2px 12px;font-size:15px}
+.parts dt{margin:0}.parts dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums;text-align:right}
+.ex{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:15px}
+/* calculator */
+.calc{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+.fields{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field.wide{grid-column:1 / -1}
+.field label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+input,select,button{font:inherit;color:var(--ink)}
+input,select{width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:10px;background:var(--bg);font-variant-numeric:tabular-nums}
+.presets{display:flex;flex-wrap:wrap;gap:8px}
+.presets button{border:1.5px solid var(--ink);background:transparent;border-radius:999px;padding:6px 12px;font-size:13px;font-weight:700;cursor:pointer}
+.presets button:hover{background:var(--ink);color:var(--bg)}
+.out{background:var(--soft);border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.big{font-family:var(--display);font-size:56px;line-height:1;font-variant-numeric:tabular-nums}
+.out dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:15px}
+.out dd{margin:0;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.checks li{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start}
+.checks li::before{content:"";width:18px;height:18px;border:2px solid var(--ink);border-radius:4px;margin-top:3px}
+.qs{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+@media (max-width:600px){.summary{padding:20px}.fields{grid-template-columns:1fr}.big{font-size:46px}}
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <div class="kicker">Royale Cinema Lounge · Bar pricing review · Oct 4, 2026</div>
+  <h1 style="margin-top:8px">Bar Pricing Review</h1>
+  <p class="lead">One consistent way to price everything the bar pours, built on what most US bars already do. It is a starting point for Andrew, Nathan, Caleb and the bar manager to settle together. Beer costs come from our Oct 2 invoice; liquor and wine costs are estimates until we have invoices for them.</p>
+</header>
+
+<section class="summary" aria-labelledby="h-sum">
+  <div><span class="num">THE RECOMMENDATION</span><h2 id="h-sum" style="margin-top:6px">In seven lines</h2></div>
+  <ul>
+    <li><strong>Pour 1.5 oz.</strong> Shots, highballs and the base spirit in cocktails get 1.5 oz; neat or rocks 2 oz; a double 3 oz; wine 5 oz. The bar manager signs off. We could not find Outback's spec in public, so his word on it decides.</li>
+    <li><strong>Draft is the one real problem.</strong> At our invoice keg costs, a $5 16 oz runs a 30–36% pour cost, and up to 40% with the Insiders+ discount. Bars aim for about 20%. Proposal: $7 for 16 oz, $9 for 20 oz, one price for every tap. No 12 oz, no pitcher.</li>
+    <li><strong>Cans get two prices, not one.</strong> Bud, Bud Light and the non-alcoholic cans stay $4. Space Dust costs us $1.58 a can, so it moves to $6.</li>
+    <li><strong>Liquor is priced well. Keep it.</strong> Shots at $5 / $7 / $9 and the cocktail menu run about 9–18% pour cost, under 20% even after the Insiders+ 10%. One tidy-up: the Manhattan to $10, to match the Old Fashioned.</li>
+    <li><strong>One register rule for anything off the menu.</strong> Serve plus level: shot $5, highball $8, neat or rocks $7, off-menu cocktail $10; call +$2, premium +$4. A double adds a second shot at $1 off.</li>
+    <li><strong>Wine waits for invoices.</strong> If our Missouri wines cost about $10 a bottle, $6 a glass and $25 a bottle fit the usual target. If they cost $7, today's $5 / $18 already works.</li>
+    <li><strong>Whole dollars, one price sheet.</strong> Prices stay whole dollars before tax. Once the team decides, every price goes into one Back office price sheet you can change any time. Discounts on alcohol stay on the list of things to check.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="h-pour">
+  <div class="sec-head"><span class="kicker">1 · Pour standard</span><h2 id="h-pour">How much goes in the glass</h2></div>
+  <p class="col">A pour standard makes a drink taste and cost the same no matter who is behind the bar. Every cost and price in this review depends on it.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Drink</th><th>Usual US pour</th><th>Royale default (for sign-off)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Highball</strong> (spirit and mixer)</td><td>1.5 oz. Chains often set 1 oz or 1.5 oz in their recipes.</td><td>1.5 oz</td></tr>
+      <tr><td><strong>Shot</strong></td><td>1.5 oz</td><td>1.5 oz</td></tr>
+      <tr><td><strong>Double</strong></td><td>Twice the pour</td><td>3 oz</td></tr>
+      <tr><td><strong>Neat or on the rocks</strong></td><td>About 2 oz, since there is no mixer</td><td>2 oz</td></tr>
+      <tr><td><strong>Martini-style</strong> (stirred or shaken, served up)</td><td>2 to 2.5 oz of spirit</td><td>Up to 2.5 oz total</td></tr>
+      <tr><td><strong>Cocktail base spirit</strong></td><td>1.5 to 2 oz, by recipe</td><td>1.5 oz; 2 oz for whiskey-forward drinks (Old Fashioned, Manhattan, sours)</td></tr>
+      <tr><td><strong>Wine by the glass</strong></td><td>5 oz. A 750 ml bottle is 25.4 oz, so 5 glasses.</td><td>5 oz, 5 glasses a bottle</td></tr>
+      <tr><td><strong>Draft beer</strong></td><td>12 oz, 16 oz pint, 20 oz or larger, 60 oz pitcher. Outback calls its two sizes the Middy and the Big Bloke.</td><td>16 oz and 20 oz (what we pour today)</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note col"><b>Outback's pour.</b> We could not confirm Outback's spirit pour from any public source. Industry guides say chains usually set 1 oz or 1.5 oz. An undated Outback server menu posted online lists the Middy as 16 oz and the Big Bloke as 22 oz. Our bar manager ran an Outback bar, so he confirms what they poured, and that becomes our standard. If it isn't 1.5 oz, every liquor cost here scales with it.</div>
+  <p class="col">Measure with a jigger, not a free pour. Recipes in the Bar Book use the same ounces.</p>
+  <p class="src">Sources, seen Oct 4, 2026: <a href="https://www.sculpturehospitality.com/blog/bar-inventory-management-understanding-standard-pours">Sculpture Hospitality on standard pours</a> (1.5 oz standard; chains set 1 or 1.5 oz), <a href="https://lounge.untappd.com/a-guide-to-a-standard-liquor-pour">Untappd</a>, <a href="https://home.binwise.com/blog/standard-pours">BinWise</a>; Outback sizes from a <a href="https://www.docsity.com/en/docs/outback-steakhouse-server-menu/13839209/">server-menu document</a> (undated) and <a href="https://android.fatsecret.com/calories-nutrition/outback-steakhouse/bud-light-middy">menu-item names on FatSecret</a>. Martini and neat pours are common bar practice; the bar manager confirms.</p>
+</section>
+
+<section aria-labelledby="h-how">
+  <div class="sec-head"><span class="kicker">2 · How bars price</span><h2 id="h-how">Pour cost, the one number bars watch</h2></div>
+  <p class="col">Pour cost is what the drink costs us, as a share of its price. A 20% pour cost means 20¢ of every dollar pays for what's in the glass. The other 80¢ covers staff, rent, glassware, spills and profit.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Category</th><th>Usual target pour cost</th><th>Why it differs</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Liquor</strong> (shots, highballs, cocktails)</td><td class="n">15–20%</td><td>A bottle goes a long way, so liquor carries the bar.</td></tr>
+      <tr><td><strong>Draft beer</strong></td><td class="n">15–20%</td><td>Keg beer is cheap per ounce. Craft and import kegs run higher.</td></tr>
+      <tr><td><strong>Bottled or canned beer</strong></td><td class="n">24–28%</td><td>Guests know what a can costs at the store.</td></tr>
+      <tr><td><strong>Wine</strong></td><td class="n">30–40%</td><td>Some guides allow 22–45%. Bars usually take less margin on a bottle than on a glass, because a bottle sells all at once.</td></tr>
+      <tr><td><strong>Whole bar, blended</strong></td><td class="n">18–24%</td><td>Depends on the mix of what sells.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="src">Targets from <a href="https://bevspot.com/blog/whats-average-pour-cost-bar-industry/">BevSpot</a>, <a href="https://www.sculpturehospitality.com/blog/what-is-the-average-liquor-cost-for-a-bar">Sculpture Hospitality</a> and <a href="https://academy.getbackbar.com/how-to-lower-your-bars-liquor-cost">Backbar</a>, seen Oct 4, 2026. The guides differ by a few points; these are the common ranges.</p>
+
+  <h3>The formula</h3>
+  <div class="formula col"><b>Price = cost of the pour ÷ target pour cost</b><br>
+  Worked example with a real cost: a sixth-barrel of Stella costs us <strong>$74</strong> and holds <strong>661 oz</strong>.<br>
+  $74 ÷ 661 = $0.112 per oz → a 16 oz glass costs <strong>$1.79</strong>.<br>
+  At a 20% target: $1.79 ÷ 0.20 = $8.95 → round up to <strong>$9</strong>.<br>
+  Today we charge $5, which is a <strong>36%</strong> pour cost.</div>
+  <p class="col">The formula gives the lowest price that hits the target. The market and the venue set the menu price, as long as it stays at or under target. For liquor our menu prices are already well above the formula. For draft they are well below it. That's why draft is the one place this review asks for a real change.</p>
+  <p class="col"><strong>Rounding.</strong> Round up to a clean price point. We suggest whole dollars: easy to read on a menu, easy on tabs and tips. Our sales tax (8.725%) is added on top, so the guest pays odd cents either way.</p>
+  <p class="col"><strong>The Insiders+ discount.</strong> Insiders+ members get 10% off the whole order, alcohol included. That raises the pour cost on their drinks by about a tenth: a 20% drink becomes 22%. The ladder below shows both.</p>
+</section>
+
+<section aria-labelledby="h-calc">
+  <div class="sec-head"><span class="kicker">Try it</span><h2 id="h-calc">Pour-cost calculator</h2></div>
+  <p class="col">Type a bottle or keg cost and see the price that hits your target. Tap a preset to load one of our drinks.</p>
+  <form class="calc" id="calc" autocomplete="off">
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <div class="presets" aria-label="Presets">
+        <button type="button" data-p="74,661,16,20,0">Stella 16 oz (invoice)</button>
+        <button type="button" data-p="18,25.36,1.5,18,0">Call shot (estimate)</button>
+        <button type="button" data-p="10,25.36,5,35,0">Wine glass (estimate)</button>
+        <button type="button" data-p="8.25,25.36,1.5,18,0.70">Moscow Mule (estimate)</button>
+      </div>
+      <div class="fields">
+        <div class="field"><label for="c-cost">Bottle or keg cost ($)</label><input id="c-cost" type="number" inputmode="decimal" min="0" step="0.01" value="74"></div>
+        <div class="field"><label for="c-size">Size</label>
+          <select id="c-size">
+            <option value="25.36">750 ml bottle (25.4 oz)</option>
+            <option value="33.81">1 L bottle (33.8 oz)</option>
+            <option value="59.17">1.75 L bottle (59.2 oz)</option>
+            <option value="661" selected>1/6 barrel keg (661 oz)</option>
+            <option value="1984">1/2 barrel keg (1,984 oz)</option>
+          </select></div>
+        <div class="field"><label for="c-pour">Pour (oz)</label><input id="c-pour" type="number" inputmode="decimal" min="0" step="0.25" value="16"></div>
+        <div class="field"><label for="c-target">Target pour cost (%)</label><input id="c-target" type="number" inputmode="decimal" min="1" max="100" step="1" value="20"></div>
+        <div class="field"><label for="c-extra">Mixer and garnish ($)</label><input id="c-extra" type="number" inputmode="decimal" min="0" step="0.05" value="0"></div>
+        <div class="field"><label for="c-round">Round up to</label>
+          <select id="c-round"><option value="1" selected>Whole dollar</option><option value="0.5">Half dollar</option></select></div>
+      </div>
+    </div>
+    <div class="out" aria-live="polite">
+      <span class="num" style="color:var(--muted)">SUGGESTED PRICE</span>
+      <div class="big" id="c-price">$9</div>
+      <dl>
+        <dt>Cost per oz</dt><dd id="c-oz">$0.112</dd>
+        <dt>Cost of the drink</dt><dd id="c-drink">$1.79</dd>
+        <dt>Exact price at target</dt><dd id="c-exact">$8.95</dd>
+        <dt>Pour cost at suggested price</dt><dd id="c-pc">19.9%</dd>
+        <dt>Same, with Insiders+ 10% off</dt><dd id="c-pcm">22.1%</dd>
+      </dl>
+      <p class="src" id="c-msg">For kegs, real pour cost runs a little higher than this, because foam and line cleaning use some beer.</p>
+    </div>
+  </form>
+</section>
+
+<section aria-labelledby="h-levels">
+  <div class="sec-head"><span class="kicker">3 · Spirit levels</span><h2 id="h-levels">Well, call, premium, and above</h2></div>
+  <p class="col">Bars sort every bottle into a level. The level sets the upcharge, so a guest who names a brand pays for it the same way on every drink. We already price shots this way: $5, $7, $9.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Level</th><th>What it means</th><th class="n">Upcharge</th><th>Example bottles (the bar manager sorts ours)</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Well</strong></td><td>The house bottle, poured when nobody names a brand.</td><td class="n">+$0</td><td>House vodka, rum, whiskey, tequila, gin</td></tr>
+      <tr><td><strong>Call</strong></td><td>A brand the guest "calls" by name, at an everyday price.</td><td class="n">+$2</td><td>Tito's, Jack Daniel's, Bacardi, Jim Beam, Jose Cuervo</td></tr>
+      <tr><td><strong>Premium</strong></td><td>Better-known, higher-cost bottles.</td><td class="n">+$4</td><td>Grey Goose, Maker's Mark, Patrón Silver, Hendrick's, Crown Royal</td></tr>
+      <tr><td><strong>Above premium</strong></td><td>Anything that costs more than premium. We don't stock this level today.</td><td class="n">Own price</td><td>Priced by the formula, one bottle at a time</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid">
+    <div class="card"><h3>The double rule</h3><p>A double is twice the liquor, not twice the drink. The glass, ice and mixer are already paid for. So a double adds <strong>a second shot at $1 off</strong>: well +$4, call +$6, premium +$8. A flat +$4 on every level would give the premium pour away at about a 38% pour cost.</p></div>
+    <div class="card"><h3>Neat or rocks</h3><p>No mixer, so the pour is 2 oz instead of 1.5. That's <strong>the shot price plus $2</strong>: well $7, call $9, premium $11. A drink served up, martini-style, rings as an off-menu cocktail (section 4).</p></div>
+    <div class="card"><h3>Mixers</h3><p>Soda-gun mixers cost pennies, so bars include them: cola, diet, lemon-lime, ginger ale, tonic, soda water, sour. Same for house juices and cream. Canned mixers cost real money: <strong>ginger beer swap +$1, energy drink +$2</strong>.</p></div>
+  </div>
+  <p class="src">The level names and the idea of a fixed upcharge per level are standard across bar registers (see section 4). The dollar amounts are ours; call +$2 and premium +$4 match the shot prices on our menu today. Mixer charges are common practice, not from a source; the bar manager confirms.</p>
+</section>
+
+<section aria-labelledby="h-off">
+  <div class="sec-head"><span class="kicker">4 · Drinks not on the menu</span><h2 id="h-off">What bars and bar registers actually do</h2></div>
+  <p class="col">Andrew floated two ideas: (a) a price from how hard the drink is plus its cost, and (b) an itemized price, so much per pour plus the mixer. Bars use both, in different places. Idea (b) is what the register does on every order. Idea (a) is what a manager does once, when deciding a menu price.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>How bars ring it</th><th>How it works</th><th>Good</th><th>Watch out</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Liquor matrix by level</strong></td><td>Each spirit sits in a level with a set price. The mixer is a free or priced add-on. The register adds it up. Toast's guides and its users set liquor up as shared upcharge choices, so one price change flows to every drink.</td><td>Automatic and the same every time.</td><td>Every bottle needs a level.</td></tr>
+      <tr><td><strong>Base cocktail plus level</strong></td><td>One "off-menu cocktail" button at a set price, then the main spirit's level upcharge. Toast users call theirs a "complex drink".</td><td>Covers any drink a guest can name.</td><td>Easy and fussy drinks cost the same.</td></tr>
+      <tr><td><strong>Ring the closest menu drink</strong></td><td>The bartender picks the nearest thing on the menu.</td><td>No setup.</td><td>Prices drift by bartender, and stock counts can't track what was poured.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="src">Sources, seen Oct 4, 2026: Toast's <a href="https://support.toasttab.com/en/article/Menu-Best-Practices-for-Bars">bar menu guide</a> and <a href="https://support.toasttab.com/en/article/Modifier-Pricing-Strategies">modifier pricing guide</a>; Toast forum threads on <a href="https://community.toasttab.com/t5/restaurant-operations/drink-modifiers-and-classic-cocktails/m-p/13093">liquor upcharges and the "complex drink" button</a> and on <a href="https://community.toasttab.com/t5/restaurant-operations/pre-mod-for-quot-double-quot-drinks-as-a-percentage/m-p/19040">pricing doubles</a> (users report Toast can't price a double automatically). Ringing the closest drink is common bar practice, not from a source.</p>
+
+  <div class="rule">
+    <span class="num" style="color:var(--red)">THE ROYALE RULE · ONE RULE THE REGISTER APPLIES</span>
+    <div class="eq">Price = serve <span>+</span> level <span>+</span> double <span>+</span> mixer</div>
+    <div class="parts">
+      <div><span class="num">SERVE (WELL PRICE)</span><dl>
+        <dt>Shot, 1.5 oz</dt><dd>$5</dd>
+        <dt>Highball, 1.5 oz + mixer</dt><dd>$8</dd>
+        <dt>Neat or rocks, 2 oz</dt><dd>$7</dd>
+        <dt>Menu cocktail</dt><dd>menu price</dd>
+        <dt>Off-menu cocktail, up to 2.5 oz</dt><dd>$10</dd></dl></div>
+      <div><span class="num">LEVEL</span><dl>
+        <dt>Well</dt><dd>+$0</dd><dt>Call</dt><dd>+$2</dd><dt>Premium</dt><dd>+$4</dd><dt>Above premium</dt><dd>own price</dd></dl></div>
+      <div><span class="num">DOUBLE · MIXER</span><dl>
+        <dt>Double (well / call / premium)</dt><dd>+$4 / +$6 / +$8</dd>
+        <dt>Gun mixer, juice, cream</dt><dd>included</dd>
+        <dt>Ginger beer swap</dt><dd>+$1</dd>
+        <dt>Energy drink</dt><dd>+$2</dd></dl></div>
+    </div>
+    <ul class="ex">
+      <li>Vodka soda with Tito's (call): $8 + $2 = <strong>$10</strong></li>
+      <li>Margarita with Patrón (premium): $8 + $4 = <strong>$12</strong></li>
+      <li>Double Jack and Coke (call): $8 + $2 + $6 = <strong>$16</strong></li>
+      <li>Lemon Drop, house vodka (off-menu): <strong>$10</strong></li>
+    </ul>
+    <p><strong>The manager's check</strong> (Andrew's idea a): when a new bottle comes in, or an off-menu drink starts selling often, run it through the calculator. If the rule's price gives more than a 20% pour cost, give that bottle or drink its own price. A drink people keep asking for earns a menu spot.</p>
+  </div>
+  <p class="col">The highball at $8 is the shot plus $3. That matches the Rum or Whiskey & Coke on our menu today, so nothing on the menu has to change for the rule to work.</p>
+</section>
+
+<section aria-labelledby="h-market">
+  <div class="sec-head"><span class="kicker">5 · The market</span><h2 id="h-market">What others charge</h2></div>
+  <p class="col">Local prices were hard to find online. We could not open these pages directly, so the figures come from search listings. Open each link to confirm a number before quoting it.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>#</th><th>Where</th><th>What</th><th>Price</th><th>Source, date seen</th><th>Caveat</th></tr></thead>
+    <tbody>
+      <tr id="m1"><td>M1</td><td><strong>Chili's, Joplin</strong></td><td>Domestic draft 16 oz / 22 oz; margaritas</td><td class="n">$3 / $4; $6–7</td><td><a href="https://www.chilis.com/locations/us/missouri/joplin/joplin">chilis.com Joplin page</a>, Oct 4, 2026</td><td>Happy hour only, Mon–Fri 3–6 pm. Regular prices are higher. Domestic kegs, cheaper than ours.</td></tr>
+      <tr id="m2"><td>M2</td><td><strong>Outback</strong>, national listing</td><td>Draft, Middy / Big Bloke: Bud Light or Foster's; Sam Adams; Stella</td><td class="n">$5 / $6; $6 / $7; $7 / $8</td><td><a href="https://www.thepricer.org/?p=14167">thepricer.org</a>, Oct 4, 2026</td><td>Third-party, undated, approximate. Not Joplin-specific; prices vary by location.</td></tr>
+      <tr id="m3"><td>M3</td><td><strong>US bars</strong>, typical</td><td>Domestic draft</td><td class="n">$3–6; as low as $2 at happy hour</td><td><a href="https://pos.toasttab.com/blog/on-the-line/cheap-bar-drinks">Toast blog</a>, Oct 4, 2026</td><td>National, not local.</td></tr>
+      <tr id="m4"><td>M4</td><td><strong>Alamo Drafthouse</strong>, Lake Highlands, Dallas</td><td>Pint; happy hour draft / cocktail</td><td class="n">about $7; $5 / $10</td><td><a href="https://lakehighlands.advocatemag.com/?p=121462">Lake Highlands Advocate</a>, Oct 4, 2026</td><td>Big-city cinema. Approximate; article date not shown.</td></tr>
+      <tr id="m5"><td>M5</td><td><strong>Alamo Drafthouse</strong>, downtown Los Angeles</td><td>Lobby-bar cocktails</td><td class="n">about $14–16</td><td><a href="https://www.timeout.com/los-angeles/news/l-a-s-first-alamo-drafthouse-wants-to-be-your-boozy-new-downtown-hangout-071819">Time Out LA</a> (July 2019), Oct 4, 2026</td><td>Old, and a big-city price.</td></tr>
+      <tr id="m6"><td>M6</td><td><strong>AMC MacGuffins bars</strong></td><td>24 oz movie-themed cocktail in a souvenir cup</td><td class="n">$15.99–21 plus tax</td><td><a href="https://www.today.com/today/amp/rcna171710">Today</a> (Sept 2024), Oct 4, 2026</td><td>At 92% of locations; includes the cup. One Chicago theater charged $31.</td></tr>
+      <tr id="m7"><td>M7</td><td><strong>Club 609, Joplin</strong></td><td>Happy hour</td><td class="n">daily 2-for-1</td><td><a href="https://www.yelp.com/search?find_desc=Happy+Hour&amp;find_loc=Joplin%2C+MO">Yelp listing</a>, Oct 4, 2026</td><td>No prices listed.</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid">
+    <div class="card"><h3>Not found</h3><p>Joplin prices for well drinks, craft or import draft, cans, house wine, and an Old Fashioned. Outback's pour, cocktail and well-drink prices (third-party listings disagreed, so we left them out). Studio Movie Grill and Cinemark bar prices.</p></div>
+    <div class="card"><h3>The quick fix</h3><p>The bar manager or an owner checks five prices at Outback Joplin, Chili's, Applebee's, Club 609 and Bricktown Brewery: domestic pint, craft or import pint, well drink, glass of house wine, margarita. One evening fills the gaps.</p></div>
+    <div class="card"><h3>What it tells us</h3><p>Our taps are craft and import. Outback reportedly charges about $7 for a 16 oz Stella, and big-city cinema bars charge $7 pints and $14–21 cocktails. A $7 pint and $8–10 cocktails sit above a Joplin happy hour and well under a city cinema. That fits a small-town cinema lounge.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-kegs">
+  <div class="sec-head"><span class="kicker">6 · Draft price ladder</span><h2 id="h-kegs">Draft at our real keg costs</h2></div>
+  <p class="col">All six taps are sixth-barrel kegs (661 oz) from the Missouri Eagle invoice of Oct 2, 2026. They cost within $12.50 of each other, so one price for every tap stays simple and fair.</p>
+  <div class="tbl"><table id="kegs">
+    <thead><tr><th>Tap</th><th class="n">Keg (invoice)</th><th class="n">Per oz</th><th class="n">16 oz cost</th><th class="n">16 oz at $5 (now)</th><th class="n">16 oz at $7</th><th class="n">20 oz cost</th><th class="n">20 oz at $7 (now)</th><th class="n">20 oz at $9</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="src">Cost per ounce assumes every ounce in the keg sells. Foam, spills and line cleaning use some, so real pour cost runs a few points higher. With the Insiders+ 10% off, a $7 16 oz runs 24–28%; a $5 one runs 33–40%.</p>
+  <div class="grid">
+    <div class="card"><h3>A 12 oz pour?</h3><p>Not needed. 16 oz is the normal US draft glass and our base. A 12 oz mostly makes sense for very strong beers, or as a cheaper entry price. The one strong beer on tap, Space Dust (8.2%), is a question for the bar manager below.</p></div>
+    <div class="card"><h3>A pitcher?</h3><p>Not now. A 60 oz pitcher is 9% of a sixth-barrel, so kegs would run out faster. Pitchers are usually discounted, which our draft margin can't take yet. If groups ask, price it as 3.75 glasses at the 16 oz price, with no real discount: $26.</p></div>
+    <div class="card"><h3>The gentler option</h3><p>If $7 / $9 feels like too big a jump from $5 / $7, $6 / $8 is a middle step: 25–30% pour cost at 16 oz, 23–28% at 20 oz. Still above target, but a real improvement.</p></div>
+  </div>
+
+  <h3 style="margin-top:12px">The full ladder</h3>
+  <p class="col"><span class="chip c-ok">Invoice</span> marks a real cost from our Oct 2 invoice. <span class="chip c-soft">Estimate</span> marks a cost from typical wholesale prices, to be replaced with our invoice costs. Missouri is a license state with low alcohol taxes, so the estimates sit at the low-to-middle of national wholesale ranges. Pour cost is shown <span class="chip c-ok">at or under target</span> or <span class="chip c-warn">over target</span>.</p>
+  <div class="tbl"><table id="ladder" style="min-width:1040px">
+    <thead><tr><th>Item</th><th>Pour</th><th class="n">Cost</th><th class="n">Pour cost</th><th class="n">With Insiders+</th><th class="n">Proposed</th><th>Market</th><th>Current</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="src">Pour cost is at the proposed price. "With Insiders+" is the same drink after the 10% member discount. Market notes refer to the table in section 5. Cinema bars in big cities charge about $14–21 for a cocktail (M5, M6).</p>
+
+  <h3 style="margin-top:12px">Costs used</h3>
+  <p class="col">Change these when invoices come in, and every cost above moves with them. Liquor is tracked in 750 ml bottles.</p>
+  <div class="tbl"><table id="costs" style="min-width:560px">
+    <thead><tr><th>Item</th><th class="n">Cost</th><th>Unit</th><th>Source</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</section>
+
+<section aria-labelledby="h-check">
+  <div class="sec-head"><span class="kicker">7 · Things to check</span><h2 id="h-check">Questions, not answers</h2></div>
+  <p class="col">These need a check with the Missouri Division of Alcohol and Tobacco Control, the City of Joplin, or our accountant before we lean on them.</p>
+  <div class="grid">
+    <div class="card"><h3>Drink specials and happy hour</h3><ul class="qs">
+      <li>Do Missouri or Joplin rules limit happy hours, 2-for-1s, or drink discounts by time of day?</li>
+      <li>Does a can bucket or a pitcher count as a special, and are there limits on serving one to a single guest?</li>
+      <li>Are there rules on how we advertise drink prices or specials?</li></ul></div>
+    <div class="card"><h3>Member discounts on alcohol</h3><ul class="qs">
+      <li>Insiders+ members get 10% off the whole order today, alcohol included. Is a percentage discount on alcohol for paying members allowed?</li>
+      <li>Do Insiders points earned on alcohol spend count as a discount on alcohol?</li>
+      <li>If either isn't allowed, can the perks apply to food, coffee, candy and tickets only?</li></ul></div>
+    <div class="card"><h3>Sales tax</h3><ul class="qs">
+      <li>Menu prices exclude tax today; 8.725% is added after discounts. Do we keep that, or move to tax-included whole-dollar prices?</li>
+      <li>If we move to tax-included prices, how does Missouri want the receipt to show the tax?</li></ul></div>
+    <div class="card"><h3>For the bar manager</h3><ul class="qs">
+      <li>Space Dust is 8.2%. A 20 oz is about 2.7 standard drinks. Should strong beers be 16 oz only?</li>
+      <li>What did Outback pour for a shot, a highball and a neat pour?</li></ul></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-decide">
+  <div class="sec-head"><span class="kicker">8 · Decisions for the team</span><h2 id="h-decide">What to settle at the meeting</h2></div>
+  <div class="grid">
+    <div class="card"><ul class="checks">
+      <li><span><strong>Pour size.</strong> 1.5 oz standard, 2 oz neat, 3 oz double. Bar manager signs off.</span></li>
+      <li><span><strong>Draft.</strong> $7 / $9 or $6 / $8, one price for every tap. No 12 oz, no pitcher.</span></li>
+      <li><span><strong>Cans.</strong> $4 domestic and non-alcoholic; Space Dust $6 (or $5). Add a bucket of 4 domestic for $15, or not.</span></li>
+      <li><span><strong>Level upcharges.</strong> Keep call +$2, premium +$4. Bottles above premium get their own price. Bar manager sorts every bottle into a level.</span></li>
+    </ul></div>
+    <div class="card"><ul class="checks">
+      <li><span><strong>Double rule.</strong> A second shot at $1 off (+$4 / +$6 / +$8).</span></li>
+      <li><span><strong>Off-menu rule.</strong> Serve + level + double + mixer, with the cost check as the manager's job.</span></li>
+      <li><span><strong>Cocktails.</strong> Keep the menu prices; move the Manhattan to $10, or not.</span></li>
+      <li><span><strong>Wine.</strong> Get wine invoices, then set the glass and bottle price with the calculator.</span></li>
+      <li><span><strong>Rounding and tax.</strong> Whole dollars before tax, or tax-included prices.</span></li>
+      <li><span><strong>Member pricing on alcohol.</strong> Keep the Insiders+ 10% on drinks while we check, or pause it on alcohol.</span></li>
+    </ul></div>
+  </div>
+  <p class="note col"><b>After the meeting.</b> Whatever the team decides goes into one price sheet in Back office. You can change any price there, any time, without touching code. That sheet gets built after this review.</p>
+</section>
+
+</div>
+
+<script>
+/* ===== Costs. INVOICE = real (Missouri Eagle, Oct 2, 2026). EST = estimate from typical wholesale prices; replace with invoices. ===== */
+var KEG_OZ = 661; // 1/6 barrel
+var KEGS = [["Stella Artois",74],["Space Dust",73],["Dunkel",69],["Mango Cart",68.5],["Kona Big Wave",67],["Michelob AmberBock",61.5]];
+var CANS = {bud:1.05, spaceDust:1.58, odouls:1.28, ultraZero:1.14}; // invoice, each
+var BOTTLE_OZ = 25.36; // 750 ml
+var EST = { // $ per 750 ml bottle unless noted
+  well:9, call:18, premium:26,
+  vodka:8.25, rum:9, gin:9, whiskey:10.5, tequila:12, tripleSec:6, schnapps:7.5, coffeeLiqueur:10.5, sweetVermouth:12,
+  wine:10,
+  // $ per drink
+  gun:0.15, sour:0.25, gingerBeer:0.60, grapefruitSoda:0.35, cream:0.15, creamSoda:0.40, whip:0.25, garnish:0.10, ofKit:0.35, juice:0.30, energy:1.50
+};
+var MEMBER = 0.10; // Insiders+ discount
+
+function oz(k, n){ return EST[k] / BOTTLE_OZ * n; }
+var kegOz = KEGS.map(function(k){ return k[1] / KEG_OZ; });
+var kegLo = Math.min.apply(null, kegOz), kegHi = Math.max.apply(null, kegOz);
+function draftRange(n){ return [kegLo * n, kegHi * n]; }
+
+function money(x){ return "$" + x.toFixed(2); }
+function whole(x){ return "$" + (x % 1 === 0 ? x : x.toFixed(2)); }
+function pct(x){ return (x * 100).toFixed(0) + "%"; }
+function asRange(v){ return Array.isArray(v) ? v : [v, v]; }
+function fmtRange(v, f){ var r = asRange(v); return Math.abs(r[0]-r[1]) < 0.005 ? f(r[0]) : f(r[0]) + "–" + f(r[1]); }
+function pcRange(v, price){ var r = asRange(v); return [r[0]/price, r[1]/price]; }
+function pcText(r){ return Math.round(r[0]*100) === Math.round(r[1]*100) ? pct(r[0]) : (r[0]*100).toFixed(0) + "–" + pct(r[1]); }
+function pcChip(r, target){
+  var cls = target == null ? "c-soft" : (r[1]*100 > target + 0.5 ? "c-warn" : "c-ok");
+  return '<span class="chip ' + cls + '">' + pcText(r) + '</span>';
+}
+function src(s){ return s === "inv" ? '<span class="chip c-ok">Invoice</span>' : '<span class="chip c-soft">Estimate</span>'; }
+
+/* current: [price or null, text, kind]; kind: menu | none */
+function cur(p, text){ return {p:p, text:text}; }
+
+var rum = oz("rum",1.5)+EST.gun, whisk = oz("whiskey",2), sour = whisk+EST.sour+EST.garnish;
+var GROUPS = [
+ {name:"Draft beer · 16 oz is our base", target:20, rows:[
+  {item:"16 oz draft, any tap", pour:"16 oz", cost:draftRange(16), src:"inv", price:7, market:'M2: Outback Stella about $7, Sam Adams about $6. M4: Alamo pint about $7. M1: $3 domestic at Chili\'s happy hour', cur:cur(5,"$5")},
+  {item:"20 oz draft, any tap", pour:"20 oz", cost:draftRange(20), src:"inv", price:9, market:"M2: Outback 22 oz Stella about $8", cur:cur(7,"$7 (16 oz + $2)")},
+  {item:"12 oz draft", pour:"12 oz", cost:draftRange(12), src:"inv", show:"Don't add", market:"M1, M3: $3–6 for domestic", cur:cur(null,"Not offered")},
+  {item:"60 oz pitcher", pour:"60 oz", cost:draftRange(60), src:"inv", show:"Don't add (if ever: $26)", market:"None found", cur:cur(null,"Not offered")}
+ ]},
+ {name:"Cans", target:28, rows:[
+  {item:"Bud / Bud Light", pour:"12 oz can", cost:CANS.bud, src:"inv", price:4, market:"None found", cur:cur(4,"$4")},
+  {item:"Space Dust IPA (8.2%)", pour:"12 oz can", cost:CANS.spaceDust, src:"inv", price:6, market:"None found", cur:cur(4,"$4")},
+  {item:"O'Doul's (non-alcoholic)", pour:"12 oz can", cost:CANS.odouls, src:"inv", price:4, target:null, market:"None found", cur:cur(4,"$4"), note:"Kept low on purpose"},
+  {item:"Michelob Ultra Zero (non-alcoholic)", pour:"12 oz can", cost:CANS.ultraZero, src:"inv", price:4, target:null, market:"None found", cur:cur(4,"$4"), note:"Kept low on purpose"},
+  {item:"Bucket of 4 domestic (option)", pour:"4 × 12 oz", cost:CANS.bud*4, src:"inv", price:15, market:"None found", cur:cur(null,"Not offered")}
+ ]},
+ {name:"Wine · six Missouri wines, one price", target:40, rows:[
+  {item:"Glass", pour:"5 oz", cost:EST.wine/BOTTLE_OZ*5, src:"est", price:6, market:"None found", cur:cur(5,"$5")},
+  {item:"Bottle", pour:"750 ml (5 glasses)", cost:EST.wine, src:"est", price:25, market:"None found", cur:cur(18,"$18")}
+ ]},
+ {name:"Shots by level · choice of vodka, rum, whiskey, tequila or gin", target:20, rows:[
+  {item:"Well shot", pour:"1.5 oz", cost:oz("well",1.5), src:"est", price:5, market:"None found", cur:cur(5,"$5")},
+  {item:"Call shot", pour:"1.5 oz", cost:oz("call",1.5), src:"est", price:7, market:"None found", cur:cur(7,"$7")},
+  {item:"Premium shot", pour:"1.5 oz", cost:oz("premium",1.5), src:"est", price:9, market:"None found", cur:cur(9,"$9")},
+  {item:"Above premium", pour:"1.5 oz", cost:null, src:"est", show:"Own price (cost ÷ 0.20)", market:"None found", cur:cur(null,"Not stocked")}
+ ]},
+ {name:"Highballs by level · spirit and a gun mixer", target:20, rows:[
+  {item:"Well highball", pour:"1.5 oz + mixer", cost:oz("well",1.5)+EST.gun, src:"est", price:8, market:"None found", cur:cur(8,"$8 (Rum or whiskey & coke only)")},
+  {item:"Call highball", pour:"1.5 oz + mixer", cost:oz("call",1.5)+EST.gun, src:"est", price:10, market:"None found", cur:cur(null,"No item")},
+  {item:"Premium highball", pour:"1.5 oz + mixer", cost:oz("premium",1.5)+EST.gun, src:"est", price:12, market:"None found", cur:cur(null,"No item")}
+ ]},
+ {name:"Our 11 cocktails · well spirits", target:20, rows:[
+  {item:"Butter Beer", pour:"1.5 oz butterscotch schnapps, cream soda, whipped top", cost:oz("schnapps",1.5)+EST.creamSoda+EST.whip, src:"est", price:8, market:"—", cur:cur(8,"$8")},
+  {item:"Long Island Iced Tea", pour:"2.5 oz total: vodka, rum, gin, tequila, triple sec; sour, cola", cost:oz("vodka",.5)+oz("rum",.5)+oz("gin",.5)+oz("tequila",.5)+oz("tripleSec",.5)+EST.sour+EST.gun, src:"est", price:10, market:"—", cur:cur(10,"$10")},
+  {item:"Manhattan", pour:"2 oz whiskey, 1 oz sweet vermouth, bitters, cherry", cost:whisk+oz("sweetVermouth",1)+0.25, src:"est", price:10, market:"—", cur:cur(9,"$9"), note:"Tidy-up: match the Old Fashioned"},
+  {item:"Margarita", pour:"1.5 oz tequila, 0.75 oz triple sec, sour, salt", cost:oz("tequila",1.5)+oz("tripleSec",.75)+EST.sour+0.05, src:"est", price:8, market:"M1: $6–7 at Chili's happy hour", cur:cur(8,"$8")},
+  {item:"Moscow Mule", pour:"1.5 oz vodka, ginger beer, lime", cost:oz("vodka",1.5)+EST.gingerBeer+EST.garnish, src:"est", price:8, market:"—", cur:cur(8,"$8")},
+  {item:"NY Whiskey Sour", pour:"2 oz whiskey, sour, red wine float", cost:sour+EST.wine/BOTTLE_OZ*1, src:"est", price:9, market:"—", cur:cur(9,"$9")},
+  {item:"Old Fashioned", pour:"2 oz whiskey, syrup, bitters, orange, cherry", cost:whisk+EST.ofKit, src:"est", price:10, market:"—", cur:cur(10,"$10")},
+  {item:"Paloma", pour:"1.5 oz tequila, grapefruit soda, lime, salt", cost:oz("tequila",1.5)+EST.grapefruitSoda+EST.garnish, src:"est", price:8, market:"—", cur:cur(8,"$8")},
+  {item:"Rum or Whiskey & Coke", pour:"1.5 oz rum or whiskey, cola", cost:[rum, oz("whiskey",1.5)+EST.gun], src:"est", price:8, market:"—", cur:cur(8,"$8")},
+  {item:"Whiskey Sour", pour:"2 oz whiskey, sour, cherry", cost:sour, src:"est", price:9, market:"—", cur:cur(9,"$9")},
+  {item:"White Russian", pour:"1.5 oz vodka, 1 oz coffee liqueur, cream", cost:oz("vodka",1.5)+oz("coffeeLiqueur",1)+EST.cream, src:"est", price:8, market:"—", cur:cur(8,"$8")}
+ ]},
+ {name:"Doubles, neat, mixers", target:20, rows:[
+  {item:"Double, well", pour:"+1.5 oz", cost:oz("well",1.5), src:"est", price:4, show:"+$4", market:"—", cur:cur(null,"No item")},
+  {item:"Double, call", pour:"+1.5 oz", cost:oz("call",1.5), src:"est", price:6, show:"+$6", market:"—", cur:cur(null,"No item")},
+  {item:"Double, premium", pour:"+1.5 oz", cost:oz("premium",1.5), src:"est", price:8, show:"+$8", market:"—", cur:cur(null,"No item")},
+  {item:"Neat or rocks, well (whole drink)", pour:"2 oz", cost:oz("well",2), src:"est", price:7, market:"—", cur:cur(null,"No item")},
+  {item:"Neat or rocks, premium (whole drink)", pour:"2 oz", cost:oz("premium",2), src:"est", price:11, market:"—", cur:cur(null,"No item")},
+  {item:"Soda-gun mixer", pour:"to fill", cost:EST.gun, src:"est", show:"Included", market:"—", cur:cur(null,"—")},
+  {item:"House juice or cream", pour:"to fill", cost:EST.juice, src:"est", show:"Included", market:"—", cur:cur(null,"—")},
+  {item:"Ginger beer swap (whole well highball)", pour:"1.5 oz + ginger beer", cost:oz("well",1.5)+EST.gingerBeer, src:"est", price:9, show:"$9 (+$1)", market:"—", cur:cur(null,"—")},
+  {item:"Energy drink (whole well highball)", pour:"1.5 oz + 8.4 oz can", cost:oz("well",1.5)+EST.energy, src:"est", price:10, show:"$10 (+$2)", market:"—", cur:cur(null,"—")}
+ ]}
+];
+
+function renderKegs(){
+  var tb = document.querySelector("#kegs tbody"), h = "";
+  KEGS.forEach(function(k){
+    var o = k[1]/KEG_OZ, c16 = o*16, c20 = o*20;
+    h += "<tr><td><strong>"+k[0]+"</strong></td><td class='n'>"+money(k[1])+"</td><td class='n'>$"+o.toFixed(3)+"</td><td class='n'>"+money(c16)+"</td>"
+      + "<td class='n'>"+pcChip([c16/5,c16/5],20)+"</td><td class='n'>"+pcChip([c16/7,c16/7],20)+"</td>"
+      + "<td class='n'>"+money(c20)+"</td><td class='n'>"+pcChip([c20/7,c20/7],20)+"</td><td class='n'>"+pcChip([c20/9,c20/9],20)+"</td></tr>";
+  });
+  tb.innerHTML = h;
+}
+
+function renderLadder(){
+  var tb = document.querySelector("#ladder tbody"), h = "";
+  GROUPS.forEach(function(g){
+    h += "<tr class='group'><td colspan='8'>"+g.name+"</td></tr>";
+    g.rows.forEach(function(r){
+      var target = r.hasOwnProperty("target") ? r.target : g.target;
+      var costCell = r.cost == null ? "<span class='sub'>per bottle</span>" : fmtRange(r.cost, money) + "<span class='sub'>" + src(r.src) + "</span>";
+      var pcCell = "—", memCell = "—";
+      if (r.cost != null && r.price) {
+        var pc = pcRange(r.cost, r.price);
+        pcCell = pcChip(pc, target);
+        memCell = pcChip([pc[0]/(1-MEMBER), pc[1]/(1-MEMBER)], target);
+      }
+      var shown = r.show || whole(r.price);
+      var curCell = r.cur.text;
+      if (r.cur.p != null && r.cost != null) {
+        var cp = pcRange(r.cost, r.cur.p);
+        curCell += " <span class='sub'>pour cost " + pcText(cp) + "</span>";
+      }
+      var changed = r.cur.p != null && r.price && r.cur.p !== r.price;
+      h += "<tr><td><strong>"+r.item+"</strong>"+(r.note?"<span class='sub'>"+r.note+"</span>":"")+"</td><td>"+r.pour+"</td>"
+        + "<td class='n'>"+costCell+"</td><td class='n'>"+pcCell+"</td><td class='n'>"+memCell+"</td>"
+        + "<td class='n price'>"+shown+(changed?"<span class='sub'>was "+whole(r.cur.p)+"</span>":"")+"</td>"
+        + "<td><span class='sub' style='font-size:13px'>"+r.market+"</span></td><td>"+curCell+"</td></tr>";
+    });
+  });
+  tb.innerHTML = h;
+}
+
+function renderCosts(){
+  var rows = [];
+  KEGS.forEach(function(k){ rows.push([k[0]+" keg", k[1], "1/6 barrel, 661 oz", "inv"]); });
+  rows.push(["Bud / Bud Light", CANS.bud, "can", "inv"],["Space Dust", CANS.spaceDust, "can", "inv"],["O'Doul's", CANS.odouls, "can", "inv"],["Michelob Ultra Zero", CANS.ultraZero, "can", "inv"]);
+  [["Well liquor, average","well"],["Call liquor, average","call"],["Premium liquor, average","premium"],["Well vodka","vodka"],["Well rum","rum"],["Well gin","gin"],["Well whiskey","whiskey"],["Well tequila","tequila"],["Triple sec","tripleSec"],["Butterscotch schnapps","schnapps"],["Coffee liqueur","coffeeLiqueur"],["Sweet vermouth","sweetVermouth"],["House wine (each of the six)","wine"]]
+    .forEach(function(x){ rows.push([x[0], EST[x[1]], "750 ml bottle", "est"]); });
+  [["Gun mixer","gun"],["Sour mix","sour"],["Ginger beer","gingerBeer"],["Grapefruit soda","grapefruitSoda"],["Cream","cream"],["Cream soda","creamSoda"],["Whipped topping","whip"],["Garnish","garnish"],["Old Fashioned syrup, bitters, fruit","ofKit"],["Juice","juice"],["Energy drink","energy"]]
+    .forEach(function(x){ rows.push([x[0], EST[x[1]], "per drink", "est"]); });
+  document.querySelector("#costs tbody").innerHTML = rows.map(function(r){
+    return "<tr><td>"+r[0]+"</td><td class='n'>"+money(r[1])+"</td><td>"+r[2]+"</td><td>"+(r[3]==="inv"?'<span class="chip c-ok">Invoice</span> Missouri Eagle, Oct 2, 2026':'<span class="chip c-soft">Estimate</span>')+"</td></tr>";
+  }).join("");
+}
+
+/* ===== Calculator ===== */
+function $(id){ return document.getElementById(id); }
+function n(id){ var v = parseFloat($(id).value); return isNaN(v) ? 0 : v; }
+function calc(){
+  var cost = n("c-cost"), size = parseFloat($("c-size").value), pour = n("c-pour"), target = n("c-target"), extra = n("c-extra"), step = parseFloat($("c-round").value);
+  if (!(cost > 0 && pour > 0 && target > 0)) {
+    $("c-price").textContent = "—";
+    ["c-oz","c-drink","c-exact","c-pc","c-pcm"].forEach(function(i){ $(i).textContent = "—"; });
+    $("c-msg").textContent = "Enter a cost, a pour and a target above zero.";
+    return;
+  }
+  var perOz = cost / size, drink = perOz * pour + extra, exact = drink / (target / 100);
+  var rounded = Math.ceil(exact / step - 1e-9) * step;
+  $("c-price").textContent = whole(rounded);
+  $("c-oz").textContent = "$" + perOz.toFixed(3);
+  $("c-drink").textContent = money(drink);
+  $("c-exact").textContent = money(exact);
+  $("c-pc").textContent = (drink / rounded * 100).toFixed(1) + "%";
+  $("c-pcm").textContent = (drink / (rounded * (1 - MEMBER)) * 100).toFixed(1) + "%";
+  $("c-msg").textContent = size >= 600 ? "For kegs, real pour cost runs a little higher than this, because foam and line cleaning use some beer." : "Mixer and garnish is the cost of everything besides the spirit or wine.";
+}
+function setSize(v){ var s = $("c-size"); for (var i = 0; i < s.options.length; i++) { if (Math.abs(parseFloat(s.options[i].value) - v) < 0.01) { s.selectedIndex = i; return; } } }
+document.querySelectorAll(".presets button").forEach(function(b){
+  b.addEventListener("click", function(){
+    var p = b.getAttribute("data-p").split(",").map(parseFloat);
+    $("c-cost").value = p[0]; setSize(p[1]); $("c-pour").value = p[2]; $("c-target").value = p[3]; $("c-extra").value = p[4];
+    calc();
+  });
+});
+$("calc").addEventListener("input", calc);
+$("calc").addEventListener("change", calc);
+$("calc").addEventListener("submit", function(e){ e.preventDefault(); });
+
+renderKegs(); renderLadder(); renderCosts(); calc();
+</script>

@@ -1,6 +1,7 @@
 import { requireDisplayScreen } from "@/lib/auth";
 import { getScreeningsForCountdown } from "@/lib/data/screenings";
 import { getRecentHouseEvents } from "@/lib/data/house-events";
+import { visibilityOf } from "@/lib/showing-visibility";
 import RampCountdown from "./RampCountdown";
 import { NOW_PLAYING_MINUTES, type RampScreening } from "./schedule";
 
@@ -37,7 +38,9 @@ export default async function RampDisplayPage({ searchParams }: { searchParams: 
     room: "The lounge",
   }));
 
-  const films: RampScreening[] = screenings.map((s) => ({
+  // Members-only showings stay up (this screen already shows members-only
+  // titles); a private group's showing never does.
+  const films: RampScreening[] = screenings.filter((s) => visibilityOf(s) !== "private").map((s) => ({
     id: s.id,
     kind: "film",
     endsAt: null,

@@ -15,7 +15,7 @@ export default async function AdminDevNotesPage() {
         title="Dev notes"
         purpose={
           <>
-            Notes admins jotted down with Leave a dev note (in this menu, on the register&apos;s shift bar, or the staff bar on other pages), with the page
+            Notes admins jotted down with Leave a dev note (in this menu, on the register, or the staff bar on other pages), with the page
             they&apos;re about. Approve the ones worth doing: that&apos;s the backlog to hand to Claude.
           </>
         }

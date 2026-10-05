@@ -28,6 +28,7 @@ export type OpsApi = Pick<
   | "setParItemActive"
   | "getOpsHistory"
   | "markBoothCardPrinted"
+  | "getRegisterSchedule"
 > &
   Pick<typeof ranOut, "getRanOutOptions" | "reportOutage" | "getOpenOutages" | "resolveOutage" | "markItemBack" | "getRaiseParHints">;
 

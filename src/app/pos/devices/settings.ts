@@ -20,6 +20,11 @@ export interface DeviceSettings {
   autoPrint: boolean; // print a receipt after every sale
   drawerOnCash: boolean; // open the cash drawer when a sale takes cash
   printTickets: boolean; // print a keepsake ticket for every movie admission sold
+  // The customer screen's sound effects, once someone sets them here (sent
+  // to the screen, which remembers them too). Unset: the screen keeps its
+  // own (on, at 40), and this register doesn't send anything.
+  tabletSound?: boolean;
+  tabletVolume?: number; // 0–100
 }
 
 const KEY = "rcl.register-devices.v1";
@@ -35,7 +40,11 @@ function read(): DeviceSettings {
   try {
     const raw = localStorage.getItem(KEY);
     const saved = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : DEFAULTS;
-    cached = { ...saved, station: saved.station === "outdoor" ? "outdoor" : "bar", printVia: saved.printVia === "station" ? "station" : "direct" };
+    cached = {
+      ...saved,
+      station: saved.station === "outdoor" ? "outdoor" : "bar",
+      printVia: saved.printVia === "station" ? "station" : "direct",
+    };
   } catch {
     cached = DEFAULTS;
   }

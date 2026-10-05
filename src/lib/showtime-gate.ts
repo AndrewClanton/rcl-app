@@ -77,12 +77,14 @@ async function screeningStart(id: string): Promise<string | null | undefined> {
   try {
     const { data, error } = await createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
       .from("screenings")
-      .select("starts_at")
+      .select("*")
       .eq("id", id)
       .abortSignal(AbortSignal.timeout(LOOKUP_TIMEOUT_MS))
       .maybeSingle()
       .retry(false);
     if (error) return undefined;
+    // A private group's showing has no public page at all: same as no showtime.
+    if (data?.visibility === "private") return null;
     return (data?.starts_at as string | undefined) ?? null;
   } catch {
     return undefined;

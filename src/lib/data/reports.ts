@@ -1,6 +1,9 @@
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getRecipesByItem } from "./recipes";
+import { schemaMissing } from "@/lib/schema-missing";
+import { isDouble, pouredLines, serveOf } from "@/lib/bar/double";
+import { getBarPrices } from "./barBook";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
@@ -206,6 +209,13 @@ export interface SalesSummary {
   // of the perk shows instead of hiding in the discounts.
   dailyCoffee: number;
   dailyCoffeeCount: number;
+  // Organization comps (lib/orgs.ts): day passes and movies given at $0 to
+  // an organization's people, at their price, and on how many orders.
+  orgComps: number;
+  orgCompOrders: number;
+  // Supported guests' tax-included sales: what they paid (before tips),
+  // the tax inside it, and how many orders. Their tax is already in `tax`.
+  taxIncluded: { sales: number; tax: number; orders: number };
   partialRefunds: number; // goods given back on part-refunded orders, before tax
   netSales: number;
   ticketsSold: number;
@@ -292,6 +302,9 @@ type DayOrderRow = {
   // it replaced. Missing until 20261003060000_owner_tab.sql is applied.
   owner_tab_employee_id?: string | null;
   owner_menu_value?: number | null;
+  // Organization accounts (20261005040000_organizations.sql); missing before it.
+  org_comp_discount?: number | null;
+  tax_included?: boolean | null;
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
@@ -514,7 +527,10 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     tax = 0,
     discounts = 0,
     dailyCoffee = 0,
-    dailyCoffeeCount = 0;
+    dailyCoffeeCount = 0,
+    orgComps = 0,
+    orgCompOrders = 0;
+  const taxIncluded = { sales: 0, tax: 0, orders: 0 };
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   const ownerTab: OwnerTabSummary = { orders: 0, sales: 0, menuValue: 0, tax: 0, owed: 0, paid: 0, payments: 0 };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
@@ -544,6 +560,16 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       ownerTab.tax += Number(o.tax);
       ownerTab.owed += Number(o.total);
       ownerTab.menuValue += Number(o.owner_menu_value ?? o.subtotal) - tickets;
+    }
+    const comp = Number(o.org_comp_discount ?? 0);
+    if (comp > 0) {
+      orgComps += comp;
+      orgCompOrders++;
+    }
+    if (o.tax_included) {
+      taxIncluded.sales += Number(o.total) - Number(o.tip);
+      taxIncluded.tax += Number(o.tax);
+      taxIncluded.orders++;
     }
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
@@ -637,8 +663,13 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     discounts,
     dailyCoffee,
     dailyCoffeeCount,
+    orgComps,
+    orgCompOrders,
+    taxIncluded,
     partialRefunds,
-    netSales: grossSales - discounts - dailyCoffee - partialRefunds,
+    // A tax-included sale's prices hold its tax, so that comes out of what
+    // sold too: a $4.00 pizza is $3.68 of sales and $0.32 of tax.
+    netSales: grossSales - discounts - dailyCoffee - orgComps - taxIncluded.tax - partialRefunds,
     ticketsSold,
     tickets,
     orderCount: completed.length,
@@ -845,12 +876,12 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   // Paged, and read in one go through the order (a list of thousands of
   // order ids used to be pasted into a second request, after the first had
   // already stopped at 1,000 orders).
-  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }] = await Promise.all([
+  const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }, notCarriedRead, bookSold] = await Promise.all([
     supabase.from("ingredients").select("id, name, unit, unit_cost").eq("active", true).order("category").order("name"),
-    fetchAll<{ menu_item_id: string | null; quantity: number }>((from, to) =>
+    fetchAll<{ menu_item_id: string | null; quantity: number; modifiers: string[] | null }>((from, to) =>
       supabase
         .from("order_items")
-        .select("menu_item_id, quantity, orders!inner(status, completed_at)")
+        .select("menu_item_id, quantity, modifiers, orders!inner(status, completed_at)")
         .eq("orders.status", "completed")
         .gte("orders.completed_at", since.toISOString())
         .not("menu_item_id", "is", null)
@@ -862,9 +893,16 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     ),
     getRecipesByItem(),
     supabase.from("menu_items").select("id").eq("is_alcohol", true),
+    // Ingredients the bar doesn't carry (the Bar Book's starter list adds
+    // them). An error, like before the Bar Book migration, means none.
+    supabase.from("ingredients").select("id").eq("carried", false),
+    // Bar Book drinks rung up off the menu, poured from their recipe.
+    bookDrinkLines(since),
   ]);
+  const [customSold, prices] = await Promise.all([customDrinkLines(since), getBarPrices()]);
   if (ingErr) throw ingErr;
   if (drinkErr) throw drinkErr;
+  const notCarried = new Set(notCarriedRead.error ? [] : (notCarriedRead.data ?? []).map((i) => i.id as string));
 
   // The bar only. Food has recipes too (a hot dog's bun, popcorn kernels),
   // so "Ran out" knows which buttons to stop; those amounts are placeholders
@@ -877,12 +915,41 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   }
 
   const theoreticalByIngredient = new Map<string, number>();
+  // A double (lib/bar/double.ts) pours its base-spirit lines twice; a shot
+  // poured neat or on the rocks pours the neat pour (2 oz, twice that
+  // doubled).
+  const pour = (lines: { ingredient_id: string; quantity: number; name: string; unit?: string | null; kind?: string | null; optional?: boolean }[], times: number, double: boolean, pourOz: number | null = null) => {
+    for (const ri of pouredLines(lines, { double, pourOz })) {
+      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * times);
+    }
+  };
   for (const oi of orderItems) {
     const recipe = oi.menu_item_id && drinkIds.has(oi.menu_item_id) ? recipesByItem[oi.menu_item_id] : undefined;
     if (!recipe) continue;
-    for (const ri of recipe.ingredients) {
-      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * oi.quantity);
-    }
+    pour(
+      recipe.ingredients.map((ri) => ({ ingredient_id: ri.ingredient_id, quantity: ri.quantity, name: ri.ingredient_name, unit: ri.unit, kind: ri.kind ?? null, optional: ri.optional === true })),
+      oi.quantity,
+      isDouble(oi.modifiers),
+      serveOf(oi.modifiers) ? prices.pours.neat : null,
+    );
+  }
+  // A Bar Book drink pours its own recipe, the same way.
+  for (const sold of bookSold.sold) {
+    const lines = bookSold.recipes.get(sold.recipe_id) ?? [];
+    for (const ri of lines) barIngredients.add(ri.ingredient_id);
+    pour(lines, sold.quantity, isDouble(sold.modifiers));
+  }
+  // And a custom drink pours what its list says.
+  for (const sold of customSold) {
+    if (!Array.isArray(sold.custom_recipe)) continue;
+    const lines = (sold.custom_recipe as { ingredient_id?: unknown; quantity?: unknown; name?: unknown; kind?: unknown }[]).flatMap((ri) => {
+      const id = typeof ri?.ingredient_id === "string" ? ri.ingredient_id : null;
+      const q = Number(ri?.quantity);
+      if (!id || !Number.isFinite(q) || q <= 0) return [];
+      return [{ ingredient_id: id, quantity: q, name: typeof ri.name === "string" ? ri.name : "", kind: typeof ri.kind === "string" ? ri.kind : null }];
+    });
+    for (const ri of lines) barIngredients.add(ri.ingredient_id);
+    pour(lines, sold.quantity, isDouble(sold.modifiers));
   }
 
   const countsByIngredient = new Map<string, { quantity_on_hand: number; counted_at: string }[]>();
@@ -900,7 +967,11 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     return best;
   }
 
-  const rows: AlcoholUsageRow[] = (ingredients ?? []).filter((ing) => barIngredients.has(ing.id) || !foodIngredients.has(ing.id)).map((ing) => {
+  // Not-carried ingredients no menu drink uses and nobody counts stay off.
+  const rows: AlcoholUsageRow[] = (ingredients ?? [])
+    .filter((ing) => barIngredients.has(ing.id) || !foodIngredients.has(ing.id))
+    .filter((ing) => !notCarried.has(ing.id) || barIngredients.has(ing.id) || countsByIngredient.has(ing.id))
+    .map((ing) => {
     const list = countsByIngredient.get(ing.id) ?? [];
     const startCount = latestAtOrBefore(list, since);
     const endCount = latestAtOrBefore(list, now);
@@ -930,6 +1001,88 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     if (a.varianceCost !== null || b.varianceCost !== null) return (b.varianceCost ?? -Infinity) - (a.varianceCost ?? -Infinity);
     return b.theoreticalUsage - a.theoreticalUsage;
   });
+}
+
+// Bar Book drinks sold off the menu since `since` (order_items.recipe_id,
+// migration 20261004030000), and their recipes' lines. Empty before that
+// migration, or if it can't be read: the report then reads as before.
+type BookLineRow = { ingredient_id: string; quantity: number; name: string; kind: string | null; optional: boolean };
+type BookSold = { sold: { recipe_id: string; name: string; quantity: number; unit_price: number; modifiers: string[] | null }[]; recipes: Map<string, BookLineRow[]> };
+
+async function bookDrinkLines(since: Date): Promise<BookSold> {
+  const none: BookSold = { sold: [], recipes: new Map() };
+  const supabase = createAdminClient();
+  try {
+    const sold = await fetchAll<{ recipe_id: string; name: string; quantity: number; unit_price: number; modifiers: string[] | null }>((from, to) =>
+      supabase
+        .from("order_items")
+        .select("recipe_id, name, quantity, unit_price, modifiers, orders!inner(status, completed_at)")
+        .eq("orders.status", "completed")
+        .gte("orders.completed_at", since.toISOString())
+        .not("recipe_id", "is", null)
+        .order("id")
+        .range(from, to),
+    );
+    const ids = [...new Set(sold.map((l) => l.recipe_id))];
+    if (!ids.length) return { sold, recipes: new Map() };
+    const { data, error } = await supabase.from("recipe_ingredients").select("recipe_id, ingredient_id, quantity, optional, ingredient:ingredients(name, kind)").in("recipe_id", ids);
+    if (error) return { sold, recipes: new Map() };
+    const recipes = new Map<string, BookLineRow[]>();
+    for (const r of (data ?? []) as unknown as { recipe_id: string; ingredient_id: string; quantity: number; optional: boolean | null; ingredient: { name: string; kind: string | null } | null }[]) {
+      const line: BookLineRow = { ingredient_id: r.ingredient_id, quantity: Number(r.quantity), name: r.ingredient?.name ?? "", kind: r.ingredient?.kind ?? null, optional: r.optional === true };
+      recipes.set(r.recipe_id, [...(recipes.get(r.recipe_id) ?? []), line]);
+    }
+    return { sold, recipes };
+  } catch (e) {
+    if (!schemaMissing(e as { code?: string })) console.warn("bar usage: Bar Book drinks not read", e);
+    return none;
+  }
+}
+
+// Custom drinks ("What's in it?") sold since `since`, with the ingredient
+// list on each line (order_items.custom_recipe, migration 20261005010000).
+// Empty before that migration, or if it can't be read.
+async function customDrinkLines(since: Date): Promise<{ quantity: number; custom_recipe: unknown; modifiers: string[] | null }[]> {
+  const supabase = createAdminClient();
+  try {
+    return await fetchAll<{ quantity: number; custom_recipe: unknown; modifiers: string[] | null }>((from, to) =>
+      supabase
+        .from("order_items")
+        .select("quantity, custom_recipe, modifiers, orders!inner(status, completed_at)")
+        .eq("orders.status", "completed")
+        .gte("orders.completed_at", since.toISOString())
+        .not("custom_recipe", "is", null)
+        .order("id")
+        .range(from, to),
+    );
+  } catch (e) {
+    if (!schemaMissing(e as { code?: string })) console.warn("bar usage: custom drinks not read", e);
+    return [];
+  }
+}
+
+export interface BookDrinkSale {
+  recipeId: string;
+  name: string;
+  sold: number;
+  revenue: number;
+}
+
+// Reports → Bar usage: the Bar Book drinks rung up off the menu in the
+// last `days` business days, by drink. They're Alcohol sales everywhere
+// else (the Day report counts them with the bar); this names them.
+export async function getBookDrinkSales(days: number): Promise<BookDrinkSale[]> {
+  const dates = recentBusinessDays(days);
+  const since = new Date(businessDayWindow(dates[dates.length - 1]).start);
+  const { sold } = await bookDrinkLines(since);
+  const by = new Map<string, BookDrinkSale>();
+  for (const l of sold) {
+    const row = by.get(l.recipe_id) ?? { recipeId: l.recipe_id, name: l.name, sold: 0, revenue: 0 };
+    row.sold += l.quantity;
+    row.revenue = round2(row.revenue + Number(l.unit_price) * l.quantity);
+    by.set(l.recipe_id, row);
+  }
+  return [...by.values()].sort((a, b) => b.sold - a.sold || a.name.localeCompare(b.name));
 }
 
 export interface PourCostRow {

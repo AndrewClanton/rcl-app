@@ -29,6 +29,7 @@ function asReceipt(o: RecentOrder): ReceiptData {
     subtotal: o.subtotal,
     discounts: o.discounts,
     tax: o.tax,
+    taxIncluded: o.taxIncluded,
     tip: o.tip,
     total: o.total,
     payments: o.ownerTab
@@ -197,7 +198,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       {selected.discounts.map((d) => (
                         <Row key={d.label} label={d.label} value={`−${money(d.amount)}`} />
                       ))}
-                      <Row label="Tax" value={money(selected.tax)} />
+                      <Row label={selected.taxIncluded ? "Tax (included in prices)" : "Tax"} value={money(selected.tax)} />
                       {selected.tip > 0 && <Row label="Tip" value={money(selected.tip)} />}
                       <Row label="Total" value={money(selected.total)} strong />
                       {selected.voucher > 0 && <Row label="Voucher" value={money(selected.voucher)} muted />}

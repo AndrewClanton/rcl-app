@@ -16,10 +16,12 @@ import k from "./kiosk.module.css";
 // from what the register broadcasts about them (lib/registerChannel.ts):
 // - NeedsCardCard: a former unlimited member with nothing paying for it
 //   (lib/legacy-plus.ts), or Insiders+ with no card on file. Red, never
-//   gold. Up the whole time they're on the order, until it's set up or
-//   they're taken off: as a banner over the order, or filling the panel
-//   while there's nothing rung up yet. Never over the order's total or the
-//   check-in keypad.
+//   gold: as a banner over the order, or filling the panel while there's
+//   nothing rung up yet. Never over the order's total or the check-in
+//   keypad, and never locks the screen: "✕ Show my card" (or a few seconds
+//   untouched) puts it down for their own card, which then carries an "Add
+//   a card" chip to bring it back (AddCardChip; Andrew 10/3). The register
+//   keeps its red signal either way.
 // - PlusWelcomeCard: the moment it's set up.
 // - MemberCard: their card while nothing's rung up yet: photo, name,
 //   profile line, color, badges and points, and what's left to make it
@@ -49,9 +51,17 @@ export function needsCard(m: TabletMember | null | undefined): boolean {
 // "$15/month": the price staff set them up at unless they pick otherwise.
 const PRICE = planPrice(LEGACY_DEFAULT_RATE, LEGACY_DEFAULT_INTERVAL);
 
-export function NeedsCardCard({ firstName, kind, hero }: { firstName: string; kind: "unlimited" | "nocard"; hero: boolean }) {
+// onDismiss: "✕ Show my card" (or "✕ Close" over the order): down until
+// they tap the chip on their card. This screen only: the register's setup
+// (a card waiting on the reader, say) carries on.
+export function NeedsCardCard({ firstName, kind, hero, onDismiss }: { firstName: string; kind: "unlimited" | "nocard"; hero: boolean; onDismiss?: () => void }) {
   return (
     <section className={`${k.unlimited} ${hero ? k.unlimitedHero : ""}`} role="status" aria-live="polite">
+      {onDismiss && (
+        <button type="button" className={k.redClose} onClick={onDismiss}>
+          <span aria-hidden="true">✕</span> {hero ? "Show my card" : "Close"}
+        </button>
+      )}
       <div className={k.unlimitedCopy}>
         <span className={k.notActive}>{kind === "nocard" ? "No card on file" : "Not active"}</span>
         <h2 className={k.unlimitedTitle}>
@@ -104,6 +114,17 @@ export function PlusWelcomeCard({ firstName, hero, renewed = false }: { firstNam
         <p className={k.unlimitedWhy}>{renewed ? "Your card's on file. Free movies and 10% off keep going. Enjoy the show." : "Free movies and 10% off start right now. Enjoy the show."}</p>
       </div>
     </section>
+  );
+}
+
+// On their card (or their account) once the red card's down: one tap
+// brings it back, with what it costs and where to tap.
+export function AddCardChip({ kind, onClick, small = false }: { kind: "unlimited" | "nocard"; onClick: () => void; small?: boolean }) {
+  return (
+    <button type="button" className={`${k.addCard} ${small ? k.addCardSmall : ""}`} onClick={onClick}>
+      <span aria-hidden="true">💳</span> {kind === "nocard" ? "Add a card to keep Insiders+" : "Add a card for Insiders+"}
+      <span aria-hidden="true"> ›</span>
+    </button>
   );
 }
 
@@ -169,7 +190,20 @@ export function MemberActions({ onOff }: { onOff: (why: "done" | "not-me") => vo
 
 // Beside the order (`earn`: the points this order earns), or on its own
 // under a red card or tonight's tickets while nothing's rung up yet.
-export function AccountPanel({ member, earn, alone = false, onNotMe }: { member: TabletMember; earn?: number; alone?: boolean; onNotMe?: () => void }) {
+// onAddCard: their red card is down; the chip brings it back.
+export function AccountPanel({
+  member,
+  earn,
+  alone = false,
+  onNotMe,
+  onAddCard,
+}: {
+  member: TabletMember;
+  earn?: number;
+  alone?: boolean;
+  onNotMe?: () => void;
+  onAddCard?: () => void;
+}) {
   const standing = standingOf(member);
   const pts = points(member.points);
   const perks = perksToday(member, standing, !alone);
@@ -184,6 +218,7 @@ export function AccountPanel({ member, earn, alone = false, onNotMe }: { member:
           </span>
         </div>
         {perks.length > 0 && <div className={k.accountPerks}>{perks.join(" · ")}</div>}
+        {onAddCard && (standing === "unlimited" || standing === "nocard") && <AddCardChip kind={standing} onClick={onAddCard} small />}
       </div>
       {!!earn && earn > 0 && (
         <div className={k.accountEarn}>
@@ -211,7 +246,8 @@ const PHOTO_REF = /^[A-Za-z0-9_-]{40,200}$/;
 // where they stand and their points, and what's still to do on their
 // account's Profile tab. Without a profile (still looking it up, or it
 // couldn't be read) it's their first name with the same account facts.
-export function MemberCard({ member }: { member: TabletMember }) {
+// onAddCard: their red "add your card" card is down; the chip brings it back.
+export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddCard?: () => void }) {
   const p = member.profile ?? null;
   const standing = standingOf(member);
   const pts = points(member.points);
@@ -247,6 +283,7 @@ export function MemberCard({ member }: { member: TabletMember }) {
             </span>
           </div>
           {perks.length > 0 && <div className={k.cardPerks}>{perks.join(" · ")}</div>}
+          {onAddCard && (standing === "unlimited" || standing === "nocard") && <AddCardChip kind={standing} onClick={onAddCard} />}
           {(color || entrance) && (
             <div className={k.cardFlair}>
               {color && (

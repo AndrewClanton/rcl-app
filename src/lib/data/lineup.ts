@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
+import { visibilityOf } from "@/lib/showing-visibility";
 import { isWithinPublicWindow } from "@/lib/data/screenings";
 import { businessDay, businessDayWindow, shiftDate } from "@/lib/ops/time";
 import type { FilmData, HappeningData } from "@/lib/email/render";
@@ -20,6 +21,7 @@ export const LINEUP_DEFAULT_DAYS = 7;
 interface Row {
   id: string;
   starts_at: string;
+  visibility: string;
   movie: { id: string; title: string; poster_url: string | null; rating: string | null; runtime_minutes: number | null; release_year: number | null } | null;
 }
 
@@ -41,7 +43,7 @@ export async function getLineup(start: string = businessDay().date, days: number
   const [screenings, happenings] = await Promise.all([
     supabase
       .from("screenings")
-      .select("id, starts_at, movie:movies(id, title, poster_url, rating, runtime_minutes, release_year)")
+      .select("id, starts_at, visibility, movie:movies(id, title, poster_url, rating, runtime_minutes, release_year)")
       .gte("starts_at", lower)
       .lt("starts_at", to)
       .order("starts_at"),
@@ -53,7 +55,13 @@ export async function getLineup(start: string = businessDay().date, days: number
   const films = new Map<string, FilmData>();
   for (const s of (screenings.data ?? []) as unknown as Row[]) {
     if (!s.movie || !isWithinPublicWindow(s.starts_at)) continue;
-    let f = films.get(s.movie.id);
+    // A private group's showing is never in an email. A members-only one goes
+    // in the members-only section (with the archive titles), as its own entry
+    // so the film's public showings keep their ordinary card.
+    const visibility = visibilityOf(s);
+    if (visibility === "private") continue;
+    const key = visibility === "members" ? `${s.movie.id}|members` : s.movie.id;
+    let f = films.get(key);
     if (!f) {
       f = {
         movieId: s.movie.id,
@@ -61,10 +69,10 @@ export async function getLineup(start: string = businessDay().date, days: number
         posterUrl: s.movie.poster_url,
         rating: s.movie.rating,
         runtime: s.movie.runtime_minutes,
-        archive: isRestrictedRelease(s.movie),
+        archive: isRestrictedRelease(s.movie) || visibility === "members",
         showtimes: [],
       };
-      films.set(s.movie.id, f);
+      films.set(key, f);
     }
     f.showtimes.push({ id: s.id, startsAt: s.starts_at });
   }

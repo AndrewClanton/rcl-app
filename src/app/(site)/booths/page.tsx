@@ -8,6 +8,7 @@ import { PageMasthead } from "@/components/print";
 import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { issueFormToken } from "@/lib/public-form-guard";
+import { nextOpenDate } from "@/lib/closed-days";
 
 // Per request: today's open times, the checkout result and the visitor's own
 // details (and Insiders+ free reservations) are all on this page.
@@ -33,8 +34,9 @@ export default async function BoothsPage({
 }) {
   const { checkout, session_id, reservation_id } = await searchParams;
   // Booths can't be reserved for today -- only from tomorrow on, so nobody
-  // books a seat out from under a customer who's already sitting in it.
-  const startDate = tomorrowCentral();
+  // books a seat out from under a customer who's already sitting in it --
+  // and never on a day we're closed, so a Saturday visit starts on Monday.
+  const startDate = nextOpenDate(tomorrowCentral());
 
   const [booths, reservationsForStartDate] = await Promise.all([getActiveBooths(), getBoothBusyTimes(startDate)]);
 

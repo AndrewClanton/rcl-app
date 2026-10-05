@@ -8,7 +8,7 @@ import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { applyMemberRate, insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { salesTaxRateId } from "@/lib/stripe-tax";
-import { plusPaidFor } from "@/lib/plus-status";
+import { canAddPlusCard, firstChargeHold } from "@/lib/plus-status";
 import { markLegacyOnboarded } from "@/lib/legacy-plus-server";
 import { linkPlusCardById } from "@/lib/member-cards";
 import { recordInvoicePayment } from "@/lib/membership-payments/sync";
@@ -109,7 +109,9 @@ export async function startUnlimitedCard(memberId: string, readerId: string | nu
   if (bad) return { ok: false, error: bad };
   const m = await loadMember(memberId);
   if (!m) return { ok: false, error: "Couldn't find that member." };
-  if (plusPaidFor(m)) return { ok: false, error: `${firstOf(m)} already has Insiders+ paid for.` };
+  // Paid ahead until a date (lib/paid-through.ts) is fine: the card goes on
+  // and the first charge waits until then.
+  if (!canAddPlusCard(m)) return { ok: false, error: `${firstOf(m)} already has Insiders+ paid for.` };
   const stripe = getStripe();
   try {
     if (!(await insidersPlusPriceIdFor(plan.tier, plan.interval))) return { ok: false, error: "That Insiders+ price isn't set up in Stripe yet." };
@@ -217,7 +219,9 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
 
   // Already paid for: by this card a moment ago (an earlier check got
   // here first), or some other way since (then this card isn't needed).
-  if (plusPaidFor(m)) {
+  // A gifted or prepaid year with nothing after it isn't: the card goes on,
+  // first charged when it ends.
+  if (!canAddPlusCard(m)) {
     const mine = m.stripe_subscription_id
       ? await stripe.subscriptions
           .retrieve(m.stripe_subscription_id, { expand: ["latest_invoice"] })
@@ -237,6 +241,8 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
     return { status: "failed", message: `${firstOf(m)} already has Insiders+ paid for, so this card wasn't charged.` };
   }
 
+  // Paid ahead until a date: no charge until then (Stripe's trial_end).
+  const held = firstChargeHold(m);
   let sub: Stripe.Subscription;
   try {
     const priceId = await insidersPlusPriceIdFor(tier, interval);
@@ -248,7 +254,9 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
         // As the online checkout makes it: the price, with sales tax on top.
         items: [{ price: priceId, tax_rates: [taxRate] }],
         default_payment_method: paymentMethodId,
-        // Charged today. A decline makes no subscription at all.
+        ...(held ? { trial_end: Math.floor(held.getTime() / 1000) } : {}),
+        // Charged today (or $0 today when held). A decline makes no
+        // subscription at all.
         payment_behavior: "error_if_incomplete",
         off_session: true,
         metadata: { source: SOURCE, member_id: m.id, setup_intent: si.id, price_tier: tier, billing_interval: interval },
@@ -300,6 +308,16 @@ async function finishFromCard(stripe: Stripe, si: Stripe.SetupIntent): Promise<U
     if (invoice?.id) await recordInvoicePayment(invoice.id);
   });
   revalidatePath("/admin/members");
+  if (held) {
+    // Nothing charged today, so no receipt.
+    const day = held.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+    return {
+      status: "done",
+      member: await getPosMember(m.id),
+      message: `${firstOf(m)}'s card is on. Nothing charged today: no charge until ${day}, then ${planPrice(tier, interval)} plus tax.`,
+      receipt: null,
+    };
+  }
   const charged = invoice ? `$${(invoice.amount_paid / 100).toFixed(2)}` : null;
   return {
     status: "done",
@@ -374,7 +392,7 @@ export async function unlimitedPhoneLink(
   const m = await loadMember(memberId);
   if (!m) return { ok: false, error: "Couldn't find that member." };
   const name = firstOf(m);
-  if (plusPaidFor(m)) return { ok: false, error: `${name} already has Insiders+ paid for.` };
+  if (!canAddPlusCard(m)) return { ok: false, error: `${name} already has Insiders+ paid for.` };
   // Stripe's page sends its receipts there, and it's how their account is found.
   if (!m.email) return { ok: false, error: "No email on their account, so Stripe's page can't be tied to it. Take their card on the reader instead." };
   if ((m.price_tier ?? "adult") !== plan.tier) {
@@ -404,6 +422,8 @@ export async function unlimitedDone(memberId: string): Promise<{ done: boolean; 
   await assertStaff();
   const m = await loadMember(memberId);
   if (!m) return { done: false, member: null };
-  if (!plusPaidFor(m)) return { done: false, member: null };
+  // Done once a card is on (or it's paid for some other way that needs no
+  // card); a prepaid year alone isn't done.
+  if (canAddPlusCard(m)) return { done: false, member: null };
   return { done: true, member: await getPosMember(m.id) };
 }

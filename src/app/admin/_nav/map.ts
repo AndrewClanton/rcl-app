@@ -81,6 +81,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       keywords: "insiders plus loyalty points customers guests add a member community programs free comped gift billing",
     },
     {
+      href: "/admin/organizations",
+      label: "Organizations",
+      about: "Groups like Easter Seals: monthly fee, daily comps, helpers and supported guests, statements and the helper sign-up link.",
+      keywords: "corporate accounts easter seals arc of the ozarks disability helpers supported guests comps day pass invoice statement nonprofit group",
+      min: "admin",
+    },
+    {
       href: "/admin/members/former-unlimited",
       label: "Former unlimited members",
       about: "Paid for unlimited on the old website: who's set up on Insiders+ here, who came in without paying, who hasn't been in.",
@@ -105,8 +112,8 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     {
       href: "/admin/email",
       label: "Email",
-      about: "Member emails: the weekly lineup, campaigns, automations and results.",
-      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders",
+      about: "Member emails: what's up next, campaigns, how the list is doing and what each email brought in.",
+      keywords: "email marketing newsletter campaign lineup automations unsubscribe suppressions resend insiders overview up next results",
       min: "manager",
     },
     {
@@ -114,6 +121,20 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       label: "Ready to send",
       about: "Three finished member emails (the new Royale, Come in, Press play): preview, test and send them, and see who signed up.",
       keywords: "email invite send claim password new royale come in press play unlimited restart insiders ready test",
+      min: "manager",
+    },
+    {
+      href: "/admin/email/campaigns",
+      label: "Email campaigns",
+      about: "Every email as a card: drafts, the Monday lineup, what's going out and what went.",
+      keywords: "email campaigns drafts lineup newsletter sent scheduled new email weekly",
+      min: "manager",
+    },
+    {
+      href: "/admin/email/settings",
+      label: "Email settings",
+      about: "The go-live checklist and Sending on/off, who sends email, waves and our plan, Emergency stop.",
+      keywords: "email settings sending switch on off go live checklist who sends senders resend plan wave size emergency stop",
       min: "manager",
     },
     {
@@ -141,6 +162,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       badge: "itemsOut",
     },
     { href: "/admin/ingredients", label: "Ingredients & counts", about: "The ingredients recipes use, their costs, and shelf counts.", keywords: "inventory stock par counts cost pour", min: "manager" },
+    {
+      href: "/admin/bar-book",
+      label: "Bar Book",
+      about: "What the bar carries, each ingredient's icon color, and our own drinks for the register's Bar Book.",
+      keywords: "cocktails drinks recipes bar book carried makeable icons colors house drinks starter list spirits",
+      min: "manager",
+    },
     {
       href: "/admin/ran-out",
       label: "Ran out",
@@ -223,6 +251,23 @@ function shortcuts(dates: { yesterday: string; lastWeek: string }): (MapLink & {
     { area: "money", href: "/admin/reports/members", label: "Members report", about: "Reports → Members: who our members are, free members by program.", keywords: "grant impact community analytics" },
     { area: "money", href: "/admin/reports/usage", label: "Website usage", about: "Reports → Website usage: visits to the public site.", keywords: "analytics traffic visitors page views site" },
     { area: "money", href: "/admin/reports/daily", label: "Daily email", about: "Preview the end-of-day email the owners get each morning.", keywords: "digest morning email report send" },
+    // The Email tabs, so Find anything reaches each one.
+    {
+      area: "guests",
+      href: "/admin/email/automations",
+      label: "Email automations",
+      about: "Email → Automations: welcome, birthday, win-backs, switched on or off.",
+      keywords: "email automations welcome birthday win back winback nudge automatic",
+      min: "manager",
+    },
+    {
+      area: "guests",
+      href: "/admin/email/suppressions",
+      label: "Never-mail list",
+      about: "Email → Never-mail list: addresses we never send marketing to.",
+      keywords: "email suppressions never mail block unsubscribe bounce spam complaint",
+      min: "admin",
+    },
     { area: "guests", href: "/admin/members", label: "Add a member", about: "Members → + Add member.", keywords: "new member sign up join" },
     { area: "guests", href: "/admin/members?comped=1", label: "Free & community members", about: "Members, showing only the free ones.", keywords: "comped community programs grant" },
     {

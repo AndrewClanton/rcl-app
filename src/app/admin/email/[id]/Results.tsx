@@ -22,7 +22,21 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
   );
 }
 
-export default function Results({ detail, canSend, campaignId, status, kind }: { detail: CampaignDetail; canSend: boolean; campaignId: string; status: string; kind: CampaignKind }) {
+export default function Results({
+  detail,
+  canSend,
+  canStop,
+  campaignId,
+  status,
+  kind,
+}: {
+  detail: CampaignDetail;
+  canSend: boolean;
+  canStop: boolean;
+  campaignId: string;
+  status: string;
+  kind: CampaignKind;
+}) {
   const f = detail.funnel;
   const s = detail.summary.sent;
   const h = detail.summary.heldOut;
@@ -35,7 +49,7 @@ export default function Results({ detail, canSend, campaignId, status, kind }: {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold">How it did</h2>
-        <CampaignActions id={campaignId} status={status} kind={kind} canSend={canSend} waitingAtResend={f.waitingAtResend} />
+        <CampaignActions id={campaignId} status={status} kind={kind} canSend={canSend} canStop={canStop} waitingAtResend={f.waitingAtResend} />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">

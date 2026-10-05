@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { assertAdmin, assertManager, assertOwner } from "@/lib/auth";
+import { assertAdmin, assertManager, assertOwner, hasAdminAccess } from "@/lib/auth";
+import { SENDER_ROLES, senderRefusal } from "@/lib/email/senders";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay } from "@/lib/ops/time";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "@/lib/email/campaign";
@@ -38,6 +39,7 @@ import { centralDateTime, centralParts, nextLineupSlot, nextSendSlot, sendByFor 
 import { AUTOMATIONS, KIND_CATEGORY, PREF_CATEGORIES, type Audience, type Automation, type Category, type Exclusion } from "@/lib/email/types";
 import { designOf, type CampaignContent, type RenderData } from "@/lib/email/render";
 import type { LintResult } from "@/lib/email/lint";
+import { campaignTestKey, recordTest } from "./_studio/tests-log";
 
 // Back office -> Email. Managers and up draft, preview and send tests;
 // scheduling or sending to a list, switching automations, the never-mail
@@ -52,6 +54,9 @@ const EDITABLE = new Set(["draft", "paused", "scheduled", "active", "off"]);
 
 function revalidate(id?: string) {
   revalidatePath("/admin/email");
+  // The Email tabs (Campaigns, Settings) show the same state.
+  revalidatePath("/admin/email/campaigns");
+  revalidatePath("/admin/email/settings");
   if (id) revalidatePath(`/admin/email/${id}`);
 }
 
@@ -184,6 +189,8 @@ export async function sendCampaignTest(id: string, seeds: boolean): Promise<Resu
   if (!c) return { ok: false, error: "No such email." };
   try {
     const r = await sendTestEmail(asInput(c), { email: staff.email, name: staff.name }, { seeds });
+    // For the step track ("Tested on my phone"); never fails the test.
+    if (r.ok) await recordTest(campaignTestKey(c.id), staff);
     return r.ok ? { ok: true, sentTo: r.sentTo } : r;
   } catch {
     return { ok: false, error: "Couldn't send the test." };
@@ -200,7 +207,10 @@ export interface ScheduleInput {
 }
 
 export async function scheduleCampaign(id: string, input: ScheduleInput): Promise<Result<{ message: string }>> {
-  const staff = await assertAdmin();
+  // Sending to a list is for the people picked to send (lib/email/senders.ts).
+  const staff = await assertManager();
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   if (!UUID.test(id) || !UUID.test(input.sendKey ?? "")) return { ok: false, error: "Reload the page and try again." };
   const admin = createAdminClient();
   const c = await getCampaign(id);
@@ -311,7 +321,9 @@ export async function unscheduleCampaign(id: string): Promise<Result> {
 }
 
 export async function resumeCampaign(id: string): Promise<Result> {
-  await assertAdmin();
+  const staff = await assertManager();
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   if (await guardrailPause()) return { ok: false, error: "Sending is stopped (by an admin or a guardrail). Resume sending on the Email page first." };
   const before = await getCampaign(id);
   if (!before || isAutomation(before)) return { ok: false, error: "No such email." };
@@ -350,7 +362,9 @@ export async function resumeCampaign(id: string): Promise<Result> {
 // its "too late" time: one that's now over a day late pauses again for its
 // own Resume, and a "tonight" alert past its day is cancelled.
 export async function resumeAllSending(reason: string): Promise<Result<{ message: string }>> {
-  const staff = await assertAdmin();
+  const staff = await assertManager();
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   const why = String(reason ?? "").trim();
   if (why.length < 5) return { ok: false, error: "Say what you checked (a few words)." };
   const admin = createAdminClient();
@@ -467,7 +481,9 @@ export async function markUnsubscribeTested(done: boolean): Promise<Result> {
 // yet. Refused while the last wave's hard bounces or complaints are over
 // the warm-up limits, unless an admin types why it's fine.
 export async function sendNextWave(id: string, size: number, override: string | null): Promise<Result<{ message: string }>> {
-  const staff = await assertAdmin();
+  const staff = await assertManager();
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
   const n = Math.max(10, Math.min(1000, Math.floor(Number(size)) || 150));
   const c = await getCampaign(id);
   if (!c) return { ok: false, error: "No such email." };
@@ -516,7 +532,11 @@ export async function sendNextWave(id: string, size: number, override: string | 
 
 // ---------- automations ----------
 export async function setAutomationOn(automation: string, on: boolean): Promise<Result> {
-  await assertAdmin();
+  // On starts emails going, so it's for a sender. Off is a stop: any admin
+  // too.
+  const staff = await assertManager();
+  const notSender = await senderRefusal(staff);
+  if (notSender && (on || !hasAdminAccess(staff.role))) return { ok: false, error: notSender };
   if (!(AUTOMATIONS as readonly string[]).includes(automation)) return { ok: false, error: "No such automation." };
   const { data, error } = await createAdminClient()
     .from("email_campaigns")
@@ -596,4 +616,26 @@ export async function duplicateCampaign(id: string): Promise<Result<{ id: string
   if (error || !data) return { ok: false, error: "Couldn't copy it." };
   revalidate();
   return { ok: true, id: data.id as string };
+}
+
+// ---------- who sends ----------
+// Owners pick who sends email to members (lib/email/senders.ts): a tick per
+// person, from the managers, admins and owners.
+export async function setEmailSender(employeeId: string, on: boolean): Promise<Result<{ message: string }>> {
+  await assertOwner();
+  if (!UUID.test(employeeId ?? "")) return { ok: false, error: "Reload the page and try again." };
+  const { data, error } = await createAdminClient()
+    .from("employees")
+    .update({ sends_email: !!on })
+    .eq("id", employeeId)
+    .eq("active", true)
+    .in("role", [...SENDER_ROLES])
+    .select("name");
+  if (error) return { ok: false, error: error.code === "42703" ? "The database update for this hasn't been applied yet." : "Couldn't save that. Try again." };
+  if (!data?.length) return { ok: false, error: "That login can't send email (it has to be an active manager, admin or owner)." };
+  revalidatePath("/admin/email");
+  revalidatePath("/admin/email/settings");
+  revalidatePath("/admin/email/ready");
+  const name = String(data[0].name ?? "").trim().split(/\s+/)[0] || "They";
+  return { ok: true, message: on ? `${name} can send email to members now.` : `${name} can't send email to members any more.` };
 }

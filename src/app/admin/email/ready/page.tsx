@@ -1,13 +1,36 @@
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
-import { BRAKE_PREFIX, guardrailPause, masterSettingOn, sendingGate, SWITCH_OFF, waitingAtResend, WAVE_WAITING } from "@/lib/email/campaign-send";
+import {
+  BRAKE_PREFIX,
+  guardrailPause,
+  holdsWork,
+  lastWave,
+  masterSettingOn,
+  nextWaveAfter,
+  sendingGate,
+  SWITCH_OFF,
+  UNDO_PREFIX,
+  UNDO_UNFINISHED,
+  undoHoldAt,
+  undoPending,
+  undoWaveHanded,
+  UNDOING,
+  waitingAtResend,
+  waveDayWord,
+  WAVE_WAITING,
+  type Pace,
+} from "@/lib/email/campaign-send";
+import { arrivalLabel } from "@/lib/email/undo";
 import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
-import { finishDate, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
+import { finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
 import type { CampaignRow } from "@/lib/email/campaign";
-import ReadyToSend, { type CardData } from "./ReadyToSend";
+import { joinNames, senderCheck } from "@/lib/email/senders";
+import ReadyToSend, { type CardData, type UndoCard } from "./ReadyToSend";
+import { designTestKey, lastTestOf, testLog, testWhen } from "../_studio/tests-log";
+import { StatusChip } from "../_studio/ui";
 
 export const dynamic = "force-dynamic";
 // "Send" hands the first wave to Resend inside the action.
@@ -21,23 +44,39 @@ const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", 
 
 export default async function ReadyToSendPage() {
   const staff = await requireManager();
+  const sender = await senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: "Couldn't check who can send. Reload the page." }));
   const now = new Date();
   const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
-  const [plan, usage, pause, pictures, mode] = await Promise.all([
+  const [plan, usage, pause, pictures, mode, tests] = await Promise.all([
     getSendPlan(),
     listUsage(now).catch(() => ({ today: 0, month: 0 })),
     guardrailPause().catch(() => null),
     picturesReady(),
     getWaveMode(),
+    testLog(),
   ]);
   const gate = await sendingGate();
   const daily = perDay(plan);
   const monthLeft = Math.max(0, perMonth(plan) - usage.month);
   const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
+  // One wave a day: an email whose wave went (or arrives) today can have
+  // its next one the next sending day. Whether Resend holds email for later
+  // (for Undo) is asked once.
+  const [waveNext, holdsOk] = await Promise.all([
+    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? nextWaveAfter(await lastWave((rows[k] as CampaignRow).id).catch(() => null), now) : null] as const)).then(
+      (x) => Object.fromEntries(x) as Record<DesignKey, Date | null>,
+    ),
+    holdsWork().catch(() => true),
+  ]);
   // The next wave is as many as today's share allows (a full wave once
-  // today's has gone).
+  // today's has gone, or tomorrow's after today's wave); a Send that starts
+  // afresh has the small first wave.
+  const first = firstWaveSize(plan);
+  const startsAfresh = (c: CampaignRow | null) => !c || c.status === "sent" || c.status === "failed" || !!((c.content as { pace?: Pace }).pace ?? {}).firstWave;
+  const leftToday = (k: DesignKey) => (waveNext[k] ? 0 : todayLeft);
+  const sizes = Object.fromEntries(DESIGN_KEYS.map((k) => [k, Math.min(startsAfresh(rows[k]) ? first : daily, leftToday(k) > 0 ? leftToday(k) : daily)])) as Record<DesignKey, number>;
   const [counts, results, atResend] = await Promise.all([
-    countAudiences(rows, now, todayLeft > 0 ? todayLeft : daily).catch(() => null),
+    countAudiences(rows, now, sizes).catch(() => null),
     Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
       (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
     ),
@@ -47,14 +86,34 @@ export default async function ReadyToSendPage() {
     ),
   ]);
   const slot = nextSendSlot(now);
+  // The wave just pressed for, while it can be undone or is still on its
+  // way: from what's saved, so a reload shows the same minute.
+  const undos = Object.fromEntries(
+    await Promise.all(
+      DESIGN_KEYS.map(async (k): Promise<[DesignKey, UndoCard | null]> => {
+        const c = rows[k];
+        const u = c ? (((c.content as { pace?: Pace }).pace ?? {}).undo ?? null) : null;
+        if (!c || !u || now.getTime() >= Date.parse(u.arrives)) return [k, null];
+        const handed = await undoWaveHanded(c.id, u).catch(() => 0);
+        return [
+          k,
+          { key: u.key, wave: u.wave, people: handed || u.n, until: Date.parse(u.until), arrives: Date.parse(u.arrives), arrivesLabel: arrivalLabel(u.arrives, now), first: u.first, started: !!u.started, undoing: c.error === UNDOING },
+        ];
+      }),
+    ),
+  ) as Record<DesignKey, UndoCard | null>;
 
   const cards: CardData[] = DESIGN_KEYS.map((key) => {
     const d = DESIGNS[key];
     const c = rows[key];
     const count: AudienceCount | null = counts?.[key] ?? null;
     const n = count?.willSend ?? 0;
-    const days = sendingDays(n, daily, todayLeft);
+    const days = sendingDays(n, daily, leftToday(key), startsAfresh(c) ? first : daily);
     const preview = previewHtml(key, "claim");
+    // The next wave if pressed now, and whether (and till when) it would
+    // wait at Resend so it can be undone: the send's own rule.
+    const nextWave = Math.min(count?.next.n ?? 0, n) || sizes[key];
+    const hold = holdsOk && !waveNext[key] ? undoHoldAt(nextWave, now) : null;
     return {
       key,
       title: d.title,
@@ -67,12 +126,18 @@ export default async function ReadyToSendPage() {
       text: preview.text,
       count,
       days: Number.isFinite(days) ? days : null,
-      finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, todayLeft > 0)) : null,
+      finish: n > 0 && Number.isFinite(days) ? dayLabel(finishDate(days, now, leftToday(key) > 0, waveNext[key] ?? undefined)) : null,
       overMonth: n > monthLeft,
       status: c?.status ?? null,
       // "Waiting for staff" is what the wave line says already, and the
-      // brake has its own panel.
-      note: c?.error && !c.error.includes(WAVE_WAITING) && !c.error.startsWith(BRAKE_PREFIX) ? c.error : null,
+      // brake has its own panel. An Undo's note, once that Undo can no
+      // longer carry on, says so plainly.
+      note:
+        c?.error?.startsWith(UNDO_PREFIX) && !undoPending(c, now.getTime())
+          ? UNDO_UNFINISHED
+          : c?.error && !c.error.includes(WAVE_WAITING) && !c.error.startsWith(BRAKE_PREFIX)
+            ? c.error
+            : null,
       brake: c?.status === "paused" && c.error?.startsWith(BRAKE_PREFIX) ? c.error.slice(BRAKE_PREFIX.length) : null,
       atResend: atResend[key] ?? 0,
       campaignId: c?.id ?? null,
@@ -80,9 +145,15 @@ export default async function ReadyToSendPage() {
       outcomeLabel: d.outcome.label,
       outcomeAbout: d.outcome.about,
       sendKey: crypto.randomUUID(),
+      undo: undos[key],
+      hold: hold ? { minutes: Math.max(1, Math.round((hold.getTime() - now.getTime()) / 60_000)), label: arrivalLabel(hold.toISOString(), now) } : null,
+      nextWaveOn: waveNext[key] ? waveDayWord(waveNext[key] as Date, now) : null,
+      lastTest: (() => {
+        const t = lastTestOf(tests, designTestKey(key), staff.employeeId);
+        return t ? { who: t.who, when: testWhen(t.at, now) } : null;
+      })(),
     };
   });
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -90,6 +161,7 @@ export default async function ReadyToSendPage() {
         back={{ href: "/admin/email", label: "Email" }}
         title="Ready to send"
         purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. They go out in waves, the members most used to hearing from us first, so each wave can be checked before the next."
+        actions={pause ? <StatusChip label="Sending is stopped" tone="stopped" /> : gate.ok ? <StatusChip label="Sending is on" tone="sent" /> : <StatusChip label="Sending is off" tone="off" />}
       />
       <ReadyToSend
         cards={cards}
@@ -102,6 +174,7 @@ export default async function ReadyToSendPage() {
         plan={{
           ...plan,
           perDay: daily,
+          firstWave: first,
           perMonth: perMonth(plan),
           usedToday: usage.today,
           usedMonth: usage.month,
@@ -114,7 +187,10 @@ export default async function ReadyToSendPage() {
           goesAt: slot.getTime() === now.getTime() ? "now" : `at ${slot.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} ${dayLabel(slot)}`,
         }}
         isAdmin={hasAdminAccess(staff.role)}
+        sender={{ ok: sender.ok, names: joinNames(sender.names), why: sender.why }}
         myEmail={staff.email}
+        serverNow={now.getTime()}
+        noHolds={!holdsOk}
       />
     </div>
   );

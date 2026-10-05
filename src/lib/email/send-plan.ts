@@ -58,8 +58,34 @@ export const perMonth = (p: SendPlan) => Math.max(0, p.monthly - p.reserve * 30)
 const DAY = 86_400_000;
 export const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
+// Emails Undo called back from Resend (Ready to send), by the day (UTC)
+// they were handed over. Their rows are gone, but Resend may still count
+// them against that day's and month's limit, so they're counted here too
+// (email_settings 'undone_at_resend', {days: {"2026-10-13": 25}}, the last
+// 40 days). Written only under the call-back lease, one at a time.
+const UNDONE = "undone_at_resend";
+
+async function undoneDays(): Promise<Record<string, number>> {
+  const { data, error } = await createAdminClient().from("email_settings").select("value").eq("key", UNDONE).maybeSingle();
+  if (error) throw new Error("Couldn't count today's email.");
+  const days = (data?.value as { days?: Record<string, unknown> } | undefined)?.days ?? {};
+  return Object.fromEntries(Object.entries(days).map(([d, n]) => [d, Number(n) || 0]));
+}
+
+export async function addUndone(daysHandedOver: string[]): Promise<void> {
+  if (!daysHandedOver.length) return;
+  const days = await undoneDays();
+  for (const d of daysHandedOver) days[d] = (days[d] ?? 0) + 1;
+  const oldest = utcDay(new Date(Date.now() - 40 * DAY));
+  for (const d of Object.keys(days)) if (d < oldest) delete days[d];
+  const { error } = await createAdminClient()
+    .from("email_settings")
+    .upsert({ key: UNDONE, value: { days }, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw new Error("Couldn't save the emails called back.");
+}
+
 // List emails handed to Resend today (UTC) and this month (UTC), counting
-// ones handed over earlier to go out today.
+// ones handed over earlier to go out today, and ones Undo called back.
 export async function listUsage(now = new Date()): Promise<{ today: number; month: number }> {
   const admin = createAdminClient();
   const start = new Date(`${utcDay(now)}T00:00:00Z`);
@@ -71,12 +97,17 @@ export async function listUsage(now = new Date()): Promise<{ today: number; mont
     if (error) throw new Error("Couldn't count today's email.");
     return c ?? 0;
   };
-  const [today, earlier, thisMonth] = await Promise.all([
+  const [today, earlier, thisMonth, undone] = await Promise.all([
     count(admin.from("email_sends").select("id", { count: "exact", head: true }).in("status", handed).gte("submitted_at", start.toISOString()).lt("submitted_at", end.toISOString())),
     count(admin.from("email_sends").select("id", { count: "exact", head: true }).in("status", handed).lt("submitted_at", start.toISOString()).gte("deliver_at", start.toISOString()).lt("deliver_at", end.toISOString())),
     count(admin.from("email_sends").select("id", { count: "exact", head: true }).in("status", handed).gte("submitted_at", month.toISOString())),
+    undoneDays(),
   ]);
-  return { today: today + earlier, month: thisMonth };
+  const day = utcDay(now);
+  const undoneMonth = Object.entries(undone)
+    .filter(([d]) => d.slice(0, 7) === day.slice(0, 7) && d <= day)
+    .reduce((a, [, n]) => a + n, 0);
+  return { today: today + earlier + (undone[day] ?? 0), month: thisMonth + undoneMonth };
 }
 
 // How many more list emails can go today.
@@ -132,6 +163,13 @@ export async function saveWaveMode(mode: WaveMode, employeeId: string | null): P
   if (error) throw new Error("Couldn't save it.");
 }
 
+// The first wave of each ready-made email (and of each Send again) goes to
+// only this many, the most engaged, so a small wave can be judged before a
+// full one (Andrew, 10/3). Waves after it are the wave size; the first is
+// never bigger than that either.
+export const FIRST_WAVE = 25;
+export const firstWaveSize = (p: SendPlan) => Math.min(FIRST_WAVE, perDay(p));
+
 // Wave size is the plan's list share a day: setting it keeps what's held
 // back for receipts and makes Resend's daily figure the two added up.
 export async function saveWaveSize(size: number, employeeId: string | null): Promise<SendPlan> {
@@ -142,18 +180,22 @@ export async function saveWaveSize(size: number, employeeId: string | null): Pro
 }
 
 // About how many sending days (Monday to Saturday) `n` people take, with
-// `today` left today. Ignores the month's limit (the screen says so when
-// that's the one that bites).
-export function sendingDays(n: number, daily: number, today: number): number {
+// `today` left today, one wave a day, the first no bigger than `first`
+// (FIRST_WAVE for a Send that starts afresh). Ignores the month's limit
+// (the screen says so when that's the one that bites).
+export function sendingDays(n: number, daily: number, today: number, first = daily): number {
   if (n <= 0) return 0;
   if (daily <= 0) return Infinity;
-  const first = Math.min(n, Math.max(0, today));
-  return (first > 0 ? 1 : 0) + Math.ceil((n - first) / daily);
+  // The first wave goes today if there's room, otherwise on the next day.
+  const day1 = Math.min(n, Math.max(1, first), today > 0 ? today : daily);
+  return 1 + Math.ceil((n - day1) / daily);
 }
 
-// The date the last wave would go, counting Sundays off.
-export function finishDate(days: number, now = new Date(), firstToday = true): Date {
-  let d = firstToday ? nextSendSlot(now) : nextWaveDay(now);
+// The date the last wave would go, counting Sundays off. `start`: when the
+// first of them can go, if not today or the next day a wave can (a wave
+// already went today: one a day).
+export function finishDate(days: number, now = new Date(), firstToday = true, start?: Date): Date {
+  let d = start ?? (firstToday ? nextSendSlot(now) : nextWaveDay(now));
   for (let i = 1; i < days; i++) d = nextSendSlot(new Date(Date.parse(`${utcDay(new Date(d.getTime() + DAY))}T13:00:00Z`)));
   return d;
 }

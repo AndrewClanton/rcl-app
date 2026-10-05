@@ -12,6 +12,9 @@ export interface RegisterCartSnapshot {
   items: { name: string; quantity: number; modifiers: string[]; lineTotal?: number }[];
   subtotal: number;
   tax: number;
+  // The tax is inside the prices (an organization's supported guest,
+  // lib/orgs.ts): "Tax included", and the total is the listed prices.
+  taxIncluded?: boolean;
   total: number;
   discounts?: { label: string; amount: number }[];
   // Who's on this order, for the live tally, their account panel and their
@@ -40,6 +43,59 @@ export interface RegisterCartSnapshot {
     profile?: TabletProfile | null;
   } | null;
   pointsToEarn?: number;
+  // The register's payment screen is open: the customer screen plays its
+  // "ready to pay" sound. (A sale that saved sends "paid" on its own.)
+  paying?: boolean;
+  // A card charge couldn't start because the reader is offline: the screen
+  // says "Card reader is waking up, one moment" (never an error to guests).
+  readerWaking?: boolean;
+  // A card payment is waiting on the card reader: the customer screen
+  // takes over with "Finish on the card reader" (PayOnReader.tsx), so
+  // guests stop tapping their card on the tablet. Missing otherwise (cash,
+  // a voucher, a card on file charged without asking).
+  reader?: ReaderPrompt | null;
+}
+
+// What the guest does on the card reader, and where it sits.
+// tip: the reader asks for a tip first (off when the tip was already
+// taken on the register, or a tab asked for it when it closed).
+// card: they tap, insert or swipe there (false: a tab's card on file, where
+// the reader only asks for the tip).
+// step: "card" once the register can tell they're past the tip (a card was
+// tried); missing while it can't, so both steps stay up.
+export interface ReaderPrompt {
+  tip: boolean;
+  card: boolean;
+  step?: "card";
+}
+
+// Checked, since it comes off the channel: null for anything else.
+export function parseReaderPrompt(p: unknown): ReaderPrompt | null {
+  if (!p || typeof p !== "object") return null;
+  const r = p as Partial<ReaderPrompt>;
+  const tip = r.tip === true;
+  const card = r.card !== false;
+  if (!tip && !card) return null;
+  return { tip, card, step: card && r.step === "card" ? "card" : undefined };
+}
+
+// The customer screen's sound effects (display/customer/sounds.ts): on or
+// off, and how loud (0 to 100). Set on the register under Devices, sent as
+// "sound", and remembered on both. A register only sends it once someone
+// has set it there, so two registers never argue over the default.
+export interface TabletSound {
+  on: boolean;
+  volume: number;
+}
+
+// Modest by default: the 37-seat cinema is next door.
+export const TABLET_SOUND_DEFAULT: TabletSound = { on: true, volume: 40 };
+
+export function parseTabletSound(p: unknown): TabletSound | null {
+  if (!p || typeof p !== "object") return null;
+  const { on, volume } = p as Partial<TabletSound>;
+  if (typeof on !== "boolean" || typeof volume !== "number" || !Number.isFinite(volume)) return null;
+  return { on, volume: Math.min(100, Math.max(0, Math.round(volume))) };
 }
 
 // The outward-facing side of a member's profile (lib/member-profile.ts), as

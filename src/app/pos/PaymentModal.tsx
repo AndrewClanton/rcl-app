@@ -2,11 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
+import { READER_OFFLINE_MESSAGE } from "@/lib/terminal/reader-status";
 import { createReaderPayment, sendReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
 import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 import InfoTip from "@/components/help/InfoTip";
+import type { ReaderPrompt } from "@/lib/registerChannel";
 
 // Split: the cash part is taken first (change worked out, like Cash), then
 // the rest goes to this register's card reader, and the sale is saved as
@@ -259,7 +261,19 @@ export default function PaymentModal({
   onReaderCanceled,
   onConfirm,
   onCancel,
+  readerDown = false,
+  onReaderOffline,
+  onReaderPrompt,
 }: {
+  // What the guest does on the reader right now, for the customer screen's
+  // "Finish on the card reader" (null: nothing on the reader).
+  onReaderPrompt?: (prompt: Omit<ReaderPrompt, "side"> | null) => void;
+  // The register's reader monitor says it's offline: said up front, by the
+  // Card button. (A charge still checks for itself.)
+  readerDown?: boolean;
+  // A charge couldn't start because the reader is offline (true), or one
+  // got to the reader (false). The customer screen says "waking up".
+  onReaderOffline?: (offline: boolean) => void;
   total: number;
   readerId: string | null; // this register's card reader, or null if none is set up
   tipEligible: number | null; // pre-tax amount the reader's tip suggestions use; null skips the tip screen
@@ -312,6 +326,11 @@ export default function PaymentModal({
   // gets a note saying so (staff would otherwise think it was canceled).
   const cancelTappedRef = useRef(false);
   const [cancelling, setCancelling] = useState(false);
+  // The payment on the reader, for the customer screen: whether the reader
+  // asks for a tip first, and whether a card's been tried (so they're past
+  // the tip). Stripe doesn't say when the tip is picked; a declined card,
+  // or one being approved, is the first sign.
+  const [onReader, setOnReader] = useState<{ paymentIntentId: string; tip: boolean; pastTip: boolean } | null>(null);
 
   // What the reader charges: everything due, or what's left after a split's cash.
   const cardPart = (split: Split | null) => (split ? toCents(due - split.cash) : due);
@@ -345,6 +364,9 @@ export default function PaymentModal({
       let again = true;
       try {
         const { status, errorMessage, amountCents, tipCents } = await checkReaderPayment(paymentIntentId);
+        if (errorMessage || status === "processing" || status === "requires_capture") {
+          setOnReader((r) => (r && r.paymentIntentId === paymentIntentId && !r.pastTip ? { ...r, pastTip: true } : r));
+        }
         if (status === "succeeded") {
           // Recorded even if Cancel was tapped meanwhile: the card is charged.
           again = false;
@@ -389,6 +411,7 @@ export default function PaymentModal({
     try {
       const created = await createReaderPayment(amountCents, readerId);
       if (!created.ok) {
+        if (created.offline) onReaderOffline?.(true);
         setReader({ state: "failed", paymentIntentId: "", message: created.error, split });
         return;
       }
@@ -412,9 +435,13 @@ export default function PaymentModal({
         // Stopped, so nothing can charge it. (One that couldn't be stopped
         // stays kept, and is looked up again when the register next loads.)
         if (sent.canceled) onReaderCanceled?.(paymentIntentId);
+        if (sent.offline) onReaderOffline?.(true);
         setReader({ state: "failed", paymentIntentId: "", message: sent.error, split });
         return;
       }
+      onReaderOffline?.(false);
+      // Stripe shows the reader's tip screen only with a tip-eligible amount.
+      setOnReader({ paymentIntentId, tip: !!tipCents && tipCents > 0, pastTip: false });
       setReader({ state: "waiting", paymentIntentId, split });
       watchReaderPayment(paymentIntentId, split);
     } catch (e) {
@@ -443,6 +470,23 @@ export default function PaymentModal({
   useEffect(() => () => {
     if (tipPollRef.current) clearTimeout(tipPollRef.current);
   }, []);
+
+  // Closed: the customer screen's "waking up" goes with it.
+  useEffect(() => () => onReaderOffline?.(false), [onReaderOffline]);
+
+  // The customer screen's "Finish on the card reader": while this payment
+  // waits on the reader (not once Cancel is tapped), or while the reader
+  // asks a tab's card on file for its tip (no card to tap then).
+  const waitingOn = reader?.state === "waiting" && !cancelling ? reader.paymentIntentId : null;
+  const cardOnReader = !!waitingOn && onReader?.paymentIntentId === waitingOn;
+  const tipOnReader = !!readerTip && readerTip.phase !== "failed";
+  const promptOn = cardOnReader || tipOnReader;
+  const promptTip = cardOnReader ? !!onReader?.tip : tipOnReader;
+  const promptPast = cardOnReader && !!onReader?.pastTip;
+  useEffect(() => {
+    onReaderPrompt?.(promptOn ? { tip: promptTip, card: cardOnReader, step: promptPast ? "card" : undefined } : null);
+  }, [promptOn, promptTip, cardOnReader, promptPast, onReaderPrompt]);
+  useEffect(() => () => onReaderPrompt?.(null), [onReaderPrompt]);
 
   // "Charge card on file": ask the customer on the reader. No reader on
   // this register: ask here instead, unless the register already asked when
@@ -785,6 +829,11 @@ export default function PaymentModal({
           </div>
         )}
 
+        {readerId && readerDown && (
+          <p className="notice notice-warn mt-4 p-2 text-xs font-semibold" role="status">
+            {READER_OFFLINE_MESSAGE}
+          </p>
+        )}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
           <button className="btn-secondary px-4 py-2" onClick={() => setCashOpen(true)}>
             Cash

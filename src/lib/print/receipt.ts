@@ -27,6 +27,9 @@ export interface ReceiptData {
   subtotal: number;
   discounts: { label: string; amount: number }[];
   tax: number;
+  // The tax is inside the prices (an organization's supported guest,
+  // lib/orgs.ts): printed as "Tax included", not added.
+  taxIncluded?: boolean;
   tip: number;
   total: number; // includes tip
   payments: { label: string; amount: number }[];
@@ -190,7 +193,7 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   d.line(rule());
   d.lines(columns("Subtotal", money(r.subtotal)));
   for (const disc of r.discounts) if (disc.amount > 0) d.lines(columns(disc.label, `-${money(disc.amount)}`));
-  d.lines(columns("Tax", money(r.tax)));
+  d.lines(columns(r.taxIncluded ? "Tax (included in prices)" : "Tax", money(r.tax)));
   if (r.tip > 0) d.lines(columns("Tip", money(r.tip)));
   d.bold(true).lines(columns("TOTAL", money(r.total))).bold(false);
   d.line();
@@ -391,7 +394,11 @@ export function orderTicketXml(t: OrderTicket): string {
     d.size(2, 2).bold(true).lines(hang(`${qty}${l.name}`, 24, 0, qty.length)).bold(false);
     if (l.mods.length) {
       d.size(1, 2);
-      for (const m of l.mods) d.lines(hang(`- ${m}`, COLS, 6, 8));
+      for (const m of l.mods) {
+        // A double (lib/bar/double.ts) prints big and dark, so it's poured right.
+        if (m === "Double") d.size(2, 2).bold(true).reverse(true).line("  DOUBLE  ").reverse(false).bold(false).size(1, 2);
+        else d.lines(hang(`- ${m}`, COLS, 6, 8));
+      }
     }
     d.size(1, 1).gap(14);
   }

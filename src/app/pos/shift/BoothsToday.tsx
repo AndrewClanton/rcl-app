@@ -8,8 +8,10 @@ import { useOpsApi } from "./api";
 
 // Booths held today (each one a to-do until its Reserved card is printed and
 // set out) and tomorrow's bookings, with the ones booked in the last day
-// marked NEW -- so a booking made online never goes unnoticed.
-export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus["booths"]; onChanged: () => void }) {
+// marked NEW -- so a booking made online never goes unnoticed. The register
+// shows it behind its Booths button (StaffButton.tsx), in a window: `bare`
+// leaves off the box it used to sit in above the register.
+export default function BoothsToday({ booths, onChanged, bare = false }: { booths: ShiftStatus["booths"]; onChanged: () => void; bare?: boolean }) {
   const api = useOpsApi();
   const target = usePrintTarget();
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,15 +38,23 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
 
   return (
     <div
-      className="mb-3 rounded-lg border-2 px-4 py-2.5"
-      style={{ borderColor: "var(--foreground)", background: waiting > 0 ? "var(--gold)" : "var(--surface)", color: waiting > 0 ? "var(--gold-foreground)" : undefined }}
+      className={bare ? "" : "mb-3 rounded-lg border-2 px-4 py-2.5"}
+      style={bare ? undefined : { borderColor: "var(--foreground)", background: waiting > 0 ? "var(--gold)" : "var(--surface)", color: waiting > 0 ? "var(--gold-foreground)" : undefined }}
       role="status"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <span className="text-sm font-black uppercase tracking-wide">
-          Booths today{today.length > 0 ? ` · ${today.length}` : ""}
-          {waiting > 0 && <span className="ml-2 font-bold normal-case tracking-normal">Print the Reserved card and set it on the booth.</span>}
-        </span>
+        {bare ? (
+          waiting > 0 && (
+            <span className="rounded px-2 py-1 text-sm font-bold" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
+              Print the Reserved card and set it on the booth.
+            </span>
+          )
+        ) : (
+          <span className="text-sm font-black uppercase tracking-wide">
+            Booths today{today.length > 0 ? ` · ${today.length}` : ""}
+            {waiting > 0 && <span className="ml-2 font-bold normal-case tracking-normal">Print the Reserved card and set it on the booth.</span>}
+          </span>
+        )}
         {!target && today.length > 0 && <span className="text-xs">No printer set up on this register (Devices). You can still mark cards as set out.</span>}
       </div>
 
@@ -53,11 +63,16 @@ export default function BoothsToday({ booths, onChanged }: { booths: ShiftStatus
       ) : (
         <ul className="mt-1.5">
           {today.map((h) => (
-            <li key={h.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t py-2 first:border-t-0" style={{ borderColor: "rgba(20,17,12,0.2)" }}>
-              <span className="w-36 shrink-0 font-black tabular-nums">{h.window}</span>
-              <span className="font-bold">{h.booth}</span>
-              <span className="min-w-0 flex-1 text-sm">
-                {h.name} · party of {h.party}
+            <li key={h.id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t py-2 first:border-t-0" style={{ borderColor: "rgba(20,17,12,0.2)" }}>
+              {/* When, where and who on their own lines of text, never squeezed
+                  to a word a line: with too little room beside them (the
+                  pop-up on an iPad), the button drops under them instead. */}
+              <span className="flex min-w-0 flex-[1_1_15rem] flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <span className="whitespace-nowrap font-black tabular-nums">{h.window}</span>
+                <span className="whitespace-nowrap font-bold">{h.booth}</span>
+                <span className="min-w-0 break-words text-sm">
+                  {h.name} · <span className="whitespace-nowrap">party of {h.party}</span>
+                </span>
               </span>
               {h.cardPrintedAt ? (
                 <span className="flex items-center gap-3 text-sm">

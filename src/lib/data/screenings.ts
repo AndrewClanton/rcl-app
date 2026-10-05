@@ -4,10 +4,11 @@ import { unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
-import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow } from "@/lib/public-window";
+import { isOutdoorRoom, visibilityOf } from "@/lib/showing-visibility";
+import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow, publicWindowEnd } from "@/lib/public-window";
 import type { Screening } from "@/lib/types";
 
-export { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow };
+export { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow, publicWindowEnd };
 
 // Upcoming screenings (now and later), soonest first, with movie + room
 // joined. Unwindowed -- for staff/admin tools that need to see and manage
@@ -158,6 +159,12 @@ export function excludeRestrictedReleases(screenings: Screening[]): Screening[] 
   return screenings.filter((s) => !isRestrictedRelease(s.movie));
 }
 
+// What anyone may see: public showings of titles we're allowed to advertise.
+// Members-only and private showings never pass, nor does an older MPLC title.
+export function onlyPublicShowings(screenings: Screening[]): Screening[] {
+  return excludeRestrictedReleases(screenings).filter((s) => visibilityOf(s) === "public");
+}
+
 // ---------- the public listings (Home, Showtimes, the sitemap) ----------
 
 // The tag on the cached rows below. admin/screenings/actions.ts expires it
@@ -190,7 +197,7 @@ async function readPublicRows(): Promise<PublicRows> {
 
 // About one database read a minute while people are browsing, shared by
 // every visitor and page (plus one after a quiet spell, see ROWS_MAX_AGE_MS).
-const cachedPublicRows = unstable_cache(readPublicRows, ["public-screening-rows-v1"], { revalidate: 60, tags: [PUBLIC_SCREENINGS_TAG] });
+const cachedPublicRows = unstable_cache(readPublicRows, ["public-screening-rows-v2"], { revalidate: 60, tags: [PUBLIC_SCREENINGS_TAG] });
 
 // Same as getUpcomingScreenings, but only screenings starting within the
 // next PUBLIC_SCHEDULE_WINDOW_DAYS, and excluding anything our MPLC license
@@ -210,5 +217,30 @@ export async function getPubliclyVisibleScreenings(): Promise<Screening[]> {
   const cached = await cachedPublicRows();
   // Too old to trust after a quiet spell: read them now.
   const { rows } = Date.now() - cached.fetchedAt > ROWS_MAX_AGE_MS ? await readPublicRows() : cached;
-  return excludeRestrictedReleases(rows.filter((s) => isWithinPublicWindow(s.starts_at)));
+  return onlyPublicShowings(rows.filter((s) => isWithinPublicWindow(s.starts_at)));
+}
+
+// The members-only showings inside the public window, for a signed-in
+// member's listing. Takes the member getSignedInMember() returned, so a
+// guest (null) gets nothing. Members are who the MPLC rule lets us tell
+// about older titles, so an older title marked members-only is listed too.
+export async function getMembersOnlyScreenings(member: { id: string } | null): Promise<Screening[]> {
+  if (!member) return [];
+  return membersOnlyRows();
+}
+
+async function membersOnlyRows(): Promise<Screening[]> {
+  await connection();
+  const cached = await cachedPublicRows();
+  const { rows } = Date.now() - cached.fetchedAt > ROWS_MAX_AGE_MS ? await readPublicRows() : cached;
+  return rows.filter((s) => visibilityOf(s) === "members" && isWithinPublicWindow(s.starts_at));
+}
+
+// When the members-only showings are, and on which screen -- never what.
+// For the guests' teaser ("Outdoor movies this week: Thu, Fri & Sat at 8 PM.
+// Titles are for Insiders"): the outdoor screen and Midweek Movies aren't
+// licensed for public advertising, so a title must never reach a guest.
+export type InsiderSlot = { startsAt: string; outdoor: boolean };
+export async function getMembersOnlySlots(): Promise<InsiderSlot[]> {
+  return (await membersOnlyRows()).map((s) => ({ startsAt: s.starts_at, outdoor: isOutdoorRoom(s.room) }));
 }

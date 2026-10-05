@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { getPubliclyVisibleScreenings } from "@/lib/data/screenings";
 import MoviePoster from "@/components/MoviePoster";
+import ScreenTag from "@/components/site/ScreenTag";
+import { isOutdoorRoom } from "@/lib/showing-visibility";
 import PlusLink from "@/components/PlusLink";
 import { Seal, SpecFoot, Sprockets, Starburst } from "@/components/print";
 import type { Screening } from "@/lib/types";
@@ -179,7 +181,7 @@ export default async function HomePage() {
                   <MoviePoster posterUrl={first.movie.poster_url} title={first.movie.title} sizes="(min-width: 1024px) 300px, (min-width: 640px) 45vw, 90vw" />
                 </Link>
                 <span className="ctag ctag-yellow absolute -top-3 right-3 z-[1]">{first.ticket_price === 0 ? "Free" : `$${first.ticket_price.toFixed(2)}`}</span>
-                {first.room.name.toLowerCase().includes("outdoor") && <span className="ctag ctag-ink absolute top-3 left-3 z-[1]">Outdoor</span>}
+                {isOutdoorRoom(first.room) && <span className="ctag ctag-ink absolute top-3 left-3 z-[1]">Outdoor</span>}
                 <div className="flex flex-1 flex-col px-4 py-4">
                   <h3 className="font-display text-xl leading-tight">
                     <Link href={`/showtimes/${first.id}`} className="hover:underline">
@@ -187,7 +189,8 @@ export default async function HomePage() {
                     </Link>
                   </h3>
                   <div className="spec-k mt-1 !mb-0">
-                    {[first.room.name, first.movie.runtime_minutes ? `${first.movie.runtime_minutes} min` : null, first.movie.rating].filter(Boolean).join(" · ")}
+                    <ScreenTag room={first.room} className="align-middle" />
+                    {[first.movie.runtime_minutes ? `${first.movie.runtime_minutes} min` : null, first.movie.rating].filter(Boolean).map((p) => ` · ${p}`).join("")}
                   </div>
                   <div className="mt-3 flex flex-1 flex-wrap content-start gap-2">
                     {showings.map((s) => {

@@ -4,16 +4,19 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import MemberAvatar from "@/components/MemberAvatar";
 import { maskEmail, maskPhone } from "@/lib/contact-mask";
 import { FLAG_NOTE_MAX, FLAG_REASONS, FLAG_REASON_KEYS, flagTime, type FlagReason } from "@/lib/member-flags";
-import { flagMember, getMemberGlance, type GlanceFlag, type MemberGlanceInfo } from "./checkin-actions";
+import MemberNotesPanel from "@/components/MemberNotesPanel";
+import OrgAccountPicker from "./OrgAccountPicker";
+import { addMemberNote, flagMember, getMemberGlance, setMemberOrganization, type GlanceFlag, type MemberGlanceInfo } from "./checkin-actions";
 import { NOT_ACTIVE_RED } from "./LegacyPlusCard";
 import type { PosMember } from "./member-actions";
 import { memberSignal, memberStanding } from "./member-signal";
 
 // Hold a customer card (Checked in today on the Customers tab, or the
 // order's Member box) for about half a second: their account at a glance
-// (Andrew, 10/2). For looking only: anything to change is done in Back
-// office ("Open in Back office"), so there's nothing here to edit or undo.
-// The one thing staff can do is "Flag suspicious activity" (a quiet red
+// (Andrew, 10/2). Mostly for looking: anything big is done in Back office
+// ("Open in Back office"). Staff can add a note and set the "Group /
+// organization" chip here (staff only, lib/member-notes.ts; 10/5), and
+// "Flag suspicious activity" (a quiet red
 // link at the bottom): a reason and a short note, recorded for an admin or
 // owner to look at on the member's Back office page. It blocks nothing.
 // Closes with ✕, Esc, or a tap outside.
@@ -105,11 +108,16 @@ export default function MemberGlance({
   employeeId,
   onClose,
   onFlagged,
+  onOrganization,
+  onOrgAccount,
 }: {
   member: PosMember;
   employeeId: string;
   onClose: () => void;
   onFlagged?: (memberId: string) => void;
+  onOrganization?: (memberId: string, organization: string | null) => void;
+  // Their organization account changed (OrgAccountPicker).
+  onOrgAccount?: (memberId: string) => void;
 }) {
   // undefined while it's looked up, null if it couldn't be.
   const [info, setInfo] = useState<MemberGlanceInfo | null | undefined>(undefined);
@@ -224,6 +232,24 @@ export default function MemberGlance({
             </div>
           ))}
         </dl>
+        {/* Staff-only notes and the organization chip (Andrew, 10/5): any
+            cashier, no PIN. */}
+        {info && (
+          <div className="mt-3 border-t pt-3" style={{ borderColor: "var(--border)" }}>
+            <MemberNotesPanel
+              notes={info.notes}
+              organization={info.organization}
+              suggestions={info.organizations}
+              shown={3}
+              moreHref={`/admin/members/${m.id}`}
+              addNote={(text) => addMemberNote(m.id, text, employeeId || null)}
+              setOrganization={(value) => setMemberOrganization(m.id, value)}
+              onOrganization={(org) => onOrganization?.(m.id, org)}
+            />
+            {/* The organization account (comps, tax-included prices). */}
+            <OrgAccountPicker memberId={m.id} onChanged={() => onOrgAccount?.(m.id)} />
+          </div>
+        )}
         {/* A new tab, so the register (and its open sale) stays put. */}
         <a
           href={`/admin/members/${m.id}`}

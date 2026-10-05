@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { drawerXml, testPageXml } from "@/lib/print/receipt";
 import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
 import { STATION_LABEL, STATIONS, type RegisterStation } from "@/lib/print/stations";
@@ -9,20 +9,108 @@ import { getStationPrinterStatus, type StationPrinterStatus } from "../print-act
 import { printTargetOf, sendPrint } from "../printing";
 import { saveDeviceSettings, useDeviceSettings } from "./settings";
 import InfoTip from "@/components/help/InfoTip";
+import { TABLET_SOUND_DEFAULT } from "@/lib/registerChannel";
+import { agoLabel, readerNeedsLook, type ReaderHealth } from "@/lib/terminal/reader-status";
+import type { ReaderMonitor } from "./reader-monitor";
+
+const WISEPOS_SETUP_URL = "https://docs.stripe.com/terminal/payments/setup-reader/bbpos-wisepos-e#settings";
+
+// The chosen reader's health (useReaderMonitor): a big online/offline dot,
+// when Stripe last heard from it, what it is and what it's doing, how often
+// it dropped off today, and what to do when it's offline. Stripe has no
+// battery level for this reader, so the panel says so.
+export function ReaderStatusCard({ health, checking, onCheck }: { health: ReaderHealth | null; checking: boolean; onCheck: () => void }) {
+  // "Last seen 12 s ago" keeps counting while the panel is open.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const first = setTimeout(tick, 0);
+    const t = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+    };
+  }, []);
+  const down = readerNeedsLook(health);
+  const known = !!health && health.found && health.checkedAt !== null;
+  const state = !health ? "Checking…" : !health.found ? "Not in Stripe" : !known ? "Unknown" : down ? "Offline" : "Online";
+  const color = !known ? "var(--muted)" : down ? "var(--danger-text)" : "var(--success-text, green)";
+  const details = health && [health.model, health.serialLast4 && `serial ··${health.serialLast4}`, health.software && `software ${health.software}`, health.ip && `IP ${health.ip}`].filter(Boolean).join(" · ");
+  return (
+    <div className="space-y-2 rounded-lg border p-3 text-sm" style={{ borderColor: down ? "var(--danger-text)" : "var(--border)" }}>
+      <div className="flex items-center gap-3">
+        <span className="h-6 w-6 shrink-0 rounded-full" style={{ background: color, boxShadow: known && !down ? "0 0 0 4px color-mix(in srgb, var(--success-text, green) 25%, transparent)" : undefined }} aria-hidden />
+        <div className="min-w-0 flex-1">
+          <div className="text-lg font-bold leading-tight" style={{ color }}>
+            {state}
+          </div>
+          <div className="text-xs" style={{ color: "var(--muted)" }}>
+            {health?.lastSeenAt && now ? `Last seen ${agoLabel(now - health.lastSeenAt)}` : health?.found === false ? "Pick another reader below." : "Not seen yet"}
+            {health?.stripeError && " · couldn't reach Stripe just now"}
+          </div>
+        </div>
+        <button className="btn-secondary shrink-0 !px-3 !py-1.5 text-sm" disabled={checking} onClick={onCheck}>
+          {checking ? "Checking…" : "Check now"}
+        </button>
+      </div>
+      {health?.found && (
+        <div className="space-y-0.5 text-xs">
+          <div>
+            <span className="font-bold">{health.label ?? "Card reader"}</span>
+            {details ? <span style={{ color: "var(--muted)" }}> · {details}</span> : null}
+          </div>
+          {health.location && <div style={{ color: "var(--muted)" }}>Location: {health.location}</div>}
+          <div>
+            Now: <span className="font-bold">{down ? "Not reachable" : (health.doing ?? "Idle")}</span>
+            {" · "}
+            <span style={{ color: health.offlineToday > 0 ? "var(--danger-text)" : "var(--muted)" }}>
+              {health.offlineToday === 0 ? "Not offline today" : `Offline ${health.offlineToday} time${health.offlineToday === 1 ? "" : "s"} today`}
+            </span>
+          </div>
+        </div>
+      )}
+      <p className="text-xs font-semibold">Battery % isn&apos;t available from Stripe for this reader; keep it on its charger.</p>
+      <details open={down} className="text-xs">
+        <summary className="cursor-pointer font-semibold">If it&apos;s offline</summary>
+        <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+          <li>Plug it in, or set it on its charging dock.</li>
+          <li>Check its Wi-Fi: swipe in from the left edge → Settings → Wi-Fi.</li>
+          <li>Still stuck: hold the power button to restart it.</li>
+          <li>
+            To see the battery: swipe in from the left edge → Settings (the passcode is on{" "}
+            <a className="underline" href={WISEPOS_SETUP_URL} target="_blank" rel="noreferrer">
+              Stripe&apos;s reader page
+            </a>
+            ) → Diagnostics.
+          </li>
+        </ol>
+      </details>
+    </div>
+  );
+}
 
 // The "Devices" button on the register: which register this is (Bar or
 // Outdoor stand), its card reader, how it prints (through the website to
 // the station's printer, or straight to a printer's IP the old way),
-// whether receipts print on their own, and test buttons for the printer and
-// the cash drawer.
+// whether receipts print on their own, test buttons for the printer and
+// the cash drawer, and the customer screen's sound effects (on or off, and
+// how loud), sent to the screen over the register's channel.
 export default function DevicesPanel({
   onReprint,
   onReprintTickets,
   fallbackReaderId,
+  sendToTablet,
+  reader,
+  buttonClassName = "chip relative shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm",
 }: {
+  // This register's reader, watched by the register (useReaderMonitor).
+  reader: ReaderMonitor;
   onReprint: (() => Promise<PrintResult>) | null;
   onReprintTickets: (() => Promise<PrintResult>) | null;
   fallbackReaderId: string | null;
+  // To the customer screen over the register's channel ("sound", "sound-test").
+  sendToTablet: (event: string, payload: object) => void;
+  buttonClassName?: string;
 }) {
   const settings = useDeviceSettings();
   const [open, setOpen] = useState(false);
@@ -58,22 +146,30 @@ export default function DevicesPanel({
   const target = printTargetOf(settings);
   const viaStation = settings.printVia === "station";
   const missing = [!readerId && "reader", !target && "printer"].filter(Boolean);
+  const readerDown = readerNeedsLook(reader.health);
   const stationLabel = STATION_LABEL[settings.station];
+  // What the customer screen plays: as set here, else its own default.
+  const sound = { on: settings.tabletSound ?? TABLET_SOUND_DEFAULT.on, volume: settings.tabletVolume ?? TABLET_SOUND_DEFAULT.volume };
 
   return (
     <>
       <button
-        className="chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm"
-        title={missing.length ? `No ${missing.join(" or ")} set up on this register` : undefined}
+        className={buttonClassName}
+        title={readerDown ? "Card reader offline" : missing.length ? `No ${missing.join(" or ")} set up on this register` : undefined}
+        aria-label={readerDown ? "Devices: card reader offline" : missing.length ? `Devices: no ${missing.join(" or ")} set up` : "Devices"}
         onClick={() => {
           setAddress(settings.printerAddress);
           setResult(null);
           setOpen(true);
           void loadReaders();
+          reader.check();
           if (settings.printVia === "station") void loadStationPrinter(settings.station);
         }}
       >
-        Devices{missing.length ? <span style={{ color: "var(--danger-text)" }}> · set up</span> : null}
+        Devices
+        {/* Red: something on this register still needs setting up, or its
+            card reader is offline. */}
+        {(missing.length > 0 || readerDown) &&<span className="absolute -right-1 -top-1 h-3 w-3 rounded-full" style={{ background: "var(--accent)", boxShadow: "0 0 0 2px var(--surface)" }} aria-hidden />}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setOpen(false)}>
@@ -114,7 +210,9 @@ export default function DevicesPanel({
               <div className="label-xs flex items-center">
                 Card reader next to this register
                 <InfoTip topic="devices-reader" />
+                <InfoTip topic="card-reader-status" />
               </div>
+              {readerId && <ReaderStatusCard health={reader.health} checking={reader.checking} onCheck={() => reader.check(true)} />}
               {readerError ? (
                 <p className="text-sm" style={{ color: "var(--danger-text)" }}>
                   {readerError}
@@ -283,8 +381,68 @@ export default function DevicesPanel({
               </label>
             </section>
 
+            <section className="space-y-3 border-t pt-4" style={{ borderColor: "var(--border)" }}>
+              <div className="label-xs flex items-center">
+                Customer screen sounds
+                <InfoTip topic="devices-tablet-sound" />
+              </div>
+              <label className="flex min-h-11 items-center gap-2 text-sm">
+                <input
+                  id="tablet-sound-on"
+                  type="checkbox"
+                  className="h-5 w-5"
+                  checked={sound.on}
+                  onChange={(e) => {
+                    const next = { ...sound, on: e.target.checked };
+                    saveDeviceSettings({ tabletSound: next.on, tabletVolume: next.volume });
+                    sendToTablet("sound", next);
+                    if (next.on) sendToTablet("sound-test", {});
+                  }}
+                />
+                Play sound effects on the customer screen
+              </label>
+              <label className="block text-sm" htmlFor="tablet-sound-volume">
+                <span className="flex items-baseline justify-between">
+                  <span>Volume</span>
+                  <span className="tabular-nums" style={{ color: "var(--muted)" }}>
+                    {sound.volume}%
+                  </span>
+                </span>
+                <input
+                  id="tablet-sound-volume"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={5}
+                  className="mt-1 h-11 w-full"
+                  style={{ accentColor: "var(--accent)" }}
+                  disabled={!sound.on}
+                  value={sound.volume}
+                  onChange={(e) => {
+                    const next = { ...sound, volume: Number(e.target.value) };
+                    saveDeviceSettings({ tabletSound: next.on, tabletVolume: next.volume });
+                    sendToTablet("sound", next);
+                  }}
+                  // Let go of the slider: a sample at the new level.
+                  onPointerUp={() => sendToTablet("sound-test", {})}
+                  onKeyUp={() => sendToTablet("sound-test", {})}
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button className="btn-secondary" disabled={!sound.on} onClick={() => sendToTablet("sound-test", {})}>
+                  Play a test sound
+                </button>
+                <span className="text-xs" style={{ color: "var(--muted)" }}>
+                  Silent? Tap the customer screen once, and check the iPad&apos;s own volume.
+                </span>
+              </div>
+              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                Short arcade blips for check-ins, items, the total, paying and the fun stuff. Keep it low: the cinema is right next door.
+              </p>
+            </section>
+
             <p className="text-xs" style={{ color: "var(--muted)" }}>
-              These choices are saved on this device only, so each register can have its own reader and printer.
+              These choices are saved on this device only, so each register can have its own reader and printer. The sound settings are also kept on the customer screen.
             </p>
           </div>
         </div>

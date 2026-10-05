@@ -21,8 +21,12 @@ import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { readApproval } from "@/lib/approval-token";
-import { ownerSaleProblems, parseOwnerRateScope, sameOwnerLines, type OwnerPricing } from "@/lib/register-totals";
+import { ownerOrderExtras, ownerSaleProblems, parseOwnerRateScope, sameOwnerLines, type OwnerPricing } from "@/lib/register-totals";
 import { firstName as firstNameOf, ownerOrderHash, ownerRatePeople, priceOwnerSale } from "@/lib/owner-rate-server";
+import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
+import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
+import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
+import { logOrderComps, openOverLimit, orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -37,6 +41,16 @@ export interface CheckoutLine {
   // from the register.
   menu_unit_price?: number;
   owner_pricing?: OwnerPricing;
+  // A Bar Book drink rung up off the menu (register → Bar Book → Add to
+  // order): a one-off line like "+ Custom item" that says which recipe it
+  // was. The server keeps it only for a real off-menu recipe on a one-off
+  // line (bookRecipeOf); anything else is dropped.
+  recipe_id?: string | null;
+  // A custom drink from "What's in it?": a one-off line carrying what's in
+  // it ([{ ingredient_id, quantity }]). The server keeps it only on a
+  // one-off line with no Bar Book recipe, checks every ingredient, and
+  // writes the names itself (cleanCustomRecipe); anything else is dropped.
+  custom_recipe?: CustomRecipeLine[] | null;
 }
 
 export interface CheckoutTotals {
@@ -49,6 +63,10 @@ export interface CheckoutTotals {
   redemption_discount: number;
   tax: number;
   total: number;
+  // An organization member's comps (a day pass, movies) and a supported
+  // guest's tax-included prices (lib/orgs.ts). Optional: none.
+  org_comp_discount?: number;
+  tax_included?: boolean;
 }
 
 export interface CheckoutPayment {
@@ -97,6 +115,28 @@ function revalidate() {
   revalidatePath("/pos");
 }
 
+type BookRecipes = Awaited<ReturnType<typeof bookRecipesFor>>;
+
+// What the server found for an order's Bar Book drinks and custom drinks,
+// looked up once per save.
+type LineExtras = { book: BookRecipes; ingredients: Awaited<ReturnType<typeof customIngredientsFor>> };
+
+async function lineExtrasFor(lines: CheckoutLine[]): Promise<LineExtras> {
+  const [book, ingredients] = await Promise.all([bookRecipesFor(lines), customIngredientsFor(lines)]);
+  return { book, ingredients };
+}
+
+// The recipe a line may keep: a one-off line (no menu item, not a ticket)
+// naming an off-menu Bar Book drink the server found (bookRecipesFor).
+function bookRecipeOf(l: CheckoutLine, book: BookRecipes): string | null {
+  return bookRecipeIdOf(l, book);
+}
+
+// The ingredient list a custom drink may keep (cleanCustomRecipe).
+function customRecipeOf(l: CheckoutLine, extras: LineExtras): CustomRecipeLine[] | null {
+  return cleanCustomRecipe(l, extras.ingredients);
+}
+
 // Swaps an order's items for `lines`. The new rows go in first and the old
 // ones come out after, by id, so a save that fails part-way leaves the order
 // with its old items instead of none (deleting first, then failing to
@@ -106,30 +146,41 @@ async function replaceOrderItems(
   supabase: ReturnType<typeof createAdminClient>,
   orderId: string,
   lines: CheckoutLine[],
+  given?: LineExtras,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: old, error: readErr } = await supabase.from("order_items").select("id").eq("order_id", orderId);
   if (readErr) return { ok: false, error: readErr.message };
   let addedIds: string[] = [];
   if (lines.length) {
-    const { data: added, error: insertErr } = await supabase
-      .from("order_items")
-      .insert(
-        lines.map((l) => ({
-          order_id: orderId,
-          menu_item_id: l.menu_item_id,
-          name: l.name,
-          unit_price: l.unit_price,
-          quantity: l.quantity,
-          modifiers: l.modifiers,
-          is_alcohol: l.is_alcohol,
-          screening_id: l.screening_id ?? null,
-          // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
-          is_event: !!l.screening_id,
-          // Only on an owner-tab line, so every other sale saves exactly as before.
-          ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
-        }))
-      )
-      .select("id");
+    // Bar Book drinks keep their recipe and custom drinks their list (both
+    // count as alcohol when they are); a line without either saves exactly
+    // as it always has.
+    const extras = given ?? (await lineExtrasFor(lines));
+    const recipeIds = lines.map((l) => bookRecipeOf(l, extras.book));
+    const customs = lines.map((l) => customRecipeOf(l, extras));
+    const rows = lines.map((l, i) => ({
+      order_id: orderId,
+      menu_item_id: l.menu_item_id,
+      name: l.name,
+      unit_price: l.unit_price,
+      quantity: l.quantity,
+      modifiers: l.modifiers,
+      is_alcohol: recipeIds[i] ? true : l.is_alcohol || (customs[i] ? customIsAlcohol(customs[i]!.map((c) => ({ name: c.name ?? "", kind: c.kind }))) : false),
+      screening_id: l.screening_id ?? null,
+      // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
+      is_event: !!l.screening_id,
+      // Only on an owner-tab line, so every other sale saves exactly as before.
+      ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
+    }));
+    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
+    const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
+    const withCustoms: Row[] = customs.some(Boolean) ? withRecipes.map((r, i) => (customs[i] ? { ...r, custom_recipe: customs[i]! } : r)) : withRecipes;
+    const insert = (r: Row[]) => supabase.from("order_items").insert(r).select("id");
+    let { data: added, error: insertErr } = await insert(withCustoms);
+    // Before migration 20261005010000 adds order_items.custom_recipe, or
+    // 20261004030000 adds recipe_id: saved without them, like any custom line.
+    if (insertErr && schemaMissing(insertErr) && withCustoms !== withRecipes) ({ data: added, error: insertErr } = await insert(withRecipes));
+    if (insertErr && schemaMissing(insertErr) && withRecipes !== rows) ({ data: added, error: insertErr } = await insert(rows));
     if (insertErr) return { ok: false, error: insertErr.message };
     addedIds = (added ?? []).map((r) => r.id);
   }
@@ -193,8 +244,9 @@ async function saveSaleItems(
   supabase: ReturnType<typeof createAdminClient>,
   sale: { orderId: string; orderNumber: number; employeeId: string; paymentIntentId: string | null },
   lines: CheckoutLine[],
+  extras: LineExtras,
 ) {
-  const r = await replaceOrderItems(supabase, sale.orderId, lines);
+  const r = await replaceOrderItems(supabase, sale.orderId, lines, extras);
   if (r.ok) return;
   console.error("sale items not saved", sale.orderId, r.error);
   const items = lines.slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`);
@@ -205,10 +257,23 @@ async function saveSaleItems(
 // A custom item usually means the menu couldn't describe the sale, so each
 // one becomes a dev note to review. Best-effort: never blocks the sale. A
 // badge reward's $0 line isn't one.
-async function noteCustomItems(supabase: ReturnType<typeof createAdminClient>, orderNumber: number, lines: CheckoutLine[], employeeId: string) {
-  const customLines = lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l));
+// Nor is a Bar Book drink: the book described it.
+async function noteCustomItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  orderNumber: number,
+  lines: CheckoutLine[],
+  employeeId: string,
+  extras: LineExtras,
+) {
+  const customLines = lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !bookRecipeOf(l, extras.book));
   if (!customLines.length) return;
-  const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
+  // A custom drink says what was in it.
+  const items = customLines
+    .map((l) => {
+      const list = customRecipeText(customRecipeOf(l, extras));
+      return `"${l.name}"${list ? ` (${list})` : ""} $${(l.unit_price * l.quantity).toFixed(2)}`;
+    })
+    .join(", ");
   await supabase
     .from("dev_notes")
     .insert({
@@ -226,6 +291,9 @@ export type CompleteOrderInput = DraftFields & {
   ageVerified: boolean;
   tip?: number;
   draftOrderId?: string | null;
+  // A manager's OK to comp past the organization's daily limit
+  // (org-actions.ts approveOrgOverLimit).
+  orgApproval?: string | null;
 };
 
 // A card sale's card, once the sale is saved: linked to the member on it,
@@ -271,10 +339,29 @@ async function memberPoints(supabase: ReturnType<typeof createAdminClient>, memb
 // dropDailyCoffee: the Insiders+ daily coffee has to come off the order,
 // with the member's coffee today when that's why (already used: the
 // register shows when).
-export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null };
+// orgFull: the organization's comps for today are used up (the register
+// looks again and offers the manager override).
+export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null; orgFull?: boolean };
 
-export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals): Promise<PaymentCheck> {
-  await assertStaff();
+export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals, orgApproval: string | null = null): Promise<PaymentCheck> {
+  const staff = await assertStaff();
+  // An organization's comps: today's limit, looked at again (the other
+  // register may have used the last one). A manager can go past it.
+  if (Number(totals.org_comp_discount ?? 0) > 0 && fields.memberId) {
+    try {
+      const memberNow = await currentMemberId(fields.memberId);
+      const terms = await orgSaleTerms(memberNow, fields.lines, false);
+      if (terms.plan.blocked && !(terms.org && openOverLimit(orgApproval, terms.org.orgId, staff.employeeId))) {
+        return {
+          ok: false,
+          orgFull: true,
+          error: `${terms.org?.orgName ?? "This organization"} has used all ${terms.org?.limit ?? ""} of today's comps. A manager can approve one more, or ring the day pass and tickets at their price.`,
+        };
+      }
+    } catch (e) {
+      console.warn("org comp check skipped", e);
+    }
+  }
   const supabase = createAdminClient();
   const coffeeOn = Number(totals.daily_perk_discount ?? 0) > 0;
   // The account a merged-away member became (lib/member-forward.ts), so the
@@ -347,7 +434,37 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // they've paid.
   const memberId = await currentMemberId(params.memberId);
 
+  // An organization member's comps and tax-included prices (lib/orgs.ts),
+  // judged before this sale's own comps are logged. The register checked
+  // the daily limit before payment; a comp past it without a manager's OK
+  // is still saved (they've paid what they were asked) and flagged.
+  // Comps are logged only when the register took them off (a sale rung
+  // while the day's comps were used up was charged, so logs none).
+  const compsClaimed = Number(params.totals.org_comp_discount ?? 0) > 0;
+  const orgClaimed = compsClaimed || !!params.totals.tax_included;
+  let orgTerms: OrgSaleTerms | undefined;
+  let overLimitBy: string | null = null;
+  let overLimitUnapproved = false;
+  if (memberId && orgClaimed) {
+    try {
+      // A charged sale (no comps) is judged against the limit; a comped one
+      // is let past it here and flagged below if no manager approved.
+      orgTerms = await orgSaleTerms(memberId, params.lines, compsClaimed);
+      if (compsClaimed && orgTerms.plan.overLimit && orgTerms.org) {
+        const ok = openOverLimit(params.orgApproval, orgTerms.org.orgId, staff.employeeId);
+        overLimitBy = ok?.approverId ?? null;
+        overLimitUnapproved = !ok;
+      }
+    } catch (e) {
+      console.error("org terms not read", e);
+    }
+  }
+  const orgFields = orgClaimed
+    ? { organization_id: orgTerms?.org?.orgId ?? null, org_comp_discount: cents(Number(params.totals.org_comp_discount ?? 0)), tax_included: !!params.totals.tax_included }
+    : {};
+
   const orderFields = {
+    ...orgFields,
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
@@ -401,8 +518,12 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     return { ok: false, error: card.error, cardCharged: card.charged };
   }
 
-  const saleForCheck = { ...params, memberId, tip };
+  const saleForCheck = { ...params, memberId, tip, org: orgTerms };
   let totalsCheck: TotalsCheck | null = null;
+  // The Bar Book drinks on it (off-menu, rung up from the book), looked up
+  // once: only those keep their recipe, and they aren't custom items.
+  const extras = await lineExtrasFor(params.lines);
+  const book = extras.book;
 
   // The Insiders+ daily coffee (lib/daily-perk.ts): checked again here
   // (Insiders+, a daily coffee item on the order, not had today), then
@@ -470,7 +591,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       orderId = params.draftOrderId;
       orderNumber = Number(existing.order_number);
       wasTab = existing.status === "tab";
-      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
+      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
     } else {
       // This payment's own close may have landed a moment ago (a retry).
       const saved = await orderForPayment();
@@ -506,8 +627,12 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       throw orderErr;
     }
     orderId = order.id;
-    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines);
+    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
   }
+
+  // The organization's comps on this sale, logged now so the next count
+  // (the other register, the chip) includes them.
+  if (orgTerms && memberId && compsClaimed) await logOrderComps({ orderId, memberId, terms: orgTerms, lines: params.lines, overLimitBy });
 
   // The member's balance before this sale moves it. A reward's points come
   // out below only if it covers them, and the log-only totals check (run
@@ -534,12 +659,40 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       });
     }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
+    if (overLimitUnapproved && orgTerms?.org) {
+      await flagSale("org_over_limit", {
+        ...saved,
+        details: { summary: `${orgTerms.org.orgName} was comped past its daily limit (${orgTerms.org.used}/${orgTerms.org.limit}) without a manager's OK.`, organizationId: orgTerms.org.orgId },
+      });
+    }
     // The coffee as judged before this sale saved (once saved, its own
     // coffee would look like today's already used).
     const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore }));
     if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
     if (check.problems.length) {
       await flagSale("totals_mismatch", { ...saved, details: { problems: check.problems, sent: params.totals, server: check.server, lines: check.lines, member: check.member, payment: params.payment, tip, draft: !!params.draftOrderId } });
+    }
+    // A Bar Book drink rung up for less than its ingredients cost. The
+    // register asks for a manager PIN first (the PIN log has who); this is
+    // the server's own record of it, priced like any custom line.
+    // A custom drink from "What's in it?" the same way, costed from its list.
+    const under = params.lines.flatMap((l) => {
+      const id = bookRecipeOf(l, book);
+      const found = id ? book.get(id) : undefined;
+      if (found) return isBelowCost(Number(l.unit_price), found.cost) ? [{ name: l.name, recipeId: id, price: Number(l.unit_price), cost: found.cost.known, list: null as string | null }] : [];
+      const custom = customRecipeOf(l, extras);
+      if (!custom) return [];
+      const cost = drinkCost(custom.map((c) => ({ name: c.name ?? "?", quantity: c.quantity, unitCost: extras.ingredients.get(c.ingredient_id)?.unitCost ?? null })));
+      return isBelowCost(Number(l.unit_price), cost) ? [{ name: l.name, recipeId: null, price: Number(l.unit_price), cost: cost.known, list: customRecipeText(custom) }] : [];
+    });
+    if (under.length) {
+      await flagSale("below_cost", {
+        ...saved,
+        details: {
+          summary: `Rung up below what its ingredients cost: ${under.map((u) => `${u.name}${u.list ? ` (${u.list})` : ""} at ${barMoney(u.price)} (costs ${barMoney(u.cost)})`).join(", ")}. The register asks for a manager PIN for this.`,
+          lines: under,
+        },
+      });
     }
   });
 
@@ -569,7 +722,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // (A tab closed elsewhere had its card released there.)
   if (params.draftOrderId && !closedElsewhere) await releaseTabCard(orderId);
 
-  await noteCustomItems(supabase, orderNumber, params.lines, params.employeeId);
+  await noteCustomItems(supabase, orderNumber, params.lines, params.employeeId, extras);
 
   // The kitchen's order ticket: the whole order, or for a tab whatever
   // hadn't gone to the kitchen yet. Never throws; nothing happens without a
@@ -654,6 +807,9 @@ export type OwnerTabOrderInput = DraftFields & {
   ownerRate: { ownerId: string; token: string; nonce: string };
   ageVerified: boolean;
   draftOrderId?: string | null;
+  // Never sent by the register (the owner rate clears them); refused if they come.
+  orgComps?: number;
+  taxIncluded?: boolean;
 };
 
 // again: the approval can't be used (run out, used for another order, or
@@ -701,6 +857,9 @@ export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise
   const staff = await assertStaff();
   const lines = Array.isArray(params?.lines) ? params.lines : [];
   if (lines.length === 0) return { ok: false, error: "There's nothing on the order." };
+  // No member perks, organization comps or tax-included pricing: nothing is saved.
+  const carried = ownerOrderExtras(params);
+  if (carried) return { ok: false, again: true, error: carried };
   const rate = params.ownerRate ?? { ownerId: "", token: "", nonce: "" };
   const again = "Tap Owner rate and have them enter their PIN again.";
 
@@ -812,10 +971,11 @@ export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise
     orderId = order.id;
   }
 
-  await saveSaleItems(supabase, { orderId, orderNumber, employeeId: params.employeeId, paymentIntentId: null }, priced.lines);
+  const extras = await lineExtrasFor(priced.lines);
+  await saveSaleItems(supabase, { orderId, orderNumber, employeeId: params.employeeId, paymentIntentId: null }, priced.lines, extras);
   await syncTicketBookings(supabase, { id: orderId, memberId: null, name: params.orderName || null }, priced.lines);
   if (params.draftOrderId) await releaseTabCard(orderId);
-  await noteCustomItems(supabase, orderNumber, priced.lines, params.employeeId);
+  await noteCustomItems(supabase, orderNumber, priced.lines, params.employeeId, extras);
   await sendKitchenTicket({ orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: priced.lines }, "now");
   revalidate();
   return done(orderNumber);
@@ -961,14 +1121,21 @@ export async function getDraftOrders(status: "held" | "tab"): Promise<DraftOrder
 export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   await assertStaff();
   const supabase = createAdminClient();
-  const { data: order, error } = await supabase
-    .from("orders")
-    .select("id, order_name, member_id, tax_free, monthly_member, points_redeemed, items:order_items(menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id)")
-    .eq("id", id)
-    .in("status", OPEN_DRAFT)
-    .single();
+  // recipe_id: a Bar Book drink's recipe, once migration 20261004030000 is
+  // in; read without it before then.
+  type DraftRow = { id: string; order_name: string | null; member_id: string | null; tax_free: boolean; monthly_member: boolean; points_redeemed: boolean; items: unknown };
+  const read = async (columns: string) => {
+    const r = await supabase.from("orders").select(columns).eq("id", id).in("status", OPEN_DRAFT).single();
+    return { data: r.data as unknown as DraftRow | null, error: r.error };
+  };
+  const ORDER_COLUMNS = "id, order_name, member_id, tax_free, monthly_member, points_redeemed";
+  const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
+  // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
+  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`);
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`));
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS})`));
   if (error || !order) throw new Error("That order was already closed on another register.");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -986,6 +1153,8 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       modifiers: i.modifiers,
       is_alcohol: i.is_alcohol,
       screening_id: i.screening_id,
+      ...(i.recipe_id ? { recipe_id: i.recipe_id } : {}),
+      ...(Array.isArray(i.custom_recipe) && i.custom_recipe.length ? { custom_recipe: i.custom_recipe } : {}),
     })),
   };
 }
@@ -1048,6 +1217,7 @@ export interface RecentOrder {
   subtotal: number;
   discounts: { label: string; amount: number }[];
   tax: number;
+  taxIncluded?: boolean; // the tax is inside the prices (lib/orgs.ts)
   tip: number;
   total: number;
   lines: { name: string; qty: number; unit: number; mods: string[]; screeningId: string | null }[];
@@ -1064,7 +1234,8 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     createAdminClient().from("orders").select(columns).in("status", ["completed", "refunded", "voided"]).not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(limit);
   // The card that paid and how the member got on the sale (migration
   // 20261001220000); without it, the list as it was.
-  let { data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`);
+  let { data, error } = await recent(`${base}, org_comp_discount, tax_included, member_source, card:card_payments(brand, last4, wallet)`);
+  if (schemaMissing(error)) ({ data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`));
   if (schemaMissing(error)) ({ data, error } = await recent(base));
   if (error) throw error;
   type Row = {
@@ -1080,6 +1251,8 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     payment_voucher_amount: number | null;
     subtotal: number;
     daily_perk_discount?: number | null;
+    org_comp_discount?: number | null;
+    tax_included?: boolean | null;
     tier_discount: number;
     monthly_discount: number;
     redemption_discount: number;
@@ -1112,12 +1285,14 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
       voucher: Number(o.payment_voucher_amount ?? 0),
       subtotal: Number(o.subtotal),
       discounts: [
+        { label: "Organization comp", amount: Number(o.org_comp_discount ?? 0) },
         { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
         { label: "Member discount", amount: Number(o.tier_discount) },
         { label: "Monthly member discount", amount: Number(o.monthly_discount) },
         { label: "Points reward", amount: Number(o.redemption_discount) },
       ].filter((d) => d.amount > 0),
       tax: Number(o.tax),
+      taxIncluded: !!o.tax_included,
       tip: Number(o.tip),
       total: Number(o.total),
       lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),

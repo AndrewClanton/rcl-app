@@ -756,7 +756,7 @@ export default function Composer({
           {!isAutomation && (
             <div className="mt-4 border-t border-[var(--border)] pt-3">
               {!canSend ? (
-                <p className="text-sm text-[var(--muted)]">An admin or owner schedules and sends to the list. Save it and let them know it&apos;s ready.</p>
+                <p className="text-sm text-[var(--muted)]">Only the people picked to send email (Email page, Who sends) schedule and send it to the list. Save it and let them know it&apos;s ready.</p>
               ) : c.status === "scheduled" ? (
                 <div className="flex flex-wrap items-center gap-3 text-sm">
                   <span>

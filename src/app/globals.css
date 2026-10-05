@@ -170,6 +170,48 @@ body {
     color: var(--accent);
   }
 
+  /* The register's Bar tab: a button tinted by its drink's spirit. --sp is
+     the spirit's color from the fixed legend (src/lib/bar/icons.ts);
+     --sp-soft and --sp-line are plain rgba versions for iPad Safari before
+     16.2, which has no color-mix(). Set by tintVars (src/lib/bar/menu.ts). */
+  .bar-tint {
+    background: var(--sp-soft, var(--surface));
+    border-color: var(--sp-line, var(--border));
+    transition: filter 120ms;
+  }
+  @supports (background: color-mix(in oklab, red 50%, white)) {
+    .bar-tint {
+      background: color-mix(in oklab, var(--sp) 16%, var(--surface));
+      border-color: color-mix(in oklab, var(--sp) 45%, var(--border));
+    }
+  }
+  .bar-tint:active {
+    filter: brightness(0.94);
+  }
+  /* A Bar tab drink's icon pops up when it's pressed, so it's seen bigger
+     for a moment before its choices open (which show it large too). */
+  @keyframes bar-pop {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.4);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .bar-pop {
+    position: relative;
+    z-index: 1;
+    animation: bar-pop 200ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar-pop {
+      animation: none;
+    }
+  }
+
   .notice {
     @apply rounded-lg border p-6;
   }
@@ -924,5 +966,55 @@ body {
   }
   .bo-card-area {
     border-top: 3px solid var(--area, var(--foreground));
+  }
+}
+
+/*
+ * Back office -> Email (src/app/admin/email/_studio). Calm by default:
+ * ink for anything that leads somewhere (New email, Open it), and red only
+ * for a button that emails members, in the deeper red so white type on it
+ * passes 4.5:1 (#c81017: 5.9:1). The quiet button is for Emergency stop:
+ * plain until it's needed, red type so it's never mistaken for anything else.
+ */
+@layer components {
+  .btn-ink,
+  .btn-send,
+  .btn-quiet {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-ink {
+    background: var(--foreground);
+    color: var(--background);
+  }
+  .btn-ink:hover:not(:disabled) {
+    background: #3a3329;
+  }
+  .btn-send {
+    background: var(--accent-hover);
+    color: #fff;
+  }
+  .btn-send:hover:not(:disabled) {
+    background: #a50d13;
+  }
+  .btn-quiet {
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--accent-hover);
+  }
+  .btn-quiet:hover:not(:disabled) {
+    border-color: var(--accent-hover);
+  }
+  .es-tile {
+    @apply flex min-w-0 flex-col gap-1 rounded-2xl border p-4 sm:p-5;
+    background: var(--surface);
+    border-color: var(--border);
+  }
+  .es-head {
+    @apply flex flex-wrap items-baseline justify-between gap-3 pb-2;
+    border-bottom: 3px solid var(--foreground);
+  }
+  .es-mono {
+    @apply text-[11px] font-bold uppercase tracking-[0.12em];
+    font-family: var(--font-space-mono), "Courier New", monospace;
   }
 }

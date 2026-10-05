@@ -1,6 +1,7 @@
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import type { MemberTier } from "@/lib/types";
+import { taxInside } from "@/lib/orgs";
 
 // The register's order math, in one place: the register (PosApp) figures
 // every order with registerTotals, and the server redoes it from menu
@@ -21,6 +22,12 @@ import type { MemberTier } from "@/lib/types";
 // - member discount (10%, Insiders+ only: plain Insiders earn points
 //   instead of a discount), the monthly member 10%, and a
 //   points reward, capped at what's left after the other two.
+// - an organization comp (lib/orgs.ts): `comp` on a line is how many of it
+//   the organization covers (a day pass, a movie ticket), at its price. It
+//   comes off before anything else.
+// - taxIncluded (an organization's supported guest, lib/orgs.ts): the
+//   price is the total, with the tax inside it, so a $4 pizza is $4.00 even
+//   ($3.68 plus $0.32 tax). Everything else adds tax on top.
 // Not in here: the tip and vouchers. A tip goes on top of the total (asked
 // on the register for a tab when there's no reader, or picked on the card
 // reader, which adds it to the card amount). Vouchers are a way to pay,
@@ -44,7 +51,9 @@ export function memberDiscountRate(member: TotalsMember) {
   return member.tier === "Insiders+" ? 0.1 : 0;
 }
 
-export type TotalsLine = { unit: number; qty: number; perkBase?: number | null };
+export type TotalsLine = { unit: number; qty: number; perkBase?: number | null; comp?: number };
+
+export type TotalsExtra = { taxIncluded?: boolean };
 
 // The line the daily coffee goes on, and how much comes off: the eligible
 // line it takes the most off (the first, on a tie). Never more than the
@@ -62,26 +71,35 @@ export function dailyPerkPick(lines: TotalsLine[]): { index: number; amount: num
   return best;
 }
 
-export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean, dailyPerk = false) {
+export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean, dailyPerk = false, extra: TotalsExtra = {}) {
   const subtotal = cents(lines.reduce((s, l) => s + l.unit * l.qty, 0));
-  const perk = dailyPerk && member?.tier === "Insiders+" ? dailyPerkPick(lines) : null;
-  const dailyPerkDiscount = perk ? Math.min(perk.amount, subtotal) : 0;
+  // An organization's comps: never more than the order.
+  const compOf = (l: TotalsLine) => Math.min(l.qty, Math.max(0, Math.floor(Number(l.comp) || 0)));
+  const orgCompDiscount = cents(Math.min(subtotal, lines.reduce((s, l) => s + Math.max(0, l.unit) * compOf(l), 0)));
+  // A comped line is never the free coffee.
+  const perkLines = orgCompDiscount > 0 ? lines.map((l) => (compOf(l) > 0 ? { ...l, perkBase: null } : l)) : lines;
+  const perk = dailyPerk && member?.tier === "Insiders+" ? dailyPerkPick(perkLines) : null;
+  const dailyPerkDiscount = perk ? Math.min(perk.amount, cents(subtotal - orgCompDiscount)) : 0;
   // What the percentage discounts and a reward are figured on. Without a
-  // daily coffee this is the subtotal, so every other order adds up exactly
-  // as it always has.
-  const rest = cents(subtotal - dailyPerkDiscount);
+  // daily coffee or a comp this is the subtotal, so every other order adds
+  // up exactly as it always has.
+  const rest = cents(subtotal - orgCompDiscount - dailyPerkDiscount);
   const tierDiscount = cents(rest * memberDiscountRate(member));
   const monthlyDiscount = monthlyMember ? cents(rest * 0.1) : 0;
   const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
   // A $5 reward on a $3 order takes $3 off, never more than what's left.
   const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, rest - tierDiscount - monthlyDiscount))) : 0;
-  const discount = dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
+  const discount = orgCompDiscount + dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
-  const tax = taxFree ? 0 : cents(Math.max(0, taxable) * SALES_TAX_RATE);
-  const total = cents(Math.max(0, taxable) + tax);
+  const taxIncluded = !taxFree && !!extra.taxIncluded;
+  const tax = taxFree ? 0 : taxIncluded ? taxInside(taxable).tax : cents(Math.max(0, taxable) * SALES_TAX_RATE);
+  const total = taxIncluded ? cents(Math.max(0, taxable)) : cents(Math.max(0, taxable) + tax);
   return {
     subtotal,
+    orgCompDiscount,
+    // The tax is inside the total (an organization's supported guest).
+    taxIncluded,
     dailyPerkDiscount,
     // Which of `lines` the daily coffee is on (null: none).
     dailyPerkLine: perk && dailyPerkDiscount > 0 ? perk.index : null,
@@ -100,8 +118,23 @@ export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthl
 // coffee earns nothing. Never negative. completeOrder pays this, and the
 // customer screen shows it. (A sale rung before the daily coffee existed
 // has no daily_perk_discount.)
-export function pointsEarned(t: { subtotal: number; tier_discount: number; monthly_discount: number; redemption_discount: number; daily_perk_discount?: number }) {
-  return Math.max(0, cents(t.subtotal - (Number(t.daily_perk_discount) || 0) - t.tier_discount - t.monthly_discount - t.redemption_discount));
+// An organization's comps earn nothing, and a tax-included sale earns on
+// what it came to before its tax.
+export function pointsEarned(t: {
+  subtotal: number;
+  tier_discount: number;
+  monthly_discount: number;
+  redemption_discount: number;
+  daily_perk_discount?: number;
+  org_comp_discount?: number;
+  tax_included?: boolean;
+  tax?: number;
+}) {
+  const inside = t.tax_included ? Number(t.tax) || 0 : 0;
+  return Math.max(
+    0,
+    cents(t.subtotal - (Number(t.daily_perk_discount) || 0) - (Number(t.org_comp_discount) || 0) - t.tier_discount - t.monthly_discount - t.redemption_discount - inside),
+  );
 }
 
 // A badge reward the member cashed in on the register: a $0 line with no
@@ -192,6 +225,32 @@ export function ownerLinePrice(line: { menuItemId: string | null; screeningId?: 
   const base = item.cost !== null && item.cost !== undefined ? Number(item.cost) : Number(item.price) / 2;
   const unit = cents(Math.max(0, Math.min(menu, base + options / 2)));
   return { unit, how: item.cost !== null && item.cost !== undefined ? "cost" : "half" };
+}
+
+// An off-menu Bar Book drink or a custom drink ("What's in it?") at the
+// owner rate: at cost when every required ingredient has a cost (drinkCost
+// in lib/bar/pricing.ts), never more than the price it was rung at; else
+// half of that price. A double on one is half too (its second pour isn't in
+// the recipe's cost). The server prices these (lib/owner-rate-server.ts) and
+// the register shows the server's figure, so there is one function.
+export function ownerOffMenuPrice(rung: number, cost: { cost: number | null; anyCost: boolean } | null | undefined, double = false): { unit: number; how: OwnerPricing } {
+  const menu = cents(Math.max(0, Number(rung) || 0));
+  if (!double && cost && cost.anyCost && cost.cost !== null && cost.cost !== undefined && Number.isFinite(Number(cost.cost))) {
+    return { unit: cents(Math.min(menu, Number(cost.cost))), how: "cost" };
+  }
+  return { unit: cents(menu / 2), how: "half" };
+}
+
+// What an owner-tab order can't carry: member perks, an organization's comps
+// and tax-included pricing are all off with the owner rate (the register
+// clears them when it's turned on; the server refuses any that come anyway).
+// null: nothing in the way; else the sentence for the cashier.
+export function ownerOrderExtras(o: { memberId?: string | null; monthlyMember?: boolean; pointsRedeemed?: boolean; taxFree?: boolean; orgComps?: number | null; taxIncluded?: boolean }): string | null {
+  if (Number(o.orgComps ?? 0) > 0) return "An organization's comps don't go on the owner tab. Undo the owner rate, or ring it without the comp.";
+  if (o.taxIncluded) return "Tax-included pricing doesn't go with the owner rate: an owner tab order is taxed. Ring it up again with the owner rate.";
+  if (o.memberId || o.monthlyMember || o.pointsRedeemed) return "Member perks don't go on the owner tab. Ring it up again with the owner rate.";
+  if (o.taxFree) return "An owner tab order is taxed. Ring it up again with the owner rate.";
+  return null;
 }
 
 // An owner order's totals: the owner prices, taxed like any sale, with

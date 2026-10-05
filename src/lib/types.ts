@@ -137,6 +137,10 @@ export interface RecipeIngredientLine {
   unit: IngredientUnit;
   quantity: number;
   sort_order: number;
+  // From the Bar Book migration (20261004010000); missing before it.
+  family?: string | null; // its color on the drink icons
+  kind?: string | null;
+  optional?: boolean; // never stops the drink being made (a garnish)
 }
 
 // Recipes are fetched separately from the public menu tree (see
@@ -153,6 +157,11 @@ export interface Recipe {
   // ingredient is on it, so the owner rate can charge it at cost. False
   // until then, and again when an ingredient is added or taken off.
   cost_complete?: boolean;
+  // From the Bar Book migration (20261004010000); missing before it.
+  method?: string | null; // build, shake, stir, blend
+  garnishes?: string[] | null;
+  ice?: string | null; // none, cubes, crushed
+  description?: string | null;
 }
 
 export interface RoomAddon {
@@ -198,6 +207,8 @@ export interface Screening {
   attendance_reported: boolean;
   attendance_count: number | null;
   box_office_revenue: number | null;
+  // Who it's listed for: lib/showing-visibility.ts
+  visibility: "public" | "members" | "private";
   movie: Movie;
   room: Room;
 }
@@ -227,6 +238,11 @@ export interface Member {
   // Their own switch for card-linked points (lib/member-cards.ts). Optional:
   // not every members query selects it.
   link_cards?: boolean;
+  // "Group / organization" label (lib/member-notes.ts), staff only.
+  organization?: string | null;
+  // Their organization account (lib/orgs.ts): shown on My Account.
+  organization_id?: string | null;
+  org_role?: "helper" | "supported" | null;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
+import { getBarPrices } from "@/lib/data/barBook";
 import { hasAdminAccess, requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
@@ -10,7 +11,7 @@ import PosApp from "./PosApp";
 import { HeaderSignal } from "./MemberSignal";
 import { ItemSettingsProvider } from "./item-settings/ItemSettings";
 import { registerTopic } from "@/lib/register-topic";
-import ShiftBar from "./shift/ShiftBar";
+import StaffTools from "./shift/StaffTools";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
 import { ownerRatePeople } from "@/lib/owner-rate-server";
@@ -36,7 +37,7 @@ export default async function PosPage() {
   // Signing in again comes back here, not to the back office.
   const session = await requireStaff("/pos");
 
-  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, owners] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, owners, barPrices] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getDraftOrders("held"),
@@ -45,6 +46,7 @@ export default async function PosPage() {
     getRegisterScreenings(),
     // Who gets the owner rate; nobody until its database update is applied.
     ownerRatePeople().catch(() => null),
+    getBarPrices(),
   ]);
 
   // Tickets are sold from the Movies tab (per showing, with seats counted),
@@ -70,9 +72,11 @@ export default async function PosPage() {
       </div>
       <div className="shrink-0">
         <UpdateBanner current={deploymentId()} />
-        {/* Roles, so the managers' to-dos and Ran out details show only
-            while a manager is signed in or on shift at this iPad. */}
-        <ShiftBar staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
+        {/* The shift tools behind the register's Staff button, and any
+            reminder that's due. Roles, so the managers' to-dos and Ran out
+            details show only while a manager is signed in or on shift at
+            this iPad. */}
+        <StaffTools staff={employees.map((e) => ({ id: e.id, name: e.name, role: e.role }))} signedInRole={session.role} />
       </div>
       {/* Press and hold a menu button for its settings (manager PIN). */}
       <ItemSettingsProvider>
@@ -88,6 +92,8 @@ export default async function PosPage() {
           // Dev note only while an admin is signed in (submitting checks again).
           canNote={hasAdminAccess(session.role)}
           owners={owners ?? []}
+          // The Prices sheet: doubles, neat or rocks, the off-menu rule (Back office → Bar Book → Prices).
+          barPrices={barPrices}
         />
       </ItemSettingsProvider>
     </div>

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import { allowFromConnection, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
+import { closedDayError } from "@/lib/closed-days-server";
 import type { Room } from "@/lib/types";
 
 // Next.js redacts a *thrown* Server Action error's message in production
@@ -31,6 +32,9 @@ export async function submitEventInquiry(fields: {
   if (!(fields.hours > 0)) return { ok: false, error: "Enter the number of hours." };
   if (!fields.eventDate) return { ok: false, error: "Enter an event date." };
   if (!fields.eventTime) return { ok: false, error: "Enter an event time." };
+  // Not on a day we're closed (lib/closed-days.ts). Staff can still set one up.
+  const closed = closedDayError(fields.eventDate, fields.eventTime);
+  if (closed) return { ok: false, error: closed };
   if (!fields.organizerEmail || !fields.organizerEmail.includes("@")) return { ok: false, error: "Enter a valid email." };
   // Each request lands in the staff's events list, so a script mustn't be
   // able to bury it.

@@ -55,7 +55,8 @@ export default function GiftCard({ member, gifts }: { member: Member; gifts: Gif
         &apos;s account.
       </p>
 
-      {member.plus_gift_until && giftActive(member) && (
+      {/* (A date with no gift ending on it is a prepaid year: PaidThroughCard.) */}
+      {member.plus_gift_until && giftActive(member) && gifts.some((g) => !!g.ends_at && new Date(g.ends_at).getTime() === new Date(member.plus_gift_until as string).getTime()) && (
         <p className="mb-3 rounded border border-[var(--success-border)] bg-[var(--success-bg)] px-3 py-2 text-sm text-[var(--success-text)]">
           Covered by a gift through <strong>{day(member.plus_gift_until)}</strong>. Another gift adds a year on top of that.
         </p>

@@ -65,9 +65,21 @@ export default function MemberDetail({
   canUndoCardMatch,
   canManage,
   flags = null,
+  notes = null,
+  paidThroughCard = null,
+  prepaidRenewsAs = null,
+  renewalNotice = null,
 }: {
   // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
   flags?: React.ReactNode;
+  // Staff-only notes and the organization label (NotesBox.tsx).
+  notes?: React.ReactNode;
+  // Insiders+ paid ahead until a date (PaidThroughCard.tsx), and the plan a
+  // prepaid year renews as (the card page offers it first).
+  paidThroughCard?: React.ReactNode;
+  prepaidRenewsAs?: "month" | "year" | null;
+  // The yearly renewal notice for their next renewal, if it went (lib/renewal-notice.ts).
+  renewalNotice?: { sentAt: string; chargeAt: string } | null;
   member: Member;
   gifts: GiftMembership[];
   purchases: MemberPurchase[];
@@ -139,11 +151,13 @@ export default function MemberDetail({
         </Link>
       </div>
       {flags && <div className="xl:col-span-2">{flags}</div>}
+      {notes && <div className="xl:col-span-2">{notes}</div>}
 
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} canManage={canManage} />
       <div className="space-y-6">
         <FreeMembershipCard member={member} communityPrograms={communityPrograms} canManage={canManage} />
-        <BillingCard member={member} />
+        <BillingCard member={member} prepaidRenewsAs={prepaidRenewsAs} renewalNotice={renewalNotice} />
+        {paidThroughCard}
         <LinkedCardsCard member={member} cards={cards} canRelink={canUndoCardMatch} />
         <GiftCard member={member} gifts={gifts} />
         {signInHelp && <SignInHelpCard memberId={member.id} memberName={member.name} info={signInHelp} />}
@@ -570,11 +584,23 @@ function FreeMembershipCard({ member, communityPrograms, canManage }: { member: 
   );
 }
 
-function BillingCard({ member }: { member: Member }) {
+// "Mar 6, 2027", on Chicago's calendar.
+const shortDay = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" });
+
+function BillingCard({
+  member,
+  prepaidRenewsAs,
+  renewalNotice,
+}: {
+  member: Member;
+  prepaidRenewsAs: "month" | "year" | null;
+  renewalNotice: { sentAt: string; chargeAt: string } | null;
+}) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [firstCharge, setFirstCharge] = useState("");
-  const [annual, setAnnual] = useState(false);
+  // A prepaid year renews as the plan they had (yearly for an old-site annual).
+  const [annual, setAnnual] = useState(prepaidRenewsAs === "year");
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   // Stripe won't hold a first charge less than 2 days out. The date is
@@ -609,8 +635,11 @@ function BillingCard({ member }: { member: Member }) {
           <p className="text-sm">
             {giftEnds ? (
               <>
-                <strong>Covered by a gift until {new Date(giftEnds).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}.</strong>{" "}
-                To keep Insiders+ going after that, put their own card on now. The first charge waits until the gift ends.
+                <strong>
+                  {prepaidRenewsAs ? "Paid through" : "Covered by a gift until"}{" "}
+                  {new Date(giftEnds).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })}.
+                </strong>{" "}
+                To keep Insiders+ going after that, put their own card on now. The first charge waits until {prepaidRenewsAs ? "that day" : "the gift ends"}.
               </>
             ) : needsCard ? (
               <>
@@ -660,6 +689,12 @@ function BillingCard({ member }: { member: Member }) {
       ) : member.stripe_customer_id ? (
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm text-[var(--muted)]">Subscription: {member.subscription_status ?? "unknown"}</span>
+          {renewalNotice && (
+            <span className="text-sm" title={`For the ${shortDay(renewalNotice.chargeAt)} renewal`}>
+              Renewal notice sent {shortDay(renewalNotice.sentAt)}
+              <InfoTip topic="renewal-notice" />
+            </span>
+          )}
           <button
             className="rounded border border-[var(--border)] px-3 py-1.5 text-sm "
             disabled={pending}

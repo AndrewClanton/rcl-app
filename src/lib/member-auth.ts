@@ -16,7 +16,12 @@ export const getSignedInMember = cache(async (): Promise<Member | null> => {
   } = await supabase.auth.getUser();
   if (!user) return null;
   const { data: member } = await createAdminClient().from("members").select("*").eq("auth_user_id", user.id).maybeSingle();
-  return (member as Member) ?? null;
+  if (!member) return null;
+  // The "Group / organization" label is staff only (lib/member-notes.ts):
+  // it never reaches My Account.
+  const { organization: _staffOnly, ...own } = member as Member;
+  void _staffOnly;
+  return own as Member;
 });
 
 // Gates /account/*. No session, or a session that isn't linked to a member

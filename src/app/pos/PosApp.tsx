@@ -4,7 +4,16 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { useRouter } from "next/navigation";
 import type { MenuCategory, Employee, Recipe } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
-import { EMPTY_CART_SNAPSHOT, type MemberOff, type RegisterCartSnapshot, type RickrollState, type TabletProfile } from "@/lib/registerChannel";
+import {
+  EMPTY_CART_SNAPSHOT,
+  TABLET_SOUND_DEFAULT,
+  type MemberOff,
+  type ReaderPrompt,
+  type RegisterCartSnapshot,
+  type RickrollState,
+  type TabletProfile,
+  type TabletSound,
+} from "@/lib/registerChannel";
 import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal from "./PaymentModal";
@@ -17,6 +26,32 @@ import { publishCashier, useRanOut } from "./shift/ran-out-store";
 import { ItemOutDialog } from "./shift/RanOut";
 import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
+import BarTab from "./BarTab";
+import OrderLineRow from "./OrderLineRow";
+import {
+  DOUBLE,
+  SERVE_MOD,
+  canServe,
+  doubleUpcharge,
+  hasLiquorChoice,
+  hasOwnDouble,
+  hasOwnServe,
+  isDouble,
+  isServeMod,
+  optionsUpcharge,
+  serveOf,
+  type DoubleContext,
+  type DoubleLine,
+  type Serve,
+} from "@/lib/bar/double";
+import { doubleSettingsOf, type BarPrices } from "@/lib/bar/pricing";
+import { iconSpecFor, type BarSection, type IconSpec } from "@/lib/bar/icons";
+import { customSpec } from "@/lib/bar/match";
+import BarBook from "./BarBook";
+import WhatsInIt from "./WhatsInIt";
+import { loadBarBook } from "./bar-book-actions";
+import { barSectionOf, isBarCategory, itemIconSpec } from "@/lib/bar/menu";
+import { countMakeable, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
@@ -45,6 +80,9 @@ import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
+import { useReaderMonitor } from "./devices/reader-monitor";
+import { READER_OFFLINE_MESSAGE, readerNeedsLook } from "@/lib/terminal/reader-status";
+import { BoothsButton, StaffButton } from "./shift/StaffButton";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, {
   clearPendingReaderSale,
@@ -66,7 +104,6 @@ import {
   ENFORCE_REGISTER_TOTALS,
   memberDiscountRate,
   OWNER_PRICING_LABEL,
-  OWNER_PRICING_TAG,
   ownerCartKey,
   ownerTabLabel,
   ownerTabReceiptLabel,
@@ -76,6 +113,8 @@ import {
 import OwnerRateModal, { type OwnerRateOn } from "./OwnerRateModal";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee, getTabletProfile } from "./member-actions";
+import { approveOrgOverLimit, getOrgOnOrder } from "./org-actions";
+import { compCountText, isDayPassName, orgCompPlan, roleLabel, TAX_INCLUDED_NOTE, type OrgOnOrder } from "@/lib/orgs";
 import {
   checkBeforePayment,
   completeOrder,
@@ -108,6 +147,12 @@ interface CartLine {
   qty: number;
   mods: string[];
   isAlcohol: boolean;
+  // A Bar Book drink rung up off the menu (BarBook.tsx → Add to order): a
+  // one-off line like "+ Custom item" that knows its recipe.
+  recipeId?: string | null;
+  // A custom drink from "What's in it?" (WhatsInIt.tsx): a one-off line
+  // that knows what's in it.
+  customRecipe?: { ingredient_id: string; quantity: number }[] | null;
 }
 
 // The Movies tab sits alongside the menu categories, and so does Customers
@@ -146,6 +191,9 @@ function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
     redemption_discount: t.redemptionDiscount,
     tax: t.tax,
     total: t.total,
+    // Only when there's one, so every other sale saves as it always has.
+    ...(t.orgCompDiscount > 0 ? { org_comp_discount: t.orgCompDiscount } : {}),
+    ...(t.taxIncluded ? { tax_included: true } : {}),
   };
 }
 
@@ -160,6 +208,7 @@ export default function PosApp({
   registerTopic,
   canNote,
   owners,
+  barPrices,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -171,14 +220,16 @@ export default function PosApp({
   registerTopic: string;
   canNote: boolean; // an admin is signed in: Dev note
   owners: { id: string; name: string }[]; // who gets the owner rate (Back office, Owner tab)
+  barPrices: BarPrices; // the Prices sheet: doubles, neat or rocks and the off-menu rule (lib/bar/pricing.ts)
 }) {
+  const doubleSettings = useMemo(() => doubleSettingsOf(barPrices), [barPrices]);
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
   const [builderItemId, setBuilderItemId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [orderName, setOrderName] = useState("");
   // The cashier: whoever picked themselves in the list, else the person
-  // using this iPad per the shift bar, else the only person on shift. No
+  // using this iPad per the Staff tools, else the only person on shift. No
   // more re-picking after every reload.
   const onShift = useOnShift();
   // The cashier follows the shift: this iPad's shift, else whoever started
@@ -194,11 +245,11 @@ export default function PosApp({
     (pickedCashier && pickedCashier.shiftKey === shiftKey && isEmployee(pickedCashier.id) ? pickedCashier.id : "") ||
     (isEmployee(onShift.meEmployeeId) ? onShift.meEmployeeId : "") ||
     (isEmployee(latestOnShift) ? latestOnShift : "");
-  // "Ran out" reports from the shift bar are made in the cashier's name.
+  // "Ran out" reports from the Staff sheet are made in the cashier's name.
   useEffect(() => {
     publishCashier(employeeId || null);
   }, [employeeId]);
-  // 86'd items: what the shift bar's poll last saw, else what the page
+  // 86'd items: what the Staff tools' poll last saw, else what the page
   // loaded with.
   const ranOut = useRanOut();
   const tileExtras = useMenuTileExtras();
@@ -281,6 +332,32 @@ export default function PosApp({
   // On this order unless it's used, unknown, or staff took it off. Only one
   // member is on an order, so only their coffee can be.
   const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
+  // The member's organization (lib/orgs.ts): their comps today and, for a
+  // supported guest, tax-included prices. Looked up when they're put on the
+  // order, like the coffee; looked up again after a sale or a refused check.
+  const [orgState, setOrgState] = useState<{ memberId: string; org: OrgOnOrder | null } | null>(null);
+  const [orgTry, setOrgTry] = useState(0);
+  useEffect(() => {
+    if (!memberId) return;
+    let live = true;
+    getOrgOnOrder(memberId).then(
+      (org) => {
+        if (live) setOrgState({ memberId, org });
+      },
+      () => {
+        if (live) setOrgState({ memberId, org: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId, orgTry]);
+  const orgOnOrder = memberId && orgState?.memberId === memberId ? orgState.org : null;
+  // A manager's OK to comp past today's limit, for one organization.
+  const [orgApproval, setOrgApproval] = useState<{ orgId: string; token: string } | null>(null);
+  const [orgPinOpen, setOrgPinOpen] = useState(false);
+  const orgOverride = !!orgOnOrder && orgApproval?.orgId === orgOnOrder.orgId;
+  const orgTaxIncluded = !!orgOnOrder?.active && orgOnOrder.role === "supported";
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
   // The manual "Monthly member (10% off)" tick counts only with no member on
@@ -336,6 +413,25 @@ export default function PosApp({
   // or straight to a printer IP (Devices).
   const printTarget = usePrintTarget();
   const readerId = devices.readerId || defaultReaderId;
+  // Is this register's card reader up? Checked about once a minute
+  // (devices/reader-monitor.ts): a red strip over the order while it's
+  // offline, the details under Devices.
+  const readerMonitor = useReaderMonitor(readerId || null);
+  const readerDown = !!readerId && readerNeedsLook(readerMonitor.health);
+  const checkReader = readerMonitor.check;
+  // A charge couldn't start because the reader is offline: the customer
+  // screen says it's waking up (never an error in front of the guest).
+  const [readerWaking, setReaderWaking] = useState(false);
+  const onReaderOffline = useCallback(
+    (offline: boolean) => {
+      setReaderWaking(offline);
+      if (offline) checkReader();
+    },
+    [checkReader],
+  );
+  // A card payment waiting on the reader (PaymentModal): the customer
+  // screen says "Finish on the card reader".
+  const [readerPrompt, setReaderPrompt] = useState<ReaderPrompt | null>(null);
   // A scanner at the counter: an online ticket's QR prints its tickets right
   // away (one print per ticket, ever); a member card checks them in. An empty
   // register also picks up the scanned member so the order goes on their
@@ -435,6 +531,8 @@ export default function PosApp({
     setCategoryId(id);
     setBuilderItemId(null);
     setFindAt(0);
+    // The Bar tab's cocktails start on their first page again.
+    setBarPage(0);
     menuScrollRef.current?.scrollTo({ top: 0 });
   }
 
@@ -465,24 +563,202 @@ export default function PosApp({
     return (id: string | null) => (id ? (byId.get(id) ?? null) : null);
   }, [categories]);
   const builderItem = findItem(builderItemId);
+  // A menu button's tap, wherever it is (a tile, the Bar tab): its choices,
+  // or for an 86'd item the question first (sell anyway, or it's back).
+  // double: rung up as a double from a Bar Book card or "What's in it?".
+  function tapItem(id: string, double = false) {
+    setBuilderDouble(double);
+    if (outs.get(id)) setOutPromptId(id);
+    else setBuilderItemId(id);
+  }
+  // The bar's category draws as the one-screen Bar tab (BarTab.tsx).
+  const barTab = !!category && isBarCategory(category) && !builderItem && categoryId !== MOVIES_TAB && categoryId !== CUSTOMERS_TAB;
+
+  // The Bar Book (BarBook.tsx): read when the Bar tab first shows, and again
+  // each time it opens. Until the Bar Book migration is applied it reports
+  // not ready and the Bar tab shows no book button.
+  const [book, setBook] = useState<{ state: "idle" | "ready" | "not-ready" | "error"; recipes: BookRecipe[]; stock: BookStock[]; target: number }>({
+    state: "idle",
+    recipes: [],
+    stock: [],
+    target: 0.2,
+  });
+  const [bookOpen, setBookOpen] = useState(false);
+  const [whatsOpen, setWhatsOpen] = useState(false); // "What's in it?"
+  // What the Bar tab's "Find a drink" box opened the book searching for.
+  const [bookQuery, setBookQuery] = useState("");
+  // Which page of cocktails the Bar tab is on: kept here, so ringing a
+  // drink up (its choices replace the tab for a moment) or a change to the
+  // order doesn't lose it. Only switching tabs starts it over (pickTab).
+  const [barPage, setBarPage] = useState(0);
+  const [bookLoading, setBookLoading] = useState(false);
+  const bookAsked = useRef(false);
+  // State changes only once the answer is back (the opening tap shows
+  // "checking stock" itself).
+  const refreshBook = useCallback(() => {
+    loadBarBook()
+      .then(
+        (r) =>
+          setBook((prev) =>
+            r.ok
+              ? { state: "ready", recipes: r.recipes, stock: r.stock, target: r.target }
+              : prev.state === "ready" && !r.notReady
+                ? prev
+                : { state: r.notReady ? "not-ready" : "error", recipes: [], stock: [], target: prev.target },
+          ),
+        () => setBook((prev) => (prev.state === "ready" ? prev : { ...prev, state: "error" })),
+      )
+      .finally(() => setBookLoading(false));
+  }, []);
+  useEffect(() => {
+    if (!barTab || bookAsked.current) return;
+    bookAsked.current = true;
+    refreshBook();
+  }, [barTab, refreshBook]);
+  // The book rings up register items, so it knows only the alcohol ones
+  // that are on the register (not hidden), with where each sits on the Bar
+  // tab (the cocktails make the card's average pour cost).
+  const bookMenu = useMemo<MenuRef[]>(() => {
+    const list: MenuRef[] = [];
+    for (const c of categories) {
+      const bar = isBarCategory(c);
+      for (const i of c.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price), section: "other" });
+      for (const sub of c.subcategories) {
+        const section = bar ? barSectionOf(sub) : "other";
+        for (const i of sub.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price), section });
+      }
+    }
+    return list;
+  }, [categories]);
+  // ---------- doubles and drink icons on the order ----------
+  // Where each menu item sits on the Bar tab (beer, wine, cocktails,
+  // shots, other), or null outside the bar.
+  const sectionById = useMemo(() => {
+    const m = new Map<string, BarSection | null>();
+    for (const c of categories) {
+      const bar = isBarCategory(c);
+      for (const i of c.items) m.set(i.id, bar ? "other" : null);
+      for (const sub of c.subcategories) for (const i of sub.items) m.set(i.id, bar ? barSectionOf(sub) : null);
+    }
+    return m;
+  }, [categories]);
+  const recipeLinesOf = (r: Recipe | undefined): DoubleLine[] | null =>
+    r ? r.ingredients.map((i) => ({ name: i.ingredient_name, quantity: i.quantity, unit: i.unit, kind: i.kind ?? null, optional: i.optional === true })) : null;
+  // How a line would be doubled (or poured neat or on the rocks), or null
+  // when it can't be: a menu drink by its section, name and recipe, a Bar
+  // Book drink and a custom drink by their own lists. A plain custom item
+  // never is (nobody knows what's in it).
+  function lineDoubleCtx(line: CartLine): DoubleContext | null {
+    if (line.screeningId || !line.isAlcohol) return null;
+    if (line.menuItemId) {
+      const item = findItem(line.menuItemId);
+      if (!item) return null;
+      const groups = item.modifier_groups;
+      const ownServe = hasOwnServe(groups);
+      return {
+        isAlcohol: item.is_alcohol,
+        section: sectionById.get(item.id) ?? null,
+        ownDouble: hasOwnDouble(groups),
+        recipe: recipeLinesOf(recipesByItem[item.id]),
+        name: item.name,
+        liquor: hasLiquorChoice(groups),
+        ownServe,
+        serve: serveOf(line.mods, ownServe),
+      };
+    }
+    if (line.recipeId) {
+      const r = book.recipes.find((x) => x.id === line.recipeId);
+      return { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: r ? r.lines : null };
+    }
+    if (line.customRecipe?.length) {
+      const byId = new Map(book.stock.map((x) => [x.id, x]));
+      const lines = line.customRecipe.flatMap((c) => {
+        const st = byId.get(c.ingredient_id);
+        return st ? [{ name: st.name, quantity: c.quantity, unit: st.unit ?? "oz", kind: st.kind ?? null }] : [];
+      });
+      return { isAlcohol: true, section: "other", ownDouble: false, recipe: lines.length ? lines : null };
+    }
+    return null;
+  }
+  // A drink's icon on its order line.
+  function lineIcon(line: CartLine): IconSpec | null {
+    if (!line.isAlcohol) return null;
+    if (line.menuItemId) {
+      const section = sectionById.get(line.menuItemId);
+      if (!section) return null;
+      return itemIconSpec(recipesByItem[line.menuItemId], section);
+    }
+    if (line.recipeId) {
+      const r = book.recipes.find((x) => x.id === line.recipeId);
+      return r ? iconSpecFor({ glassware: r.glassware, garnishes: r.garnishes, ice: r.ice, ingredients: r.lines.map((l) => ({ name: l.name, quantity: l.quantity, unit: l.unit, family: l.family, kind: l.kind })) }) : null;
+    }
+    if (line.customRecipe?.length) {
+      const byId = new Map(book.stock.map((x) => [x.id, x]));
+      const picked = line.customRecipe.flatMap((c) => {
+        const st = byId.get(c.ingredient_id);
+        return st ? [{ id: st.id, name: st.name, unit: st.unit ?? "oz", family: st.family ?? null, kind: st.kind ?? null, amount: c.quantity }] : [];
+      });
+      return picked.length ? customSpec(picked) : null;
+    }
+    return null;
+  }
+  // The order line's chips: Double, and on a Liquor shot Neat or Rocks (one
+  // choice: off, Neat or Rocks). A change takes what the line's options
+  // added off its price and puts the new ones' on, with "Double", "Neat" or
+  // "On the rocks" on the line. Taxed and discounted like anything else.
+  function setLineOptions(key: string, change: (cur: { serve: Serve | null; double: boolean }) => { serve: Serve | null; double: boolean }) {
+    setCart((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        const ctx = lineDoubleCtx(l);
+        if (!ctx) return l;
+        const cur = { serve: ctx.serve ?? null, double: !ctx.ownDouble && isDouble(l.mods) };
+        const next = change(cur);
+        const was = optionsUpcharge(ctx, cur, doubleSettings);
+        const now = optionsUpcharge(ctx, next, doubleSettings);
+        if (was === null || now === null) return l;
+        const rest = l.mods.filter((m) => !(m === DOUBLE && !ctx.ownDouble) && !(isServeMod(m) && !ctx.ownServe));
+        const mods = [...rest, ...(next.serve ? [SERVE_MOD[next.serve]] : []), ...(next.double ? [DOUBLE] : [])];
+        return { ...l, unit: Math.round((l.unit - was + now) * 100) / 100, mods };
+      }),
+    );
+  }
+  // A double picked on a Bar Book card or "What's in it?" before ringing a
+  // menu drink up: the choices sheet opens with Double already on.
+  const [builderDouble, setBuilderDouble] = useState(false);
+
+  const bookMakeable = useMemo(() => {
+    if (book.state !== "ready") return 0;
+    return countMakeable(book.recipes, book.stock, bookMenu);
+  }, [book, bookMenu]);
   const outPromptItem = findItem(outPromptId);
   const outPrompt = outPromptItem ? (outs.get(outPromptItem.id) ?? null) : null;
 
-  // A line can be the free coffee if its item is ticked as a daily coffee
-  // (Back office -> Menu): its menu price comes off, its add-ons don't.
-  const totalsLines = cart.map((l) => {
-    const item = findItem(l.menuItemId);
-    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
-  });
-  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn);
   // With the owner rate on: the order exactly as the owner approved it,
   // priced by the server (each line's owner price and how it was priced,
   // taxed, nothing else off). Only while the order is still the one they
   // saw: changing it (which also drops the approval) turns it off. The
-  // member and their perks stay on the order underneath, for Undo.
+  // member and their perks stay on the order underneath, for Undo. An
+  // organization's comps and tax-included pricing are perks too: off while
+  // it's on, and the organization's banner (and its manager override) is
+  // hidden, so they can't be turned on.
   const ownerRate = ownerApproval && ownerApproval.cartKey === ownerCartKey(cart) ? ownerApproval.on : null;
   const ownerLines = ownerRate ? ownerRate.lines : null;
   const ownerTotals = ownerRate ? ownerRate.totals : null;
+  // A line can be the free coffee if its item is ticked as a daily coffee
+  // (Back office -> Menu): its menu price comes off, its add-ons don't.
+  // An organization member's comps: their day pass and one ticket per
+  // showing, at $0 (lib/orgs.ts).
+  const compPlan = orgCompPlan(
+    cart.map((l) => ({ dayPass: !l.screeningId && isDayPassName(findItem(l.menuItemId)?.name), screeningId: l.screeningId ?? null, qty: l.qty, unit: l.unit })),
+    ownerRate ? null : orgOnOrder,
+    orgOverride,
+  );
+  const totalsLines = cart.map((l, i) => {
+    const item = findItem(l.menuItemId);
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i] };
+  });
+  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: orgTaxIncluded && !ownerRate });
   const menuSubtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
   // The line it would go on, whether or not it's on: "Use it" puts it back.
   const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
@@ -513,6 +789,8 @@ export default function PosApp({
         modifiers: l.mods,
         is_alcohol: l.isAlcohol,
         screening_id: l.screeningId ?? null,
+        ...(l.recipeId ? { recipe_id: l.recipeId } : {}),
+        ...(l.customRecipe?.length ? { custom_recipe: l.customRecipe } : {}),
       })),
     };
   }
@@ -528,6 +806,8 @@ export default function PosApp({
         mods: l.modifiers,
         isAlcohol: l.is_alcohol,
         screeningId: l.screening_id ?? null,
+        recipeId: l.recipe_id ?? null,
+        customRecipe: l.custom_recipe?.length ? l.custom_recipe.map((c) => ({ ingredient_id: c.ingredient_id, quantity: c.quantity })) : null,
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -624,7 +904,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded, !!ownerRate]);
 
   // Mirrors the cart onto the customer-facing kiosk display in real time,
   // via Realtime broadcast rather than a database row -- entirely separate
@@ -658,10 +938,12 @@ export default function PosApp({
     items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
     subtotal: totals.subtotal,
     tax: totals.tax,
+    taxIncluded: totals.taxIncluded,
     total: totals.total,
     // The customer screen's live tally: savings, whose order it is, and the
     // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
+      { label: orgOnOrder ? `${orgOnOrder.orgName} comp` : "Comp", amount: totals.orgCompDiscount },
       { label: DAILY_COFFEE_LINE, amount: totals.dailyPerkDiscount },
       // Named for the guest: "Insiders+ 10% off" is the perk they see applied.
       { label: isPlus && !member?.legacyUnlimited ? `Insiders+ ${Math.round(memberDiscountRate(member) * 100)}% off` : "Member discount", amount: totals.tierDiscount },
@@ -685,11 +967,27 @@ export default function PosApp({
         }
       : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
+    // The payment screen is up: "ready to pay" on the customer screen.
+    paying: payOpen,
+    readerWaking: payOpen && readerWaking,
+    reader: payOpen && readerPrompt ? readerPrompt : null,
   };
   useEffect(() => {
     cartSnapshotRef.current = cartSnapshot;
   });
   const registerChannelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
+  const sendToTablet = useCallback((event: string, payload: object) => {
+    registerChannelRef.current?.send({ type: "broadcast", event, payload });
+  }, []);
+  // The customer screen's sound effects, once someone's set them on this
+  // register (Devices): sent when they change and whenever the screen
+  // (re)joins. Never set here: the screen keeps its own.
+  const tabletSound: TabletSound | null =
+    devices.tabletSound === undefined && devices.tabletVolume === undefined
+      ? null
+      : { on: devices.tabletSound ?? TABLET_SOUND_DEFAULT.on, volume: devices.tabletVolume ?? TABLET_SOUND_DEFAULT.volume };
+  const tabletSoundRef = useRef<TabletSound | null>(null);
+  tabletSoundRef.current = tabletSound;
 
   // A form staff fill in for a guest standing there shows on the customer
   // screen as it's typed (tablet-setup.tsx), and the guest's "✓ That's
@@ -741,6 +1039,7 @@ export default function PosApp({
     channel
       .on("broadcast", { event: "request-state" }, () => {
         channel.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
+        if (tabletSoundRef.current) channel.send({ type: "broadcast", event: "sound", payload: tabletSoundRef.current });
       })
       .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
       .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
@@ -760,7 +1059,7 @@ export default function PosApp({
       registerChannelRef.current?.send({ type: "broadcast", event: "cart", payload: cartSnapshotRef.current });
     }, 250);
     return () => clearTimeout(timer);
-  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, ownerTotals?.total]);
+  }, [cart, orderName, totals.subtotal, totals.tax, totals.total, totals.discount, member, coffeeToday, tabletProfile, payOpen, readerWaking, readerPrompt, ownerTotals?.total]);
 
   function resetOrder() {
     setCart([]);
@@ -962,11 +1261,16 @@ export default function PosApp({
     // A points reward the member no longer has the points for, or a daily
     // coffee they've already had today (on the other register, say), comes
     // off before anyone pays. If the check can't run, the sale goes ahead.
-    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
+    // An organization comp is checked again too: the other register may
+    // have used today's last one.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || totals.orgCompDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
       setBusy(true);
-      const r = await checkBeforePayment(currentFields(), totalsPayload(totals)).catch(() => null);
+      const r = await checkBeforePayment(currentFields(), totalsPayload(totals), orgOverride ? orgApproval?.token : null).catch(() => null);
       setBusy(false);
       if (r && !r.ok) {
+        // The other register used the last comp: look again (the order
+        // shows it's full, with the manager override).
+        if (r.orgFull) setOrgTry((n) => n + 1);
         if (r.points !== undefined) {
           setPointsRedeemed(false);
           if (member) setMember({ ...member, points: r.points });
@@ -1141,6 +1445,7 @@ export default function PosApp({
       ageVerified: cart.some((l) => l.isAlcohol),
       tip: cents(tip + (payment.tip ?? 0)),
       draftOrderId: activeTabId,
+      orgApproval: orgOverride ? (orgApproval?.token ?? null) : null,
     };
   }
 
@@ -1156,10 +1461,15 @@ export default function PosApp({
     // or print the sale twice.
     if (finalizingRef.current) return;
     finalizingRef.current = true;
+    // The customer screen's "Finish on the card reader" says "Approved"
+    // (it ignores this unless that screen is up).
+    if (payment.stripePaymentIntentId) sendToTablet("card-approved", {});
     setPayOpen(false);
     setBusy(true);
     try {
       const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note);
+      // The customer screen's "paid" sound.
+      if (saved) sendToTablet("paid", {});
       // A charged card that didn't save is cleared too: the sale now lives in
       // the "card WAS charged" banner, so its items can't be charged again,
       // held, or moved onto a tab.
@@ -1256,12 +1566,14 @@ export default function PosApp({
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
       subtotal: order.totals.subtotal,
       discounts: [
+        { label: "Organization comp", amount: order.totals.org_comp_discount ?? 0 },
         { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
         { label: "Monthly member discount", amount: order.totals.monthly_discount },
         { label: "Points reward", amount: order.totals.redemption_discount },
       ],
       tax: order.totals.tax,
+      taxIncluded: !!order.totals.tax_included,
       tip: allTip,
       total: order.totals.total + allTip,
       payments: [
@@ -1432,8 +1744,8 @@ export default function PosApp({
           }}
         />
         <div className="shrink-0">
-          <div className="mb-2 flex items-center gap-2">
-            <select className="input min-w-0 flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <select className="input min-h-11 min-w-[7rem] flex-1 !py-2" aria-label="Cashier" value={employeeId} onChange={(e) => pickCashier(e.target.value ? { id: e.target.value, shiftKey } : null)}>
               <option value="">Choose cashier</option>
               {onShiftIds.size > 0 ? (
                 <>
@@ -1464,18 +1776,33 @@ export default function PosApp({
                 ))
               )}
             </select>
-            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
+            {/* Everything about working a shift, with a red count of what
+                needs a look (shift/StaffButton.tsx). It replaced the shift
+                bar that took a whole row above the register. */}
+            <StaffButton />
+            <button className={`chip min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
               Held {heldOrders.length}
             </button>
-            <button className={`chip shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
+            <button className={`chip min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${tabsListOpen ? "chip-selected" : ""}`} onClick={() => setTabsListOpen((v) => !v)}>
               Tabs {openTabs.length}
             </button>
-            <DevicesPanel
-              fallbackReaderId={defaultReaderId}
-              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
-              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
-            />
           </div>
+
+          {/* One thin line, only while the reader is offline; clears by
+              itself when it's back. Tap to check again. */}
+          {readerDown && (
+            <button
+              className="notice notice-warn mb-2 flex w-full items-center gap-2 !px-3 !py-1.5 text-left text-xs font-semibold"
+              style={{ borderColor: "var(--danger-text)", color: "var(--danger-text)" }}
+              disabled={readerMonitor.checking}
+              onClick={() => checkReader(true)}
+              role="status"
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: "var(--danger-text)" }} aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{READER_OFFLINE_MESSAGE}</span>
+              <span className="shrink-0 underline">{readerMonitor.checking ? "Checking…" : "Check again"}</span>
+            </button>
+          )}
 
           <div className="mb-2 flex items-center gap-2">
             {activeTab && (
@@ -1625,72 +1952,31 @@ export default function PosApp({
               No items yet
             </div>
           ) : (
-            cart.map((line, i) => (
-              // One compact row per line (quantity, name, price, remove) so a
-              // longer order still fits the iPad without scrolling much.
-              <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, -1)}
-                  aria-label={`One less ${line.name}`}
-                >
-                  −
-                </button>
-                <span className="w-5 shrink-0 text-center text-sm font-bold" style={{ color: "var(--foreground)" }}>
-                  {line.qty}
-                </span>
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, 1)}
-                  aria-label={`One more ${line.name}`}
-                >
-                  +
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium" style={{ color: "var(--foreground)" }}>
-                    {line.name}
-                  </div>
-                  {line.mods.length > 0 && (
-                    <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
-                      {line.mods.join(", ")}
-                    </div>
-                  )}
-                  {i === totals.dailyPerkLine && !ownerLines && (
-                    <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
-                      ☕ {line.qty > 1 ? "One free today" : "Free today"}
-                    </div>
-                  )}
-                </div>
-                {ownerLines?.[i] ? (
-                  // The owner price, with the menu price struck through and how it was priced.
-                  <span className="shrink-0 text-right text-sm leading-tight tabular-nums" style={{ color: "var(--foreground)" }}>
-                    {ownerLines[i].unit_price !== cents(line.unit) && (
-                      <s className="mr-1 text-xs" style={{ color: "var(--muted)" }}>
-                        {money(line.unit * line.qty)}
-                      </s>
-                    )}
-                    <span className="font-semibold">{money(ownerLines[i].unit_price * line.qty)}</span>
-                    <span className="block text-[10px] font-semibold" style={{ color: ownerLines[i].owner_pricing === "half" ? "var(--danger-text)" : "var(--muted)" }}>
-                      {OWNER_PRICING_TAG[ownerLines[i].owner_pricing]}
-                    </span>
-                  </span>
-                ) : (
-                  <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
-                    {money(line.unit * line.qty)}
-                  </span>
-                )}
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md text-lg"
-                  style={{ color: "var(--danger-text)" }}
-                  onClick={() => removeLine(line.key)}
-                  aria-label={`Remove ${line.name}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))
+            cart.map((line, i) => {
+              // A drink that can be a double gets its chip (a Liquor shot its
+              // Neat and Rocks chips too), and a drink its icon.
+              const ctx = lineDoubleCtx(line);
+              const doubled = !!ctx && !ctx.ownDouble && isDouble(line.mods);
+              const up = ctx ? doubleUpcharge(ctx, doubleSettings) : null;
+              return (
+                <OrderLineRow
+                  key={line.key}
+                  line={line}
+                  icon={lineIcon(line)}
+                  double={ctx && up !== null ? { on: doubled, upcharge: up } : null}
+                  serve={ctx && canServe(ctx) ? { value: ctx.serve ?? null, upcharge: doubleSettings.serveUpcharge } : null}
+                  freeToday={!ownerLines && i === totals.dailyPerkLine}
+                  comp={compPlan.comps[i] > 0 ? orgOnOrder?.orgName : null}
+                  // With the owner rate on: the server's owner price for this line, the menu price struck through.
+                  owner={ownerLines?.[i] ? { unit: ownerLines[i].unit_price, how: ownerLines[i].owner_pricing } : null}
+                  onLess={() => updateQty(line.key, -1)}
+                  onMore={() => updateQty(line.key, 1)}
+                  onRemove={() => removeLine(line.key)}
+                  onDouble={() => setLineOptions(line.key, (o) => ({ ...o, double: !o.double }))}
+                  onServe={(serve) => setLineOptions(line.key, (o) => ({ ...o, serve }))}
+                />
+              );
+            })
           )}
 
           {/* The owner rate: whose, and what it means for this order. Member
@@ -1738,6 +2024,40 @@ export default function PosApp({
             )
           )}
 
+          {/* An organization member (lib/orgs.ts): whose, today's comps,
+              and what's comped or why not. */}
+          {orgOnOrder && !ownerRate && (
+            <div
+              className="rounded-md border-2 px-2 py-1.5 text-xs"
+              style={{ borderColor: compPlan.blocked ? "var(--danger-text)" : "var(--accent)", color: "var(--foreground)" }}
+              role="status"
+            >
+              <div className="font-bold">
+                {orgOnOrder.orgName} · comps today {compCountText(orgOnOrder.used, orgOnOrder.limit)}
+                <InfoTip topic="organizations" />
+              </div>
+              <div style={{ color: "var(--muted)" }}>
+                {roleLabel(orgOnOrder.role)}
+                {!orgOnOrder.active
+                  ? " · this organization is paused, so nothing is comped"
+                  : orgOnOrder.personCompedToday
+                    ? " · already comped today: their movies today are free"
+                    : " · day pass and movies today ring up at $0"}
+              </div>
+              {compPlan.blocked && (
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 font-semibold" style={{ color: "var(--danger-text)" }}>
+                    All {orgOnOrder.limit} comps are used today, so the day pass and tickets are charged.
+                  </span>
+                  <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setOrgPinOpen(true)}>
+                    Manager override
+                  </button>
+                </div>
+              )}
+              {compPlan.overLimit && <div className="mt-1 font-semibold">Over the limit: a manager approved this comp.</div>}
+            </div>
+          )}
+
           {/* Its "+ Add name" / "+ Add email" show on the customer screen as they're typed. */}
           <TabletSetupContext value={tabletSetup}>
           <PosMemberPanel
@@ -1767,6 +2087,7 @@ export default function PosApp({
             }}
             readerId={readerId}
             toTablet={checkins.toTablet}
+            onOrgChange={() => setOrgTry((n) => n + 1)}
           />
           </TabletSetupContext>
 
@@ -1813,8 +2134,15 @@ export default function PosApp({
             ) : (
               <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
                 <div>Subtotal {money(totals.subtotal)}</div>
-                {totals.discount > 0 && <div>Discount -{money(totals.discount)}</div>}
-                <div>Tax {money(totals.tax)}</div>
+                {totals.orgCompDiscount > 0 && <div>Comp -{money(totals.orgCompDiscount)}</div>}
+                {totals.discount - totals.orgCompDiscount > 0.004 && <div>Discount -{money(totals.discount - totals.orgCompDiscount)}</div>}
+                {totals.taxIncluded ? (
+                  <div className="font-semibold" style={{ color: "var(--foreground)" }}>
+                    {TAX_INCLUDED_NOTE(orgOnOrder?.orgName ?? "organization")}: {money(totals.tax)}
+                  </div>
+                ) : (
+                  <div>Tax {money(totals.tax)}</div>
+                )}
               </div>
             )}
             <div className="text-right">
@@ -1903,17 +2231,31 @@ export default function PosApp({
                   Owner rate
                 </button>
               ))}
+            {/* This register's reader, printer, drawer and the customer
+                screen's sounds. Down here in the row's spare cells, so the
+                top row has room for the Staff button. */}
+            <DevicesPanel
+              buttonClassName="btn-secondary relative whitespace-nowrap !px-2 py-2 text-sm"
+              fallbackReaderId={defaultReaderId}
+              reader={readerMonitor}
+              onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
+              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
+              sendToTablet={sendToTablet}
+            />
+            {/* Booths held today (it used to be a box above the register). */}
+            <BoothsButton className="btn-secondary whitespace-nowrap !px-2 py-2 text-sm" />
             {/* Admins only. Docked here, in the row's spare cells, rather than
                 floating over the menu buttons the way it used to. */}
             {canNote && (
               <button
-                className="btn-secondary col-span-2 inline-flex items-center justify-center gap-1.5 whitespace-nowrap !px-2 py-2 text-sm"
+                className="btn-secondary inline-flex items-center justify-center gap-1 whitespace-nowrap !px-2 py-2 text-sm"
                 style={{ borderColor: "var(--border)", color: "var(--muted)" }}
                 onClick={() => setNoteOpen(true)}
                 title="Leave a dev note about the register or the customer screen"
+                aria-label="Dev note"
               >
                 <NoteIcon size={16} />
-                Dev note
+                Note
               </button>
             )}
           </div>
@@ -1939,7 +2281,8 @@ export default function PosApp({
             >
               {/* An icon reads at this size where a tiny photo doesn't. */}
               <CategoryIcon category={c.key} label={c.label} />
-              {c.label}
+              {/* The bar's category is "Alcohol" in Back office and Bar here. */}
+              {isBarCategory(c) ? "Bar" : c.label}
             </button>
           ))}
           {/* Last, so the menu tabs keep their places. A dot when there's
@@ -1967,7 +2310,12 @@ export default function PosApp({
           />
         )}
 
-        <div ref={menuScrollRef} data-menu-scroll className="md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain">
+        <div
+          ref={menuScrollRef}
+          data-menu-scroll
+          // The Bar tab fills this box exactly and scrolls inside its own parts.
+          className={`md:min-h-0 md:flex-1 md:overflow-y-auto md:overscroll-contain ${barTab ? "md:flex md:flex-col" : ""}`}
+        >
         {categoryId === CUSTOMERS_TAB ? (
           // Its "New phone account" shows on the customer screen as it's typed.
           <TabletSetupContext value={tabletSetup}>
@@ -1984,7 +2332,51 @@ export default function PosApp({
             }}
           />
         ) : builderItem ? (
-          <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
+          <ItemBuilder
+            key={builderItem.id}
+            item={builderItem}
+            recipe={recipesByItem[builderItem.id] ?? null}
+            // A drink's icon, large, so it doesn't vanish when its button is tapped.
+            icon={sectionById.get(builderItem.id) ? itemIconSpec(recipesByItem[builderItem.id], sectionById.get(builderItem.id)!) : null}
+            double={{
+              ctx: {
+                isAlcohol: builderItem.is_alcohol,
+                section: sectionById.get(builderItem.id) ?? null,
+                ownDouble: hasOwnDouble(builderItem.modifier_groups),
+                recipe: recipeLinesOf(recipesByItem[builderItem.id]),
+                name: builderItem.name,
+              },
+              settings: doubleSettings,
+              start: builderDouble,
+            }}
+            onAdd={addLine}
+            onCancel={() => setBuilderItemId(null)}
+          />
+        ) : barTab && category ? (
+          <BarTab
+            category={category}
+            recipesByItem={recipesByItem}
+            outs={outs}
+            onTap={tapItem}
+            onCustom={() => setCustomOpen(true)}
+            page={barPage}
+            onPage={setBarPage}
+            book={{
+              // Before the Bar Book migration (or if it can't be read) there's no strip.
+              state: book.state === "ready" ? "ready" : book.state === "idle" ? "loading" : "off",
+              count: book.state === "ready" ? bookMakeable : null,
+              onOpen: (query) => {
+                setBookQuery(query ?? "");
+                setBookOpen(true);
+                setBookLoading(true);
+                refreshBook();
+              },
+              onWhatsInIt: () => {
+                setWhatsOpen(true);
+                refreshBook();
+              },
+            }}
+          />
         ) : (
           <div className="space-y-4">
             {menuSections.map((section, i) => (
@@ -2008,7 +2400,7 @@ export default function PosApp({
                         {...tileExtras(item, category, section.label, out)}
                         out={out}
                         // An 86'd item asks first: sell anyway, or it's back.
-                        onClick={() => (out ? setOutPromptId(item.id) : setBuilderItemId(item.id))}
+                        onClick={() => tapItem(item.id)}
                       />
                     );
                   })}
@@ -2086,6 +2478,7 @@ export default function PosApp({
           onApproved={(approval) => {
             setOwnerAskOpen(false);
             // For this order as it is now (the modal covers the register).
+            setOrgApproval(null); // an organization's comp override doesn't go with the owner rate
             setOwnerApproval({ on: approval, cartKey: ownerCartKey(cart) });
           }}
         />
@@ -2103,6 +2496,24 @@ export default function PosApp({
           onReaderCanceled={clearPendingReaderSale}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}
+          readerDown={readerDown}
+          onReaderOffline={onReaderOffline}
+          onReaderPrompt={setReaderPrompt}
+        />
+      )}
+
+      {orgPinOpen && orgOnOrder && (
+        <ManagerPinModal
+          title="Comp past today's limit?"
+          description={`${orgOnOrder.orgName} has used all ${orgOnOrder.limit} comps today. A manager's PIN comps this one anyway.`}
+          onCancel={() => setOrgPinOpen(false)}
+          onSubmit={async (pin) => {
+            const r = await approveOrgOverLimit(pin, orgOnOrder.orgId);
+            if (!r.ok) throw new Error(r.error);
+            setOrgApproval({ orgId: orgOnOrder.orgId, token: r.token });
+            setOrgPinOpen(false);
+            setToast(`Comp approved${r.approvedBy ? ` by ${r.approvedBy}` : ""}. Take payment when ready.`);
+          }}
         />
       )}
 
@@ -2140,6 +2551,78 @@ export default function PosApp({
       )}
 
       {noteOpen && <DevNoteDialog about={NOTE_ABOUT} onClose={() => setNoteOpen(false)} />}
+
+      {whatsOpen && book.state === "ready" && (
+        <WhatsInIt
+          recipes={book.recipes}
+          stock={book.stock}
+          menuItems={bookMenu}
+          target={book.target}
+          outs={outs}
+          doubleSettings={doubleSettings}
+          prices={barPrices}
+          onClose={() => setWhatsOpen(false)}
+          // Exactly what tapping its button on the Bar tab does.
+          onRingUp={(id, double) => {
+            setWhatsOpen(false);
+            tapItem(id, double);
+          }}
+          // The Bar Book's own off-menu line, and a custom drink: both the
+          // same one-off line as "+ Custom item".
+          onAddLine={(l, note) => {
+            setWhatsOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: true, recipeId: l.recipeId }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+          onAddCustom={(l, note) => {
+            setWhatsOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: l.isAlcohol, customRecipe: l.customRecipe }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+        />
+      )}
+
+      {bookOpen && book.state === "ready" && (
+        <BarBook
+          initialQuery={bookQuery}
+          recipes={book.recipes}
+          stock={book.stock}
+          menuItems={bookMenu}
+          target={book.target}
+          outs={outs}
+          updating={bookLoading}
+          // Owners and admins (canNote is hasAdminAccess); the server checks again.
+          canMakeMenuItems={canNote}
+          doubleSettings={doubleSettings}
+          prices={barPrices}
+          onClose={() => setBookOpen(false)}
+          // The same one-off line as "+ Custom item", knowing its recipe.
+          onAddLine={(l, note) => {
+            setBookOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: true, recipeId: l.recipeId }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+          // A new menu item: the register's buttons and the book read again.
+          onMenuChanged={() => {
+            router.refresh();
+            refreshBook();
+          }}
+          // Exactly what tapping its button on the Bar tab does.
+          onRingUp={(id, double) => {
+            setBookOpen(false);
+            tapItem(id, double);
+          }}
+        />
+      )}
 
       {confirmState && (
         <ConfirmModal

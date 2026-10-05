@@ -108,6 +108,10 @@ export default function PeriodView({
                   rows={[
                     ...(s.discounts > 0 ? [{ label: "Member discounts", value: `−${money(s.discounts)}`, muted: true }] : []),
                     ...(s.dailyCoffee > 0 ? [{ label: `${DAILY_COFFEE_LINE} · ${s.dailyCoffeeCount}`, value: `−${money(s.dailyCoffee)}`, muted: true }] : []),
+                    ...(s.orgComps > 0 ? [{ label: `Organization comps · ${s.orgCompOrders}`, value: `−${money(s.orgComps)}`, muted: true }] : []),
+                    ...(s.taxIncluded.tax > 0
+                      ? [{ label: `Tax inside even-dollar sales · ${s.taxIncluded.orders} (${money(s.taxIncluded.sales)})`, value: `−${money(s.taxIncluded.tax)}`, muted: true }]
+                      : []),
                     ...(s.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(s.partialRefunds)}`, muted: true }] : []),
                     { label: "Net sales", value: money(s.netSales), strong: true },
                     // Not taken off: the owner tab line is already at what the owners pay.

@@ -149,6 +149,18 @@ export const HELP_TOPICS = {
       "The register never connects to the card reader directly. It tells Stripe which reader to wake up, and the reader takes the payment over the internet, so the two only need to be online, not connected to each other. There's more than one reader, so each register picks the one sitting next to it; the choice is saved on this iPad. \"Offline\" means Stripe can't reach that reader: check that it's on and connected.",
     steps: ["A brand-new reader is registered first in the Stripe dashboard (Terminal → Readers), then picked here."],
   },
+  "card-reader-status": {
+    title: "Card reader",
+    area: "Register: devices",
+    body:
+      "The register asks Stripe about its card reader about once a minute, and again right before every card charge. If Stripe says the reader is offline, or hasn't heard from it for over 2 minutes, a red strip says \"Card reader offline\" above the order and Devices gets a red dot; it clears by itself when the reader is back. Devices shows the reader's name, model, software, IP address, what it's doing, and how many times it went offline today. Stripe doesn't share the battery level, so a reader that keeps dropping off is the sign its battery is low: keep it on its charger or dock (a full battery lasts about 8 hours).",
+    steps: [
+      "Offline: plug it in or set it on its dock, then check its Wi-Fi (swipe in from the left edge → Settings → Wi-Fi).",
+      "Still offline: hold the power button to restart it, then tap Check now in Devices.",
+      "To see the battery: swipe in from the left edge → Settings (the passcode is on Stripe's WisePOS E page) → Diagnostics.",
+    ],
+    links: [{ label: "Stripe's WisePOS E page", href: "https://docs.stripe.com/terminal/payments/setup-reader/bbpos-wisepos-e#settings" }],
+  },
   "devices-print-via": {
     title: "Print through the website",
     area: "Register: devices",
@@ -157,8 +169,28 @@ export const HELP_TOPICS = {
     links: [{ label: "Printers (managers)", href: "/admin/printers" }],
     trainingSlug: "receipt-printer-setup",
   },
+  "devices-tablet-sound": {
+    title: "Customer screen sounds",
+    area: "Register: devices",
+    body:
+      "The customer screen plays short arcade-style sounds so guests hear what's happening: a coin for checking in (+5), two notes for \"Welcome back\", a blip for each item rung up and a tick when the total changes, a little run when the payment screen opens, a soft chime when it's the card reader's turn and a happy one when the sale goes through, sparkles for streamers and entrances, a tape clunking into the VCR for the Rickroll, and a soft \"hmm\" for a number it doesn't know. Turn them on or off and set the volume under Devices → Customer screen sounds; it's on at 40% to start, and kept low because the cinema is next door. The register sends the setting to the screen, and both remember it. Turning on reduced motion on the screen only calms the animations: sound has its own switch here.",
+    steps: [
+      "Tap Devices (bottom row of the order), scroll to Customer screen sounds.",
+      "Move the volume and let go: the screen plays a sample at that level. Play a test sound does the same.",
+      "Silent? Browsers only play sound after the screen has been tapped, so tap the customer screen once. Then check the iPad's own volume and that it isn't on silent.",
+    ],
+  },
 
   // ---------- register: payments ----------
+  "pay-on-reader": {
+    title: "\"Finish on the card reader\" on the customer screen",
+    area: "Register: payments",
+    body:
+      "Guests kept tapping their card on the customer screen, and tapping it on the reader before picking a tip (the reader asks for the tip first, so that tap does nothing). So once a card payment reaches the reader, the customer screen says \"Finish on the card reader\" in big letters, with a drawing of the reader and a soft chime, the order shrunk to a strip below. It shows two steps: pick a tip on the reader, then tap, insert or swipe the card. Stripe doesn't say when the tip is picked, so both stay up; step 2 lights up once a card has been tried. No tip asked (taken on the register already): only the card step. A tab's card on file: only the tip. Cash and vouchers never show it.",
+    steps: [
+      "Approved: the screen says so, with the usual happy sound. Cancel on the register and it goes back to the order.",
+    ],
+  },
   "card-on-file-tip": {
     title: "The tip on a card on file",
     area: "Register: payments",
@@ -206,6 +238,28 @@ export const HELP_TOPICS = {
     body:
       "Regulars check in on the customer screen with their phone number or email, and that's it: there's nothing to confirm. Their visit and its points go on right away (once a day, with streaks and badges as usual; typing it again just says \"Welcome back\"), the screen plays their reward and shows their card, and they go on the current order by themselves (taking over from whoever was on it, with \"Now on this order\"; to switch back, tap Add to order on the other person; never while a card payment is going through). A pop-up over the order shows their photo and name and the one thing to know: red for no payment on file, a free coffee ready, \"Ask their name?\", their birthday week or first visit, with their points. There's nothing to undo on the register. A guest the screen got wrong (a mistyped number) taps \"That's not me\" under their card on the screen: the visit and its points are taken back and they're off the order. A phone number shared by a few accounts asks \"Which one is you?\" on the screen, with a button for each (first name and last initial only): the one they tap checks in like anyone else, and \"None of these\" lets them sign up. Nothing waits on you. Everyone checked in today is first on the Customers tab: tap a card to put them on the order. Hold for details: press and hold a card there, or the order's Member box, for about half a second to see their tier, points, visits, member since and today's check-in time, with Open in Back office for anything to change. If something looks wrong (someone used another person's number, or checked in without being here), tap Flag suspicious activity at the bottom of that panel, pick a reason and add a short note if you like: an admin or owner looks at it in Back office and can take back the check-in's points. A flagged account shows a 🚩 on its card; it doesn't block anything. Found by email with no phone on file, they can add the number they typed, saved as they check in. New customers sign themselves up on the screen (\"Just use my phone number\", or name and email) and are checked in at once. Guests who'd rather tell you: \"New phone account\" on the Customers tab, or \"+ Add name\" / \"+ Add email\" in the Member box, shows on the screen as you type so they can tap \"✓ That's right\". The screen plays the entrance they picked on their account (a unicorn, confetti, fireworks or floating stickers, in their color); it never gets in the way of the keypad. If a profile line is rude, hide it from their page in Members.",
     links: [{ label: "Top regulars (managers)", href: "/admin/members/regulars" }],
+  },
+  "member-notes": {
+    title: "Account notes and organization",
+    area: "Register: members and the door",
+    body:
+      "Press and hold a customer's card (Checked in today, or the order's Member box) to open their panel. Under Notes, type in \"Add a note\" and tap Save: it records who wrote it and when, and any cashier can do it, no PIN. Tap the \"+ Group / organization\" chip to tag them with a group, like Easter Seals (tap a suggestion or type one), so they can be attached to a corporate account later; the tag shows on their card in Checked in today. Notes and the tag are staff only: customers never see them on the screen, their account or emails. In Back office, the member's page has the same notes, and Members filters by organization to find everyone in a group.",
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
+  organizations: {
+    title: "Organization accounts (Easter Seals and others)",
+    area: "Register: members and the door",
+    body:
+      "Groups like Easter Seals pay a monthly fee and get a number of comps a day (20 by default: 10 pairs of a guest and a helper). A comp is one person's day: when an organization's helper or supported guest is on the order, their Day pass and one ticket per movie ring up at $0, and the chip shows \"Easter Seals · comps today 6/20 · 3 pairs\". Each person counts once a day, however many movies they see. When the day's comps are used up the day pass and tickets are charged; a manager PIN can comp one more. Supported guests also pay even dollars: the listed price is the total with the tax inside it (a $4 pizza is $4.00, which is $3.68 plus $0.32 tax), so the order says \"Tax included\" and the books still record the tax. Helpers pay normal prices plus tax. To put someone in an organization, press and hold their card and tap \"Add to organization\".",
+    steps: [
+      "Back office → Organizations: make the organization, or turn a \"Group / organization\" tag into one (everyone tagged is attached).",
+      "Send helpers the sign-up link from the organization's page: they sign up with their work email and join as helpers.",
+      "Supported guests without an account: make a phone account at the register, then Add to organization.",
+    ],
+    links: [
+      { label: "Organizations", href: "/admin/organizations" },
+      { label: "Organization report", href: "/admin/reports/organizations" },
+    ],
   },
   "points-and-badges": {
     title: "Points, visits and badges",
@@ -259,11 +313,29 @@ export const HELP_TOPICS = {
   },
 
   // ---------- register: shift tools ----------
+  "staff-button": {
+    title: "The Staff button",
+    area: "Register: shift tools",
+    body:
+      "Everything about working a shift lives behind one Staff button, next to the cashier at the top of the order, so the order and the menu keep the whole screen. The red number on it counts what needs a look: checklist items left, to-dos and training for whoever's on, anything that's run out, and people on today's schedule who haven't started yet. Tap it for the Staff sheet: who's on shift (tap your name if it's you), Start a shift and End your shift; then Ran out, Checklist, Schedule and My hours; then Needs a look (to-dos with their Done, training to open, what's out, anyone who hasn't started); then Par sheet and Shopping list; then History and Reminders. When nobody's on shift yet, the button says Start shift instead. Booths held today are their own button in the order's bottom row, gold while a Reserved card still needs printing. Reminders that are due still show above the register until you tap Done or Remind me later.",
+    steps: [
+      "Start of the night: tap Start shift (top of the order) and pick your name. The checklist opens.",
+      "Something ran out: Staff → Ran out.",
+      "Closing: Staff → End your shift → I'm closing for the night → do the par count.",
+    ],
+  },
+  "staff-schedule": {
+    title: "The schedule on the register",
+    area: "Register: shift tools",
+    body:
+      "Staff → Schedule shows who's working today and whether they've started (\"On since 4:02 PM\", \"Due at 8:00 PM\", or \"Not started yet\" once their start time has passed), then the next 7 days. It's the same schedule a manager keeps in Back office → Team; the register only reads it. Someone due in later today, or late, adds to the red number on the Staff button until they start their shift.",
+    links: [{ label: "Back office → Team (managers)", href: "/admin/team" }],
+  },
   "ran-out": {
     title: "Ran out (86 it)",
     area: "Register: shift tools",
     body:
-      "Ran out is for something that runs out mid-shift. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the register shows a quiet line, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\". When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
+      "Ran out is for something that runs out mid-shift: Staff → Ran out. Pick what ran out and save: the menu items that need it (by recipe, or plainly by name) start ticked, and their buttons show OUT. That's all the cashier does: nobody on shift is asked to go buy it. The people who buy for the week get an email right away, and the Staff sheet shows a quiet line under Needs a look, like \"Out of Heavy whipping cream · Nathan and Mary have been emailed\" (it counts in the Staff button's red number). When they mark it back in stock in Back office, the line goes away and everything it stopped goes back on sale. Tap an OUT button to sell it anyway or mark it back.",
     links: [{ label: "Back office → Ran out", href: "/admin/ran-out" }],
     trainingSlug: "par-count-and-shopping-list",
   },
@@ -279,7 +351,7 @@ export const HELP_TOPICS = {
     title: "The par count",
     area: "Register: shift tools",
     body:
-      "Par is how much of each thing we keep on hand. On the register's Par sheet, count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
+      "Par is how much of each thing we keep on hand. On the register's Par sheet (Staff → Par sheet, or End your shift → I'm closing for the night), count what's on the shelf in the unit shown (bottles, bags, boxes), not in servings, and tap = par when it's fully stocked. You can save part of the sheet at a time, the candy now and the bar later: the shopping list uses each item's latest count from today. Numbers you haven't saved stay on this iPad, so stepping away doesn't lose them.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "par-quarters": {
@@ -293,7 +365,7 @@ export const HELP_TOPICS = {
     title: "The shopping list",
     area: "Register: shift tools",
     body:
-      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up. A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
+      "The shopping list builds itself from the latest counts: everything under par, grouped by the store it's bought at. Nobody types it up, and it isn't on the register all day: it comes up after the closing par count, or under Staff → Shopping list (marked when something's run out). A manager also sees what ran out mid-shift at the top, and \"Raise par?\" for anything that's run out twice in 30 days. The buyers mark a Ran out report back in stock in Back office → Ran out, which puts its menu items back on sale; Found some or False alarm here clears it without buying anything.",
     trainingSlug: "par-count-and-shopping-list",
   },
   "business-day": {
@@ -329,6 +401,24 @@ export const HELP_TOPICS = {
       "Open payment page and hand the device to the buyer, or Get a link to text the buyer.",
     ],
     links: [{ label: "Members", href: "/admin/members" }],
+  },
+  "paid-through": {
+    title: "Paid-through dates (Insiders+ paid ahead)",
+    area: "Members and memberships",
+    body:
+      "For a member who already paid for Insiders+ another way, like a whole year on the old website. Until the date they count as paid-for Insiders+ everywhere: gold at the register, every perk, no \"no card on file\" warning. When they add a card (My Account → Billing, the card page from their member page, or the register), nothing is charged until the date; then it renews on the plan picked here (yearly for an old-site annual), at that day's price plus tax. If no card is on by the date, the perks stop the next day. Owners and admins set or change the date; the page shows who set it and when. A member already billed by their own card, or complimentary, or on a gifted year can't get one.",
+    steps: [
+      "Members → find them → open their page.",
+      "Paid through → Set a paid-through date: pick the date, Yearly or Monthly, and add a note (e.g. old-site annual, confirmed 10/3). Save.",
+      "To tell them how to add their card without being charged early: Send paid-through explainer. It emails just them the 3 steps, with their date.",
+    ],
+    links: [{ label: "Members", href: "/admin/members" }],
+  },
+  "renewal-notice": {
+    title: "Yearly renewal notices",
+    area: "Members and memberships",
+    body:
+      "A week before a yearly Insiders+ renews, the member gets an email: the date, the exact charge from Stripe (price + tax, like $153 + $13.35 tax = $166.35), the card it goes on, and a Manage or cancel button to My Account → Billing. It's a billing notice, so it goes even to people who turned off our emails, and each renewal gets it only once. That includes paid-through members, a week before their first charge. Their member page shows \"Renewal notice sent\" and the date once it's gone. To cancel, they press Manage or cancel, or you open Stripe's billing page from Billing on their member page with them.",
   },
   "member-billing": {
     title: "Putting a card on a membership",
@@ -370,6 +460,18 @@ export const HELP_TOPICS = {
       "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Duplicate on a showing copies it here for another date. Repeat adds the same showing at several start times on the days you pick across a date range, listed first so you can check them. Adding, moving or removing a showing takes a manager. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
     trainingSlug: "what-we-can-post",
   },
+  "showing-visibility": {
+    title: "Public, Members only or Private",
+    area: "Showtimes, events and booths",
+    body:
+      "Every showing has a \"Who sees it\" choice; new ones start Public. Public: on the website, the lobby TV and the weekly email as usual. Members only: the website shows it only to members signed in to their account, marked Members only; guests don't see it at all. It goes in the members-only part of the weekly email and stays off the lobby TV (the ramp TV still counts it down). Private: a private group's showing, like a school or charity matinee. It's never on the website, TVs, emails or flyers and can't be bought online; it shows here and on the register's Movies tab labelled Private, so ring their tickets up there. Older titles stay off the public website whatever you pick. On the showtimes spreadsheet, add the choice to the title: \"Beetlejuice 2 (member screening)\" or \"(members only)\" for members, \"(private event do not list)\", \"(private)\" or \"(do not list)\" for private. The note comes off the title when it's loaded.",
+  },
+  "outdoor-screen": {
+    title: "The outdoor screen link",
+    area: "Showtimes, events and booths",
+    body:
+      "The website labels every showing with its screen: \"Outdoor screen · weather permitting\" or the indoor cinema, from the room you pick. Showtimes has an \"On the outdoor screen this weekend\" box, and royalecinemajoplin.com/outdoor lists only the outdoor showings: paste that link when someone asks what's on outside. Older titles and members-only showings aren't on it, same as the rest of the public site.",
+  },
   "house-events": {
     title: "House events",
     area: "Showtimes, events and booths",
@@ -380,13 +482,13 @@ export const HELP_TOPICS = {
     title: "Private event bookings",
     area: "Showtimes, events and booths",
     body:
-      "Private events booked on the website land here with their total, what's been paid and the balance. \"Mark paid manually\" is for a balance paid another way, like cash or a check at the box office. Private-event clients' names never go on public posts, signs or pages.",
+      "Private events booked on the website land here with their total, what's been paid and the balance. The website doesn't take requests for a Sunday, since we're closed; a Sunday event is arranged with staff directly. \"Mark paid manually\" is for a balance paid another way, like cash or a check at the box office. Private-event clients' names never go on public posts, signs or pages.",
   },
   booths: {
     title: "Booth reservations",
     area: "Showtimes, events and booths",
     body:
-      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee.",
+      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee. On the register, the Booths button in the order's bottom row (\"2 booths\") lists today's and tomorrow's: it's gold while a Reserved card still needs printing, with a red dot for a booking made in the last day.",
   },
 
   // ---------- reports and money ----------

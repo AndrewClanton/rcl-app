@@ -21,7 +21,8 @@ export function subscriptionLive(member: Pick<Member, "stripe_subscription_id" |
   return !!member.stripe_subscription_id && ["active", "trialing", "past_due", "unpaid"].includes(member.subscription_status ?? "");
 }
 
-// A gifted year (see lib/gift-membership.ts) that hasn't run out yet.
+// A gifted year (see lib/gift-membership.ts), or a year prepaid another way
+// (lib/paid-through.ts: the same column), that hasn't run out yet.
 export function giftActive(member: Pick<Member, "plus_gift_until">, now = Date.now()): boolean {
   return !!member.plus_gift_until && new Date(member.plus_gift_until).getTime() > now;
 }
@@ -37,6 +38,27 @@ export function plusPaidFor(member: BillingFields): boolean {
 export function giftEndsWithoutRenewal(member: BillingFields): string | null {
   if (member.comped || subscriptionLive(member) || !giftActive(member)) return null;
   return member.plus_gift_until ?? null;
+}
+
+// Stripe holds a new subscription's first charge only 48+ hours out.
+export const MIN_HOLD_MS = 49 * 3_600_000;
+
+// When a card added now should first be charged: the end of a gifted or
+// prepaid year (plus_gift_until, lib/paid-through.ts) with nothing lined up
+// after it, so they're never charged for time already paid. Null: charge
+// today (nothing covers them, or it ends within 2 days).
+export function firstChargeHold(member: BillingFields, now = Date.now()): Date | null {
+  const ends = giftEndsWithoutRenewal(member);
+  if (!ends) return null;
+  const at = new Date(ends);
+  return at.getTime() > now + MIN_HOLD_MS ? at : null;
+}
+
+// A card can go on for Insiders+ now: nothing pays for it, or a gifted or
+// prepaid year with nothing after it (then the first charge waits).
+export function canAddPlusCard(member: BillingFields): boolean {
+  if (member.comped) return false;
+  return !plusPaidFor(member) || !!giftEndsWithoutRenewal(member);
 }
 
 // Insiders+ set by hand, with no card or complimentary flag behind it.

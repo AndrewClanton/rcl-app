@@ -1252,6 +1252,72 @@
   color: #fff;
 }
 
+/* ---------- putting the red card down (MemberCards.tsx) ---------- */
+/* "✕ Show my card" on the red card: paper on red, in its top corner while
+   it fills the panel; "✕ Close" at its end as a banner over the order. */
+.unlimited {
+  position: relative;
+}
+.redClose {
+  flex: none;
+  order: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.redClose:active {
+  transform: translateY(1px);
+}
+.unlimitedHero .redClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  min-height: 52px;
+  padding: 8px 18px;
+  font-size: 18px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+/* "💳 Add a card to keep Insiders+" on their card once it's down: one tap
+   brings the red card back. */
+.addCard {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  background: var(--red);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 800;
+  text-align: left;
+  box-shadow: 0 3px 0 var(--ink);
+  cursor: pointer;
+  animation: badgeIn 480ms cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.addCard:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 0 var(--ink);
+}
+.addCardSmall {
+  min-height: 38px;
+  padding: 4px 12px;
+  font-size: 14px;
+  box-shadow: none;
+}
+
 /* ---------- their account (MemberCards.tsx AccountPanel) ---------- */
 /* At the foot of the order (in place of the points strip), or on its own
    under a red card or tonight's tickets (.accountAlone). */
@@ -1692,7 +1758,8 @@
   .tapWaves,
   .plusWelcome,
   .accountAlone,
-  .memberCard {
+  .memberCard,
+  .addCard {
     animation: none;
   }
   .key,

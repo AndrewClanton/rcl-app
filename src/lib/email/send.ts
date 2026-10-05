@@ -36,7 +36,7 @@ async function hardBounced(to: string): Promise<boolean> {
   }
 }
 
-export async function sendEmail(to: string, subject: string, html: string, opts: SendOptions = {}): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function sendEmail(to: string, subject: string, html: string, opts: SendOptions = {}): Promise<{ ok: true; id: string | null } | { ok: false; error: string }> {
   const key = process.env.RESEND_API_KEY;
   if (!key) return { ok: false, error: "Email isn't set up yet (RESEND_API_KEY missing)." };
   if (await hardBounced(to)) return { ok: false, error: "That address bounced before, so email to it is off. Check the address." };
@@ -60,7 +60,11 @@ export async function sendEmail(to: string, subject: string, html: string, opts:
     }),
   }).catch(() => null);
   if (!res) return { ok: false, error: "Couldn't reach the email service." };
-  if (res.ok) return { ok: true };
+  if (res.ok) {
+    // Resend's id for the email (the renewal notice keeps it).
+    const sent = (await res.json().catch(() => null)) as { id?: string } | null;
+    return { ok: true, id: sent?.id ?? null };
+  }
   const body = (await res.json().catch(() => null)) as { message?: string } | null;
   return { ok: false, error: body?.message ?? `Email service answered ${res.status}.` };
 }

@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPlusCheckout, giftEndsWithoutRenewal, plusPaidFor } from "@/lib/plus-checkout";
+import { firstChargeHold } from "@/lib/plus-status";
 import { safePath } from "@/lib/safe-path";
 import type { MemberPriceTier } from "@/lib/types";
 import { exactEmail } from "@/lib/email-match";
@@ -116,7 +117,7 @@ export async function startMembershipCheckout(fields: {
     priceTier,
     returnTo: safePath(fields.returnTo),
     interval: fields.annual ? "year" : "month",
-    firstChargeAt: giftEnds && new Date(giftEnds).getTime() > Date.now() + 49 * 3_600_000 ? new Date(giftEnds) : null,
+    firstChargeAt: existing ? firstChargeHold(existing) : null,
     // Applied once they've paid (lib/plus-activate.ts).
     emailOptIn: fields.emailOptIn === true,
   });

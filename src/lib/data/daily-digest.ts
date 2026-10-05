@@ -5,6 +5,8 @@ import { latestLines } from "@/lib/ops/par-counts";
 import { qtyLabel } from "@/lib/ops/shared";
 import { getMembershipRefundsMade } from "@/lib/membership-payments/read";
 import { getDayReport, type DayReport } from "./reports";
+import { compsByOrg } from "./organizations";
+import { customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
 
 // The end-of-day email to the admins: how the business day went, how that
 // compares, and anything worth a look before the next day starts. Built
@@ -27,6 +29,8 @@ export interface DailyDigest {
   newMembers: number;
   // "Ran out" reports made that day (false alarms left out).
   ranOut: { what: string; time: string; by: string | null; status: string; bought: boolean }[];
+  // Organization comps that day, by organization (lib/orgs.ts).
+  orgComps?: { name: string; people: number; value: number }[];
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -99,8 +103,23 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
   await safely(undefined, async () => {
     const ids = completed.map((o) => o.id);
     if (!ids.length) return;
-    const { data } = await supabase.from("order_items").select("name, unit_price, quantity").in("order_id", ids).is("menu_item_id", null).is("screening_id", null);
-    if (data?.length) watch.push(`${data.length} custom item${data.length === 1 ? "" : "s"} rung up: ${data.map((i) => `${i.name} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}. The menu may be missing a button.`);
+    // A Bar Book drink rung up off the menu (recipe_id, once migration
+    // 20261004030000 is in) isn't a missing button: it's named as such.
+    const read = (columns: string) => supabase.from("order_items").select(columns).in("order_id", ids).is("menu_item_id", null).is("screening_id", null);
+    // A custom drink from "What's in it?" (custom_recipe, migration
+    // 20261005010000) says what was in it.
+    let res = await read("name, unit_price, quantity, recipe_id, custom_recipe");
+    if (res.error) res = await read("name, unit_price, quantity, recipe_id");
+    if (res.error) res = await read("name, unit_price, quantity");
+    const rows = (res.data ?? []) as unknown as { name: string; unit_price: number; quantity: number; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null }[];
+    const data = rows.filter((i) => !i.recipe_id);
+    const book = rows.filter((i) => i.recipe_id);
+    const listed = (i: (typeof rows)[number]) => {
+      const list = customRecipeText(i.custom_recipe ?? null);
+      return list ? ` (${list})` : "";
+    };
+    if (data.length) watch.push(`${data.length} custom item${data.length === 1 ? "" : "s"} rung up: ${data.map((i) => `${i.name}${listed(i)} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}. The menu may be missing a button.`);
+    if (book.length) watch.push(`${book.length} Bar Book drink${book.length === 1 ? "" : "s"} rung up off the menu: ${book.map((i) => `${i.name} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}.`);
   });
 
   const refunded = day.orders.filter((o) => o.status === "refunded");
@@ -237,5 +256,8 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     next: { label: dayLabel(nextDate), items: items.map(({ time, text }) => ({ time, text })) },
     newMembers,
     ranOut,
+    orgComps: await safely([] as { name: string; people: number; value: number }[], async () =>
+      (await compsByOrg(date, date)).map((o) => ({ name: o.name, people: o.people, value: o.value })),
+    ),
   };
 }

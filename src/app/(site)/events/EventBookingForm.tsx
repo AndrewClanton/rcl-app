@@ -5,6 +5,7 @@ import type { Room } from "@/lib/types";
 import { estimateEventTotal } from "@/lib/eventPricing";
 import { submitEventInquiry } from "./actions";
 import { SpecFoot } from "@/components/print";
+import { CLOSED_DAYS_NOTE, isClosedDate } from "@/lib/closed-days";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -36,7 +37,10 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
     setAddonIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
 
-  const missing = !room ? "Pick a space" : !eventDate || !eventTime ? "Pick a date and time" : !organizerEmail.includes("@") ? "Add your email" : null;
+  // A native date picker can't grey out a closed day, so it's flagged and
+  // the button says why; the server refuses it too.
+  const closed = isClosedDate(eventDate);
+  const missing = !room ? "Pick a space" : !eventDate || !eventTime ? "Pick a date and time" : closed ? CLOSED_DAYS_NOTE : !organizerEmail.includes("@") ? "Add your email" : null;
   const canSubmit = !missing && hours > 0;
 
   async function handleSubmit() {
@@ -128,7 +132,7 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
         <Step n={2} title="When">
           <div className="grid gap-4 sm:grid-cols-3">
             <Field label="Date">
-              <input type="date" className="input" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+              <input type="date" className="input" value={eventDate} aria-invalid={closed || undefined} onChange={(e) => setEventDate(e.target.value)} />
             </Field>
             <Field label="Start time">
               <input type="time" className="input" value={eventTime} onChange={(e) => setEventTime(e.target.value)} />
@@ -148,6 +152,13 @@ export default function EventBookingForm({ rooms }: { rooms: Room[] }) {
               </div>
             </div>
           </div>
+          {closed ? (
+            <p role="alert" className="mt-2 text-sm font-bold text-[var(--danger-text)]">
+              {CLOSED_DAYS_NOTE} Pick another day.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-[var(--muted)]">{CLOSED_DAYS_NOTE}</p>
+          )}
         </Step>
 
         <Step n={3} title="The event">

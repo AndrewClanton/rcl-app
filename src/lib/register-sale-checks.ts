@@ -7,6 +7,23 @@ import type { MemberTier } from "@/lib/types";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { coffeeTime } from "@/lib/daily-perk";
 import { coffeeDay, dailyCoffeeUse, type DailyCoffeeUse } from "@/lib/daily-perk-server";
+import { orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
+import {
+  DOUBLE,
+  DOUBLE_DEFAULTS,
+  hasLiquorChoice,
+  hasOwnDouble,
+  hasOwnServe,
+  isServeMod,
+  priceWithOptions,
+  sectionOfCategory,
+  withoutOurs,
+  type DoubleLine,
+  type DoubleSettings,
+} from "@/lib/bar/double";
+import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
+import { doubleSettingsOf } from "@/lib/bar/pricing";
+import { getBarPrices } from "@/lib/data/barBook";
 
 // The server's own look at a register sale before it's saved, instead of
 // taking the register's word for it:
@@ -119,7 +136,19 @@ export interface SaleForCheck {
   lines: { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id?: string | null }[];
   // daily_perk_discount: the Insiders+ daily coffee (missing from a sale
   // rung before it existed, which is the same as none).
-  totals: { subtotal: number; daily_perk_discount?: number; tier_discount: number; monthly_discount: number; redemption_discount: number; tax: number; total: number };
+  // org_comp_discount / tax_included: an organization member's comps and
+  // tax-included pricing (lib/orgs.ts); missing is none.
+  totals: {
+    subtotal: number;
+    org_comp_discount?: number;
+    daily_perk_discount?: number;
+    tier_discount: number;
+    monthly_discount: number;
+    redemption_discount: number;
+    tax: number;
+    total: number;
+    tax_included?: boolean;
+  };
   payment?: { cash: number; card: number; voucher?: number };
   tip?: number;
   // The member's points before this sale moved them, for a check that runs
@@ -131,6 +160,9 @@ export interface SaleForCheck {
   // before the sale was saved: once saved, the sale's own coffee would
   // count as "already had today's". Left out, it's checked here.
   dailyCoffee?: CoffeeCheck;
+  // The organization terms (orgSaleTerms) as judged before the sale saved
+  // its comps. Left out, they're looked up here.
+  org?: OrgSaleTerms;
 }
 
 type ServerTotals = SaleForCheck["totals"];
@@ -145,6 +177,7 @@ export interface TotalsCheck {
 
 const TOTAL_LABELS: [keyof ServerTotals, string][] = [
   ["subtotal", "Subtotal"],
+  ["org_comp_discount", "Organization comps"],
   ["daily_perk_discount", "Insiders+ daily coffee"],
   ["tier_discount", "Member discount"],
   ["monthly_discount", "Monthly member discount"],
@@ -198,7 +231,7 @@ export async function checkSaleTotals(sale: SaleForCheck): Promise<TotalsCheck> 
 
 // must_choose: a "pick one" question with no default (the $5 Special's
 // soda). Read with "*", so a database without that column still checks.
-export type Group = { item_id: string; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
+export type Group = { item_id: string; key?: string | null; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
 
 // What a line's modifiers add to the item's price, found by option name
 // (the register saves names, not ids). The owner rate prices options with
@@ -212,6 +245,34 @@ export function modifierPrice(groups: Group[], mods: string[]): { extra: number 
     extra += [...deltas][0];
   }
   return { extra };
+}
+
+// A menu line's price with its options, the way compareTotals finds it
+// (the item's price, its options by name, then Double, Neat and On the
+// rocks from the Prices sheet). The owner rate prices a menu line from this
+// too (lib/owner-rate-server.ts), so a double costs an owner half of its
+// upcharge the same way on the register and on the server. An error is a
+// sentence about the line.
+export type MenuLinePrice = { unit: number; extra: number } | { error: string };
+export function menuLinePrice(
+  item: { price: number; name: string; is_alcohol: boolean; category_id: string; id: string },
+  itemGroups: Group[],
+  mods: string[],
+  doubles: Awaited<ReturnType<typeof doubleContext>>,
+): MenuLinePrice {
+  const ownDouble = hasOwnDouble(itemGroups);
+  const ownServe = hasOwnServe(itemGroups);
+  const found = modifierPrice(itemGroups, withoutOurs(mods, ownDouble, ownServe));
+  if ("unknown" in found) return { error: `the option "${found.unknown}" isn't on the menu anymore` };
+  if ("ambiguous" in found) return { error: `two of its options are called "${found.ambiguous}", so its price can't be worked out. Fix the names on the Menu page` };
+  const base = Number(item.price) + found.extra;
+  const d = priceWithOptions(
+    base,
+    mods,
+    { isAlcohol: item.is_alcohol, section: doubles.sectionOf(item.category_id), ownDouble, recipe: doubles.recipes.get(item.id) ?? null, name: item.name, liquor: hasLiquorChoice(itemGroups), ownServe },
+    doubles.settings,
+  );
+  return "unit" in d ? { unit: d.unit, extra: found.extra } : { error: d.error };
 }
 
 async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
@@ -228,8 +289,16 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     sale.memberId ? supabase.from("members").select("tier, points").eq("id", sale.memberId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   for (const r of [items, groups, screenings, memberRow]) if (r.error) throw new Error(r.error.message);
+  // A double ("Double" on an alcohol line) and neat or on the rocks (a
+  // Liquor shot), lib/bar/double.ts, are priced from the item's section,
+  // its name, its recipe and the Prices sheet, read only when the sale has
+  // one.
+  const doubles = await doubleContext(
+    supabase,
+    sale.lines.filter((l) => l.menu_item_id && !l.screening_id && (l.modifiers ?? []).some((m) => m === DOUBLE || isServeMod(m))).map((l) => l.menu_item_id as string),
+  );
 
-  const itemById = new Map(((items.data ?? []) as { id: string; price: number; is_alcohol: boolean; daily_perk?: boolean }[]).map((i) => [i.id, i]));
+  const itemById = new Map(((items.data ?? []) as { id: string; name: string; price: number; is_alcohol: boolean; category_id: string; daily_perk?: boolean }[]).map((i) => [i.id, i]));
   const groupsByItem = new Map<string, Group[]>();
   for (const g of (groups.data ?? []) as unknown as Group[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
   const ticketPrice = new Map(((screenings.data ?? []) as { id: string; ticket_price: number }[]).map((s) => [s.id, Number(s.ticket_price)]));
@@ -259,9 +328,30 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
       } else {
         if (item.daily_perk) perkBase = Number(item.price);
         const itemGroups = groupsByItem.get(item.id) ?? [];
-        const mods = modifierPrice(itemGroups, l.modifiers ?? []);
-        if ("extra" in mods) expected = Number(item.price) + mods.extra;
-        else if ("unknown" in mods) problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore, so its price couldn't be checked.`);
+        // Our Double, Neat and On the rocks aren't menu options (unless the
+        // item has its own of that name).
+        const ownDouble = hasOwnDouble(itemGroups);
+        const ownServe = hasOwnServe(itemGroups);
+        const mods = modifierPrice(itemGroups, withoutOurs(l.modifiers ?? [], ownDouble, ownServe));
+        if ("extra" in mods) {
+          expected = Number(item.price) + mods.extra;
+          const d = priceWithOptions(
+            expected,
+            l.modifiers ?? [],
+            {
+              isAlcohol: item.is_alcohol,
+              section: doubles.sectionOf(item.category_id),
+              ownDouble,
+              recipe: doubles.recipes.get(item.id) ?? null,
+              name: item.name,
+              liquor: hasLiquorChoice(itemGroups),
+              ownServe,
+            },
+            doubles.settings,
+          );
+          if ("unit" in d) expected = d.unit;
+          else problems.push(`"${l.name}" ${d.error}.`);
+        } else if ("unknown" in mods) problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore, so its price couldn't be checked.`);
         else note = `two options are called "${mods.ambiguous}", price not checked`;
         // The register won't add an item until its "pick one" questions are
         // answered, so an unanswered one means the line didn't come from there.
@@ -290,15 +380,34 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     if (!coffee.ok) problems.push(`Insiders+ daily coffee: ${coffee.reason} It came off the order anyway.`);
   }
 
-  const t = registerTotals(lines.map((l) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase })), member, sale.monthlyMember, sale.taxFree, sale.pointsRedeemed, dailyPerk);
+  // An organization member's comps and tax-included pricing (lib/orgs.ts),
+  // as judged before the sale saved its own comps, or looked up now.
+  // A comp past the daily limit is judged where it's approved (and flagged
+  // as org_over_limit without a manager's OK), so here the limit only
+  // decides whether a sale rung with no comps was right to charge.
+  const org = sale.org ?? (await orgSaleTerms(sale.memberId, sale.lines, Number(sale.totals.org_comp_discount ?? 0) > 0));
+  const t = registerTotals(
+    lines.map((l, i) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase, comp: org.plan.comps[i] ?? 0 })),
+    member,
+    sale.monthlyMember,
+    sale.taxFree,
+    sale.pointsRedeemed,
+    dailyPerk,
+    { taxIncluded: org.taxIncluded },
+  );
+  if (!!sale.totals.tax_included !== t.taxIncluded) {
+    problems.push(t.taxIncluded ? "The member is a supported guest, so the tax should have been included in the prices." : "The tax was included in the prices, but the member isn't a supported guest.");
+  }
   const server: ServerTotals = {
     subtotal: t.subtotal,
+    org_comp_discount: t.orgCompDiscount,
     daily_perk_discount: t.dailyPerkDiscount,
     tier_discount: t.tierDiscount,
     monthly_discount: t.monthlyDiscount,
     redemption_discount: t.redemptionDiscount,
     tax: t.tax,
     total: t.total,
+    tax_included: t.taxIncluded,
   };
   for (const [key, label] of TOTAL_LABELS) {
     const sent = Number(sale.totals[key] ?? 0);
@@ -321,6 +430,46 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   return { problems, server, lines, member };
 }
 
+// What pricing our options needs, for the menu items rung with one (a
+// Double, Neat or On the rocks): where each sits on the Bar tab, its recipe
+// (with each ingredient's kind) and the Prices sheet. Nothing is read
+// without one on the sale.
+export async function doubleContext(
+  supabase: ReturnType<typeof createAdminClient>,
+  itemIds: string[],
+): Promise<{ settings: DoubleSettings; recipes: Map<string, DoubleLine[]>; sectionOf: (categoryId: string) => ReturnType<typeof sectionOfCategory> }> {
+  if (!itemIds.length) return { settings: DOUBLE_DEFAULTS, recipes: new Map(), sectionOf: () => null };
+  type RecipeRow = { menu_item_id: string; ingredients: { quantity: number; optional?: boolean | null; ingredient: { name: string; unit: string; kind?: string | null } | null }[] };
+  const read = (cols: string) => supabase.from("recipes").select(cols).in("menu_item_id", [...new Set(itemIds)]);
+  const [cats, prices, withKind] = await Promise.all([
+    supabase.from("menu_categories").select("id, key, label, parent_id"),
+    getBarPrices(),
+    read("menu_item_id, ingredients:recipe_ingredients(quantity, optional, ingredient:ingredients(name, unit, kind))"),
+  ]);
+  let recipeRows = withKind.data as unknown as RecipeRow[] | null;
+  if (withKind.error) {
+    const plain = await read("menu_item_id, ingredients:recipe_ingredients(quantity, ingredient:ingredients(name, unit))");
+    if (plain.error) throw new Error(plain.error.message);
+    recipeRows = plain.data as unknown as RecipeRow[];
+  }
+  if (cats.error) throw new Error(cats.error.message);
+  const recipes = new Map<string, DoubleLine[]>();
+  for (const r of recipeRows ?? []) {
+    recipes.set(
+      r.menu_item_id,
+      (r.ingredients ?? [])
+        .filter((i) => i.ingredient)
+        .map((i) => ({ name: i.ingredient!.name, unit: i.ingredient!.unit, kind: i.ingredient!.kind ?? null, quantity: Number(i.quantity), optional: i.optional === true })),
+    );
+  }
+  const categories = (cats.data ?? []) as { id: string; key: string | null; label: string | null; parent_id: string | null }[];
+  return {
+    settings: doubleSettingsOf(prices),
+    recipes,
+    sectionOf: (categoryId) => sectionOfCategory(categoryId, categories, isBarCategory, barSectionOf),
+  };
+}
+
 // ---------- flags ----------
 
 // What each kind means is in the table's migration
@@ -334,7 +483,9 @@ export type SaleFlagKind =
   | "points_short"
   | "tab_closed_elsewhere"
   | "sale_abandoned"
-  | "items_not_saved";
+  | "items_not_saved"
+  | "below_cost"
+  | "org_over_limit";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

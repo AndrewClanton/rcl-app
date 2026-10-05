@@ -131,6 +131,10 @@ export default function DayScreen({
                   rows={[
                     ...(r.discounts > 0 ? [{ label: "Member discounts", value: `−${money(r.discounts)}`, muted: true, href: to({ show: "net" }) }] : []),
                     ...(r.dailyCoffee > 0 ? [{ label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true, href: to({ show: "net" }) }] : []),
+                    ...(r.orgComps > 0 ? [{ label: `Organization comps · ${r.orgCompOrders}`, value: `−${money(r.orgComps)}`, muted: true, href: "/admin/reports/organizations" }] : []),
+                    ...(r.taxIncluded.tax > 0
+                      ? [{ label: `Tax inside even-dollar sales · ${r.taxIncluded.orders} (${money(r.taxIncluded.sales)})`, value: `−${money(r.taxIncluded.tax)}`, muted: true }]
+                      : []),
                     ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
                     { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
                     // Not taken off: the owner tab line is already at what the owners pay.

@@ -91,6 +91,10 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   const sold: [string, string, boolean?][] = r.sold.map((s) => [`${esc(s.label)}${s.detail ? ` <span style="color:${MUTED}">· ${esc(s.detail)}</span>` : ""}`, money(s.amount)]);
   if (r.discounts > 0) sold.push(["Member discounts", `−${money(r.discounts)}`]);
   if (r.dailyCoffee > 0) sold.push([`${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, `−${money(r.dailyCoffee)}`]);
+  if (r.orgComps > 0) sold.push([`Organization comps · ${r.orgCompOrders}`, `−${money(r.orgComps)}`]);
+  if (r.taxIncluded.tax > 0) sold.push([`Tax inside even-dollar sales · ${r.taxIncluded.orders} (${money(r.taxIncluded.sales)})`, `−${money(r.taxIncluded.tax)}`]);
+  // Comps by organization: who, how many people, and what it would have cost.
+  for (const o of d.orgComps ?? []) sold.push([`<span style="color:${MUTED}">${esc(o.name)}: ${o.people} comped</span>`, `<span style="color:${MUTED}">${money(o.value)}</span>`]);
   sold.push(["Net sales", money(r.netSales), true]);
   // Not taken off: the owner tab line is already at what the owners pay.
   if (r.ownerTab.orders > 0) {
