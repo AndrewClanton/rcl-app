@@ -24,6 +24,9 @@
 //     (and which recipe ids the server keeps).
 // 10. The Bar tab: the cocktail grid fills its box at both iPad sizes and
 //     pages when it must; quick pour names.
+// 12. Doubles: a shot at each tier, a 1.5 oz cocktail at each tier, the
+//     Long Island and Butter beer, no recipe, rounding, no beer or wine,
+//     an item's own "Double" left alone, and the server's re-check.
 // 11. "What's in it?": the matcher on the drinks guests describe, never
 //     across spirits; a custom drink's cost, name, icon and order line; and
 //     which ingredient lists the server keeps.
@@ -44,6 +47,7 @@ const B = await import("../src/lib/bar/book.ts");
 const M = await import("../src/lib/bar/menu.ts");
 const P = await import("../src/lib/bar/pricing.ts");
 const X = await import("../src/lib/bar/match.ts");
+const D = await import("../src/lib/bar/double.ts");
 const { SEED_DRINKS, SEED_INGREDIENTS } = await import("../src/lib/bar/seed-drinks.ts");
 
 let failures = 0;
@@ -55,7 +59,7 @@ const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8"
 
 // ---------- 1. client-safe imports ----------
 const SERVER = [/["']server-only["']/, /@\/lib\/supabase/, /["']next\/headers["']/, /["']next\/cache["']/, /@\/lib\/data\//, /@\/lib\/auth["']/, /["']pg["']/, /["']node:/, /["']fs["']/];
-const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/pricing.ts", "src/lib/bar/match.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
+const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/pricing.ts", "src/lib/bar/match.ts", "src/lib/bar/double.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
 const seen = new Set();
 function walk(rel) {
   if (seen.has(rel)) return;
@@ -492,6 +496,73 @@ const third = "20261005010000_order_item_custom_recipe.sql";
 const sql3 = read(`supabase/migrations/${third}`).replace(/--.*$/gm, "");
 check("order_items.custom_recipe: after the recipe link, columns only, safe to run twice", migrations.includes(third) && third > second && /add column if not exists custom_recipe jsonb/.test(sql3) && !/create\s+(table|function|view|sequence)/i.test(sql3) && /drop constraint if exists order_items_custom_recipe_check/.test(sql3));
 check("sale math untouched by the matcher", !/register-totals|register-sale-checks/.test(read("src/lib/bar/match.ts")));
+
+// ---------- 12. doubles ----------
+const S = D.DOUBLE_DEFAULTS;
+const shot = (price) => D.doubleUpcharge(price, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S);
+check("a double shot is twice the single at each tier", shot(5) === 5 && shot(7) === 7 && shot(9) === 9);
+const one = (name) => D.recipeUpcharge([{ name, quantity: 1.5, unit: "oz", kind: "spirit" }, { name: "Lime juice", quantity: 1, unit: "oz", kind: "juice" }], S);
+check("a 1.5 oz cocktail: well +$4, call +$6, premium +$8", one("Well Vodka") === 4 && one("Call Vodka") === 6 && one("Premium Tequila") === 8, [one("Well Vodka"), one("Call Vodka"), one("Premium Tequila")].join());
+check("only the spirit doubles (the lime doesn't add)", D.recipeUpcharge([{ name: "Well Vodka", quantity: 1.5, kind: "spirit" }], S) === one("Well Vodka"));
+const li = SEED_DRINKS.find((d) => d.name === "Long Island Iced Tea");
+const liLines = li.ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind, optional: !!l.optional }));
+check("a Long Island (4 × ½ oz of spirit, the triple sec left out): +$5.50", D.recipeUpcharge(liLines, S) === 5.5, String(D.recipeUpcharge(liLines, S)));
+const butter = [{ name: "Butterscotch schnapps", quantity: 1, unit: "oz", kind: "liqueur" }, { name: "Cream soda", quantity: 6, unit: "oz", kind: "mixer" }];
+check("Butter beer (no spirit: its 1 oz of schnapps): +$2.50", D.recipeUpcharge(butter, S) === 2.5, String(D.recipeUpcharge(butter, S)));
+check("a spirit drink with no recipe: +$4", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: null }, S) === 4);
+check("rounding to the nearest $0.50", D.recipeUpcharge([{ name: "Vodka", quantity: 1.75, kind: "spirit" }], S) === 4.5 && D.recipeUpcharge([{ name: "Vodka", quantity: 1.875, kind: "spirit" }], S) === 5 && D.roundTo(4.25, 0.5) === 4.5);
+check("ml counts as ounces", D.recipeUpcharge([{ name: "Vodka", quantity: 44.36, unit: "ml", kind: "spirit" }], S) === 4);
+check("no double on beer or wine", D.doubleUpcharge(5, { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S) === null && D.doubleUpcharge(5, { isAlcohol: true, section: "wine", ownDouble: false, recipe: null }, S) === null);
+check("no double on something that isn't alcohol", D.doubleUpcharge(4, { isAlcohol: false, section: "other", ownDouble: false, recipe: null }, S) === null);
+check("no double on a drink with nothing to double (a Mimosa)", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: [{ name: "Prosecco", quantity: 4, kind: "wine" }, { name: "Orange juice", quantity: 2, kind: "juice" }] }, S) === null);
+check("an alcohol item outside the bar with no recipe has no double", D.doubleUpcharge(8, { isAlcohol: true, section: null, ownDouble: false, recipe: null }, S) === null);
+// the collision guard
+const espressoGroups = [{ options: [{ name: "Single" }, { name: "Double" }] }];
+check("an item's own \"Double\" option is found", D.hasOwnDouble(espressoGroups) && !D.hasOwnDouble([{ options: [{ name: "Double shot" }] }]) && !D.hasOwnDouble(null));
+check("…and then it's never our double", D.doubleUpcharge(4, { isAlcohol: true, section: "other", ownDouble: true, recipe: null }, S) === null && JSON.stringify(D.withoutDouble(["Oat milk", "Double"], true)) === JSON.stringify(["Oat milk", "Double"]));
+check("our Double isn't priced as a menu option", JSON.stringify(D.withoutDouble(["Rocks", "Double"], false)) === JSON.stringify(["Rocks"]));
+// the server's re-check
+const ofLines = SEED_DRINKS.find((d) => d.name === "Old Fashioned").ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind }));
+const ofCtx = { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: ofLines };
+const valid = D.priceWithDouble(10, ["Double"], ofCtx, S);
+check("the server accepts a double rung at its price (Old fashioned $10 + $5.50)", "unit" in valid && valid.unit === 15.5, JSON.stringify(valid));
+check("…and flags one rung at the wrong price", "unit" in valid && Math.abs(valid.unit - 14) > 0.0101);
+check("…and refuses a double on a beer", "error" in D.priceWithDouble(5, ["Double"], { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S));
+check("…and leaves a line without one alone", JSON.stringify(D.priceWithDouble(10, ["Rocks"], ofCtx, S)) === JSON.stringify({ unit: 10 }));
+check("…and an item's own Double alone", JSON.stringify(D.priceWithDouble(3.5, ["Double"], { isAlcohol: false, section: null, ownDouble: true, recipe: null }, S)) === JSON.stringify({ unit: 3.5 }));
+check("taking a double off gives the single back", D.undoDouble(10, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S) === 5 && D.undoDouble(15.5, ofCtx, S) === 10);
+check("tiers from the name", D.tierOf("Call Vodka") === "call" && D.tierOf("Premium Tequila") === "premium" && D.tierOf("Tito's") === "well" && D.tierOf("Well Gin") === "well");
+check("settings: bad numbers fall back one by one", JSON.stringify(D.readDoubleSettings({ shotMultiplier: 9, pourDiscount: 2, tiers: { well: "x", call: 8 }, rounding: 0 })) === JSON.stringify({ shotMultiplier: 2, pourDiscount: 2, tiers: { well: 5, call: 8, premium: 9 }, noRecipeUpcharge: 4, rounding: 0.5 }));
+check("doubled lines: only the base spirit", JSON.stringify(D.doubledLines(ofLines).map((l) => l.quantity)) === JSON.stringify(ofLines.map((l, i) => (i === 0 ? l.quantity * 2 : l.quantity))));
+check("a doubled line's order line carries Double", JSON.stringify(P.bookOrderLine({ recipeId: RID, name: "Mojito" }, 13, true).mods) === JSON.stringify(["Double"]) && JSON.stringify(X.customOrderLine("x", 9, vcl, true).mods) === JSON.stringify(["Double"]));
+const sc = read("src/lib/register-sale-checks.ts");
+check("the server's sale check prices doubles with the same function", /priceWithDouble\(/.test(sc) && /withoutDouble\(l\.modifiers \?\? \[\], ownDouble\)/.test(sc));
+check("printed tickets and the bar tablet show DOUBLE", /"  DOUBLE  "/.test(read("src/lib/print/receipt.ts")) && /DOUBLE/.test(read("src/app/display/PrepTicketBoard.tsx")));
+check("Bar usage pours a double's spirit twice", /isDouble\(oi\.modifiers\)/.test(read("src/lib/data/reports.ts")) && /isDouble\(sold\.modifiers\)/.test(read("src/lib/data/reports.ts")));
+// The menu's 11 cocktails with the starter list's specs (2 oz pours, all
+// well), as a table for the report. The live numbers come from their own
+// recipes: Back office → Bar Book → Doubles lists them.
+const menu11 = [
+  ["Butter beer", 8, butter],
+  ["Long island iced tea", 10, liLines],
+  ...[
+    ["Manhattan", 9, "Manhattan"],
+    ["Margarita", 8, "Margarita"],
+    ["Moscow mule", 8, "Moscow Mule"],
+    ["NY whiskey sour", 9, "New York Sour"],
+    ["Old fashioned", 10, "Old Fashioned"],
+    ["Paloma", 8, "Paloma"],
+    ["Rum or whiskey & coke", 8, "Rum & Coke"],
+    ["Whiskey sour", 9, "Whiskey Sour"],
+    ["White russian", 8, "White Russian"],
+  ].map(([n, p, seed]) => [n, p, SEED_DRINKS.find((d) => d.name === seed).ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind, optional: !!l.optional }))]),
+];
+console.log("\nDoubles on the menu's cocktails (starter-list specs, well spirits):");
+for (const [n, p, lines] of menu11) {
+  const up = D.doubleUpcharge(p, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: lines }, S);
+  console.log(`  ${n.padEnd(24)} $${p.toFixed(2)}  ${up === null ? "no double" : `+$${up.toFixed(2)} = $${(p + up).toFixed(2)}`}`);
+}
+console.log("  Shots: Well $5 → $10, Call $7 → $14, Premium $9 → $18");
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll Bar Book checks passed.");
 process.exit(failures ? 1 : 0);

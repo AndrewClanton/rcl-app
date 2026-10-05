@@ -27,10 +27,14 @@ import { ItemOutDialog } from "./shift/RanOut";
 import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
 import BarTab from "./BarTab";
+import OrderLineRow from "./OrderLineRow";
+import { DOUBLE, doubleUpcharge, hasOwnDouble, isDouble, undoDouble, type DoubleContext, type DoubleLine, type DoubleSettings } from "@/lib/bar/double";
+import { iconSpecFor, type BarSection, type IconSpec } from "@/lib/bar/icons";
+import { customSpec } from "@/lib/bar/match";
 import BarBook from "./BarBook";
 import WhatsInIt from "./WhatsInIt";
 import { loadBarBook } from "./bar-book-actions";
-import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
+import { barSectionOf, isBarCategory, itemIconSpec } from "@/lib/bar/menu";
 import { countMakeable, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
@@ -169,6 +173,7 @@ export default function PosApp({
   initialScreenings,
   registerTopic,
   canNote,
+  doubleSettings,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -179,6 +184,7 @@ export default function PosApp({
   initialScreenings: RegisterScreening[];
   registerTopic: string;
   canNote: boolean; // an admin is signed in: Dev note
+  doubleSettings: DoubleSettings; // how a double is priced (lib/bar/double.ts)
 }) {
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
@@ -487,7 +493,9 @@ export default function PosApp({
   const builderItem = findItem(builderItemId);
   // A menu button's tap, wherever it is (a tile, the Bar tab): its choices,
   // or for an 86'd item the question first (sell anyway, or it's back).
-  function tapItem(id: string) {
+  // double: rung up as a double from a Bar Book card or "What's in it?".
+  function tapItem(id: string, double = false) {
+    setBuilderDouble(double);
     if (outs.get(id)) setOutPromptId(id);
     else setBuilderItemId(id);
   }
@@ -550,6 +558,85 @@ export default function PosApp({
     }
     return list;
   }, [categories]);
+  // ---------- doubles and drink icons on the order ----------
+  // Where each menu item sits on the Bar tab (beer, wine, cocktails,
+  // shots, other), or null outside the bar.
+  const sectionById = useMemo(() => {
+    const m = new Map<string, BarSection | null>();
+    for (const c of categories) {
+      const bar = isBarCategory(c);
+      for (const i of c.items) m.set(i.id, bar ? "other" : null);
+      for (const sub of c.subcategories) for (const i of sub.items) m.set(i.id, bar ? barSectionOf(sub) : null);
+    }
+    return m;
+  }, [categories]);
+  const recipeLinesOf = (r: Recipe | undefined): DoubleLine[] | null =>
+    r ? r.ingredients.map((i) => ({ name: i.ingredient_name, quantity: i.quantity, unit: i.unit, kind: i.kind ?? null, optional: i.optional === true })) : null;
+  // How a line would be doubled, or null when it can't be: a menu drink by
+  // its section and recipe, a Bar Book drink and a custom drink by their
+  // own lists. A plain custom item never is (nobody knows what's in it).
+  function lineDoubleCtx(line: CartLine): DoubleContext | null {
+    if (line.screeningId || !line.isAlcohol) return null;
+    if (line.menuItemId) {
+      const item = findItem(line.menuItemId);
+      if (!item) return null;
+      return { isAlcohol: item.is_alcohol, section: sectionById.get(item.id) ?? null, ownDouble: hasOwnDouble(item.modifier_groups), recipe: recipeLinesOf(recipesByItem[item.id]) };
+    }
+    if (line.recipeId) {
+      const r = book.recipes.find((x) => x.id === line.recipeId);
+      return { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: r ? r.lines : null };
+    }
+    if (line.customRecipe?.length) {
+      const byId = new Map(book.stock.map((x) => [x.id, x]));
+      const lines = line.customRecipe.flatMap((c) => {
+        const st = byId.get(c.ingredient_id);
+        return st ? [{ name: st.name, quantity: c.quantity, unit: st.unit ?? "oz", kind: st.kind ?? null }] : [];
+      });
+      return { isAlcohol: true, section: "other", ownDouble: false, recipe: lines.length ? lines : null };
+    }
+    return null;
+  }
+  // A drink's icon on its order line.
+  function lineIcon(line: CartLine): IconSpec | null {
+    if (!line.isAlcohol) return null;
+    if (line.menuItemId) {
+      const section = sectionById.get(line.menuItemId);
+      if (!section) return null;
+      return itemIconSpec(recipesByItem[line.menuItemId], section);
+    }
+    if (line.recipeId) {
+      const r = book.recipes.find((x) => x.id === line.recipeId);
+      return r ? iconSpecFor({ glassware: r.glassware, garnishes: r.garnishes, ice: r.ice, ingredients: r.lines.map((l) => ({ name: l.name, quantity: l.quantity, unit: l.unit, family: l.family, kind: l.kind })) }) : null;
+    }
+    if (line.customRecipe?.length) {
+      const byId = new Map(book.stock.map((x) => [x.id, x]));
+      const picked = line.customRecipe.flatMap((c) => {
+        const st = byId.get(c.ingredient_id);
+        return st ? [{ id: st.id, name: st.name, unit: st.unit ?? "oz", family: st.family ?? null, kind: st.kind ?? null, amount: c.quantity }] : [];
+      });
+      return picked.length ? customSpec(picked) : null;
+    }
+    return null;
+  }
+  // The order line's Double chip: on adds the upcharge and "Double", off
+  // takes them back off. Taxed and discounted like anything else.
+  function toggleDouble(key: string) {
+    setCart((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        const ctx = lineDoubleCtx(l);
+        if (!ctx) return l;
+        if (isDouble(l.mods)) return { ...l, unit: undoDouble(l.unit, ctx, doubleSettings), mods: l.mods.filter((m) => m !== DOUBLE) };
+        const up = doubleUpcharge(l.unit, ctx, doubleSettings);
+        if (up === null) return l;
+        return { ...l, unit: Math.round((l.unit + up) * 100) / 100, mods: [...l.mods, DOUBLE] };
+      }),
+    );
+  }
+  // A double picked on a Bar Book card or "What's in it?" before ringing a
+  // menu drink up: the choices sheet opens with Double already on.
+  const [builderDouble, setBuilderDouble] = useState(false);
+
   const bookMakeable = useMemo(() => {
     if (book.state !== "ready") return 0;
     return countMakeable(book.recipes, book.stock, bookMenu);
@@ -1610,57 +1697,25 @@ export default function PosApp({
               No items yet
             </div>
           ) : (
-            cart.map((line, i) => (
-              // One compact row per line (quantity, name, price, remove) so a
-              // longer order still fits the iPad without scrolling much.
-              <div key={line.key} className="card-flat flex items-center gap-2 px-2 py-1.5">
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, -1)}
-                  aria-label={`One less ${line.name}`}
-                >
-                  −
-                </button>
-                <span className="w-5 shrink-0 text-center text-sm font-bold" style={{ color: "var(--foreground)" }}>
-                  {line.qty}
-                </span>
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md border text-base"
-                  style={{ borderColor: "var(--border)", color: "var(--foreground)" }}
-                  onClick={() => updateQty(line.key, 1)}
-                  aria-label={`One more ${line.name}`}
-                >
-                  +
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium" style={{ color: "var(--foreground)" }}>
-                    {line.name}
-                  </div>
-                  {line.mods.length > 0 && (
-                    <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
-                      {line.mods.join(", ")}
-                    </div>
-                  )}
-                  {i === totals.dailyPerkLine && (
-                    <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
-                      ☕ {line.qty > 1 ? "One free today" : "Free today"}
-                    </div>
-                  )}
-                </div>
-                <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
-                  {money(line.unit * line.qty)}
-                </span>
-                <button
-                  className="h-9 w-9 shrink-0 rounded-md text-lg"
-                  style={{ color: "var(--danger-text)" }}
-                  onClick={() => removeLine(line.key)}
-                  aria-label={`Remove ${line.name}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))
+            cart.map((line, i) => {
+              // A drink that can be a double gets its chip, and a drink its icon.
+              const ctx = lineDoubleCtx(line);
+              const doubled = isDouble(line.mods) && !!ctx;
+              const up = ctx ? (doubled ? Math.round((line.unit - undoDouble(line.unit, ctx, doubleSettings)) * 100) / 100 : doubleUpcharge(line.unit, ctx, doubleSettings)) : null;
+              return (
+                <OrderLineRow
+                  key={line.key}
+                  line={line}
+                  icon={lineIcon(line)}
+                  double={ctx && up !== null ? { on: doubled, upcharge: up } : null}
+                  freeToday={i === totals.dailyPerkLine}
+                  onLess={() => updateQty(line.key, -1)}
+                  onMore={() => updateQty(line.key, 1)}
+                  onRemove={() => removeLine(line.key)}
+                  onDouble={() => toggleDouble(line.key)}
+                />
+              );
+            })
           )}
 
           {/* The Insiders+ daily coffee: on the order with a way to take it
@@ -1923,7 +1978,25 @@ export default function PosApp({
             onAdd={(t) => setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, screeningId: t.screeningId, name: t.name, unit: t.unit, qty: t.qty, mods: t.mods, isAlcohol: false }])}
           />
         ) : builderItem ? (
-          <ItemBuilder item={builderItem} recipe={recipesByItem[builderItem.id] ?? null} onAdd={addLine} onCancel={() => setBuilderItemId(null)} />
+          <ItemBuilder
+            key={builderItem.id}
+            item={builderItem}
+            recipe={recipesByItem[builderItem.id] ?? null}
+            // A drink's icon, large, so it doesn't vanish when its button is tapped.
+            icon={sectionById.get(builderItem.id) ? itemIconSpec(recipesByItem[builderItem.id], sectionById.get(builderItem.id)!) : null}
+            double={{
+              ctx: {
+                isAlcohol: builderItem.is_alcohol,
+                section: sectionById.get(builderItem.id) ?? null,
+                ownDouble: hasOwnDouble(builderItem.modifier_groups),
+                recipe: recipeLinesOf(recipesByItem[builderItem.id]),
+              },
+              settings: doubleSettings,
+              start: builderDouble,
+            }}
+            onAdd={addLine}
+            onCancel={() => setBuilderItemId(null)}
+          />
         ) : barTab && category ? (
           <BarTab
             category={category}
@@ -2100,11 +2173,12 @@ export default function PosApp({
           menuItems={bookMenu}
           target={book.target}
           outs={outs}
+          doubleSettings={doubleSettings}
           onClose={() => setWhatsOpen(false)}
           // Exactly what tapping its button on the Bar tab does.
-          onRingUp={(id) => {
+          onRingUp={(id, double) => {
             setWhatsOpen(false);
-            tapItem(id);
+            tapItem(id, double);
           }}
           // The Bar Book's own off-menu line, and a custom drink: both the
           // same one-off line as "+ Custom item".
@@ -2138,6 +2212,7 @@ export default function PosApp({
           updating={bookLoading}
           // Owners and admins (canNote is hasAdminAccess); the server checks again.
           canMakeMenuItems={canNote}
+          doubleSettings={doubleSettings}
           onClose={() => setBookOpen(false)}
           // The same one-off line as "+ Custom item", knowing its recipe.
           onAddLine={(l, note) => {
@@ -2154,9 +2229,9 @@ export default function PosApp({
             refreshBook();
           }}
           // Exactly what tapping its button on the Bar tab does.
-          onRingUp={(id) => {
+          onRingUp={(id, double) => {
             setBookOpen(false);
-            tapItem(id);
+            tapItem(id, double);
           }}
         />
       )}

@@ -12,8 +12,10 @@ import {
   type BookStock,
   type RecipeSource,
 } from "@/lib/bar/book";
-import { barSectionOf, itemIconSpec } from "@/lib/bar/menu";
-import { iconSpecFor } from "@/lib/bar/icons";
+import { barSectionOf, isBarCategory, itemIconSpec } from "@/lib/bar/menu";
+import { iconSpecFor, type BarSection } from "@/lib/bar/icons";
+import { DOUBLE_SETTING, doubleUpcharge, hasOwnDouble, readDoubleSettings, sectionOfCategory, type DoubleSettings } from "@/lib/bar/double";
+import { getRecipesByItem } from "@/lib/data/recipes";
 import { DEFAULT_TARGET_POUR_COST, TARGET_POUR_COST_SETTING, drinkCost, validTarget, type DrinkCost } from "@/lib/bar/pricing";
 
 // The Bar Book's data (server only: it reads with the service role). The
@@ -78,6 +80,51 @@ export interface BarBookData {
   recipes: BookRecipe[];
   stock: BookStock[];
   target: number; // the target pour cost for suggested prices
+}
+
+export interface MenuDouble {
+  id: string;
+  name: string;
+  section: BarSection | null;
+  price: number;
+  upcharge: number | null; // null: no double (beer, wine, nothing to double)
+}
+
+// Back office → Bar Book → Doubles: what a double of each alcohol drink on
+// the menu costs right now, from its section, its recipe and the settings.
+export async function getMenuDoubles(settings: DoubleSettings): Promise<MenuDouble[]> {
+  const supabase = createAdminClient();
+  const [items, cats, groups, recipes] = await Promise.all([
+    supabase.from("menu_items").select("id, name, price, category_id, is_alcohol, active, sort_order").eq("is_alcohol", true).eq("active", true).order("sort_order"),
+    supabase.from("menu_categories").select("id, key, label, parent_id, sort_order").order("sort_order"),
+    supabase.from("menu_modifier_groups").select("item_id, options:menu_modifier_options(name)"),
+    getRecipesByItem(),
+  ]);
+  if (items.error || cats.error) return [];
+  const categories = (cats.data ?? []) as { id: string; key: string | null; label: string | null; parent_id: string | null }[];
+  const groupsByItem = new Map<string, { options: { name: string }[] }[]>();
+  for (const g of (groups.data ?? []) as unknown as { item_id: string; options: { name: string }[] }[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
+  const order = new Map(categories.map((c, i) => [c.id, i]));
+  return ((items.data ?? []) as { id: string; name: string; price: number; category_id: string; is_alcohol: boolean }[])
+    .sort((a, b) => (order.get(a.category_id) ?? 0) - (order.get(b.category_id) ?? 0))
+    .map((i) => {
+      const section = sectionOfCategory(i.category_id, categories, isBarCategory, barSectionOf);
+      const r = recipes[i.id];
+      const recipe = r ? r.ingredients.map((x) => ({ name: x.ingredient_name, quantity: x.quantity, unit: x.unit, kind: x.kind ?? null, optional: x.optional === true })) : null;
+      const upcharge = doubleUpcharge(Number(i.price), { isAlcohol: true, section, ownDouble: hasOwnDouble(groupsByItem.get(i.id)), recipe }, settings);
+      return { id: i.id, name: i.name, section, price: Number(i.price), upcharge };
+    });
+}
+
+// How a double is priced (lib/bar/double.ts): settings.bar_double, each
+// knob falling back to the bar standard on its own. Never throws.
+export async function getDoubleSettings(): Promise<DoubleSettings> {
+  try {
+    const { data, error } = await createAdminClient().from("settings").select("value").eq("key", DOUBLE_SETTING).maybeSingle();
+    return readDoubleSettings(error ? null : data?.value);
+  } catch {
+    return readDoubleSettings(null);
+  }
 }
 
 // The pour cost suggested prices aim for (Back office → Bar Book, owners

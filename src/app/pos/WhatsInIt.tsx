@@ -21,6 +21,7 @@ import {
   type PickedIngredient,
 } from "@/lib/bar/match";
 import { PriceSheet } from "./BarBook";
+import { doubledLines, doubleUpcharge, plus, type DoubleSettings } from "@/lib/bar/double";
 
 function money(n: number) {
   return `$${Number(n).toFixed(2)}`;
@@ -53,6 +54,7 @@ export default function WhatsInIt({
   menuItems,
   target,
   outs,
+  doubleSettings,
   onRingUp,
   onAddLine,
   onAddCustom,
@@ -63,7 +65,8 @@ export default function WhatsInIt({
   menuItems: MenuRef[];
   target: number;
   outs: Map<string, RegisterOut>;
-  onRingUp: (menuItemId: string) => void;
+  doubleSettings: DoubleSettings;
+  onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onAddCustom: (line: CustomOrderLine, note?: string) => void;
   onClose: () => void;
@@ -73,6 +76,9 @@ export default function WhatsInIt({
   const [shownKey, setShownKey] = useState<string | null>(null); // an alternative tapped
   const [name, setName] = useState<string | null>(null); // the custom drink's name, once typed
   const [sheet, setSheet] = useState<"drink" | "custom" | null>(null);
+  // A double, picked before adding: twice the spirit in the cost, the
+  // upcharge on the price (lib/bar/double.ts).
+  const [dbl, setDbl] = useState(false);
 
   const stockById = useMemo(() => stockMap(stock), [stock]);
   const book = useMemo(() => buildBook(recipes, menuItems), [recipes, menuItems]);
@@ -131,8 +137,20 @@ export default function WhatsInIt({
   const alt = shownKey ? result.alternatives.find((a) => a.drink.key === shownKey) : undefined;
   const shown: BookDrink | null = alt?.drink ?? result.best?.drink ?? null;
 
-  const customCost = useMemo(() => drinkCost(picked.map((p) => ({ name: p.name, quantity: p.amount, unitCost: stockById.get(p.id)?.unitCost ?? null }))), [picked, stockById]);
+  const customLines = useMemo(() => picked.map((p) => ({ name: p.name, quantity: p.amount, unit: p.unit, kind: p.kind, unitCost: stockById.get(p.id)?.unitCost ?? null })), [picked, stockById]);
+  const customUp = picked.length ? doubleUpcharge(0, { isAlcohol: true, section: "other", ownDouble: false, recipe: customLines }, doubleSettings) : null;
+  const customDoubled = dbl && customUp !== null;
+  const customCost = useMemo(() => drinkCost(customDoubled ? doubledLines(customLines) : customLines), [customLines, customDoubled]);
+  const customSingleSuggested = priceSummary({ cost: drinkCost(customLines), target }).suggested;
+  const customSuggested = customDoubled && customSingleSuggested !== null ? Math.round((customSingleSuggested + customUp!) * 100) / 100 : customSingleSuggested;
   const customLabel = name ?? customName(picked);
+
+  // The shown drink as a double.
+  const shownUp = shown ? doubleUpcharge(shown.menu?.price ?? 0, { isAlcohol: true, section: shown.menu?.section ?? "cocktails", ownDouble: false, recipe: shown.lines }, doubleSettings) : null;
+  const shownDoubled = dbl && shownUp !== null;
+  const shownCost = shown ? costOf(shownDoubled ? { lines: doubledLines(shown.lines) } : shown, stockById) : null;
+  const shownSingleSuggested = shown ? priceSummary({ cost: costOf(shown, stockById), target }).suggested : null;
+  const shownSuggested = shownDoubled && shownSingleSuggested !== null ? Math.round((shownSingleSuggested + shownUp!) * 100) / 100 : shownSingleSuggested;
 
   const chip = (s: BookStock, label?: string, swatch?: string) => {
     const on = isPicked(s.id);
@@ -240,11 +258,12 @@ export default function WhatsInIt({
               drink={shown}
               headline={alt ? alt.text : result.best ? bestText(result.best) : shown.name}
               statusLabel={drinkStatus(shown, stockById)}
-              priceText={priceSummary({ cost: costOf(shown, stockById), target, menuPrice: shown.menu?.price ?? null, average }).text}
+              priceText={priceSummary({ cost: shownCost!, target, menuPrice: shown.menu ? shown.menu.price + (shownDoubled ? shownUp! : 0) : null, average }).text}
               menuOut={shown.menu ? (outs.get(shown.menu.id)?.reason ?? null) : null}
-              onRingUp={() => shown.menu && onRingUp(shown.menu.id)}
+              onRingUp={() => shown.menu && onRingUp(shown.menu.id, shownDoubled)}
               onAdd={() => setSheet("drink")}
-              suggested={priceSummary({ cost: costOf(shown, stockById), target }).suggested}
+              suggested={shownSuggested}
+              double={shownUp !== null ? { on: shownDoubled, upcharge: shownUp, toggle: () => setDbl(!shownDoubled) } : null}
               onBack={alt ? () => setShownKey(null) : null}
               backLabel={result.best ? "Back to the best match" : "Back to a custom drink"}
             />
@@ -263,9 +282,16 @@ export default function WhatsInIt({
                   <p className="rounded-md px-2.5 py-1.5 text-sm font-semibold" style={{ background: "var(--surface-hover)" }}>
                     {priceSummary({ cost: customCost, target }).text}
                   </p>
-                  <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("custom")}>
-                    Add to order{priceSummary({ cost: customCost, target }).suggested !== null ? ` · $${priceSummary({ cost: customCost, target }).suggested}` : ""}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("custom")}>
+                      Add to order{customSuggested !== null ? ` · $${customSuggested}` : ""}
+                    </button>
+                    {customUp !== null && (
+                      <button className={`chip min-h-11 !px-3.5 !text-sm font-bold ${customDoubled ? "chip-selected" : ""}`} aria-pressed={customDoubled} onClick={() => setDbl(!customDoubled)}>
+                        {customDoubled ? "✓ " : ""}Double {plus(customUp)}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -301,29 +327,29 @@ export default function WhatsInIt({
       {sheet === "drink" && shown && !shown.menu && (
         <PriceSheet
           mode="add"
-          title={shown.name}
-          suggested={priceSummary({ cost: costOf(shown, stockById), target }).suggested}
-          cost={costOf(shown, stockById)}
+          title={shownDoubled ? `${shown.name} · Double` : shown.name}
+          suggested={shownSuggested}
+          cost={shownCost!}
           approvalTarget={shown.id}
           onClose={() => setSheet(null)}
           onAdd={(price, note) => {
             setSheet(null);
-            onAddLine(bookOrderLine({ recipeId: shown.id, name: shown.name }, price), note);
+            onAddLine(bookOrderLine({ recipeId: shown.id, name: shown.name }, price, shownDoubled), note);
           }}
         />
       )}
       {sheet === "custom" && picked.length > 0 && (
         <PriceSheet
           mode="add"
-          title={customLabel}
+          title={customDoubled ? `${customLabel} · Double` : customLabel}
           blurb={`Goes on the order like a custom item, at this price, with what's in it.${customOrderLine(customLabel, 1, picked).isAlcohol ? " It counts as alcohol, so the ID check applies." : ""}`}
-          suggested={priceSummary({ cost: customCost, target }).suggested}
+          suggested={customSuggested}
           cost={customCost}
           approvalTarget="custom"
           onClose={() => setSheet(null)}
           onAdd={(price, note) => {
             setSheet(null);
-            onAddCustom(customOrderLine(customLabel, price, picked), note);
+            onAddCustom(customOrderLine(customLabel, price, picked, customDoubled), note);
           }}
         />
       )}
@@ -342,6 +368,7 @@ function DrinkCard({
   onAdd,
   onBack,
   backLabel,
+  double,
 }: {
   drink: BookDrink;
   headline: string;
@@ -353,6 +380,7 @@ function DrinkCard({
   onAdd: () => void;
   onBack: (() => void) | null;
   backLabel: string;
+  double: { on: boolean; upcharge: number; toggle: () => void } | null;
 }) {
   const ok = statusLabel.state === "ok";
   return (
@@ -379,11 +407,16 @@ function DrinkCard({
           <div className="flex flex-wrap items-center gap-2">
             {drink.menu ? (
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={onRingUp}>
-                Ring it up · {money(drink.menu.price)}
+                Ring it up{double?.on ? " a double" : ""} · {money(drink.menu.price + (double?.on ? double.upcharge : 0))}
               </button>
             ) : (
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={onAdd}>
                 Add to order{suggested !== null ? ` · $${suggested}` : ""}
+              </button>
+            )}
+            {double && (
+              <button className={`chip min-h-11 !px-3.5 !text-sm font-bold ${double.on ? "chip-selected" : ""}`} aria-pressed={double.on} onClick={double.toggle}>
+                {double.on ? "✓ " : ""}Double {plus(double.upcharge)}
               </button>
             )}
             {onBack && (

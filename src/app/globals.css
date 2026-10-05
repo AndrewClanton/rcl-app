@@ -188,6 +188,29 @@ body {
   .bar-tint:active {
     filter: brightness(0.94);
   }
+  /* A Bar tab drink's icon pops up when it's pressed, so it's seen bigger
+     for a moment before its choices open (which show it large too). */
+  @keyframes bar-pop {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.4);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .bar-pop {
+    position: relative;
+    z-index: 1;
+    animation: bar-pop 200ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar-pop {
+      animation: none;
+    }
+  }
 
   .notice {
     @apply rounded-lg border p-6;

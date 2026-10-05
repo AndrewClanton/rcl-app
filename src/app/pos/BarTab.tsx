@@ -72,10 +72,20 @@ export default function BarTab({
   const tiles = [...parts.cocktails, ...parts.other];
   const pours = (["beer", "wine", "shots"] as const).filter((s) => parts[s].length > 0);
 
+  // Its settings (press and hold) show its icon large too.
   function extras(p: Placed) {
     const out = outs.get(p.item.id) ?? null;
-    return { out, hold: tileExtras(p.item, category, p.sectionLabel, out).hold };
+    const hold = tileExtras(p.item, category, p.sectionLabel, out, p.spec).hold;
+    // The finger going down pops the icon up (a quick 1.4×, none with
+    // reduced motion; .bar-pop in globals.css); the tap still does what it did.
+    const onPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+      hold?.onPointerDown(e);
+      setPop({ id: p.item.id, n: Date.now() });
+    };
+    return { out, hold: hold ? { ...hold, onPointerDown } : { onPointerDown } };
   }
+  const [pop, setPop] = useState<{ id: string; n: number } | null>(null);
+  const popping = (id: string) => (pop?.id === id ? "bar-pop" : "");
 
   // The cocktails' column, measured, so the grid fills it exactly
   // (gridPlan leaves room for the pager when the tiles page).
@@ -135,7 +145,7 @@ export default function BarTab({
         aria-label={out ? `${p.item.name}, ${out.reason}` : p.item.name}
       >
         <span style={{ color: "var(--foreground)" }}>
-          <DrinkIcon spec={p.spec} size={30} />
+          <DrinkIcon key={pop?.id === p.item.id ? pop.n : 0} spec={p.spec} size={30} className={popping(p.item.id)} />
         </span>
         <span className="min-w-0 flex-1 truncate text-[15px] font-bold" style={{ color: out ? "var(--muted)" : "var(--foreground)" }}>
           {quickPourName(p.item.name, p.section)}
@@ -161,7 +171,7 @@ export default function BarTab({
       >
         {base && <span className="absolute left-1.5 top-1.5 h-2.5 w-2.5 rounded-full" style={{ background: FAMILY_COLOR[base] }} aria-hidden />}
         <span style={{ color: "var(--foreground)" }}>
-          <DrinkIcon spec={p.spec} size={iconSize} />
+          <DrinkIcon key={pop?.id === p.item.id ? pop.n : 0} spec={p.spec} size={iconSize} className={popping(p.item.id)} />
         </span>
         <span className={`line-clamp-2 font-bold leading-tight ${narrow ? "text-[12.5px]" : "text-[13.5px]"}`} style={{ color: out ? "var(--muted)" : "var(--foreground)" }}>
           {p.item.name}

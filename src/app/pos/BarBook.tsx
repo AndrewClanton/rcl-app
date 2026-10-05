@@ -7,6 +7,7 @@ import { approvalText } from "@/lib/pin-rules";
 import { approveBelowCost } from "./bar-book-actions";
 import { makeMenuItemFromRecipe } from "@/app/admin/bar-book/actions";
 import { bookOrderLine, isBelowCost, money as costMoney, priceSummary, readPrice, type BookOrderLine, type DrinkCost } from "@/lib/bar/pricing";
+import { doubledLines, doubleUpcharge, plus, type DoubleSettings } from "@/lib/bar/double";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { FAMILY_COLOR, FAMILY_LABEL, GLASS_LABEL, SPIRITS, type Family } from "@/lib/bar/icons";
 import {
@@ -70,6 +71,7 @@ export default function BarBook({
   outs,
   updating,
   canMakeMenuItems,
+  doubleSettings,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -83,7 +85,8 @@ export default function BarBook({
   outs: Map<string, RegisterOut>;
   updating: boolean;
   canMakeMenuItems: boolean; // an owner or admin is signed in
-  onRingUp: (menuItemId: string) => void;
+  doubleSettings: DoubleSettings;
+  onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
   onClose: () => void;
@@ -280,6 +283,7 @@ export default function BarBook({
               target={target}
               average={average}
               canMakeMenuItems={canMakeMenuItems}
+              doubleSettings={doubleSettings}
               onRingUp={onRingUp}
               onAddLine={onAddLine}
               onMenuChanged={onMenuChanged}
@@ -299,6 +303,7 @@ function Card({
   target,
   average,
   canMakeMenuItems,
+  doubleSettings,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -310,13 +315,25 @@ function Card({
   target: number;
   average: number | null;
   canMakeMenuItems: boolean;
-  onRingUp: (menuItemId: string) => void;
+  doubleSettings: DoubleSettings;
+  onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
 }) {
   const [sheet, setSheet] = useState<"add" | "menu" | null>(null);
-  const cost = costOf(drink, stockById);
-  const pricing = priceSummary({ cost, target, menuPrice: drink.menu?.price ?? null, average });
+  // A double, picked before ringing it up: twice the spirit in the amounts
+  // shown and the cost, the upcharge on the price (lib/bar/double.ts).
+  const [dbl, setDbl] = useState(false);
+  const single = costOf(drink, stockById);
+  const singlePricing = priceSummary({ cost: single, target, menuPrice: drink.menu?.price ?? null, average });
+  const upcharge = doubleUpcharge(drink.menu?.price ?? singlePricing.suggested ?? 0, { isAlcohol: true, section: drink.menu?.section ?? "cocktails", ownDouble: false, recipe: drink.lines }, doubleSettings);
+  const doubled = dbl && upcharge !== null;
+  const shownLines = doubled ? doubledLines(drink.lines) : drink.lines;
+  const cost = doubled ? costOf({ lines: shownLines }, stockById) : single;
+  const pricing = doubled
+    ? priceSummary({ cost, target, menuPrice: drink.menu ? drink.menu.price + upcharge! : null, average })
+    : singlePricing;
+  const suggestedNow = doubled ? (singlePricing.suggested !== null ? Math.round((singlePricing.suggested + upcharge!) * 100) / 100 : null) : singlePricing.suggested;
   const card = recipeCard(drink);
   const glass = card.glass ?? (drink.glass ? GLASS_LABEL[drink.glass] : null);
   const kicker = ["Recipe card", card.method, glass].filter(Boolean).join(" · ");
@@ -345,13 +362,20 @@ function Card({
         </div>
 
         <div>
-          <div className="label-xs font-bold uppercase tracking-wider">Ingredients</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="label-xs font-bold uppercase tracking-wider">Ingredients{doubled ? " (a double)" : ""}</div>
+            {upcharge !== null && (
+              <button className={`chip min-h-11 !px-3.5 !text-sm font-bold ${doubled ? "chip-selected" : ""}`} aria-pressed={doubled} onClick={() => setDbl(!doubled)}>
+                {doubled ? "✓ " : ""}Double {plus(upcharge)}
+              </button>
+            )}
+          </div>
           {drink.lines.length === 0 && (
             <p className="text-sm" style={{ color: "var(--muted)" }}>
               None listed yet.
             </p>
           )}
-          {drink.lines.map((l, i) => {
+          {shownLines.map((l, i) => {
             const st = lineState(l, stockById);
             const good = st === "ok";
             return (
@@ -386,13 +410,13 @@ function Card({
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
           {drink.menu ? (
-            <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => onRingUp(drink.menu!.id)}>
-              Ring it up · {money(drink.menu.price)}
+            <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => onRingUp(drink.menu!.id, doubled)}>
+              Ring it up{doubled ? " a double" : ""} · {money(drink.menu.price + (doubled ? upcharge! : 0))}
             </button>
           ) : (
             <>
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("add")}>
-                Add to order{pricing.suggested !== null ? ` · $${pricing.suggested}` : ""}
+                Add to order{suggestedNow !== null ? ` · ${costMoney(suggestedNow).replace(".00", "")}` : ""}
               </button>
               <span className="text-sm" style={{ color: "var(--muted)" }}>
                 Not on our menu yet
@@ -409,14 +433,14 @@ function Card({
       {sheet && (
         <PriceSheet
           mode={sheet}
-          title={drink.name}
-          suggested={pricing.suggested}
-          cost={cost}
+          title={sheet === "add" && doubled ? `${drink.name} · Double` : drink.name}
+          suggested={sheet === "add" ? suggestedNow : singlePricing.suggested}
+          cost={sheet === "add" ? cost : single}
           approvalTarget={drink.id}
           onClose={() => setSheet(null)}
           onAdd={(price, note) => {
             setSheet(null);
-            onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, price), note);
+            onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, price, doubled), note);
           }}
           onMakeMenuItem={(price) => makeMenuItemFromRecipe(drink.id, price)}
           onMadeMenuItem={() => {

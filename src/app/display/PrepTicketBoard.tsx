@@ -7,6 +7,7 @@ import { reprintOrderTicket, setItemReady } from "./actions";
 import DrinkIcon from "@/components/bar/DrinkIcon";
 import { FAMILY_COLOR } from "@/lib/bar/icons";
 import { boardEntryForTicket, type BoardEntry, type BoardMaps } from "@/lib/bar/book";
+import { DOUBLE, isDouble } from "@/lib/bar/double";
 
 function timeAgo(iso: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -39,7 +40,7 @@ export default function PrepTicketBoard({
 }) {
   const [tickets, setTickets] = useState(initialTickets);
   // The recipe open on screen, if any.
-  const [recipe, setRecipe] = useState<{ name: string; entry: BoardEntry } | null>(null);
+  const [recipe, setRecipe] = useState<{ name: string; entry: BoardEntry; double: boolean } | null>(null);
   const [connected, setConnected] = useState(false);
   const [, forceTick] = useState(0);
   // "Reprint ticket" on a card: which order is printing, and how it went.
@@ -233,9 +234,17 @@ export default function PrepTicketBoard({
                           {item.quantity > 1 ? `${item.quantity}× ` : ""}
                           {item.name}
                         </span>
-                        {item.modifiers.length > 0 && (
+                        {/* A double (twice the spirit) can't be missed. */}
+                        {item.station === "bar" && isDouble(item.modifiers) && (
+                          <div className="mt-0.5">
+                            <span className="rounded px-1.5 py-0.5 text-base font-black tracking-wider" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                              DOUBLE
+                            </span>
+                          </div>
+                        )}
+                        {item.modifiers.filter((m) => !(item.station === "bar" && m === DOUBLE)).length > 0 && (
                           <div className="text-xs" style={{ color: "var(--muted)" }}>
-                            {item.modifiers.join(", ")}
+                            {item.modifiers.filter((m) => !(item.station === "bar" && m === DOUBLE)).join(", ")}
                           </div>
                         )}
                       </>
@@ -285,7 +294,7 @@ export default function PrepTicketBoard({
                           <button
                             className="min-h-11 shrink-0 rounded-lg border-2 px-3 text-sm font-bold"
                             style={{ borderColor: "var(--foreground)", color: "var(--foreground)", background: "var(--surface)" }}
-                            onClick={() => setRecipe({ name: item.name, entry: drink })}
+                            onClick={() => setRecipe({ name: item.name, entry: drink, double: isDouble(item.modifiers) })}
                           >
                             Recipe
                           </button>
@@ -300,13 +309,13 @@ export default function PrepTicketBoard({
         </div>
       )}
 
-      {recipe && <RecipeOverlay name={recipe.name} entry={recipe.entry} onClose={() => setRecipe(null)} />}
+      {recipe && <RecipeOverlay name={recipe.name} entry={recipe.entry} double={recipe.double} onClose={() => setRecipe(null)} />}
     </div>
   );
 }
 
 // A drink's recipe, big enough to read from arm's length while making it.
-function RecipeOverlay({ name, entry, onClose }: { name: string; entry: BoardEntry; onClose: () => void }) {
+function RecipeOverlay({ name, entry, double, onClose }: { name: string; entry: BoardEntry; double: boolean; onClose: () => void }) {
   const card = entry.card;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -333,6 +342,11 @@ function RecipeOverlay({ name, entry, onClose }: { name: string; entry: BoardEnt
           </span>
           <div className="min-w-0">
             <h2 className="font-display text-4xl leading-tight">{name}</h2>
+            {double && (
+              <p className="mt-2 inline-block rounded px-2 py-1 text-2xl font-black tracking-wider" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                DOUBLE: twice the spirit
+              </p>
+            )}
             {facts && <p className="mt-2 text-xl" style={{ color: "var(--muted)" }}>{facts}</p>}
           </div>
         </div>

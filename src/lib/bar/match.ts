@@ -15,6 +15,7 @@
 // scripts/check-bar-book.mjs checks it on the drinks guests actually
 // describe (Cape Codder, Sea Breeze or Bay Breeze, Paloma, Screwdriver or
 // Harvey Wallbanger, a rum and Coke with lime).
+import { DOUBLE } from "@/lib/bar/double";
 import { FAMILY_LABEL, SPIRITS, familyFor, iconSpecFor, isFamily, isKind, kindFor, type Family, type IconSpec, type Kind } from "@/lib/bar/icons";
 
 // One ingredient, as the picker and the book both have it.
@@ -362,7 +363,8 @@ export interface CustomOrderLine {
   customRecipe: { ingredient_id: string; quantity: number }[];
 }
 
-export function customOrderLine(name: string, price: number, picked: readonly PickedIngredient[]): CustomOrderLine {
+// double: rung up as a double ("Double" on the line; the price already has it).
+export function customOrderLine(name: string, price: number, picked: readonly PickedIngredient[], double = false): CustomOrderLine {
   const merged = new Map<string, number>();
   for (const p of picked.slice(0, MAX_LINES)) merged.set(p.id, Math.min(MAX_AMOUNT, Math.round(((merged.get(p.id) ?? 0) + p.amount) * 1000) / 1000));
   return {
@@ -370,7 +372,7 @@ export function customOrderLine(name: string, price: number, picked: readonly Pi
     name: name.replace(/\s+/g, " ").trim().slice(0, 80) || customName(picked),
     unit: Math.round(price * 100) / 100,
     qty: 1,
-    mods: [],
+    mods: double ? [DOUBLE] : [],
     isAlcohol: customIsAlcohol(picked),
     customRecipe: [...merged].map(([ingredient_id, quantity]) => ({ ingredient_id, quantity })),
   };

@@ -3,6 +3,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type { MenuCategory, MenuItem } from "@/lib/types";
+import DrinkIcon from "@/components/bar/DrinkIcon";
+import type { IconSpec } from "@/lib/bar/icons";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { approvalText } from "@/lib/pin-rules";
 import ManagerPinModal from "@/components/ManagerPinModal";
@@ -42,6 +44,7 @@ import {
 interface Snapshot {
   id: string;
   name: string;
+  icon?: IconSpec | null; // a Bar tab drink's icon, shown large in its settings
   price: number;
   active: boolean;
   picture: PictureState;
@@ -51,7 +54,7 @@ interface Snapshot {
 }
 
 type TileExtras = { art: ReactNode; hold?: HoldHandlers };
-type Extras = (item: MenuItem, category: MenuCategory | null, section: string | null, out: RegisterOut | null) => TileExtras;
+type Extras = (item: MenuItem, category: MenuCategory | null, section: string | null, out: RegisterOut | null, icon?: IconSpec | null) => TileExtras;
 
 // Outside the provider (a preview), buttons still get their text icons and
 // label tiles.
@@ -91,9 +94,10 @@ export function ItemSettingsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const extras = useCallback<Extras>(
-    (item, category, section, out) => {
+    (item, category, section, out, icon) => {
       const snap: Snapshot = {
         id: item.id,
+        icon: icon ?? null,
         name: item.name,
         price: Number(item.price),
         active: item.active !== false,
@@ -225,7 +229,12 @@ function ItemSettingsSheet({ start, token, note, onClose }: { start: Snapshot; t
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-3 sm:p-6" role="dialog" aria-modal="true" aria-label={`${item.name} settings`}>
       <div className="card w-full max-w-2xl shadow-2xl">
         <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          {item.icon && (
+            <span className="shrink-0" style={{ color: "var(--foreground)" }}>
+              <DrinkIcon spec={item.icon} size={110} label={item.name} />
+            </span>
+          )}
+          <div className="min-w-0 flex-1">
             <div className="eyebrow">Item settings</div>
             <h2 className="font-display text-2xl leading-tight">{item.name}</h2>
             <p className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>

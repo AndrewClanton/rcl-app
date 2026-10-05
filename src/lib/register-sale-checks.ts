@@ -7,6 +7,8 @@ import type { MemberTier } from "@/lib/types";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { coffeeTime } from "@/lib/daily-perk";
 import { coffeeDay, dailyCoffeeUse, type DailyCoffeeUse } from "@/lib/daily-perk-server";
+import { DOUBLE, DOUBLE_SETTING, hasOwnDouble, isDouble, priceWithDouble, readDoubleSettings, sectionOfCategory, withoutDouble, type DoubleLine, type DoubleSettings } from "@/lib/bar/double";
+import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
 
 // The server's own look at a register sale before it's saved, instead of
 // taking the register's word for it:
@@ -227,8 +229,15 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     sale.memberId ? supabase.from("members").select("tier, points").eq("id", sale.memberId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   for (const r of [items, groups, screenings, memberRow]) if (r.error) throw new Error(r.error.message);
+  // A double ("Double" on an alcohol line, lib/bar/double.ts) is priced from
+  // the item's section, its recipe and the double settings, read only when
+  // the sale has one.
+  const doubles = await doubleContext(
+    supabase,
+    sale.lines.filter((l) => l.menu_item_id && !l.screening_id && (l.modifiers ?? []).includes(DOUBLE)).map((l) => l.menu_item_id as string),
+  );
 
-  const itemById = new Map(((items.data ?? []) as { id: string; price: number; is_alcohol: boolean; daily_perk?: boolean }[]).map((i) => [i.id, i]));
+  const itemById = new Map(((items.data ?? []) as { id: string; price: number; is_alcohol: boolean; category_id: string; daily_perk?: boolean }[]).map((i) => [i.id, i]));
   const groupsByItem = new Map<string, Group[]>();
   for (const g of (groups.data ?? []) as unknown as Group[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
   const ticketPrice = new Map(((screenings.data ?? []) as { id: string; ticket_price: number }[]).map((s) => [s.id, Number(s.ticket_price)]));
@@ -258,9 +267,22 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
       } else {
         if (item.daily_perk) perkBase = Number(item.price);
         const itemGroups = groupsByItem.get(item.id) ?? [];
-        const mods = modifierPrice(itemGroups, l.modifiers ?? []);
-        if ("extra" in mods) expected = Number(item.price) + mods.extra;
-        else if ("unknown" in mods) problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore, so its price couldn't be checked.`);
+        // Our Double isn't a menu option (unless the item has its own).
+        const ownDouble = hasOwnDouble(itemGroups);
+        const mods = modifierPrice(itemGroups, withoutDouble(l.modifiers ?? [], ownDouble));
+        if ("extra" in mods) {
+          expected = Number(item.price) + mods.extra;
+          if (!ownDouble && isDouble(l.modifiers)) {
+            const d = priceWithDouble(
+              expected,
+              l.modifiers ?? [],
+              { isAlcohol: item.is_alcohol, section: doubles.sectionOf(item.category_id), ownDouble, recipe: doubles.recipes.get(item.id) ?? null },
+              doubles.settings,
+            );
+            if ("unit" in d) expected = d.unit;
+            else problems.push(`"${l.name}" was rung as a double, but ${d.error}.`);
+          }
+        } else if ("unknown" in mods) problems.push(`"${l.name}": the option "${mods.unknown}" isn't on the menu anymore, so its price couldn't be checked.`);
         else note = `two options are called "${mods.ambiguous}", price not checked`;
         // The register won't add an item until its "pick one" questions are
         // answered, so an unanswered one means the line didn't come from there.
@@ -318,6 +340,46 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   }
 
   return { problems, server, lines, member };
+}
+
+// What pricing a double needs, for the menu items rung as one: where each
+// sits on the Bar tab, its recipe (with each ingredient's kind) and the
+// double settings. Nothing is read without a double on the sale.
+async function doubleContext(
+  supabase: ReturnType<typeof createAdminClient>,
+  itemIds: string[],
+): Promise<{ settings: DoubleSettings; recipes: Map<string, DoubleLine[]>; sectionOf: (categoryId: string) => ReturnType<typeof sectionOfCategory> }> {
+  const settings = readDoubleSettings(null);
+  if (!itemIds.length) return { settings, recipes: new Map(), sectionOf: () => null };
+  type RecipeRow = { menu_item_id: string; ingredients: { quantity: number; optional?: boolean | null; ingredient: { name: string; unit: string; kind?: string | null } | null }[] };
+  const read = (cols: string) => supabase.from("recipes").select(cols).in("menu_item_id", [...new Set(itemIds)]);
+  const [cats, setting, withKind] = await Promise.all([
+    supabase.from("menu_categories").select("id, key, label, parent_id"),
+    supabase.from("settings").select("value").eq("key", DOUBLE_SETTING).maybeSingle(),
+    read("menu_item_id, ingredients:recipe_ingredients(quantity, optional, ingredient:ingredients(name, unit, kind))"),
+  ]);
+  let recipeRows = withKind.data as unknown as RecipeRow[] | null;
+  if (withKind.error) {
+    const plain = await read("menu_item_id, ingredients:recipe_ingredients(quantity, ingredient:ingredients(name, unit))");
+    if (plain.error) throw new Error(plain.error.message);
+    recipeRows = plain.data as unknown as RecipeRow[];
+  }
+  if (cats.error) throw new Error(cats.error.message);
+  const recipes = new Map<string, DoubleLine[]>();
+  for (const r of recipeRows ?? []) {
+    recipes.set(
+      r.menu_item_id,
+      (r.ingredients ?? [])
+        .filter((i) => i.ingredient)
+        .map((i) => ({ name: i.ingredient!.name, unit: i.ingredient!.unit, kind: i.ingredient!.kind ?? null, quantity: Number(i.quantity), optional: i.optional === true })),
+    );
+  }
+  const categories = (cats.data ?? []) as { id: string; key: string | null; label: string | null; parent_id: string | null }[];
+  return {
+    settings: readDoubleSettings(setting.error ? null : setting.data?.value),
+    recipes,
+    sectionOf: (categoryId) => sectionOfCategory(categoryId, categories, isBarCategory, barSectionOf),
+  };
 }
 
 // ---------- flags ----------

@@ -2,6 +2,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getRecipesByItem } from "./recipes";
 import { schemaMissing } from "@/lib/schema-missing";
+import { baseLines, isDouble } from "@/lib/bar/double";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
@@ -739,10 +740,10 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   // already stopped at 1,000 orders).
   const [{ data: ingredients, error: ingErr }, orderItems, counts, recipesByItem, { data: drinks, error: drinkErr }, notCarriedRead, bookSold] = await Promise.all([
     supabase.from("ingredients").select("id, name, unit, unit_cost").eq("active", true).order("category").order("name"),
-    fetchAll<{ menu_item_id: string | null; quantity: number }>((from, to) =>
+    fetchAll<{ menu_item_id: string | null; quantity: number; modifiers: string[] | null }>((from, to) =>
       supabase
         .from("order_items")
-        .select("menu_item_id, quantity, orders!inner(status, completed_at)")
+        .select("menu_item_id, quantity, modifiers, orders!inner(status, completed_at)")
         .eq("orders.status", "completed")
         .gte("orders.completed_at", since.toISOString())
         .not("menu_item_id", "is", null)
@@ -776,30 +777,40 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   }
 
   const theoreticalByIngredient = new Map<string, number>();
+  // A double (lib/bar/double.ts) pours its base-spirit lines twice.
+  const pour = (lines: { ingredient_id: string; quantity: number; name: string; kind?: string | null; optional?: boolean }[], times: number, double: boolean) => {
+    const twice = double ? new Set(baseLines(lines)) : new Set<(typeof lines)[number]>();
+    for (const ri of lines) {
+      const q = ri.quantity * times * (twice.has(ri) ? 2 : 1);
+      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + q);
+    }
+  };
   for (const oi of orderItems) {
     const recipe = oi.menu_item_id && drinkIds.has(oi.menu_item_id) ? recipesByItem[oi.menu_item_id] : undefined;
     if (!recipe) continue;
-    for (const ri of recipe.ingredients) {
-      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * oi.quantity);
-    }
+    pour(
+      recipe.ingredients.map((ri) => ({ ingredient_id: ri.ingredient_id, quantity: ri.quantity, name: ri.ingredient_name, kind: ri.kind ?? null, optional: ri.optional === true })),
+      oi.quantity,
+      isDouble(oi.modifiers),
+    );
   }
   // A Bar Book drink pours its own recipe, the same way.
   for (const sold of bookSold.sold) {
-    for (const ri of bookSold.recipes.get(sold.recipe_id) ?? []) {
-      barIngredients.add(ri.ingredient_id);
-      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * sold.quantity);
-    }
+    const lines = bookSold.recipes.get(sold.recipe_id) ?? [];
+    for (const ri of lines) barIngredients.add(ri.ingredient_id);
+    pour(lines, sold.quantity, isDouble(sold.modifiers));
   }
   // And a custom drink pours what its list says.
   for (const sold of customSold) {
     if (!Array.isArray(sold.custom_recipe)) continue;
-    for (const ri of sold.custom_recipe as { ingredient_id?: unknown; quantity?: unknown }[]) {
+    const lines = (sold.custom_recipe as { ingredient_id?: unknown; quantity?: unknown; name?: unknown; kind?: unknown }[]).flatMap((ri) => {
       const id = typeof ri?.ingredient_id === "string" ? ri.ingredient_id : null;
       const q = Number(ri?.quantity);
-      if (!id || !Number.isFinite(q) || q <= 0) continue;
-      barIngredients.add(id);
-      theoreticalByIngredient.set(id, (theoreticalByIngredient.get(id) ?? 0) + q * sold.quantity);
-    }
+      if (!id || !Number.isFinite(q) || q <= 0) return [];
+      return [{ ingredient_id: id, quantity: q, name: typeof ri.name === "string" ? ri.name : "", kind: typeof ri.kind === "string" ? ri.kind : null }];
+    });
+    for (const ri of lines) barIngredients.add(ri.ingredient_id);
+    pour(lines, sold.quantity, isDouble(sold.modifiers));
   }
 
   const countsByIngredient = new Map<string, { quantity_on_hand: number; counted_at: string }[]>();
@@ -856,16 +867,17 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
 // Bar Book drinks sold off the menu since `since` (order_items.recipe_id,
 // migration 20261004030000), and their recipes' lines. Empty before that
 // migration, or if it can't be read: the report then reads as before.
-type BookSold = { sold: { recipe_id: string; name: string; quantity: number; unit_price: number }[]; recipes: Map<string, { ingredient_id: string; quantity: number }[]> };
+type BookLineRow = { ingredient_id: string; quantity: number; name: string; kind: string | null; optional: boolean };
+type BookSold = { sold: { recipe_id: string; name: string; quantity: number; unit_price: number; modifiers: string[] | null }[]; recipes: Map<string, BookLineRow[]> };
 
 async function bookDrinkLines(since: Date): Promise<BookSold> {
   const none: BookSold = { sold: [], recipes: new Map() };
   const supabase = createAdminClient();
   try {
-    const sold = await fetchAll<{ recipe_id: string; name: string; quantity: number; unit_price: number }>((from, to) =>
+    const sold = await fetchAll<{ recipe_id: string; name: string; quantity: number; unit_price: number; modifiers: string[] | null }>((from, to) =>
       supabase
         .from("order_items")
-        .select("recipe_id, name, quantity, unit_price, orders!inner(status, completed_at)")
+        .select("recipe_id, name, quantity, unit_price, modifiers, orders!inner(status, completed_at)")
         .eq("orders.status", "completed")
         .gte("orders.completed_at", since.toISOString())
         .not("recipe_id", "is", null)
@@ -874,10 +886,13 @@ async function bookDrinkLines(since: Date): Promise<BookSold> {
     );
     const ids = [...new Set(sold.map((l) => l.recipe_id))];
     if (!ids.length) return { sold, recipes: new Map() };
-    const { data, error } = await supabase.from("recipe_ingredients").select("recipe_id, ingredient_id, quantity").in("recipe_id", ids);
+    const { data, error } = await supabase.from("recipe_ingredients").select("recipe_id, ingredient_id, quantity, optional, ingredient:ingredients(name, kind)").in("recipe_id", ids);
     if (error) return { sold, recipes: new Map() };
-    const recipes = new Map<string, { ingredient_id: string; quantity: number }[]>();
-    for (const r of data ?? []) recipes.set(r.recipe_id as string, [...(recipes.get(r.recipe_id as string) ?? []), { ingredient_id: r.ingredient_id as string, quantity: Number(r.quantity) }]);
+    const recipes = new Map<string, BookLineRow[]>();
+    for (const r of (data ?? []) as unknown as { recipe_id: string; ingredient_id: string; quantity: number; optional: boolean | null; ingredient: { name: string; kind: string | null } | null }[]) {
+      const line: BookLineRow = { ingredient_id: r.ingredient_id, quantity: Number(r.quantity), name: r.ingredient?.name ?? "", kind: r.ingredient?.kind ?? null, optional: r.optional === true };
+      recipes.set(r.recipe_id, [...(recipes.get(r.recipe_id) ?? []), line]);
+    }
     return { sold, recipes };
   } catch (e) {
     if (!schemaMissing(e as { code?: string })) console.warn("bar usage: Bar Book drinks not read", e);
@@ -888,13 +903,13 @@ async function bookDrinkLines(since: Date): Promise<BookSold> {
 // Custom drinks ("What's in it?") sold since `since`, with the ingredient
 // list on each line (order_items.custom_recipe, migration 20261005010000).
 // Empty before that migration, or if it can't be read.
-async function customDrinkLines(since: Date): Promise<{ quantity: number; custom_recipe: unknown }[]> {
+async function customDrinkLines(since: Date): Promise<{ quantity: number; custom_recipe: unknown; modifiers: string[] | null }[]> {
   const supabase = createAdminClient();
   try {
-    return await fetchAll<{ quantity: number; custom_recipe: unknown }>((from, to) =>
+    return await fetchAll<{ quantity: number; custom_recipe: unknown; modifiers: string[] | null }>((from, to) =>
       supabase
         .from("order_items")
-        .select("quantity, custom_recipe, orders!inner(status, completed_at)")
+        .select("quantity, custom_recipe, modifiers, orders!inner(status, completed_at)")
         .eq("orders.status", "completed")
         .gte("orders.completed_at", since.toISOString())
         .not("custom_recipe", "is", null)

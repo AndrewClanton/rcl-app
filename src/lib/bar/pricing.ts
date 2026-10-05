@@ -9,6 +9,8 @@
 // cost (a setting, 20% unless an owner changes it), rounded up to a whole
 // dollar. Nothing here changes a menu price or any sale math.
 
+import { DOUBLE } from "@/lib/bar/double";
+
 export const DEFAULT_TARGET_POUR_COST = 0.2;
 export const TARGET_POUR_COST_SETTING = "bar_target_pour_cost";
 // What an owner can set it to.
@@ -155,8 +157,9 @@ export function readPrice(text: string): PriceCheck {
   return { ok: true, price: n };
 }
 
-export function bookOrderLine(drink: { recipeId: string; name: string }, price: number): BookOrderLine {
-  return { menuItemId: null, name: drink.name.trim().slice(0, 80) || "Bar Book drink", unit: Math.round(price * 100) / 100, qty: 1, mods: [], isAlcohol: true, recipeId: drink.recipeId };
+// double: rung up as a double ("Double" on the line; the price already has it).
+export function bookOrderLine(drink: { recipeId: string; name: string }, price: number, double = false): BookOrderLine {
+  return { menuItemId: null, name: drink.name.trim().slice(0, 80) || "Bar Book drink", unit: Math.round(price * 100) / 100, qty: 1, mods: double ? [DOUBLE] : [], isAlcohol: true, recipeId: drink.recipeId };
 }
 
 // The recipe an order line may keep (order_items.recipe_id), checked on the
