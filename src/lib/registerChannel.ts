@@ -12,6 +12,9 @@ export interface RegisterCartSnapshot {
   items: { name: string; quantity: number; modifiers: string[]; lineTotal?: number }[];
   subtotal: number;
   tax: number;
+  // The tax is inside the prices (an organization's supported guest,
+  // lib/orgs.ts): "Tax included", and the total is the listed prices.
+  taxIncluded?: boolean;
   total: number;
   discounts?: { label: string; amount: number }[];
   // Who's on this order, for the live tally, their account panel and their

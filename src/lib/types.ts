@@ -236,6 +236,9 @@ export interface Member {
   link_cards?: boolean;
   // "Group / organization" label (lib/member-notes.ts), staff only.
   organization?: string | null;
+  // Their organization account (lib/orgs.ts): shown on My Account.
+  organization_id?: string | null;
+  org_role?: "helper" | "supported" | null;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;

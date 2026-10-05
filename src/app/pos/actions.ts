@@ -23,6 +23,7 @@ import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
+import { logOrderComps, openOverLimit, orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -54,6 +55,10 @@ export interface CheckoutTotals {
   redemption_discount: number;
   tax: number;
   total: number;
+  // An organization member's comps (a day pass, movies) and a supported
+  // guest's tax-included prices (lib/orgs.ts). Optional: none.
+  org_comp_discount?: number;
+  tax_included?: boolean;
 }
 
 export interface CheckoutPayment {
@@ -245,6 +250,9 @@ export type CompleteOrderInput = DraftFields & {
   ageVerified: boolean;
   tip?: number;
   draftOrderId?: string | null;
+  // A manager's OK to comp past the organization's daily limit
+  // (org-actions.ts approveOrgOverLimit).
+  orgApproval?: string | null;
 };
 
 // A card sale's card, once the sale is saved: linked to the member on it,
@@ -290,10 +298,29 @@ async function memberPoints(supabase: ReturnType<typeof createAdminClient>, memb
 // dropDailyCoffee: the Insiders+ daily coffee has to come off the order,
 // with the member's coffee today when that's why (already used: the
 // register shows when).
-export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null };
+// orgFull: the organization's comps for today are used up (the register
+// looks again and offers the manager override).
+export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: number; dropDailyCoffee?: DailyCoffeeState | null; orgFull?: boolean };
 
-export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals): Promise<PaymentCheck> {
-  await assertStaff();
+export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals, orgApproval: string | null = null): Promise<PaymentCheck> {
+  const staff = await assertStaff();
+  // An organization's comps: today's limit, looked at again (the other
+  // register may have used the last one). A manager can go past it.
+  if (Number(totals.org_comp_discount ?? 0) > 0 && fields.memberId) {
+    try {
+      const memberNow = await currentMemberId(fields.memberId);
+      const terms = await orgSaleTerms(memberNow, fields.lines, false);
+      if (terms.plan.blocked && !(terms.org && openOverLimit(orgApproval, terms.org.orgId, staff.employeeId))) {
+        return {
+          ok: false,
+          orgFull: true,
+          error: `${terms.org?.orgName ?? "This organization"} has used all ${terms.org?.limit ?? ""} of today's comps. A manager can approve one more, or ring the day pass and tickets at their price.`,
+        };
+      }
+    } catch (e) {
+      console.warn("org comp check skipped", e);
+    }
+  }
   const supabase = createAdminClient();
   const coffeeOn = Number(totals.daily_perk_discount ?? 0) > 0;
   // The account a merged-away member became (lib/member-forward.ts), so the
@@ -358,7 +385,37 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // they've paid.
   const memberId = await currentMemberId(params.memberId);
 
+  // An organization member's comps and tax-included prices (lib/orgs.ts),
+  // judged before this sale's own comps are logged. The register checked
+  // the daily limit before payment; a comp past it without a manager's OK
+  // is still saved (they've paid what they were asked) and flagged.
+  // Comps are logged only when the register took them off (a sale rung
+  // while the day's comps were used up was charged, so logs none).
+  const compsClaimed = Number(params.totals.org_comp_discount ?? 0) > 0;
+  const orgClaimed = compsClaimed || !!params.totals.tax_included;
+  let orgTerms: OrgSaleTerms | undefined;
+  let overLimitBy: string | null = null;
+  let overLimitUnapproved = false;
+  if (memberId && orgClaimed) {
+    try {
+      // A charged sale (no comps) is judged against the limit; a comped one
+      // is let past it here and flagged below if no manager approved.
+      orgTerms = await orgSaleTerms(memberId, params.lines, compsClaimed);
+      if (compsClaimed && orgTerms.plan.overLimit && orgTerms.org) {
+        const ok = openOverLimit(params.orgApproval, orgTerms.org.orgId, staff.employeeId);
+        overLimitBy = ok?.approverId ?? null;
+        overLimitUnapproved = !ok;
+      }
+    } catch (e) {
+      console.error("org terms not read", e);
+    }
+  }
+  const orgFields = orgClaimed
+    ? { organization_id: orgTerms?.org?.orgId ?? null, org_comp_discount: cents(Number(params.totals.org_comp_discount ?? 0)), tax_included: !!params.totals.tax_included }
+    : {};
+
   const orderFields = {
+    ...orgFields,
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
@@ -412,7 +469,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     return { ok: false, error: card.error, cardCharged: card.charged };
   }
 
-  const saleForCheck = { ...params, memberId, tip };
+  const saleForCheck = { ...params, memberId, tip, org: orgTerms };
   let totalsCheck: TotalsCheck | null = null;
   // The Bar Book drinks on it (off-menu, rung up from the book), looked up
   // once: only those keep their recipe, and they aren't custom items.
@@ -524,6 +581,10 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
   }
 
+  // The organization's comps on this sale, logged now so the next count
+  // (the other register, the chip) includes them.
+  if (orgTerms && memberId && compsClaimed) await logOrderComps({ orderId, memberId, terms: orgTerms, lines: params.lines, overLimitBy });
+
   // The member's balance before this sale moves it. A reward's points come
   // out below only if it covers them, and the log-only totals check (run
   // after the register has its answer, so after the points have moved)
@@ -549,6 +610,12 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       });
     }
     if (card.flag) await flagSale("card_unchecked", { ...saved, details: { reason: card.flag.reason, detail: card.flag.detail, payment: params.payment } });
+    if (overLimitUnapproved && orgTerms?.org) {
+      await flagSale("org_over_limit", {
+        ...saved,
+        details: { summary: `${orgTerms.org.orgName} was comped past its daily limit (${orgTerms.org.used}/${orgTerms.org.limit}) without a manager's OK.`, organizationId: orgTerms.org.orgId },
+      });
+    }
     // The coffee as judged before this sale saved (once saved, its own
     // coffee would look like today's already used).
     const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore }));
@@ -926,6 +993,7 @@ export interface RecentOrder {
   subtotal: number;
   discounts: { label: string; amount: number }[];
   tax: number;
+  taxIncluded?: boolean; // the tax is inside the prices (lib/orgs.ts)
   tip: number;
   total: number;
   lines: { name: string; qty: number; unit: number; mods: string[]; screeningId: string | null }[];
@@ -939,7 +1007,8 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     createAdminClient().from("orders").select(columns).in("status", ["completed", "refunded", "voided"]).not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(limit);
   // The card that paid and how the member got on the sale (migration
   // 20261001220000); without it, the list as it was.
-  let { data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`);
+  let { data, error } = await recent(`${base}, org_comp_discount, tax_included, member_source, card:card_payments(brand, last4, wallet)`);
+  if (schemaMissing(error)) ({ data, error } = await recent(`${base}, member_source, card:card_payments(brand, last4, wallet)`));
   if (schemaMissing(error)) ({ data, error } = await recent(base));
   if (error) throw error;
   type Row = {
@@ -955,6 +1024,8 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     payment_voucher_amount: number | null;
     subtotal: number;
     daily_perk_discount?: number | null;
+    org_comp_discount?: number | null;
+    tax_included?: boolean | null;
     tier_discount: number;
     monthly_discount: number;
     redemption_discount: number;
@@ -985,12 +1056,14 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
       voucher: Number(o.payment_voucher_amount ?? 0),
       subtotal: Number(o.subtotal),
       discounts: [
+        { label: "Organization comp", amount: Number(o.org_comp_discount ?? 0) },
         { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
         { label: "Member discount", amount: Number(o.tier_discount) },
         { label: "Monthly member discount", amount: Number(o.monthly_discount) },
         { label: "Points reward", amount: Number(o.redemption_discount) },
       ].filter((d) => d.amount > 0),
       tax: Number(o.tax),
+      taxIncluded: !!o.tax_included,
       tip: Number(o.tip),
       total: Number(o.total),
       lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
