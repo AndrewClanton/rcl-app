@@ -24,6 +24,8 @@ export default function MemberManager({
   staffInfo,
   query,
   compedOnly,
+  organization,
+  organizations,
   canManage,
 }: {
   membersPage: MembersPage;
@@ -31,6 +33,9 @@ export default function MemberManager({
   staffInfo: Record<string, MemberStaffInfo>;
   query: string;
   compedOnly: boolean;
+  // The organization filter ("" for any) and every organization in use.
+  organization: string;
+  organizations: string[];
   // Managers and up add and switch off community programs.
   canManage: boolean;
 }) {
@@ -46,29 +51,29 @@ export default function MemberManager({
       firstRender.current = false;
       return;
     }
-    const t = setTimeout(() => {
-      const params = new URLSearchParams();
-      if (search.trim()) params.set("q", search.trim());
-      if (compedOnly) params.set("comped", "1");
-      router.push(`/admin/members?${params.toString()}`);
-    }, 300);
+    const t = setTimeout(() => go({}), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  function toggleCompedOnly(checked: boolean) {
+  // The list's URL: the search, "Community/free members only" and the
+  // organization filter carry over; the page starts over unless given.
+  function go(o: { comped?: boolean; org?: string; page?: number }) {
     const params = new URLSearchParams();
     if (search.trim()) params.set("q", search.trim());
-    if (checked) params.set("comped", "1");
+    if (o.comped ?? compedOnly) params.set("comped", "1");
+    const org = o.org ?? organization;
+    if (org) params.set("org", org);
+    if (o.page) params.set("page", String(o.page));
     router.push(`/admin/members?${params.toString()}`);
   }
 
+  function toggleCompedOnly(checked: boolean) {
+    go({ comped: checked });
+  }
+
   function goToPage(page: number) {
-    const params = new URLSearchParams();
-    if (search.trim()) params.set("q", search.trim());
-    if (compedOnly) params.set("comped", "1");
-    params.set("page", String(page));
-    router.push(`/admin/members?${params.toString()}`);
+    go({ page });
   }
 
   const { members, total, page, pageSize } = membersPage;
@@ -93,6 +98,25 @@ export default function MemberManager({
               <input type="checkbox" checked={compedOnly} onChange={(e) => toggleCompedOnly(e.target.checked)} />
               Community/free members only
             </label>
+            {/* "Group / organization" labels set at the register or on a
+                member's page (lib/member-notes.ts), e.g. everyone with
+                Easter Seals, to attach to a corporate account later. */}
+            {(organizations.length > 0 || organization) && (
+              <select
+                className="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs"
+                aria-label="Organization"
+                value={organization}
+                onChange={(e) => go({ org: e.target.value })}
+              >
+                <option value="">Any organization</option>
+                {organization && !organizations.includes(organization) && <option value={organization}>{organization}</option>}
+                {organizations.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
@@ -109,6 +133,7 @@ export default function MemberManager({
                   <StaffBadge info={staffInfo[m.id]} />
                 </span>
                 <span className="min-w-[160px] flex-1 truncate text-[var(--muted)]">{m.email ?? "—"}</span>
+                {m.organization && <span className="rounded-full border border-[var(--border)] px-2 py-0.5 text-xs font-semibold">🏷 {m.organization}</span>}
                 <span className={`rounded-full border px-2 py-0.5 text-xs ${tierBadgeClass(m.tier)}`}>{m.tier}</span>
                 {m.comped && (
                   <span className="rounded-full border border-[var(--success-border)] bg-[var(--success-bg)] px-2 py-0.5 text-xs text-[var(--success-text)] ">
