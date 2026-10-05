@@ -6,7 +6,19 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import { approveBelowCost } from "./bar-book-actions";
 import { makeMenuItemFromRecipe } from "@/app/admin/bar-book/actions";
-import { bookOrderLine, isBelowCost, money as costMoney, priceSummary, readPrice, type BookOrderLine, type DrinkCost } from "@/lib/bar/pricing";
+import {
+  bookOrderLine,
+  dollars,
+  isBelowCost,
+  money as costMoney,
+  offMenuPricing,
+  priceSummary,
+  readPrice,
+  type BarPrices,
+  type BookOrderLine,
+  type DrinkCost,
+  type ManagersCheck,
+} from "@/lib/bar/pricing";
 import { doubledLines, doubleUpcharge, plus, type DoubleSettings } from "@/lib/bar/double";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { FAMILY_COLOR, FAMILY_LABEL, GLASS_LABEL, SPIRITS, type Family } from "@/lib/bar/icons";
@@ -58,10 +70,11 @@ type Filter = "all" | "makeable" | "menu";
 // our menu and rings up that menu item exactly as its button does
 // (onRingUp, the register's own tap), so its choices, Ran out question,
 // price and the ID check all still apply. A drink off the menu has "Add to
-// order" instead: a one-off line at the suggested price (or one staff
-// type), the same line as "+ Custom item" (onAddLine), always alcohol for
-// the ID check, and a manager PIN below what it costs. Every card shows
-// what the drink costs and a suggested price (src/lib/bar/pricing.ts).
+// order" instead: a one-off line at the rule price (or one staff type), the
+// same line as "+ Custom item" (onAddLine), always alcohol for the ID
+// check, and a manager PIN below what it costs. A menu drink's card shows
+// what it costs and its pour cost; an off-menu drink's shows the rule price
+// and the manager's check (src/lib/bar/pricing.ts).
 export default function BarBook({
   initialQuery = "",
   recipes,
@@ -72,6 +85,7 @@ export default function BarBook({
   updating,
   canMakeMenuItems,
   doubleSettings,
+  prices,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -86,6 +100,7 @@ export default function BarBook({
   updating: boolean;
   canMakeMenuItems: boolean; // an owner or admin is signed in
   doubleSettings: DoubleSettings;
+  prices: BarPrices; // the Prices sheet: the rule an off-menu drink is priced by
   onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
@@ -284,6 +299,7 @@ export default function BarBook({
               average={average}
               canMakeMenuItems={canMakeMenuItems}
               doubleSettings={doubleSettings}
+              prices={prices}
               onRingUp={onRingUp}
               onAddLine={onAddLine}
               onMenuChanged={onMenuChanged}
@@ -304,6 +320,7 @@ function Card({
   average,
   canMakeMenuItems,
   doubleSettings,
+  prices,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -316,6 +333,7 @@ function Card({
   average: number | null;
   canMakeMenuItems: boolean;
   doubleSettings: DoubleSettings;
+  prices: BarPrices;
   onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
@@ -325,15 +343,16 @@ function Card({
   // shown and the cost, the upcharge on the price (lib/bar/double.ts).
   const [dbl, setDbl] = useState(false);
   const single = costOf(drink, stockById);
-  const singlePricing = priceSummary({ cost: single, target, menuPrice: drink.menu?.price ?? null, average });
-  const upcharge = doubleUpcharge(drink.menu?.price ?? singlePricing.suggested ?? 0, { isAlcohol: true, section: drink.menu?.section ?? "cocktails", ownDouble: false, recipe: drink.lines }, doubleSettings);
+  const upcharge = doubleUpcharge({ isAlcohol: true, section: drink.menu?.section ?? "cocktails", ownDouble: false, recipe: drink.lines, name: drink.menu?.name ?? drink.name }, doubleSettings);
   const doubled = dbl && upcharge !== null;
   const shownLines = doubled ? doubledLines(drink.lines) : drink.lines;
   const cost = doubled ? costOf({ lines: shownLines }, stockById) : single;
-  const pricing = doubled
-    ? priceSummary({ cost, target, menuPrice: drink.menu ? drink.menu.price + upcharge! : null, average })
-    : singlePricing;
-  const suggestedNow = doubled ? (singlePricing.suggested !== null ? Math.round((singlePricing.suggested + upcharge!) * 100) / 100 : null) : singlePricing.suggested;
+  // On the menu: its menu price and pour cost. Off it: the rule price and
+  // the manager's check (the single's for "Make this a menu item").
+  const menuPricing = drink.menu ? priceSummary({ cost, target, menuPrice: drink.menu.price + (doubled ? upcharge! : 0), average }) : null;
+  const offMenu = drink.menu ? null : offMenuPricing(drink.lines, cost, prices, { double: doubled });
+  const offMenuSingle = drink.menu ? null : offMenuPricing(drink.lines, single, prices);
+  const startPrice = offMenu?.price ?? null;
   const card = recipeCard(drink);
   const glass = card.glass ?? (drink.glass ? GLASS_LABEL[drink.glass] : null);
   const kicker = ["Recipe card", card.method, glass].filter(Boolean).join(" · ");
@@ -356,9 +375,7 @@ function Card({
             {card.garnish ? ` Garnish: ${card.garnish}.` : ""}
           </p>
           {card.description && <p className="mt-2 text-[15px]">{card.description}</p>}
-          <p className="mt-2 rounded-md px-2.5 py-1.5 text-sm font-semibold tabular-nums" style={{ background: "var(--surface-hover)" }}>
-            {pricing.text}
-          </p>
+          <PriceLine text={menuPricing?.text ?? offMenu?.text ?? ""} flag={offMenu?.flag ?? null} />
         </div>
 
         <div>
@@ -416,7 +433,7 @@ function Card({
           ) : (
             <>
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("add")}>
-                Add to order{suggestedNow !== null ? ` · ${costMoney(suggestedNow).replace(".00", "")}` : ""}
+                Add to order{startPrice !== null ? ` · ${dollars(startPrice)}` : ""}
               </button>
               <span className="text-sm" style={{ color: "var(--muted)" }}>
                 Not on our menu yet
@@ -434,7 +451,8 @@ function Card({
         <PriceSheet
           mode={sheet}
           title={sheet === "add" && doubled ? `${drink.name} · Double` : drink.name}
-          suggested={sheet === "add" ? suggestedNow : singlePricing.suggested}
+          suggested={sheet === "add" ? startPrice : (offMenuSingle?.price ?? null)}
+          check={(sheet === "add" ? offMenu : offMenuSingle)?.rule ? (sheet === "add" ? offMenu : offMenuSingle) : null}
           cost={sheet === "add" ? cost : single}
           approvalTarget={drink.id}
           onClose={() => setSheet(null)}
@@ -453,8 +471,25 @@ function Card({
   );
 }
 
+// A card's money line: a menu drink's cost and pour cost, or an off-menu
+// drink's rule price and the manager's check, with its gentle flag when the
+// rule price is over the target pour cost.
+export function PriceLine({ text, flag }: { text: string; flag: string | null }) {
+  return (
+    <div className="mt-2 rounded-md px-2.5 py-1.5 text-sm tabular-nums" style={{ background: "var(--surface-hover)" }}>
+      <div className="font-semibold">{text}</div>
+      {flag && (
+        <div className="mt-0.5 text-xs font-semibold" style={{ color: "var(--warn-text)" }}>
+          {flag}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // "Add to order" (a one-off line at this price) or "Make this a menu item"
-// (owners and admins), named after the drink. The price starts at the
+// (owners and admins), named after the drink. The price starts at the rule
+// price (with the manager's check under it), or with no spirit in it at the
 // suggested one; with no costs to suggest from, staff type it. Below what
 // it's known to cost, adding it takes a manager's PIN (approveBelowCost,
 // for this recipe or "custom"). Used by the Bar Book's cards and by
@@ -464,6 +499,7 @@ export function PriceSheet({
   title,
   blurb,
   suggested,
+  check,
   cost,
   approvalTarget,
   onClose,
@@ -474,7 +510,8 @@ export function PriceSheet({
   mode: "add" | "menu";
   title: string; // the drink's name
   blurb?: string;
-  suggested: number | null;
+  suggested: number | null; // what the price starts at
+  check?: ManagersCheck | null; // the rule price's manager's check
   cost: DrinkCost;
   approvalTarget: string; // the recipe's id, or "custom"
   onClose: () => void;
@@ -538,10 +575,21 @@ export function PriceSheet({
           />
         </label>
         <p className="text-xs" style={{ color: below ? "var(--danger-text)" : "var(--muted)" }}>
-          {suggested !== null ? `Suggested $${suggested}. ` : "No suggested price: its costs aren't all in yet. "}
-          {cost.anyCost ? `Costs ${cost.cost !== null ? costMoney(cost.cost) : `at least ${costMoney(cost.known)}`} to make.` : ""}
+          {check ? (
+            `${check.text}.`
+          ) : (
+            <>
+              {suggested !== null ? `Suggested $${suggested}. ` : "No suggested price: its costs aren't all in yet. "}
+              {cost.anyCost ? `Costs ${cost.cost !== null ? costMoney(cost.cost) : `at least ${costMoney(cost.known)}`} to make.` : ""}
+            </>
+          )}
           {below ? (mode === "add" ? " That's below cost, so it needs a manager's PIN." : " That's below cost.") : ""}
         </p>
+        {check?.flag && (
+          <p className="text-xs font-semibold" style={{ color: "var(--warn-text)" }}>
+            {check.flag}
+          </p>
+        )}
         {error && (
           <p className="text-sm font-semibold" style={{ color: "var(--danger-text)" }}>
             {error}

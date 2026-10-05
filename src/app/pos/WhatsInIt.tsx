@@ -5,7 +5,7 @@ import DrinkIcon from "@/components/bar/DrinkIcon";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { FAMILY_COLOR, FAMILY_LABEL, SPIRITS, familyFor, isFamily, isKind, kindFor, type Family } from "@/lib/bar/icons";
 import { buildBook, costOf, drinkStatus, cocktailAverage, formatAmount, nameKey, stockMap, type BookDrink, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
-import { bookOrderLine, drinkCost, priceSummary, type BookOrderLine } from "@/lib/bar/pricing";
+import { bookOrderLine, dollars, drinkCost, offMenuPricing, priceSummary, type BarPrices, type BookOrderLine } from "@/lib/bar/pricing";
 import {
   amountStep,
   customName,
@@ -20,7 +20,7 @@ import {
   type CustomOrderLine,
   type PickedIngredient,
 } from "@/lib/bar/match";
-import { PriceSheet } from "./BarBook";
+import { PriceLine, PriceSheet } from "./BarBook";
 import { doubledLines, doubleUpcharge, plus, type DoubleSettings } from "@/lib/bar/double";
 
 function money(n: number) {
@@ -44,10 +44,11 @@ const familyOf = (s: BookStock) => (isFamily(s.family) ? s.family : familyFor(s.
 // what's in it, and it says which drink that is (src/lib/bar/match.ts), with
 // up to three near misses. A match rings up exactly as the Bar Book does: a
 // drink on our menu through its button's tap (onRingUp), one off the menu
-// through the price sheet with its recipe (onAddLine). Nothing matched, it's
-// a custom drink: named for what's in it, costed from the list, and on the
-// order like "+ Custom item" carrying that list (onAddCustom). Below what it
-// costs takes a manager's PIN either way.
+// through the price sheet with its recipe (onAddLine), at the rule price.
+// Nothing matched, it's a custom drink: named for what's in it, priced by
+// the rule (with the manager's check from its cost), and on the order like
+// "+ Custom item" carrying that list (onAddCustom). Below what it costs
+// takes a manager's PIN either way.
 export default function WhatsInIt({
   recipes,
   stock,
@@ -55,6 +56,7 @@ export default function WhatsInIt({
   target,
   outs,
   doubleSettings,
+  prices,
   onRingUp,
   onAddLine,
   onAddCustom,
@@ -66,6 +68,7 @@ export default function WhatsInIt({
   target: number;
   outs: Map<string, RegisterOut>;
   doubleSettings: DoubleSettings;
+  prices: BarPrices; // the Prices sheet: the rule and the pour standard
   onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onAddCustom: (line: CustomOrderLine, note?: string) => void;
@@ -126,7 +129,7 @@ export default function WhatsInIt({
       if (prev.some((p) => p.id === s.id)) return prev.filter((p) => p.id !== s.id);
       if (prev.length >= MAX_LINES) return prev;
       const kind = kindOf(s);
-      return [...prev, { id: s.id, name: s.name, unit: s.unit ?? "oz", family: familyOf(s), kind, amount: s.unit === "count" ? 1 : defaultAmount(kind) }];
+      return [...prev, { id: s.id, name: s.name, unit: s.unit ?? "oz", family: familyOf(s), kind, amount: s.unit === "count" ? 1 : defaultAmount(kind, prices.pours) }];
     });
   }
   function step(id: string, dir: 1 | -1) {
@@ -137,20 +140,28 @@ export default function WhatsInIt({
   const alt = shownKey ? result.alternatives.find((a) => a.drink.key === shownKey) : undefined;
   const shown: BookDrink | null = alt?.drink ?? result.best?.drink ?? null;
 
-  const customLines = useMemo(() => picked.map((p) => ({ name: p.name, quantity: p.amount, unit: p.unit, kind: p.kind, unitCost: stockById.get(p.id)?.unitCost ?? null })), [picked, stockById]);
-  const customUp = picked.length ? doubleUpcharge(0, { isAlcohol: true, section: "other", ownDouble: false, recipe: customLines }, doubleSettings) : null;
+  const customLines = useMemo(
+    () => picked.map((p) => ({ name: p.name, quantity: p.amount, unit: p.unit, kind: p.kind, family: p.family, unitCost: stockById.get(p.id)?.unitCost ?? null })),
+    [picked, stockById],
+  );
+  const customUp = picked.length ? doubleUpcharge({ isAlcohol: true, section: "other", ownDouble: false, recipe: customLines }, doubleSettings) : null;
   const customDoubled = dbl && customUp !== null;
   const customCost = useMemo(() => drinkCost(customDoubled ? doubledLines(customLines) : customLines), [customLines, customDoubled]);
-  const customSingleSuggested = priceSummary({ cost: drinkCost(customLines), target }).suggested;
-  const customSuggested = customDoubled && customSingleSuggested !== null ? Math.round((customSingleSuggested + customUp!) * 100) / 100 : customSingleSuggested;
+  // The rule price and the manager's check (lib/bar/pricing.ts).
+  const customPricing = offMenuPricing(customLines, customCost, prices, { double: customDoubled });
   const customLabel = name ?? customName(picked);
 
-  // The shown drink as a double.
-  const shownUp = shown ? doubleUpcharge(shown.menu?.price ?? 0, { isAlcohol: true, section: shown.menu?.section ?? "cocktails", ownDouble: false, recipe: shown.lines }, doubleSettings) : null;
+  // The shown drink as a double: on the menu at its menu price, off it at
+  // the rule price, the same as its Bar Book card.
+  const shownUp = shown ? doubleUpcharge({ isAlcohol: true, section: shown.menu?.section ?? "cocktails", ownDouble: false, recipe: shown.lines, name: shown.menu?.name ?? shown.name }, doubleSettings) : null;
   const shownDoubled = dbl && shownUp !== null;
   const shownCost = shown ? costOf(shownDoubled ? { lines: doubledLines(shown.lines) } : shown, stockById) : null;
-  const shownSingleSuggested = shown ? priceSummary({ cost: costOf(shown, stockById), target }).suggested : null;
-  const shownSuggested = shownDoubled && shownSingleSuggested !== null ? Math.round((shownSingleSuggested + shownUp!) * 100) / 100 : shownSingleSuggested;
+  const shownPricing =
+    shown && shownCost
+      ? shown.menu
+        ? { ...priceSummary({ cost: shownCost, target, menuPrice: shown.menu.price + (shownDoubled ? shownUp! : 0), average }), flag: null, price: null, rule: null }
+        : offMenuPricing(shown.lines, shownCost, prices, { double: shownDoubled })
+      : null;
 
   const chip = (s: BookStock, label?: string, swatch?: string) => {
     const on = isPicked(s.id);
@@ -258,11 +269,12 @@ export default function WhatsInIt({
               drink={shown}
               headline={alt ? alt.text : result.best ? bestText(result.best) : shown.name}
               statusLabel={drinkStatus(shown, stockById)}
-              priceText={priceSummary({ cost: shownCost!, target, menuPrice: shown.menu ? shown.menu.price + (shownDoubled ? shownUp! : 0) : null, average }).text}
+              priceText={shownPricing?.text ?? ""}
+              priceFlag={shownPricing?.flag ?? null}
               menuOut={shown.menu ? (outs.get(shown.menu.id)?.reason ?? null) : null}
               onRingUp={() => shown.menu && onRingUp(shown.menu.id, shownDoubled)}
               onAdd={() => setSheet("drink")}
-              suggested={shownSuggested}
+              suggested={shownPricing?.price ?? null}
               double={shownUp !== null ? { on: shownDoubled, upcharge: shownUp, toggle: () => setDbl(!shownDoubled) } : null}
               onBack={alt ? () => setShownKey(null) : null}
               backLabel={result.best ? "Back to the best match" : "Back to a custom drink"}
@@ -279,12 +291,10 @@ export default function WhatsInIt({
                     <span className="label-xs block">Name on the order</span>
                     <input className="input min-h-11 !text-base font-bold" value={customLabel} maxLength={80} onChange={(e) => setName(e.target.value)} />
                   </label>
-                  <p className="rounded-md px-2.5 py-1.5 text-sm font-semibold" style={{ background: "var(--surface-hover)" }}>
-                    {priceSummary({ cost: customCost, target }).text}
-                  </p>
+                  <PriceLine text={customPricing.text} flag={customPricing.flag} />
                   <div className="flex flex-wrap items-center gap-2">
                     <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("custom")}>
-                      Add to order{customSuggested !== null ? ` · $${customSuggested}` : ""}
+                      Add to order{customPricing.price !== null ? ` · ${dollars(customPricing.price)}` : ""}
                     </button>
                     {customUp !== null && (
                       <button className={`chip min-h-11 !px-3.5 !text-sm font-bold ${customDoubled ? "chip-selected" : ""}`} aria-pressed={customDoubled} onClick={() => setDbl(!customDoubled)}>
@@ -328,7 +338,8 @@ export default function WhatsInIt({
         <PriceSheet
           mode="add"
           title={shownDoubled ? `${shown.name} · Double` : shown.name}
-          suggested={shownSuggested}
+          suggested={shownPricing?.price ?? null}
+          check={shownPricing?.rule ? shownPricing : null}
           cost={shownCost!}
           approvalTarget={shown.id}
           onClose={() => setSheet(null)}
@@ -343,7 +354,8 @@ export default function WhatsInIt({
           mode="add"
           title={customDoubled ? `${customLabel} · Double` : customLabel}
           blurb={`Goes on the order like a custom item, at this price, with what's in it.${customOrderLine(customLabel, 1, picked).isAlcohol ? " It counts as alcohol, so the ID check applies." : ""}`}
-          suggested={customSuggested}
+          suggested={customPricing.price}
+          check={customPricing.rule ? customPricing : null}
           cost={customCost}
           approvalTarget="custom"
           onClose={() => setSheet(null)}
@@ -362,6 +374,7 @@ function DrinkCard({
   headline,
   statusLabel,
   priceText,
+  priceFlag,
   menuOut,
   suggested,
   onRingUp,
@@ -374,6 +387,7 @@ function DrinkCard({
   headline: string;
   statusLabel: ReturnType<typeof drinkStatus>;
   priceText: string;
+  priceFlag: string | null; // the manager's check's flag (off the menu)
   menuOut: string | null;
   suggested: number | null;
   onRingUp: () => void;
@@ -401,9 +415,7 @@ function DrinkCard({
               {menuOut ? ` ${menuOut}.` : ""}
             </span>
           </div>
-          <p className="rounded-md px-2.5 py-1.5 text-sm font-semibold" style={{ background: "var(--surface-hover)" }}>
-            {priceText}
-          </p>
+          <PriceLine text={priceText} flag={priceFlag} />
           <div className="flex flex-wrap items-center gap-2">
             {drink.menu ? (
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={onRingUp}>
@@ -411,7 +423,7 @@ function DrinkCard({
               </button>
             ) : (
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={onAdd}>
-                Add to order{suggested !== null ? ` · $${suggested}` : ""}
+                Add to order{suggested !== null ? ` · ${dollars(suggested)}` : ""}
               </button>
             )}
             {double && (

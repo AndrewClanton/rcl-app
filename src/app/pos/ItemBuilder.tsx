@@ -66,9 +66,9 @@ export default function ItemBuilder({
     return price;
   }
 
-  // What a double adds to the single (a shot's own price; a cocktail's by
-  // its spirit), or null when it can't be one.
-  const upcharge = double ? doubleUpcharge(singlePrice(), double.ctx, double.settings) : null;
+  // What a double adds to the single (a shot's second pour at its level; a
+  // cocktail's by its spirit), or null when it can't be one.
+  const upcharge = double ? doubleUpcharge(double.ctx, double.settings) : null;
   const isDoubled = doubled && upcharge !== null;
 
   function unitPrice() {

@@ -2,7 +2,8 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getRecipesByItem } from "./recipes";
 import { schemaMissing } from "@/lib/schema-missing";
-import { baseLines, isDouble } from "@/lib/bar/double";
+import { isDouble, pouredLines, serveOf } from "@/lib/bar/double";
+import { getBarPrices } from "./barBook";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { mostRefundable } from "./refund-plan";
@@ -761,7 +762,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     // Bar Book drinks rung up off the menu, poured from their recipe.
     bookDrinkLines(since),
   ]);
-  const customSold = await customDrinkLines(since);
+  const [customSold, prices] = await Promise.all([customDrinkLines(since), getBarPrices()]);
   if (ingErr) throw ingErr;
   if (drinkErr) throw drinkErr;
   const notCarried = new Set(notCarriedRead.error ? [] : (notCarriedRead.data ?? []).map((i) => i.id as string));
@@ -777,21 +778,22 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
   }
 
   const theoreticalByIngredient = new Map<string, number>();
-  // A double (lib/bar/double.ts) pours its base-spirit lines twice.
-  const pour = (lines: { ingredient_id: string; quantity: number; name: string; kind?: string | null; optional?: boolean }[], times: number, double: boolean) => {
-    const twice = double ? new Set(baseLines(lines)) : new Set<(typeof lines)[number]>();
-    for (const ri of lines) {
-      const q = ri.quantity * times * (twice.has(ri) ? 2 : 1);
-      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + q);
+  // A double (lib/bar/double.ts) pours its base-spirit lines twice; a shot
+  // poured neat or on the rocks pours the neat pour (2 oz, twice that
+  // doubled).
+  const pour = (lines: { ingredient_id: string; quantity: number; name: string; unit?: string | null; kind?: string | null; optional?: boolean }[], times: number, double: boolean, pourOz: number | null = null) => {
+    for (const ri of pouredLines(lines, { double, pourOz })) {
+      theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * times);
     }
   };
   for (const oi of orderItems) {
     const recipe = oi.menu_item_id && drinkIds.has(oi.menu_item_id) ? recipesByItem[oi.menu_item_id] : undefined;
     if (!recipe) continue;
     pour(
-      recipe.ingredients.map((ri) => ({ ingredient_id: ri.ingredient_id, quantity: ri.quantity, name: ri.ingredient_name, kind: ri.kind ?? null, optional: ri.optional === true })),
+      recipe.ingredients.map((ri) => ({ ingredient_id: ri.ingredient_id, quantity: ri.quantity, name: ri.ingredient_name, unit: ri.unit, kind: ri.kind ?? null, optional: ri.optional === true })),
       oi.quantity,
       isDouble(oi.modifiers),
+      serveOf(oi.modifiers) ? prices.pours.neat : null,
     );
   }
   // A Bar Book drink pours its own recipe, the same way.

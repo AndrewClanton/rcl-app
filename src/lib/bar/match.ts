@@ -237,16 +237,18 @@ export interface PickedIngredient {
 }
 
 // The starting amount for an ingredient by what it is: a pour of spirit, a
-// splash of juice, two dashes of bitters, a long pour of mixer.
-export function defaultAmount(kind: string | null | undefined): number {
+// splash of juice, two dashes of bitters, a long pour of mixer. A spirit
+// and wine start at the Prices sheet's pour standard when it's given.
+export function defaultAmount(kind: string | null | undefined, pours?: { standard: number; wine: number }): number {
   switch (kind) {
     case "spirit":
-      return 1.5;
+      return pours?.standard ?? 1.5;
     case "liqueur":
       return 0.75;
+    case "wine":
+      return pours?.wine ?? 4;
     case "mixer":
     case "beer":
-    case "wine":
       return 4;
     case "juice":
     case "syrup":

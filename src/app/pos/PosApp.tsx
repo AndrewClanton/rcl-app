@@ -28,7 +28,23 @@ import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
 import BarTab from "./BarTab";
 import OrderLineRow from "./OrderLineRow";
-import { DOUBLE, doubleUpcharge, hasOwnDouble, isDouble, undoDouble, type DoubleContext, type DoubleLine, type DoubleSettings } from "@/lib/bar/double";
+import {
+  DOUBLE,
+  SERVE_MOD,
+  canServe,
+  doubleUpcharge,
+  hasLiquorChoice,
+  hasOwnDouble,
+  hasOwnServe,
+  isDouble,
+  isServeMod,
+  optionsUpcharge,
+  serveOf,
+  type DoubleContext,
+  type DoubleLine,
+  type Serve,
+} from "@/lib/bar/double";
+import { doubleSettingsOf, type BarPrices } from "@/lib/bar/pricing";
 import { iconSpecFor, type BarSection, type IconSpec } from "@/lib/bar/icons";
 import { customSpec } from "@/lib/bar/match";
 import BarBook from "./BarBook";
@@ -173,7 +189,7 @@ export default function PosApp({
   initialScreenings,
   registerTopic,
   canNote,
-  doubleSettings,
+  barPrices,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -184,8 +200,9 @@ export default function PosApp({
   initialScreenings: RegisterScreening[];
   registerTopic: string;
   canNote: boolean; // an admin is signed in: Dev note
-  doubleSettings: DoubleSettings; // how a double is priced (lib/bar/double.ts)
+  barPrices: BarPrices; // the Prices sheet: doubles, neat or rocks and the off-menu rule (lib/bar/pricing.ts)
 }) {
+  const doubleSettings = useMemo(() => doubleSettingsOf(barPrices), [barPrices]);
   const router = useRouter();
   const [categoryId, setCategoryId] = useState<string | null>(categories[0]?.id ?? null);
   const [builderItemId, setBuilderItemId] = useState<string | null>(null);
@@ -572,15 +589,27 @@ export default function PosApp({
   }, [categories]);
   const recipeLinesOf = (r: Recipe | undefined): DoubleLine[] | null =>
     r ? r.ingredients.map((i) => ({ name: i.ingredient_name, quantity: i.quantity, unit: i.unit, kind: i.kind ?? null, optional: i.optional === true })) : null;
-  // How a line would be doubled, or null when it can't be: a menu drink by
-  // its section and recipe, a Bar Book drink and a custom drink by their
-  // own lists. A plain custom item never is (nobody knows what's in it).
+  // How a line would be doubled (or poured neat or on the rocks), or null
+  // when it can't be: a menu drink by its section, name and recipe, a Bar
+  // Book drink and a custom drink by their own lists. A plain custom item
+  // never is (nobody knows what's in it).
   function lineDoubleCtx(line: CartLine): DoubleContext | null {
     if (line.screeningId || !line.isAlcohol) return null;
     if (line.menuItemId) {
       const item = findItem(line.menuItemId);
       if (!item) return null;
-      return { isAlcohol: item.is_alcohol, section: sectionById.get(item.id) ?? null, ownDouble: hasOwnDouble(item.modifier_groups), recipe: recipeLinesOf(recipesByItem[item.id]) };
+      const groups = item.modifier_groups;
+      const ownServe = hasOwnServe(groups);
+      return {
+        isAlcohol: item.is_alcohol,
+        section: sectionById.get(item.id) ?? null,
+        ownDouble: hasOwnDouble(groups),
+        recipe: recipeLinesOf(recipesByItem[item.id]),
+        name: item.name,
+        liquor: hasLiquorChoice(groups),
+        ownServe,
+        serve: serveOf(line.mods, ownServe),
+      };
     }
     if (line.recipeId) {
       const r = book.recipes.find((x) => x.id === line.recipeId);
@@ -618,18 +647,24 @@ export default function PosApp({
     }
     return null;
   }
-  // The order line's Double chip: on adds the upcharge and "Double", off
-  // takes them back off. Taxed and discounted like anything else.
-  function toggleDouble(key: string) {
+  // The order line's chips: Double, and on a Liquor shot Neat or Rocks (one
+  // choice: off, Neat or Rocks). A change takes what the line's options
+  // added off its price and puts the new ones' on, with "Double", "Neat" or
+  // "On the rocks" on the line. Taxed and discounted like anything else.
+  function setLineOptions(key: string, change: (cur: { serve: Serve | null; double: boolean }) => { serve: Serve | null; double: boolean }) {
     setCart((prev) =>
       prev.map((l) => {
         if (l.key !== key) return l;
         const ctx = lineDoubleCtx(l);
         if (!ctx) return l;
-        if (isDouble(l.mods)) return { ...l, unit: undoDouble(l.unit, ctx, doubleSettings), mods: l.mods.filter((m) => m !== DOUBLE) };
-        const up = doubleUpcharge(l.unit, ctx, doubleSettings);
-        if (up === null) return l;
-        return { ...l, unit: Math.round((l.unit + up) * 100) / 100, mods: [...l.mods, DOUBLE] };
+        const cur = { serve: ctx.serve ?? null, double: !ctx.ownDouble && isDouble(l.mods) };
+        const next = change(cur);
+        const was = optionsUpcharge(ctx, cur, doubleSettings);
+        const now = optionsUpcharge(ctx, next, doubleSettings);
+        if (was === null || now === null) return l;
+        const rest = l.mods.filter((m) => !(m === DOUBLE && !ctx.ownDouble) && !(isServeMod(m) && !ctx.ownServe));
+        const mods = [...rest, ...(next.serve ? [SERVE_MOD[next.serve]] : []), ...(next.double ? [DOUBLE] : [])];
+        return { ...l, unit: Math.round((l.unit - was + now) * 100) / 100, mods };
       }),
     );
   }
@@ -1698,21 +1733,24 @@ export default function PosApp({
             </div>
           ) : (
             cart.map((line, i) => {
-              // A drink that can be a double gets its chip, and a drink its icon.
+              // A drink that can be a double gets its chip (a Liquor shot its
+              // Neat and Rocks chips too), and a drink its icon.
               const ctx = lineDoubleCtx(line);
-              const doubled = isDouble(line.mods) && !!ctx;
-              const up = ctx ? (doubled ? Math.round((line.unit - undoDouble(line.unit, ctx, doubleSettings)) * 100) / 100 : doubleUpcharge(line.unit, ctx, doubleSettings)) : null;
+              const doubled = !!ctx && !ctx.ownDouble && isDouble(line.mods);
+              const up = ctx ? doubleUpcharge(ctx, doubleSettings) : null;
               return (
                 <OrderLineRow
                   key={line.key}
                   line={line}
                   icon={lineIcon(line)}
                   double={ctx && up !== null ? { on: doubled, upcharge: up } : null}
+                  serve={ctx && canServe(ctx) ? { value: ctx.serve ?? null, upcharge: doubleSettings.serveUpcharge } : null}
                   freeToday={i === totals.dailyPerkLine}
                   onLess={() => updateQty(line.key, -1)}
                   onMore={() => updateQty(line.key, 1)}
                   onRemove={() => removeLine(line.key)}
-                  onDouble={() => toggleDouble(line.key)}
+                  onDouble={() => setLineOptions(line.key, (o) => ({ ...o, double: !o.double }))}
+                  onServe={(serve) => setLineOptions(line.key, (o) => ({ ...o, serve }))}
                 />
               );
             })
@@ -1990,6 +2028,7 @@ export default function PosApp({
                 section: sectionById.get(builderItem.id) ?? null,
                 ownDouble: hasOwnDouble(builderItem.modifier_groups),
                 recipe: recipeLinesOf(recipesByItem[builderItem.id]),
+                name: builderItem.name,
               },
               settings: doubleSettings,
               start: builderDouble,
@@ -2174,6 +2213,7 @@ export default function PosApp({
           target={book.target}
           outs={outs}
           doubleSettings={doubleSettings}
+          prices={barPrices}
           onClose={() => setWhatsOpen(false)}
           // Exactly what tapping its button on the Bar tab does.
           onRingUp={(id, double) => {
@@ -2213,6 +2253,7 @@ export default function PosApp({
           // Owners and admins (canNote is hasAdminAccess); the server checks again.
           canMakeMenuItems={canNote}
           doubleSettings={doubleSettings}
+          prices={barPrices}
           onClose={() => setBookOpen(false)}
           // The same one-off line as "+ Custom item", knowing its recipe.
           onAddLine={(l, note) => {
