@@ -3,6 +3,7 @@
 import DrinkIcon from "@/components/bar/DrinkIcon";
 import type { IconSpec } from "@/lib/bar/icons";
 import { DOUBLE, NEAT, ROCKS, isServeMod, plus, type Serve } from "@/lib/bar/double";
+import { OWNER_PRICING_TAG, type OwnerPricing } from "@/lib/register-totals";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -26,6 +27,7 @@ export default function OrderLineRow({
   serve,
   freeToday,
   comp,
+  owner,
   onLess,
   onMore,
   onRemove,
@@ -39,6 +41,8 @@ export default function OrderLineRow({
   freeToday?: boolean; // the Insiders+ daily coffee is this line
   // An organization comp on this line (lib/orgs.ts): its name, e.g. "Easter Seals".
   comp?: string | null;
+  // The owner rate (lib/register-totals.ts): the server's price each and how it was priced.
+  owner?: { unit: number; how: OwnerPricing } | null;
   onLess: () => void;
   onMore: () => void;
   onRemove: () => void;
@@ -92,6 +96,19 @@ export default function OrderLineRow({
           </div>
         )}
       </div>
+      {owner ? (
+        <span className="shrink-0 text-right text-sm leading-tight tabular-nums" style={{ color: "var(--foreground)" }}>
+          {Math.abs(owner.unit - line.unit) > 0.004 && (
+            <s className="mr-1 text-xs" style={{ color: "var(--muted)" }}>
+              {money(line.unit * line.qty)}
+            </s>
+          )}
+          <span className="font-semibold">{money(owner.unit * line.qty)}</span>
+          <span className="block text-[10px] font-semibold" style={{ color: owner.how === "half" ? "var(--danger-text)" : "var(--muted)" }}>
+            {OWNER_PRICING_TAG[owner.how]}
+          </span>
+        </span>
+      ) : (
       <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
         {comp && line.qty === 1 ? (
           <>
@@ -104,6 +121,7 @@ export default function OrderLineRow({
           money(line.unit * line.qty - (comp ? line.unit : 0))
         )}
       </span>
+      )}
       <button className="h-9 w-9 shrink-0 rounded-md text-lg" style={{ color: "var(--danger-text)" }} onClick={onRemove} aria-label={`Remove ${line.name}`}>
         ×
       </button>

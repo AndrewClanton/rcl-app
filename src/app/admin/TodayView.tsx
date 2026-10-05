@@ -200,7 +200,17 @@ export default function TodayView({
 
       {/* At a glance */}
       <section aria-label="At a glance" className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:col-span-3 xl:row-start-3">
-        <Tile label="Sales today" href="/admin/reports" value={board.summary ? money(board.summary.todaysRevenue) : "–"} sub={board.summary ? plural(board.summary.todaysOrders, "order") : "Couldn't load"} long />
+        <Tile
+          label="Sales today"
+          href="/admin/reports"
+          value={board.summary ? money(board.summary.todaysRevenue) : "–"}
+          sub={
+            board.summary
+              ? `${plural(board.summary.todaysOrders, "order")}${board.summary.todaysOwnerTabOrders ? ` · ${board.summary.todaysOwnerTabOrders} on owner tabs` : ""}`
+              : "Couldn't load"
+          }
+          long
+        />
         <Tile
           label="Tickets tonight"
           href="/admin/screenings"
@@ -230,6 +240,19 @@ export default function TodayView({
             </Link>
           )}
         </div>
+        {/* Owners only: what the owners have had at the owner rate this month. */}
+        {board.ownerTab && (
+          <Link
+            href="/admin/owner-tab"
+            className="col-span-2 flex min-h-11 flex-wrap items-center justify-between gap-x-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm hover:bg-[var(--surface-hover)] lg:col-span-4"
+          >
+            <span>
+              Owner tab this month: <b className="tabular-nums">{money(board.ownerTab.owed)}</b>{" "}
+              <span className="text-[var(--muted)]">(menu value {money(board.ownerTab.menuValue)})</span>
+            </span>
+            <span className="whitespace-nowrap text-[var(--muted)]">Owner tab →</span>
+          </Link>
+        )}
       </section>
 
       {/* What's on. A computer: the two right-hand columns. */}

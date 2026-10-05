@@ -234,11 +234,12 @@ export async function checkSaleTotals(sale: SaleForCheck): Promise<TotalsCheck> 
 
 // must_choose: a "pick one" question with no default (the $5 Special's
 // soda). Read with "*", so a database without that column still checks.
-type Group = { item_id: string; key?: string | null; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
+export type Group = { item_id: string; key?: string | null; label?: string | null; type?: string | null; must_choose?: boolean | null; options: { name: string; price_delta: number }[] };
 
 // What a line's modifiers add to the item's price, found by option name
-// (the register saves names, not ids).
-function modifierPrice(groups: Group[], mods: string[]): { extra: number } | { unknown: string } | { ambiguous: string } {
+// (the register saves names, not ids). The owner rate prices options with
+// it too (lib/owner-rate-server.ts).
+export function modifierPrice(groups: Group[], mods: string[]): { extra: number } | { unknown: string } | { ambiguous: string } {
   let extra = 0;
   for (const name of mods) {
     const deltas = new Set(groups.flatMap((g) => g.options.filter((o) => o.name === name).map((o) => Number(o.price_delta))));
@@ -247,6 +248,34 @@ function modifierPrice(groups: Group[], mods: string[]): { extra: number } | { u
     extra += [...deltas][0];
   }
   return { extra };
+}
+
+// A menu line's price with its options, the way compareTotals finds it
+// (the item's price, its options by name, then Double, Neat and On the
+// rocks from the Prices sheet). The owner rate prices a menu line from this
+// too (lib/owner-rate-server.ts), so a double costs an owner half of its
+// upcharge the same way on the register and on the server. An error is a
+// sentence about the line.
+export type MenuLinePrice = { unit: number; extra: number } | { error: string };
+export function menuLinePrice(
+  item: { price: number; name: string; is_alcohol: boolean; category_id: string; id: string },
+  itemGroups: Group[],
+  mods: string[],
+  doubles: Awaited<ReturnType<typeof doubleContext>>,
+): MenuLinePrice {
+  const ownDouble = hasOwnDouble(itemGroups);
+  const ownServe = hasOwnServe(itemGroups);
+  const found = modifierPrice(itemGroups, withoutOurs(mods, ownDouble, ownServe));
+  if ("unknown" in found) return { error: `the option "${found.unknown}" isn't on the menu anymore` };
+  if ("ambiguous" in found) return { error: `two of its options are called "${found.ambiguous}", so its price can't be worked out. Fix the names on the Menu page` };
+  const base = Number(item.price) + found.extra;
+  const d = priceWithOptions(
+    base,
+    mods,
+    { isAlcohol: item.is_alcohol, section: doubles.sectionOf(item.category_id), ownDouble, recipe: doubles.recipes.get(item.id) ?? null, name: item.name, liquor: hasLiquorChoice(itemGroups), ownServe },
+    doubles.settings,
+  );
+  return "unit" in d ? { unit: d.unit, extra: found.extra } : { error: d.error };
 }
 
 async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
@@ -408,7 +437,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
 // Double, Neat or On the rocks): where each sits on the Bar tab, its recipe
 // (with each ingredient's kind) and the Prices sheet. Nothing is read
 // without one on the sale.
-async function doubleContext(
+export async function doubleContext(
   supabase: ReturnType<typeof createAdminClient>,
   itemIds: string[],
 ): Promise<{ settings: DoubleSettings; recipes: Map<string, DoubleLine[]>; sectionOf: (categoryId: string) => ReturnType<typeof sectionOfCategory> }> {

@@ -105,6 +105,94 @@ export async function checkManagerPin(pin: string, context: string, requestedBy:
   return { ok: true, approverId: approver?.id ?? null, approvedBy: approver ? firstName(approver.name) : null, defaultPin: pin === DEFAULT_PIN };
 }
 
+// One named person's own PIN, for something only they can approve: the
+// owner rate on the register (lib/owner-rate-server.ts), where the approver
+// has to be that same owner. Checked against their PIN alone, with the same
+// venue-wide guess limit and log as a manager approval, so guessing an
+// owner's PIN locks approvals like any wrong manager PIN. A PIN somebody
+// else knows doesn't prove it's them: 9999, or a temporary PIN an owner set
+// on the Staff page, is turned down until they pick their own.
+export async function checkPersonPin(
+  employeeId: string,
+  pin: string,
+  context: string,
+  requestedBy: string,
+  target?: string,
+): Promise<{ ok: true; approverId: string; approvedBy: string } | { ok: false; error: string }> {
+  if (!isPinShaped(pin)) return { ok: false, error: "Enter your PIN (4 to 6 digits)." };
+
+  const before = await recentTries({ approvals: true });
+  if (before.lockedUntil) {
+    return { ok: false, error: `Too many wrong PINs. Approvals are locked until ${clock(before.lockedUntil)}, then try again.` };
+  }
+
+  // "*": pin_must_change comes with the manager PINs migration.
+  const { data, error } = await createAdminClient().from("employees").select("*").eq("id", employeeId).maybeSingle();
+  if (error) return { ok: false, error: "Couldn't check the PIN. Try again." };
+  const person = data as { id: string; name: string; active: boolean; pin_hash: string; pin_must_change?: boolean | null } | null;
+  if (!person || !person.active) return { ok: false, error: "That login isn't active." };
+  // A login with no PIN set (a TV screen, say) can't approve anything.
+  if (typeof person.pin_hash !== "string" || !person.pin_hash.startsWith("scrypt$")) {
+    return { ok: false, error: `${firstName(person.name)} has no PIN set. Set one under My PIN in the back office first.` };
+  }
+
+  if (!verifyPin(pin, person.pin_hash)) {
+    await logTry({ ok: false, context, target, requested_by: requestedBy });
+    return { ok: false, error: wrongMessage("PIN", before, "approvals are locked") };
+  }
+  const name = firstName(person.name);
+  if (pin === DEFAULT_PIN) {
+    return { ok: false, error: `${name}'s PIN is still 9999, which everyone knows. ${name}: pick your own under My PIN in the back office first.` };
+  }
+  if (person.pin_must_change) {
+    return { ok: false, error: `${name} is still on the temporary PIN an owner set. ${name}: pick your own under My PIN in the back office first.` };
+  }
+  await logTry({ ok: true, context, target, approver_id: person.id, requested_by: requestedBy });
+  return { ok: true, approverId: person.id, approvedBy: name };
+}
+
+// An owner's PIN, from any owner but `notId`: taking an order off an owner's
+// tab (refundOrder in app/admin/reports/actions.ts) is for one of the other
+// owners, so nobody takes their own drinks off their own tab. Same guess
+// limit and log as a manager approval; 9999, a temporary PIN, or a PIN two
+// owners share (no telling whose) is turned down.
+export async function checkOtherOwnerPin(
+  pin: string,
+  notId: string | null,
+  context: string,
+  requestedBy: string,
+  target?: string,
+): Promise<{ ok: true; approverId: string; approvedBy: string } | { ok: false; error: string }> {
+  if (!isPinShaped(pin)) return { ok: false, error: "Enter an owner's PIN (4 to 6 digits)." };
+
+  const before = await recentTries({ approvals: true });
+  if (before.lockedUntil) {
+    return { ok: false, error: `Too many wrong PINs. Approvals are locked until ${clock(before.lockedUntil)}, then try again.` };
+  }
+
+  // "*": pin_must_change comes with the manager PINs migration.
+  const { data, error } = await createAdminClient().from("employees").select("*").eq("active", true).eq("role", "owner");
+  if (error) return { ok: false, error: "Couldn't check the PIN. Try again." };
+  const owners = (data ?? []) as { id: string; name: string; pin_hash: string | null; pin_must_change?: boolean | null }[];
+  const fits = (o: (typeof owners)[number]) => typeof o.pin_hash === "string" && o.pin_hash.startsWith("scrypt$") && verifyPin(pin, o.pin_hash);
+  const others = owners.filter((o) => o.id !== notId && fits(o));
+  if (others.length === 0) {
+    await logTry({ ok: false, context, target, requested_by: requestedBy });
+    const own = owners.find((o) => o.id === notId && fits(o));
+    if (own) return { ok: false, error: `That's ${firstName(own.name)}'s own PIN. Another owner takes an order off ${firstName(own.name)}'s tab.` };
+    return { ok: false, error: wrongMessage("owner PIN", before, "approvals are locked") };
+  }
+  if (others.length > 1 || pin === DEFAULT_PIN) {
+    return { ok: false, error: "That PIN isn't one owner's alone (still 9999, or shared), so it can't approve this. Set your own under My PIN." };
+  }
+  const approver = others[0];
+  if (approver.pin_must_change) {
+    return { ok: false, error: `${firstName(approver.name)} is still on the temporary PIN an owner set. Pick your own under My PIN first.` };
+  }
+  await logTry({ ok: true, context, target, approver_id: approver.id, requested_by: requestedBy });
+  return { ok: true, approverId: approver.id, approvedBy: firstName(approver.name) };
+}
+
 // The "current PIN" on the My PIN screen. Same limit, but per person: 5
 // wrong in 10 minutes and they wait 10 minutes.
 export async function checkOwnPin(employeeId: string, pin: string, stored: string): Promise<{ ok: true } | { ok: false; error: string }> {

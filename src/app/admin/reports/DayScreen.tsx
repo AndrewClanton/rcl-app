@@ -5,7 +5,7 @@ import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
-import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, OWNER_TAB_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import MembershipsCard from "./MembershipsCard";
 import OrdersTable from "./OrdersTable";
@@ -137,8 +137,19 @@ export default function DayScreen({
                       : []),
                     ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
                     { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
+                    // Not taken off: the owner tab line is already at what the owners pay.
+                    ...(r.ownerTab.orders > 0
+                      ? [
+                          {
+                            label: `Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost`,
+                            value: `${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu`,
+                            muted: true,
+                            href: to({ show: "orders", cat: OWNER_TAB_LABEL }),
+                          },
+                        ]
+                      : []),
                     ...(fullRefunds.length > 0
-                      ? [{ label: `Refunded in full · ${fullRefunds.length} (not counted)`, value: money(fullRefunds.reduce((s, o) => s + o.total, 0)), muted: true, href: to({ show: "refunds" }) }]
+                      ? [{ label: `Refunded in full · ${fullRefunds.length} (not counted${fullRefunds.some((o) => o.ownerTab) ? `; ${fullRefunds.filter((o) => o.ownerTab).length} taken off owner tab` : ""})`, value: money(fullRefunds.reduce((s, o) => s + o.total, 0)), muted: true, href: to({ show: "refunds" }) }]
                       : []),
                   ]}
                 />
@@ -167,7 +178,8 @@ export default function DayScreen({
             }))}
           />
           <p className="mt-2 text-xs text-[var(--muted)]">
-            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy, memberships). The 20/80 food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
+            Not claimed by a rule: {money(r.unassigned)} (ticket and booth money past the $4, candy, memberships{r.ownerTab.sales > 0 ? ", the owner tab" : ""}). The 20/80
+            food-and-drink split is still Nathan&apos;s &ldquo;maybe.&rdquo;
           </p>
         </Card>
       </div>
@@ -201,18 +213,30 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
           now={r.collected}
           before={before.collected}
           beforeText={vs}
-          sub={r.memberships.collected !== 0 ? `cash, card, online and ${money(r.memberships.collected)} in memberships, with tax and tips` : "cash, card, online and memberships, with tax and tips"}
+          sub={`${r.memberships.collected !== 0 ? `cash, card, online and ${money(r.memberships.collected)} in memberships` : "cash, card, online and memberships"}${
+            r.ownerTab.paid !== 0 ? `, plus ${money(r.ownerTab.paid)} of owner tab payments` : ""
+          }, with tax and tips`}
           href={to({ show: "collected" })}
         />
         <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} href={to({ show: "net" })} />
         <Stat label="Orders" value={num(r.orderCount)} now={r.orderCount} before={before.orderCount} href={to({ show: "orders" })} />
         <Stat label="Tips" value={money(r.tips)} now={r.tips} before={before.tips} sub={r.tips > 0 ? (paidOut ? "paid out" : "not paid out yet") : undefined} href={to({ show: "tips" })} />
-        <Stat label="Sales tax" value={money(r.tax)} href={to({ show: "tax" })} />
+        <Stat label="Sales tax" value={money(r.tax)} sub={r.ownerTab.tax > 0 ? `${money(r.ownerTab.tax)} of it owed on owner tabs` : undefined} href={to({ show: "tax" })} />
         <Stat label="Tickets" value={num(r.ticketsSold)} now={r.ticketsSold} before={before.ticketsSold} sub={r.tickets.free ? `${r.tickets.free} free` : undefined} href={to({ show: "tickets" })} />
         <Stat label="Average order" value={r.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} sub="before tax and tip" href={to({ show: "orders" })} />
       </div>
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        <Card title="How it was paid" subtitle={r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : undefined}>
+        <Card
+          title="How it was paid"
+          subtitle={
+            [
+              r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : "",
+              r.ownerTab.owed > 0 ? `${money(r.ownerTab.owed)} went on owner tabs: it's money in when an owner pays their monthly statement, not before.` : "",
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined
+          }
+        >
           <SplitBar
             parts={[
               { label: "Card", value: r.card, href: to({ show: "orders", pay: "card" }) },
@@ -220,6 +244,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
               { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
               { label: "Memberships", value: r.memberships.collected, href: to({ show: "memberships" }) },
               { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
+              { label: "Owner tab payments", value: r.ownerTab.paid, href: to({ show: "collected" }) },
             ]}
           />
         </Card>
@@ -260,7 +285,7 @@ function TrendCard({ trend, date, days, keep }: { trend: RevenueDay[]; date: str
           label: new Date(`${d.date}T12:00:00Z`).toLocaleDateString("en-US", days <= 7 ? { weekday: "short", timeZone: "UTC" } : { month: "short", day: "numeric", timeZone: "UTC" }),
           value: d.total,
           strong: d.date === date,
-          title: `${longDate(d.date)}: ${money(d.total)}${d.online || d.memberships ? ` (${[d.online ? `${money(d.online)} online` : "", d.memberships ? `${money(d.memberships)} memberships` : ""].filter(Boolean).join(", ")})` : ""}`,
+          title: `${longDate(d.date)}: ${money(d.total)}${d.online || d.memberships || d.ownerTab ? ` (${[d.online ? `${money(d.online)} online` : "", d.memberships ? `${money(d.memberships)} memberships` : "", d.ownerTab ? `${money(d.ownerTab)} owner tab payments` : ""].filter(Boolean).join(", ")})` : ""}`,
           href: href({ ...keep, date: d.date === last ? undefined : d.date }),
         }))}
         emptyText="Nothing collected in these days."

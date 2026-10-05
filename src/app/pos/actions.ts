@@ -20,6 +20,9 @@ import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type Co
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
+import { readApproval } from "@/lib/approval-token";
+import { ownerOrderExtras, ownerSaleProblems, parseOwnerRateScope, sameOwnerLines, type OwnerPricing } from "@/lib/register-totals";
+import { firstName as firstNameOf, ownerOrderHash, ownerRatePeople, priceOwnerSale } from "@/lib/owner-rate-server";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
@@ -34,6 +37,11 @@ export interface CheckoutLine {
   modifiers: string[];
   is_alcohol: boolean;
   screening_id?: string | null; // a movie ticket for this screening
+  // An owner-tab line (completeOwnerTabOrder): the menu price the owner
+  // rate replaced, and how it was priced. Set by the server, never taken
+  // from the register.
+  menu_unit_price?: number;
+  owner_pricing?: OwnerPricing;
   // A Bar Book drink rung up off the menu (register → Bar Book → Add to
   // order): a one-off line like "+ Custom item" that says which recipe it
   // was. The server keeps it only for a real off-menu recipe on a one-off
@@ -166,6 +174,8 @@ async function replaceOrderItems(
       screening_id: l.screening_id ?? null,
       // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
       is_event: !!l.screening_id,
+      // Only on an owner-tab line, so every other sale saves exactly as before.
+      ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
     }));
     type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
     const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
@@ -247,6 +257,37 @@ async function saveSaleItems(
   const items = lines.slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`);
   const summary = `Order #${sale.orderNumber} saved as paid, but its items didn't. Put them back by hand: ${items.join(", ")}${lines.length > items.length ? ", ..." : ""}.`;
   after(() => flagSale("items_not_saved", { ...sale, details: { summary, items, error: r.error } }));
+}
+
+// A custom item usually means the menu couldn't describe the sale, so each
+// one becomes a dev note to review. Best-effort: never blocks the sale. A
+// badge reward's $0 line isn't one.
+// Nor is a Bar Book drink: the book described it.
+async function noteCustomItems(
+  supabase: ReturnType<typeof createAdminClient>,
+  orderNumber: number,
+  lines: CheckoutLine[],
+  employeeId: string,
+  extras: LineExtras,
+) {
+  const customLines = lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !bookRecipeOf(l, extras.book));
+  if (!customLines.length) return;
+  // A custom drink says what was in it.
+  const items = customLines
+    .map((l) => {
+      const list = customRecipeText(customRecipeOf(l, extras));
+      return `"${l.name}"${list ? ` (${list})` : ""} $${(l.unit_price * l.quantity).toFixed(2)}`;
+    })
+    .join(", ");
+  await supabase
+    .from("dev_notes")
+    .insert({
+      page_path: "/pos",
+      page_title: "Register: custom item used",
+      message: `Custom item rung up on order #${orderNumber}: ${items}. Should the register have a proper button or menu item for this?`,
+      submitted_by: employeeId || null,
+    })
+    .then(() => {}, () => {});
 }
 
 export type CompleteOrderInput = DraftFields & {
@@ -374,9 +415,17 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
 // to show.
 export type CompleteOrderResult = { ok: true; orderNumber: number; warning?: string; card: CardNotice | null } | { ok: false; error: string; cardCharged: boolean };
 
+// How a paid sale can be paid here. An owner-tab order goes through
+// completeOwnerTabOrder (the owner's PIN approval and the server's own
+// prices), never through this.
+const PAID_METHODS = ["cash", "card", "split", "voucher"];
+
 export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
   const staff = await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
+  if (!PAID_METHODS.includes(params.payment?.method)) {
+    return { ok: false, error: "That isn't a way to pay on the register. Take payment again.", cardCharged: false };
+  }
 
   const supabase = createAdminClient();
   // To the cent, like everything the card is charged for.
@@ -681,29 +730,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // (A tab closed elsewhere had its card released there.)
   if (params.draftOrderId && !closedElsewhere) await releaseTabCard(orderId);
 
-  // A custom item usually means the menu couldn't describe the sale, so each
-  // one becomes a dev note to review. Best-effort: never blocks the sale. A
-  // badge reward's $0 line isn't one.
-  // Nor is a Bar Book drink: the book described it.
-  const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !bookRecipeOf(l, book));
-  if (customLines.length) {
-    // A custom drink says what was in it.
-    const items = customLines
-      .map((l) => {
-        const list = customRecipeText(customRecipeOf(l, extras));
-        return `"${l.name}"${list ? ` (${list})` : ""} $${(l.unit_price * l.quantity).toFixed(2)}`;
-      })
-      .join(", ");
-    await supabase
-      .from("dev_notes")
-      .insert({
-        page_path: "/pos",
-        page_title: "Register: custom item used",
-        message: `Custom item rung up on order #${orderNumber}: ${items}. Should the register have a proper button or menu item for this?`,
-        submitted_by: params.employeeId || null,
-      })
-      .then(() => {}, () => {});
-  }
+  await noteCustomItems(supabase, orderNumber, params.lines, params.employeeId, extras);
 
   // The kitchen's order ticket: the whole order, or for a tab whatever
   // hadn't gone to the kitchen yet. Never throws; nothing happens without a
@@ -763,6 +790,203 @@ export async function logAbandonedSale(order: CompleteOrderInput, tries: number)
       stoppedBy: staff.name,
     },
   });
+}
+
+// ---------- the owner tab ----------
+// "Put on owner tab" (lib/register-totals.ts says what the owner rate is):
+// the order is saved as finished, with no money taken, on the owner's
+// monthly tab (payment_method 'owner_tab'). Only with the owner's own PIN
+// approval (approveOwnerRate in ./owner-rate-actions.ts): signed, for that
+// owner, for this one order (a nonce) and exactly the order and total the
+// owner saw (its hash), and still in time. The server prices the order
+// itself from today's menu and recipes and refuses it if anything differs:
+// nothing has been paid, so refusing costs nothing. No member, so no
+// points, no member discount, no daily coffee and no reward.
+//
+// In this order: the signature; whether the approval was already used (a
+// repeat of the same sale, whose answer got lost, gets the order it made,
+// with its own lines and totals, even after the 10 minutes; a different
+// order is refused); then the clock; then the prices and the order's hash.
+
+export type OwnerTabOrderInput = DraftFields & {
+  // The lines as rung (menu prices), and the owner totals the register
+  // shows (the approval's): checked, never saved as sent.
+  totals: { subtotal: number; tax: number; total: number };
+  ownerRate: { ownerId: string; token: string; nonce: string };
+  ageVerified: boolean;
+  draftOrderId?: string | null;
+  // Never sent by the register (the owner rate clears them); refused if they come.
+  orgComps?: number;
+  taxIncluded?: boolean;
+};
+
+// again: the approval can't be used (run out, used for another order, or
+// the order changed after it), so the register drops the owner rate and the
+// owner enters their PIN again. already: this approval's order was saved
+// earlier (a repeat), and these are its own lines and totals.
+export type OwnerTabOrderResult =
+  | { ok: true; orderNumber: number; owner: string; lines: CheckoutLine[]; totals: { subtotal: number; tax: number; total: number }; menuValue: number; already?: boolean }
+  | { ok: false; error: string; again?: boolean };
+
+type SavedOwnerOrder = {
+  id: string;
+  orderNumber: number;
+  status: string;
+  lines: CheckoutLine[];
+  totals: { subtotal: number; tax: number; total: number };
+  menuValue: number;
+};
+
+// The order an approval already made, with its saved lines. Null: none.
+async function savedOwnerOrder(supabase: ReturnType<typeof createAdminClient>, nonce: string): Promise<SavedOwnerOrder | null> {
+  const { data } = await supabase.from("orders").select("id, order_number, status, subtotal, tax, total, owner_menu_value").eq("owner_rate_nonce", nonce).limit(1);
+  const o = data?.[0];
+  if (!o) return null;
+  const { data: items } = await supabase
+    .from("order_items")
+    .select("menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id, menu_unit_price, owner_pricing")
+    .eq("order_id", o.id);
+  return {
+    id: o.id as string,
+    orderNumber: Number(o.order_number),
+    status: o.status as string,
+    lines: ((items ?? []) as (CheckoutLine & { menu_unit_price: number | null })[]).map((i) => ({
+      ...i,
+      unit_price: Number(i.unit_price),
+      menu_unit_price: Number(i.menu_unit_price ?? i.unit_price),
+      modifiers: i.modifiers ?? [],
+    })),
+    totals: { subtotal: Number(o.subtotal), tax: Number(o.tax), total: Number(o.total) },
+    menuValue: Number(o.owner_menu_value ?? o.subtotal),
+  };
+}
+
+export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise<OwnerTabOrderResult> {
+  const staff = await assertStaff();
+  const lines = Array.isArray(params?.lines) ? params.lines : [];
+  if (lines.length === 0) return { ok: false, error: "There's nothing on the order." };
+  // No member perks, organization comps or tax-included pricing: nothing is saved.
+  const carried = ownerOrderExtras(params);
+  if (carried) return { ok: false, again: true, error: carried };
+  const rate = params.ownerRate ?? { ownerId: "", token: "", nonce: "" };
+  const again = "Tap Owner rate and have them enter their PIN again.";
+
+  // 1. Signed by us, for this sign-in, for this owner and nonce.
+  const read = readApproval(rate.token, staff.employeeId);
+  const scope = read ? parseOwnerRateScope(read.scope) : null;
+  if (!read || !scope || scope.ownerId !== rate.ownerId || scope.nonce !== rate.nonce || read.approverId !== rate.ownerId) {
+    return { ok: false, again: true, error: `The owner rate wasn't approved for this order. ${again}` };
+  }
+  const supabase = createAdminClient();
+  const people = await ownerRatePeople();
+  const ownerRow = (await supabase.from("employees").select("id, name").eq("id", scope.ownerId).maybeSingle()).data;
+  const ownerName = firstNameOf(String(ownerRow?.name ?? "the owner"));
+
+  // 2. Used already? Before the clock, so a repeat after the 10 minutes
+  // still finds its order.
+  const fromSaved = async (): Promise<OwnerTabOrderResult | null> => {
+    const saved = await savedOwnerOrder(supabase, scope.nonce);
+    if (!saved) return null;
+    if (saved.status !== "completed") return { ok: false, again: true, error: `${ownerName}'s approval made order #${saved.orderNumber}, and it's been taken off the tab since. ${again}` };
+    if (!sameOwnerLines(lines, saved.lines.map((l) => ({ ...l, menu_unit_price: l.menu_unit_price ?? l.unit_price })))) {
+      return { ok: false, again: true, error: `${ownerName}'s approval already put order #${saved.orderNumber} on the tab, and this order is different. ${again}` };
+    }
+    return { ok: true, orderNumber: saved.orderNumber, owner: ownerName, lines: saved.lines, totals: saved.totals, menuValue: saved.menuValue, already: true };
+  };
+  const earlier = await fromSaved();
+  if (earlier) return earlier;
+
+  // 3. The clock.
+  if (read.expires < Date.now()) return { ok: false, again: true, error: `The owner's PIN approval has run out (it lasts 10 minutes). ${again}` };
+  const owner = people?.find((p) => p.id === scope.ownerId);
+  if (!owner) return { ok: false, again: true, error: "That person doesn't get the owner rate anymore. Ring it up as a normal sale." };
+
+  // 4. Today's prices. A line rung before a price changed is named, to take
+  // off and ring again; then the order has to be the one the owner approved.
+  const priced = await priceOwnerSale(lines);
+  if (!priced.ok) return { ok: false, error: `This can't go on the owner tab: ${priced.problems[0]}` };
+  const stale = ownerSaleProblems({ lines }, priced);
+  if (stale.length) return { ok: false, error: stale[0] };
+  if (ownerOrderHash(priced.lines, priced.totals.total) !== scope.orderHash || ownerSaleProblems({ lines, totals: params.totals }, priced).length) {
+    return { ok: false, again: true, error: `This isn't the order ${ownerName} approved: it or its prices changed after the PIN. ${again}` };
+  }
+
+  const done = (orderNumber: number): OwnerTabOrderResult => ({ ok: true, orderNumber, owner: ownerName, lines: priced.lines, totals: priced.totals, menuValue: priced.menuValue });
+  const saleFields = {
+    source: "pos" as const,
+    status: "completed" as const,
+    employee_id: params.employeeId,
+    member_id: null,
+    order_name: params.orderName || null,
+    subtotal: priced.totals.subtotal,
+    tier_discount: 0,
+    monthly_discount: 0,
+    redemption_discount: 0,
+    // Taxed like any sale: owners aren't tax-exempt.
+    tax_free: false,
+    monthly_member: false,
+    tax: priced.totals.tax,
+    tip: 0,
+    total: priced.totals.total,
+    payment_method: "owner_tab",
+    payment_cash_amount: 0,
+    payment_voucher_amount: 0,
+    payment_card_amount: 0,
+    stripe_payment_intent_id: null,
+    points_redeemed: false,
+    age_verified: !!params.ageVerified,
+    completed_at: new Date().toISOString(),
+    owner_tab_employee_id: owner.id,
+    owner_menu_value: priced.menuValue,
+    owner_rate_nonce: scope.nonce,
+  };
+  const failed = async (e: { code?: string; message?: string }): Promise<OwnerTabOrderResult> => {
+    // The same approval saved by a repeat a moment ago.
+    if (e.code === "23505" && (e.message ?? "").includes("owner_rate_nonce")) {
+      const saved = await fromSaved();
+      if (saved) return saved;
+    }
+    if (schemaMissing(e) || e.code === "23514") return { ok: false, error: "The owner tab needs its database update first (20261003060000_owner_tab.sql). Nothing was saved." };
+    console.error("owner tab order not saved", e.message);
+    return { ok: false, error: "Couldn't save the order. Nothing was put on the tab. Try again." };
+  };
+
+  let orderId = "";
+  let orderNumber = 0;
+  let wasTab = false;
+  if (params.draftOrderId) {
+    const { data: existing } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).maybeSingle();
+    const { data: closed, error } = await supabase.from("orders").update(saleFields).eq("id", params.draftOrderId).in("status", ["draft", "held", "tab"]).select("id");
+    if (error) return failed(error);
+    if (!closed?.length || !existing) {
+      const saved = await fromSaved();
+      if (saved) return saved;
+      return { ok: false, error: "This tab was already closed on another register, so nothing went on the owner tab. Check Recent orders." };
+    }
+    orderId = params.draftOrderId;
+    orderNumber = Number(existing.order_number);
+    wasTab = existing.status === "tab";
+  } else {
+    const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
+    if (numberErr) return failed(numberErr);
+    orderNumber = Number(newNumber);
+    const { data: order, error } = await supabase
+      .from("orders")
+      .insert({ order_number: orderNumber, ...saleFields })
+      .select("id")
+      .single();
+    if (error || !order) return failed(error ?? { message: "The order didn't save." });
+    orderId = order.id;
+  }
+
+  const extras = await lineExtrasFor(priced.lines);
+  await saveSaleItems(supabase, { orderId, orderNumber, employeeId: params.employeeId, paymentIntentId: null }, priced.lines, extras);
+  await syncTicketBookings(supabase, { id: orderId, memberId: null, name: params.orderName || null }, priced.lines);
+  if (params.draftOrderId) await releaseTabCard(orderId);
+  await noteCustomItems(supabase, orderNumber, priced.lines, params.employeeId, extras);
+  await sendKitchenTicket({ orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: priced.lines }, "now");
+  revalidate();
+  return done(orderNumber);
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------
@@ -1005,6 +1229,9 @@ export interface RecentOrder {
   tip: number;
   total: number;
   lines: { name: string; qty: number; unit: number; mods: string[]; screeningId: string | null }[];
+  // An owner-tab order: whose tab it went on (first name). Null for any
+  // other sale.
+  ownerTab: string | null;
 }
 
 export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]> {
@@ -1046,7 +1273,9 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
     member: { name: string } | null;
     items: { name: string; quantity: number; unit_price: number; modifiers: string[] | null; screening_id: string | null }[];
   };
-  return ((data ?? []) as unknown as Row[]).map((o) => {
+  const rows = (data ?? []) as unknown as Row[];
+  const owners = await ownerTabNames(rows.filter((o) => o.payment_method === "owner_tab").map((o) => o.id));
+  return rows.map((o) => {
     const card = Array.isArray(o.card) ? (o.card[0] ?? null) : (o.card ?? null);
     return {
       id: o.id,
@@ -1075,8 +1304,22 @@ export async function getRecentRegisterOrders(limit = 20): Promise<RecentOrder[]
       tip: Number(o.tip),
       total: Number(o.total),
       lines: o.items.map((i) => ({ name: i.name, qty: i.quantity, unit: Number(i.unit_price), mods: i.modifiers ?? [], screeningId: i.screening_id })),
+      ownerTab: o.payment_method === "owner_tab" ? (owners.get(o.id) ?? "owner") : null,
     };
   });
+}
+
+// Whose owner tab each of these orders went on, by first name. Best effort:
+// an empty map if it can't be read (the order still shows, as "owner").
+async function ownerTabNames(orderIds: string[]): Promise<Map<string, string>> {
+  if (!orderIds.length) return new Map();
+  const db = createAdminClient();
+  const { data: rows, error } = await db.from("orders").select("id, owner_tab_employee_id").in("id", orderIds);
+  if (error || !rows?.length) return new Map();
+  const ids = [...new Set(rows.map((r) => r.owner_tab_employee_id as string | null).filter((x): x is string => !!x))];
+  const { data: people } = ids.length ? await db.from("employees").select("id, name").in("id", ids) : { data: [] };
+  const name = new Map((people ?? []).map((p) => [p.id as string, firstNameOf(p.name as string)]));
+  return new Map(rows.filter((r) => r.owner_tab_employee_id && name.has(r.owner_tab_employee_id)).map((r) => [r.id as string, name.get(r.owner_tab_employee_id)!]));
 }
 
 type CardParts = { brand: string | null; last4: string | null; wallet: string | null };
@@ -1084,9 +1327,11 @@ type CardParts = { brand: string | null; last4: string | null; wallet: string | 
 // Refund from the register (manager PIN). Card money goes back to the card
 // through Stripe; for cash, staff hand it back. Returns the reason on failure
 // (a wrong PIN, say), since a thrown message is hidden in production.
-export async function refundRegisterOrder(orderId: string, pin: string): Promise<ApprovalResult> {
+// reason: required for an owner-tab order, which only another owner's PIN
+// takes off the tab (refundOrder).
+export async function refundRegisterOrder(orderId: string, pin: string, reason?: string): Promise<ApprovalResult> {
   try {
-    return await refundOrder(orderId, pin);
+    return await refundOrder(orderId, pin, reason);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't refund that order." };
   }

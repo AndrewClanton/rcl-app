@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { schemaMissing } from "@/lib/schema-missing";
 import { slugify } from "@/lib/slugify";
 import type { IngredientUnit, ModifierType, EventPriceMode } from "@/lib/types";
 import { getStaffSession, hasManagerAccess, type StaffSession } from "@/lib/auth";
@@ -428,6 +429,16 @@ export async function updateRecipeMeta(menuItemId: string, fields: Partial<{ ins
   return { ok: true };
 }
 
+// "Recipe cost is complete" (the owner rate charges an item at cost only
+// with it ticked) is a manager's word that every ingredient is on the
+// recipe. Adding or taking one off changes the recipe, so it comes off
+// until someone looks again. (No column yet, before the owner tab
+// migration: nothing to untick.)
+async function costNoLongerChecked(supabase: ReturnType<typeof createAdminClient>, recipeId: string) {
+  const { error } = await supabase.from("recipes").update({ cost_complete: false }).eq("id", recipeId);
+  if (error && !schemaMissing(error)) console.error("menu: recipe cost tick not cleared", error.message);
+}
+
 // Puts one ingredient line on a menu item's recipe (or changes its amount,
 // if it's already there).
 async function addLine(supabase: ReturnType<typeof createAdminClient>, menuItemId: string, ingredientId: string, quantity: number): Promise<Result> {
@@ -437,7 +448,39 @@ async function addLine(supabase: ReturnType<typeof createAdminClient>, menuItemI
   const { error } = await supabase
     .from("recipe_ingredients")
     .upsert({ recipe_id: recipeId, ingredient_id: ingredientId, quantity, sort_order: count ?? 0 }, { onConflict: "recipe_id,ingredient_id" });
-  return failed(error, "add that ingredient") ?? { ok: true };
+  const f = failed(error, "add that ingredient");
+  if (f) return f;
+  await costNoLongerChecked(supabase, recipeId);
+  return { ok: true };
+}
+
+// Ticks (or unticks) "Recipe cost is complete". Ticked only for a recipe
+// with ingredients that all have a cost: anything less isn't the cost of
+// the item, so the owner rate charges half the menu price instead.
+export async function setRecipeCostComplete(menuItemId: string, complete: boolean): Promise<Result> {
+  const no = await denied();
+  if (no) return no;
+  const supabase = createAdminClient();
+  const { data: recipe } = await supabase.from("recipes").select("id, lines:recipe_ingredients(ingredient_id, quantity)").eq("menu_item_id", menuItemId).maybeSingle();
+  const lines = (recipe?.lines ?? []) as { ingredient_id: string; quantity: number }[];
+  if (complete) {
+    if (!recipe || lines.length === 0) return { ok: false, error: "Add the ingredients first: a recipe with none has no cost." };
+    const { data: costs } = await supabase.from("ingredients").select("id, name, unit_cost").in("id", lines.map((l) => l.ingredient_id));
+    const byId = new Map((costs ?? []).map((c) => [c.id as string, c]));
+    const missing = lines.map((l) => byId.get(l.ingredient_id)).filter((c) => !c || c.unit_cost === null || c.unit_cost === undefined);
+    if (missing.length) {
+      const names = missing.map((c) => (c ? String(c.name) : "an ingredient")).join(", ");
+      return { ok: false, error: `No cost on file for ${names}. Add it on the Ingredients page first.` };
+    }
+  }
+  if (!recipe) return { ok: true }; // nothing to untick
+  const { error } = await supabase.from("recipes").update({ cost_complete: complete }).eq("id", recipe.id);
+  if (error && schemaMissing(error)) return { ok: false, error: "This needs the owner tab database update first (20261003060000_owner_tab.sql)." };
+  const f = failed(error, "save that");
+  if (f) return f;
+  revalidate();
+  revalidatePath("/admin/owner-tab");
+  return { ok: true };
 }
 
 export async function addRecipeIngredient(menuItemId: string, ingredientId: string, quantity: number): Promise<Result> {
@@ -713,9 +756,12 @@ export async function updateRecipeIngredientQuantity(id: string, quantity: numbe
 export async function removeRecipeIngredient(id: string): Promise<Result> {
   const no = await denied();
   if (no) return no;
-  const { error } = await createAdminClient().from("recipe_ingredients").delete().eq("id", id);
+  const supabase = createAdminClient();
+  const { data: line } = await supabase.from("recipe_ingredients").select("recipe_id").eq("id", id).maybeSingle();
+  const { error } = await supabase.from("recipe_ingredients").delete().eq("id", id);
   const f = failed(error, "remove that ingredient");
   if (f) return f;
+  if (line?.recipe_id) await costNoLongerChecked(supabase, line.recipe_id as string);
   revalidate();
   return { ok: true };
 }

@@ -66,7 +66,7 @@ export default function PeriodView({
         <Stat label="Average order" value={s.orderCount ? money(avg) : "—"} now={avg} before={avgBefore} beforeText={avgBefore !== null ? vs(avgBefore) : undefined} />
         <Stat label="Collected" value={money(s.collected)} now={s.collected} before={b.collected} sub="with tax and tips, memberships included" />
         <Stat label="Tips" value={money(s.tips)} now={s.tips} before={b.tips} />
-        <Stat label="Sales tax" value={money(s.tax)} now={s.tax} before={b.tax} />
+        <Stat label="Sales tax" value={money(s.tax)} now={s.tax} before={b.tax} sub={s.ownerTab.tax > 0 ? `${money(s.ownerTab.tax)} of it owed on owner tabs` : undefined} />
         <Stat label="Tickets sold" value={num(s.ticketsSold)} now={s.ticketsSold} before={b.ticketsSold} sub={s.tickets.free ? `${num(s.tickets.free)} free` : undefined} />
       </div>
       <p className="text-center text-xs text-[var(--muted)]">
@@ -114,6 +114,16 @@ export default function PeriodView({
                       : []),
                     ...(s.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(s.partialRefunds)}`, muted: true }] : []),
                     { label: "Net sales", value: money(s.netSales), strong: true },
+                    // Not taken off: the owner tab line is already at what the owners pay.
+                    ...(s.ownerTab.orders > 0
+                      ? [
+                          {
+                            label: `Owner rate: ${money(s.ownerTab.menuValue)} at menu prices, ${money(s.ownerTab.sales)} at cost`,
+                            value: `${money(s.ownerTab.menuValue - s.ownerTab.sales)} under menu`,
+                            muted: true,
+                          },
+                        ]
+                      : []),
                   ]}
                 />
               </div>
@@ -121,7 +131,10 @@ export default function PeriodView({
           )}
         </Card>
 
-        <Card title="Money in" subtitle="How it was paid, with tax and tips. Memberships are charged by Stripe, never at the register, so each dollar is in one line only.">
+        <Card
+          title="Money in"
+          subtitle={`How it was paid, with tax and tips. Memberships are charged by Stripe, never at the register, so each dollar is in one line only.${s.ownerTab.owed > 0 ? " Sales put on owner tabs are money in once an owner pays their statement." : ""}`}
+        >
           <SplitBar
             parts={[
               { label: "Card", value: s.card },
@@ -129,6 +142,7 @@ export default function PeriodView({
               { label: "Online", value: s.online },
               { label: "Memberships", value: s.memberships.collected },
               { label: "Vouchers", value: s.vouchers },
+              { label: "Owner tab payments", value: s.ownerTab.paid },
             ]}
           />
           <div className="mt-4">
@@ -137,10 +151,13 @@ export default function PeriodView({
                 { key: "reg", label: "Register (card and cash)", value: money(s.card + s.cash) },
                 { key: "web", label: "Online (tickets, booths, web orders)", value: money(s.online) },
                 { key: "mem", label: "Insiders+ memberships (Stripe billing)", value: money(s.memberships.collected) },
+                ...(s.ownerTab.paid !== 0 ? [{ key: "ownerpaid", label: "Owner tab payments (recorded)", value: money(s.ownerTab.paid) }] : []),
                 { key: "total", label: "Collected", value: money(s.collected), strong: true },
                 { key: "tips", label: "Of it, tips", value: money(s.tips), muted: true },
-                { key: "tax", label: "Of it, sales tax", value: money(s.tax), muted: true },
+                // The owner tabs' tax is owed with the tab, not collected yet.
+                { key: "tax", label: s.ownerTab.paid !== 0 ? "Of it, sales tax (not the tax inside owner payments)" : "Of it, sales tax", value: money(s.tax - s.ownerTab.tax), muted: true },
                 ...(s.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in)", value: money(s.vouchers), muted: true }] : []),
+                ...(s.ownerTab.owed > 0 ? [{ key: "owner", label: "Put on owner tabs (money in once it's paid)", value: money(s.ownerTab.owed), muted: true }] : []),
               ]}
             />
           </div>

@@ -223,6 +223,14 @@ export const HELP_TOPICS = {
       "Vouchers are the paper prizes, like the ones from trivia. Tap $5, $10 or $20 once for each voucher handed over, or type an odd amount. Vouchers never give change: if they cover the order it's paid, and if not, cash or card pays the rest.",
   },
 
+  "owner-rate": {
+    title: "The owner rate and the owner tab",
+    area: "Register: payments",
+    body:
+      "The owners picked in Back office (Owner tab) can have anything on the menu at what it cost us, so it doesn't quietly eat into the bottom line. Ring the order up as usual, tap Owner rate, pick the owner, and they type their own PIN: nobody else's PIN works. Each item shows its owner price with the menu price crossed out: at cost from its recipe, or half price when a cost is missing. Tickets and custom items stay at their normal price, it's taxed as usual, and member discounts, the daily coffee, rewards and points don't go with it. Put on owner tab finishes it with no card or cash; it goes on that owner's tab, which they settle once a month. Undo owner rate puts the order back to normal prices before then.",
+    links: [{ label: "Owner tab (owners)", href: "/admin/owner-tab" }],
+  },
+
   // ---------- register: members and the door ----------
   "door-checkin": {
     title: "Check-in for points",

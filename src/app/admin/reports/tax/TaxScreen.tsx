@@ -111,6 +111,10 @@ export default function TaxScreen({ report, thisMonth, sync }: { report: SalesTa
           <li>Sales are before tax and after member discounts. Tips aren&apos;t sales and are left out.</li>
           <li>Days run 4 a.m. to 4 a.m. Central, like the rest of Reports, so a sale after midnight on the last night of a month counts in that month.</li>
           <li>
+            Owner tab: what the owners have at the owner rate is counted in the month it was rung, at the owner price, with the tax charged on it, whether or not the
+            owner has paid that month&apos;s tab yet. Confirm that treatment with the accountant before filing.
+          </li>
+          <li>
             Refunds: a fully refunded order, ticket or cancelled booth isn&apos;t counted at all. A partial refund comes off the month the order was sold. So a refund made after
             you&apos;ve filed a month changes that month here; the amount you filed stays what it was.
           </li>
