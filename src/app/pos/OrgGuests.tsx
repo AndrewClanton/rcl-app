@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import InfoTip from "@/components/help/InfoTip";
+import { withArticle } from "@/lib/email/org-invite-email";
 import { GROUP_NOTE_MAX, groupInput, groupPeople, groupSummary, MAX_GROUP_PEOPLE, type CompPlan, type OrgGroupOnOrder } from "@/lib/orgs";
-import { getOrgGroup, getOrgGroupChoices, type OrgGroupChoices } from "./org-actions";
+import { getOrgGroup, getOrgGroupChoices, inviteHelper, type OrgGroupChoices } from "./org-actions";
 
 // "Organization guests" on the register (lib/orgs.ts): a group with no
 // name, phone, email or account. A helper says "we're with Easter Seals";
@@ -47,6 +48,97 @@ function Counter({ label, hint, value, onChange }: { label: string; hint: string
   );
 }
 
+// "Invite a helper": a full-screen sheet the cashier hands over on the
+// register iPad. The helper types their work email and taps Send; the
+// organization's sign-up link goes to it (lib/org-invite-server.ts). It
+// shows only the organization's name and what was just typed, and goes
+// back to an empty form a few seconds after sending.
+const SENT_CLEAR_MS = 6000;
+
+export function HelperInviteSheet({ orgId, orgName, onClose }: { orgId: string; orgName: string; onClose: () => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+
+  useEffect(() => {
+    if (!sent) return;
+    const t = setTimeout(() => setSent(false), SENT_CLEAR_MS);
+    return () => clearTimeout(t);
+  }, [sent]);
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const r = await inviteHelper(orgId, email.trim()).catch(() => null);
+    setBusy(false);
+    if (!r) return setError("Couldn't reach the server. Try again.");
+    if (!r.ok) return setError(r.error);
+    setEmail("");
+    setSent(true);
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex flex-col overflow-y-auto p-6 sm:p-10" style={{ background: "var(--background)" }} role="dialog" aria-modal="true" aria-label={`Join ${orgName}`}>
+      <div className="flex justify-end">
+        <button type="button" className="btn-secondary !py-2 text-base" onClick={onClose}>
+          Done
+        </button>
+      </div>
+      <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 text-center">
+        {sent ? (
+          <div role="status" className="space-y-3">
+            <div className="text-6xl" aria-hidden>
+              ✉️
+            </div>
+            <div className="text-4xl font-bold">Sent!</div>
+            <div className="text-2xl">Check your email to join {orgName}.</div>
+          </div>
+        ) : (
+          <form className="space-y-6" onSubmit={send}>
+            <div>
+              <div className="text-xl" style={{ color: "var(--muted)" }}>
+                Join {orgName} at the Royale
+              </div>
+              <h2 className="text-4xl font-bold">Type your work email</h2>
+            </div>
+            <input
+              className="input w-full !py-4 text-center !text-2xl"
+              type="email"
+              inputMode="email"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="you@work.org"
+              aria-label="Your work email"
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError(null);
+              }}
+              autoFocus
+            />
+            {error && (
+              <p className="text-lg" style={{ color: "var(--danger-text)" }} role="alert">
+                {error}
+              </p>
+            )}
+            <button type="submit" className="btn-primary w-full !py-5 text-2xl" disabled={busy || !email.trim()}>
+              {busy ? "Sending…" : "Send"}
+            </button>
+            <p className="text-base" style={{ color: "var(--muted)" }}>
+              We&apos;ll email you a link to join as {withArticle(orgName)} helper.
+            </p>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function OrgGuestsPicker({ onApply, onClose }: { onApply: (g: OrgGroupOnOrder) => void; onClose: () => void }) {
   const [choices, setChoices] = useState<OrgGroupChoices | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -56,6 +148,7 @@ export function OrgGuestsPicker({ onApply, onClose }: { onApply: (g: OrgGroupOnO
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -178,9 +271,13 @@ export function OrgGuestsPicker({ onApply, onClose }: { onApply: (g: OrgGroupOnO
             <button type="button" className="btn-primary w-full !py-3 text-base" disabled={busy || people < 1} onClick={() => apply(preview)}>
               {busy ? "Checking…" : `Add ${people} day ${people === 1 ? "pass" : "passes"} at $0`}
             </button>
+            <button type="button" className="btn-secondary w-full !py-2.5 text-sm" onClick={() => setInviting(true)}>
+              Invite a helper to join {org.name} (they type their work email)
+            </button>
           </section>
         )}
       </div>
+      {inviting && org && <HelperInviteSheet orgId={org.id} orgName={org.name} onClose={() => setInviting(false)} />}
     </div>
   );
 }

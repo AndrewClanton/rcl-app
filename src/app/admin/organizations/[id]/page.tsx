@@ -6,7 +6,9 @@ import { getOrganization } from "@/lib/data/organizations";
 import { compCountText, STATUS_LABEL } from "@/lib/orgs";
 import { orgBilling } from "@/lib/org-billing";
 import { siteOrigin } from "@/lib/site-origin";
-import { AddPerson, AttachPerson, BillingButtons, InviteLink, OrgEditor, PersonRow } from "../OrgForms";
+import { ORG_INVITES_PER_HOUR, recentOrgInvites } from "@/lib/org-invite-server";
+import { withArticle } from "@/lib/email/org-invite-email";
+import { AddPerson, AttachPerson, BillingButtons, EmailInvite, InviteLink, OrgEditor, PersonRow } from "../OrgForms";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +18,11 @@ function day(date: string) {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-const money = (n: number) => `$${n.toFixed(2)}`;
+function sentAt(iso: string) {
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+}
+
+const money =(n: number) => `$${n.toFixed(2)}`;
 
 export default async function OrganizationPage({ params }: { params: Promise<{ id: string }> }) {
   await requireAdmin();
@@ -25,7 +31,7 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
   const detail = await getOrganization(id);
   if (!detail) notFound();
   const { org, people, labelled, today, month } = detail;
-  const [billing, origin] = await Promise.all([orgBilling(org), siteOrigin()]);
+  const [billing, origin, invites] = await Promise.all([orgBilling(org), siteOrigin(), recentOrgInvites(org.id)]);
   const helpers = people.filter((p) => p.role === "helper");
   const guests = people.filter((p) => p.role === "supported");
   const thisMonth = today.date.slice(0, 7);
@@ -105,6 +111,26 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
           {org.name} as a helper, separate from any personal Royale account.
         </p>
         <InviteLink orgId={org.id} url={`${origin}/account/join?c=${org.invite_code}`} />
+        {org.status !== "closed" && <EmailInvite orgId={org.id} orgName={org.name} />}
+        <p className="text-xs text-[var(--muted)]">
+          The email comes from the Royale, signed &quot;The Royale crew&quot;, with one big &quot;Join as {withArticle(org.name)} helper&quot; button. Up to {ORG_INVITES_PER_HOUR} an
+          hour. At the register, &quot;Organization guests&quot; → Invite a helper lets a helper type their own work email.
+        </p>
+        {invites.length > 0 && (
+          <div>
+            <h3 className="font-semibold">Emailed</h3>
+            <ul className="divide-y divide-[var(--border)] text-sm">
+              {invites.map((s) => (
+                <li key={s.id} className="flex flex-wrap justify-between gap-x-3 py-1.5">
+                  <span className="min-w-0 break-all">{s.email}</span>
+                  <span className="text-[var(--muted)]">
+                    {sentAt(s.at)} · {s.sentByName ?? "staff"} · {s.source === "register" ? "at the register" : "Back office"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <section className="card space-y-2">
