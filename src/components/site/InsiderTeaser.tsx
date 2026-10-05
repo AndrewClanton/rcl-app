@@ -26,8 +26,9 @@ function when(slots: InsiderSlot[], now: number): string {
   return [...byTime].map(([t, days]) => `${andList(days)} at ${t}`).join(" · ");
 }
 
+// The locked Insiders tab on /showtimes, for a guest: a short sign-in prompt,
+// then the days and times (if any are coming up).
 export default function InsiderTeaser({ slots, next }: { slots: InsiderSlot[]; next: string }) {
-  if (slots.length === 0) return null;
   const now = new Date().getTime();
   const thisWeek = (xs: InsiderSlot[]) => xs.every((s) => Date.parse(s.startsAt) - now < WEEK_MS);
   const outdoor = slots.filter((s) => s.outdoor);
@@ -41,27 +42,27 @@ export default function InsiderTeaser({ slots, next }: { slots: InsiderSlot[]; n
   if (other.length) lines.push({ label: "Insider screenings", text: when(other, now) });
 
   return (
-    <section aria-labelledby="insider-teaser" className="sheet mt-6 p-5">
-      <span className="ctag ctag-red">Insiders only</span>
-      <h2 id="insider-teaser" className="sr-only">
-        Insider showings
+    <section aria-labelledby="insider-teaser" className="sheet mt-6 p-4 sm:p-5">
+      <h2 id="insider-teaser" className="text-[15px] font-bold">
+        Sign in or join free to see Insider showings (outdoor &amp; Midweek Movies).
       </h2>
-      <ul className="mt-3 space-y-1">
-        {lines.map((l) => (
-          <li key={l.label} className="font-display text-xl leading-tight sm:text-2xl">
-            {l.label}: <span className="text-[var(--accent)]">{l.text}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-3 text-[15px]">Titles are for Insiders. Sign in or join free to see what&apos;s playing.</p>
-      <div className="mt-4 flex flex-wrap gap-3">
-        <Link href={`/account/login?next=${encodeURIComponent(next)}`} className="btn-primary px-5 py-2.5">
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Link href={`/account/login?next=${encodeURIComponent(next)}`} className="btn-primary px-4 py-2">
           Sign in
         </Link>
-        <Link href="/membership?plan=free#join" className="btn-secondary px-5 py-2.5">
+        <Link href="/membership?plan=free#join" className="btn-secondary px-4 py-2">
           Join free
         </Link>
       </div>
+      {lines.length > 0 && (
+        <ul className="mt-4 space-y-1 border-t border-[var(--border)] pt-3 text-sm">
+          {lines.map((l) => (
+            <li key={l.label}>
+              <span className="font-bold">{l.label}:</span> {l.text}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
