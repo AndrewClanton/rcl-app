@@ -5,10 +5,10 @@ import { connection } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
 import { isOutdoorRoom, visibilityOf } from "@/lib/showing-visibility";
-import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow } from "@/lib/public-window";
+import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow, publicWindowEnd } from "@/lib/public-window";
 import type { Screening } from "@/lib/types";
 
-export { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow };
+export { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow, publicWindowEnd };
 
 // Upcoming screenings (now and later), soonest first, with movie + room
 // joined. Unwindowed -- for staff/admin tools that need to see and manage

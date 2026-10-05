@@ -21,16 +21,24 @@ import { ANNUAL_PRICE, RATE_PRICE, dollars } from "@/lib/membership-rates";
 // in lib/data/screenings.ts). The Insiders+ wording is switched in the
 // member's browser (plus-show / plus-hide, see components/site/plus-hint.ts).
 //
-// The one per-visitor part is MembersOnlyShowings: a signed-in member also
-// sees the members-only showings. A guest gets only their days and times
-// (InsiderTeaser), never a title: not in the HTML, the JSON-LD or the sitemap.
+// Two tabs: "All showings" (the public listing) and "Insiders" (?tab=insiders,
+// the members-only showings). The per-visitor parts are the tab bar and the
+// Insiders tab: a signed-in member sees the members-only showings there; for a
+// guest the tab is greyed and locked, and opening it shows only their days and
+// times (InsiderTeaser), never a title: not in the HTML, the JSON-LD or the
+// sitemap.
 //
 // ?screen=outdoor (and /outdoor, which redirects here) lists the outdoor
 // screen's showings only: the link to share when people ask what's on
-// outside.
+// outside. With no public outdoor showings it opens on the Insiders tab.
 
-type SearchParams = Promise<{ screen?: string | string[] }>;
+type SearchParams = Promise<{ screen?: string | string[]; tab?: string | string[] }>;
 const isOutdoorView = (screen: string | string[] | undefined) => screen === "outdoor";
+type Tab = "all" | "insiders";
+const showtimesHref = (tab: Tab, outdoor: boolean) => {
+  const q = [outdoor ? "screen=outdoor" : null, tab === "insiders" ? "tab=insiders" : null].filter(Boolean).join("&");
+  return q ? `/showtimes?${q}` : "/showtimes";
+};
 
 // "Movie showtimes in Joplin" is what people actually search for, so the
 // title and description say it plainly.
@@ -197,18 +205,52 @@ function OutdoorWeekend({ screenings }: { screenings: Screening[] }) {
   );
 }
 
-// A signed-in member's members-only showings. A guest gets the teaser: the
-// days and times, never a title (the outdoor screen and Midweek Movies
-// aren't licensed for public advertising).
-async function MembersOnlyShowings({ outdoorOnly }: { outdoorOnly: boolean }) {
+// "All showings | Insiders": the Insiders tab is greyed and locked for a
+// guest (still tappable: it says how to get in).
+async function ShowtimesTabs({ tab, outdoorOnly }: { tab: Tab; outdoorOnly: boolean }) {
+  const member = await getSignedInMember();
+  return <TabBar tab={tab} outdoorOnly={outdoorOnly} locked={!member} />;
+}
+
+function TabBar({ tab, outdoorOnly, locked }: { tab: Tab; outdoorOnly: boolean; locked: boolean }) {
+  const base = "-mb-[2px] rounded-t-[4px] border-2 border-b-0 px-4 py-2 text-sm font-bold";
+  const on = "border-[var(--foreground)] bg-[var(--background)]";
+  const off = "border-transparent";
+  return (
+    <nav aria-label="Showings" className="mt-6 flex gap-2 border-b-2 border-[var(--foreground)]">
+      <Link href={showtimesHref("all", outdoorOnly)} aria-current={tab === "all" ? "page" : undefined} className={`${base} ${tab === "all" ? on : `${off} opacity-70`}`}>
+        All showings
+      </Link>
+      <Link
+        href={showtimesHref("insiders", outdoorOnly)}
+        aria-current={tab === "insiders" ? "page" : undefined}
+        aria-label={locked ? "Insiders (locked: sign in to see)" : "Insiders"}
+        className={`${base} ${tab === "insiders" ? on : off} ${locked && tab !== "insiders" ? "opacity-45" : ""}`}
+      >
+        Insiders{locked ? " \u{1F512}" : ""}
+      </Link>
+    </nav>
+  );
+}
+
+// The Insiders tab. A signed-in member sees the members-only showings; a
+// guest gets the sign-in prompt and the days and times, never a title (the
+// outdoor screen and Midweek Movies aren't licensed for public advertising).
+async function InsidersTab({ outdoorOnly }: { outdoorOnly: boolean }) {
   const member = await getSignedInMember();
   if (!member) {
     const slots = await getMembersOnlySlots();
-    return <InsiderTeaser slots={outdoorOnly ? slots.filter((s) => s.outdoor) : slots} next={outdoorOnly ? "/showtimes?screen=outdoor" : "/showtimes"} />;
+    return <InsiderTeaser slots={outdoorOnly ? slots.filter((s) => s.outdoor) : slots} next={showtimesHref("insiders", outdoorOnly)} />;
   }
   const all = await getMembersOnlyScreenings(member);
   const shows = outdoorOnly ? all.filter((s) => isOutdoorRoom(s.room)) : all;
-  if (shows.length === 0) return null;
+  if (shows.length === 0) {
+    return (
+      <div className="sheet mt-6 p-5 text-[15px]">
+        No members-only showings{outdoorOnly ? " on the outdoor screen" : ""} in the next {PUBLIC_SCHEDULE_WINDOW_DAYS} days.
+      </div>
+    );
+  }
   return (
     <section id="members-only" className="site-anchor sheet crop mt-6">
       <h2 className="spec-head rounded-t-[4px]">
@@ -231,13 +273,16 @@ async function MembersOnlyShowings({ outdoorOnly }: { outdoorOnly: boolean }) {
 }
 
 export default async function ShowtimesPage({ searchParams }: { searchParams: SearchParams }) {
-  const outdoorOnly = isOutdoorView((await searchParams).screen);
+  const params = await searchParams;
+  const outdoorOnly = isOutdoorView(params.screen);
   const everything = await getPubliclyVisibleScreenings();
   const screenings = outdoorOnly ? everything.filter((s) => isOutdoorRoom(s.room)) : everything;
   const days = groupByDay(screenings);
-  // Members-only showings fill the gap (the teaser or the member's list), so
-  // "nothing on" is only said when there's truly nothing.
+  // Days and times only (no titles): whether to point at the Insiders tab
+  // when the public listing is empty.
   const insiderSlots = (await getMembersOnlySlots()).filter((s) => !outdoorOnly || s.outdoor);
+  const tab: Tab =
+    params.tab === "insiders" || (params.tab === undefined && outdoorOnly && screenings.length === 0 && insiderSlots.length > 0) ? "insiders" : "all";
   const events = screenings.map((s) => screeningEventJsonLd(s)).filter(Boolean);
   const todayKey = dayKey(new Date());
 
@@ -267,32 +312,40 @@ export default async function ShowtimesPage({ searchParams }: { searchParams: Se
 
       {/* Which screen: everything, or just the outdoor one. */}
       <nav aria-label="Which screen" className="mt-4 flex flex-wrap gap-2">
-        <Link href="/showtimes" className={`day-chip ${outdoorOnly ? "" : "day-chip-today"}`} aria-current={outdoorOnly ? undefined : "page"}>
-          All showtimes
+        <Link href={showtimesHref(tab, false)} className={`day-chip ${outdoorOnly ? "" : "day-chip-today"}`} aria-current={outdoorOnly ? undefined : "page"}>
+          All screens
         </Link>
-        <Link href="/showtimes?screen=outdoor" className={`day-chip ${outdoorOnly ? "day-chip-today" : ""}`} aria-current={outdoorOnly ? "page" : undefined}>
+        <Link href={showtimesHref(tab, true)} className={`day-chip ${outdoorOnly ? "day-chip-today" : ""}`} aria-current={outdoorOnly ? "page" : undefined}>
           Outdoor screen
         </Link>
       </nav>
 
-      {!outdoorOnly && <OutdoorWeekend screenings={everything} />}
-
-      <Suspense fallback={null}>
-        <MembersOnlyShowings outdoorOnly={outdoorOnly} />
+      <Suspense fallback={<TabBar tab={tab} outdoorOnly={outdoorOnly} locked />}>
+        <ShowtimesTabs tab={tab} outdoorOnly={outdoorOnly} />
       </Suspense>
 
-      {screenings.length === 0 && insiderSlots.length > 0 ? null : screenings.length === 0 ? (
-        <div className="sheet mt-8 p-5 text-[15px]">
-          {outdoorOnly ? (
+      {tab === "insiders" ? (
+        <Suspense fallback={null}>
+          <InsidersTab outdoorOnly={outdoorOnly} />
+        </Suspense>
+      ) : screenings.length === 0 ? (
+        <div className="sheet mt-6 p-5 text-[15px]">
+          {outdoorOnly ? "Nothing public on the outdoor screen" : "No public showings"} in the next {PUBLIC_SCHEDULE_WINDOW_DAYS} days yet.
+          {insiderSlots.length > 0 ? (
             <>
-              Nothing on the outdoor screen in the next {PUBLIC_SCHEDULE_WINDOW_DAYS} days. <Link href="/showtimes" className="font-bold text-[var(--accent)] hover:underline">See everything that&apos;s playing</Link>.
+              {" "}
+              <Link href={showtimesHref("insiders", outdoorOnly)} className="font-bold text-[var(--accent)] hover:underline">
+                See the Insider showings
+              </Link>
+              .
             </>
           ) : (
-            "No screenings scheduled yet. Check back soon."
+            " Check back soon."
           )}
         </div>
       ) : (
         <>
+          {!outdoorOnly && <OutdoorWeekend screenings={everything} />}
           <nav aria-label="Jump to a day" className="-mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-2">
             {days.map((d) => (
               <a key={d.key} href={`#d-${d.key}`} className={`day-chip ${d.key === todayKey ? "day-chip-today" : ""}`}>
