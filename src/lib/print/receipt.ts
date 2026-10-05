@@ -27,6 +27,9 @@ export interface ReceiptData {
   subtotal: number;
   discounts: { label: string; amount: number }[];
   tax: number;
+  // The tax is inside the prices (an organization's supported guest,
+  // lib/orgs.ts): printed as "Tax included", not added.
+  taxIncluded?: boolean;
   tip: number;
   total: number; // includes tip
   payments: { label: string; amount: number }[];
@@ -190,7 +193,7 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   d.line(rule());
   d.lines(columns("Subtotal", money(r.subtotal)));
   for (const disc of r.discounts) if (disc.amount > 0) d.lines(columns(disc.label, `-${money(disc.amount)}`));
-  d.lines(columns("Tax", money(r.tax)));
+  d.lines(columns(r.taxIncluded ? "Tax (included in prices)" : "Tax", money(r.tax)));
   if (r.tip > 0) d.lines(columns("Tip", money(r.tip)));
   d.bold(true).lines(columns("TOTAL", money(r.total))).bold(false);
   d.line();

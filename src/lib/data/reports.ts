@@ -198,6 +198,13 @@ export interface SalesSummary {
   // of the perk shows instead of hiding in the discounts.
   dailyCoffee: number;
   dailyCoffeeCount: number;
+  // Organization comps (lib/orgs.ts): day passes and movies given at $0 to
+  // an organization's people, at their price, and on how many orders.
+  orgComps: number;
+  orgCompOrders: number;
+  // Supported guests' tax-included sales: what they paid (before tips),
+  // the tax inside it, and how many orders. Their tax is already in `tax`.
+  taxIncluded: { sales: number; tax: number; orders: number };
   partialRefunds: number; // goods given back on part-refunded orders, before tax
   netSales: number;
   ticketsSold: number;
@@ -265,6 +272,9 @@ type DayOrderRow = {
   // The Insiders+ daily coffee given away (lib/daily-perk.ts). Missing
   // until its migration (20261001230000_plus_daily_coffee.sql) is applied.
   daily_perk_discount?: number | null;
+  // Organization accounts (20261005040000_organizations.sql); missing before it.
+  org_comp_discount?: number | null;
+  tax_included?: boolean | null;
   stripe_payment_intent_id: string | null;
   employee_id: string | null;
   employee: { name: string } | null;
@@ -450,7 +460,10 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     tax = 0,
     discounts = 0,
     dailyCoffee = 0,
-    dailyCoffeeCount = 0;
+    dailyCoffeeCount = 0,
+    orgComps = 0,
+    orgCompOrders = 0;
+  const taxIncluded = { sales: 0, tax: 0, orders: 0 };
   const category = { food: 0, coffee: 0, soda: 0, liquor: 0, other: 0 };
   const items = new Map<string, { qty: number; revenue: number; options: Map<string, number> }>();
   for (const o of completed) {
@@ -466,6 +479,16 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     if (coffee > 0) {
       dailyCoffee += coffee;
       dailyCoffeeCount++;
+    }
+    const comp = Number(o.org_comp_discount ?? 0);
+    if (comp > 0) {
+      orgComps += comp;
+      orgCompOrders++;
+    }
+    if (o.tax_included) {
+      taxIncluded.sales += Number(o.total) - Number(o.tip);
+      taxIncluded.tax += Number(o.tax);
+      taxIncluded.orders++;
     }
     for (const l of o.items) {
       const amount = Number(l.unit_price) * l.quantity;
@@ -544,8 +567,13 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     discounts,
     dailyCoffee,
     dailyCoffeeCount,
+    orgComps,
+    orgCompOrders,
+    taxIncluded,
     partialRefunds,
-    netSales: grossSales - discounts - dailyCoffee - partialRefunds,
+    // A tax-included sale's prices hold its tax, so that comes out of what
+    // sold too: a $4.00 pizza is $3.68 of sales and $0.32 of tax.
+    netSales: grossSales - discounts - dailyCoffee - orgComps - taxIncluded.tax - partialRefunds,
     ticketsSold,
     tickets,
     orderCount: completed.length,

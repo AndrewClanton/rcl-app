@@ -141,6 +141,8 @@ export interface Receipt {
   discounts: { label: string; amount: number }[];
   tax: number;
   taxFree: boolean;
+  // The tax is inside the prices (an organization's supported guest).
+  taxIncluded?: boolean;
   tip: number;
   total: number;
   payment: string;
@@ -185,8 +187,15 @@ export async function getReceipt(member: { id: string; name: string; email: stri
     let { data: o, error } = await receiptQuery(true);
     if (schemaMissing(error)) ({ data: o, error } = await receiptQuery(false));
     if (!o || !o.completed_at) return null;
-    const pts = await ledgerFor({ orderId: o.id });
+    const [pts, org] = await Promise.all([
+      ledgerFor({ orderId: o.id }),
+      // An organization's comps and tax-included prices (lib/orgs.ts); none
+      // before their migration.
+      supabase.from("orders").select("org_comp_discount, tax_included").eq("id", o.id).maybeSingle(),
+    ]);
+    const orgRow = org.error ? null : (org.data as { org_comp_discount: number | null; tax_included: boolean | null } | null);
     const discounts = [
+      { label: "Organization comp", amount: Number(orgRow?.org_comp_discount ?? 0) },
       { label: DAILY_COFFEE_LINE, amount: Number(o.daily_perk_discount ?? 0) },
       { label: "Member discount", amount: Number(o.tier_discount) },
       { label: "Monthly member discount", amount: Number(o.monthly_discount) },
@@ -208,6 +217,7 @@ export async function getReceipt(member: { id: string; name: string; email: stri
       discounts,
       tax: Number(o.tax),
       taxFree: o.tax_free,
+      taxIncluded: !!orgRow?.tax_included,
       tip: Number(o.tip),
       total: Number(o.total),
       payment: paymentLabel(o.payment_method, o.payment_cash_amount, o.payment_card_amount),

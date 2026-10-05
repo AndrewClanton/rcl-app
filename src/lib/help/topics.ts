@@ -238,6 +238,21 @@ export const HELP_TOPICS = {
       "Press and hold a customer's card (Checked in today, or the order's Member box) to open their panel. Under Notes, type in \"Add a note\" and tap Save: it records who wrote it and when, and any cashier can do it, no PIN. Tap the \"+ Group / organization\" chip to tag them with a group, like Easter Seals (tap a suggestion or type one), so they can be attached to a corporate account later; the tag shows on their card in Checked in today. Notes and the tag are staff only: customers never see them on the screen, their account or emails. In Back office, the member's page has the same notes, and Members filters by organization to find everyone in a group.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
+  organizations: {
+    title: "Organization accounts (Easter Seals and others)",
+    area: "Register: members and the door",
+    body:
+      "Groups like Easter Seals pay a monthly fee and get a number of comps a day (20 by default: 10 pairs of a guest and a helper). A comp is one person's day: when an organization's helper or supported guest is on the order, their Day pass and one ticket per movie ring up at $0, and the chip shows \"Easter Seals · comps today 6/20 · 3 pairs\". Each person counts once a day, however many movies they see. When the day's comps are used up the day pass and tickets are charged; a manager PIN can comp one more. Supported guests also pay even dollars: the listed price is the total with the tax inside it (a $4 pizza is $4.00, which is $3.68 plus $0.32 tax), so the order says \"Tax included\" and the books still record the tax. Helpers pay normal prices plus tax. To put someone in an organization, press and hold their card and tap \"Add to organization\".",
+    steps: [
+      "Back office → Organizations: make the organization, or turn a \"Group / organization\" tag into one (everyone tagged is attached).",
+      "Send helpers the sign-up link from the organization's page: they sign up with their work email and join as helpers.",
+      "Supported guests without an account: make a phone account at the register, then Add to organization.",
+    ],
+    links: [
+      { label: "Organizations", href: "/admin/organizations" },
+      { label: "Organization report", href: "/admin/reports/organizations" },
+    ],
+  },
   "points-and-badges": {
     title: "Points, visits and badges",
     area: "Register: members and the door",

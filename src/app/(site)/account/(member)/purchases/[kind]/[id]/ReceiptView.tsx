@@ -110,7 +110,7 @@ export default function ReceiptView({ r, ticketHref = null }: { r: Receipt; tick
             {r.discounts.map((d) => (
               <Row key={d.label} label={d.label} value={money(-d.amount)} muted />
             ))}
-            {r.kind === "order" ? <Row label={r.taxFree ? "Sales tax (exempt)" : "Sales tax"} value={money(r.tax)} /> : r.tax > 0 && <Row label="Sales tax" value={money(r.tax)} />}
+            {r.kind === "order" ? <Row label={r.taxFree ? "Sales tax (exempt)" : r.taxIncluded ? "Sales tax (included in prices)" : "Sales tax"} value={money(r.tax)} /> : r.tax > 0 && <Row label="Sales tax" value={money(r.tax)} />}
             {r.tip > 0 && <Row label="Tip" value={money(r.tip)} />}
             <div className="flex justify-between border-t-2 border-[var(--foreground)] pt-2 text-base font-bold">
               <dt>Total</dt>

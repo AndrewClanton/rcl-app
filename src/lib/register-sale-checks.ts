@@ -7,6 +7,7 @@ import type { MemberTier } from "@/lib/types";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { coffeeTime } from "@/lib/daily-perk";
 import { coffeeDay, dailyCoffeeUse, type DailyCoffeeUse } from "@/lib/daily-perk-server";
+import { orgSaleTerms, type OrgSaleTerms } from "@/lib/orgs-server";
 import {
   DOUBLE,
   DOUBLE_DEFAULTS,
@@ -135,7 +136,19 @@ export interface SaleForCheck {
   lines: { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id?: string | null }[];
   // daily_perk_discount: the Insiders+ daily coffee (missing from a sale
   // rung before it existed, which is the same as none).
-  totals: { subtotal: number; daily_perk_discount?: number; tier_discount: number; monthly_discount: number; redemption_discount: number; tax: number; total: number };
+  // org_comp_discount / tax_included: an organization member's comps and
+  // tax-included pricing (lib/orgs.ts); missing is none.
+  totals: {
+    subtotal: number;
+    org_comp_discount?: number;
+    daily_perk_discount?: number;
+    tier_discount: number;
+    monthly_discount: number;
+    redemption_discount: number;
+    tax: number;
+    total: number;
+    tax_included?: boolean;
+  };
   payment?: { cash: number; card: number; voucher?: number };
   tip?: number;
   // The member's points before this sale moved them, for a check that runs
@@ -147,6 +160,9 @@ export interface SaleForCheck {
   // before the sale was saved: once saved, the sale's own coffee would
   // count as "already had today's". Left out, it's checked here.
   dailyCoffee?: CoffeeCheck;
+  // The organization terms (orgSaleTerms) as judged before the sale saved
+  // its comps. Left out, they're looked up here.
+  org?: OrgSaleTerms;
 }
 
 type ServerTotals = SaleForCheck["totals"];
@@ -161,6 +177,7 @@ export interface TotalsCheck {
 
 const TOTAL_LABELS: [keyof ServerTotals, string][] = [
   ["subtotal", "Subtotal"],
+  ["org_comp_discount", "Organization comps"],
   ["daily_perk_discount", "Insiders+ daily coffee"],
   ["tier_discount", "Member discount"],
   ["monthly_discount", "Monthly member discount"],
@@ -334,15 +351,34 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
     if (!coffee.ok) problems.push(`Insiders+ daily coffee: ${coffee.reason} It came off the order anyway.`);
   }
 
-  const t = registerTotals(lines.map((l) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase })), member, sale.monthlyMember, sale.taxFree, sale.pointsRedeemed, dailyPerk);
+  // An organization member's comps and tax-included pricing (lib/orgs.ts),
+  // as judged before the sale saved its own comps, or looked up now.
+  // A comp past the daily limit is judged where it's approved (and flagged
+  // as org_over_limit without a manager's OK), so here the limit only
+  // decides whether a sale rung with no comps was right to charge.
+  const org = sale.org ?? (await orgSaleTerms(sale.memberId, sale.lines, Number(sale.totals.org_comp_discount ?? 0) > 0));
+  const t = registerTotals(
+    lines.map((l, i) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase, comp: org.plan.comps[i] ?? 0 })),
+    member,
+    sale.monthlyMember,
+    sale.taxFree,
+    sale.pointsRedeemed,
+    dailyPerk,
+    { taxIncluded: org.taxIncluded },
+  );
+  if (!!sale.totals.tax_included !== t.taxIncluded) {
+    problems.push(t.taxIncluded ? "The member is a supported guest, so the tax should have been included in the prices." : "The tax was included in the prices, but the member isn't a supported guest.");
+  }
   const server: ServerTotals = {
     subtotal: t.subtotal,
+    org_comp_discount: t.orgCompDiscount,
     daily_perk_discount: t.dailyPerkDiscount,
     tier_discount: t.tierDiscount,
     monthly_discount: t.monthlyDiscount,
     redemption_discount: t.redemptionDiscount,
     tax: t.tax,
     total: t.total,
+    tax_included: t.taxIncluded,
   };
   for (const [key, label] of TOTAL_LABELS) {
     const sent = Number(sale.totals[key] ?? 0);
@@ -419,7 +455,8 @@ export type SaleFlagKind =
   | "tab_closed_elsewhere"
   | "sale_abandoned"
   | "items_not_saved"
-  | "below_cost";
+  | "below_cost"
+  | "org_over_limit";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

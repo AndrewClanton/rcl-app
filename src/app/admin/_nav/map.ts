@@ -81,6 +81,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       keywords: "insiders plus loyalty points customers guests add a member community programs free comped gift billing",
     },
     {
+      href: "/admin/organizations",
+      label: "Organizations",
+      about: "Groups like Easter Seals: monthly fee, daily comps, helpers and supported guests, statements and the helper sign-up link.",
+      keywords: "corporate accounts easter seals arc of the ozarks disability helpers supported guests comps day pass invoice statement nonprofit group",
+      min: "admin",
+    },
+    {
       href: "/admin/members/former-unlimited",
       label: "Former unlimited members",
       about: "Paid for unlimited on the old website: who's set up on Insiders+ here, who came in without paying, who hasn't been in.",

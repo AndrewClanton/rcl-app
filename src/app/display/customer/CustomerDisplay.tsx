@@ -603,7 +603,7 @@ export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartS
           </div>
         ))}
         <div className={k.totalRow} style={{ color: "#6b6455" }}>
-          <span>Tax</span>
+          <span>{cart.taxIncluded ? "Tax (included in prices)" : "Tax"}</span>
           <span style={{ fontFamily: "var(--mono)" }}>{money(cart.tax)}</span>
         </div>
         <div className={k.grand}>

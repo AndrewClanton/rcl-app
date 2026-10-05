@@ -262,6 +262,10 @@ function OrdersView({
               })),
               ...(r.discounts > 0 ? [{ key: "disc", label: "Member discounts", value: `−${money(r.discounts)}`, muted: true }] : []),
               ...(r.dailyCoffee > 0 ? [{ key: "coffee", label: `${DAILY_COFFEE_LINE} · ${r.dailyCoffeeCount}`, value: `−${money(r.dailyCoffee)}`, muted: true }] : []),
+              ...(r.orgComps > 0 ? [{ key: "orgcomp", label: `Organization comps · ${r.orgCompOrders}`, value: `−${money(r.orgComps)}`, muted: true }] : []),
+              ...(r.taxIncluded.tax > 0
+                ? [{ key: "taxin", label: `Tax inside even-dollar sales · ${r.taxIncluded.orders} (${money(r.taxIncluded.sales)})`, value: `−${money(r.taxIncluded.tax)}`, muted: true }]
+                : []),
               ...(r.partialRefunds > 0 ? [{ key: "part", label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
               { key: "net", label: "Net sales", value: money(r.netSales), strong: true },
             ]}

@@ -5,6 +5,7 @@ import { latestLines } from "@/lib/ops/par-counts";
 import { qtyLabel } from "@/lib/ops/shared";
 import { getMembershipRefundsMade } from "@/lib/membership-payments/read";
 import { getDayReport, type DayReport } from "./reports";
+import { compsByOrg } from "./organizations";
 import { customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
 
 // The end-of-day email to the admins: how the business day went, how that
@@ -28,6 +29,8 @@ export interface DailyDigest {
   newMembers: number;
   // "Ran out" reports made that day (false alarms left out).
   ranOut: { what: string; time: string; by: string | null; status: string; bought: boolean }[];
+  // Organization comps that day, by organization (lib/orgs.ts).
+  orgComps?: { name: string; people: number; value: number }[];
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -253,5 +256,8 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     next: { label: dayLabel(nextDate), items: items.map(({ time, text }) => ({ time, text })) },
     newMembers,
     ranOut,
+    orgComps: await safely([] as { name: string; people: number; value: number }[], async () =>
+      (await compsByOrg(date, date)).map((o) => ({ name: o.name, people: o.people, value: o.value })),
+    ),
   };
 }

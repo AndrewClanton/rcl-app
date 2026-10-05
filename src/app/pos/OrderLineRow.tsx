@@ -25,6 +25,7 @@ export default function OrderLineRow({
   double,
   serve,
   freeToday,
+  comp,
   onLess,
   onMore,
   onRemove,
@@ -36,6 +37,8 @@ export default function OrderLineRow({
   double?: { on: boolean; upcharge: number } | null; // null: this line can't be one
   serve?: { value: Serve | null; upcharge: number } | null; // null: this line can't be poured neat or on the rocks
   freeToday?: boolean; // the Insiders+ daily coffee is this line
+  // An organization comp on this line (lib/orgs.ts): its name, e.g. "Easter Seals".
+  comp?: string | null;
   onLess: () => void;
   onMore: () => void;
   onRemove: () => void;
@@ -83,9 +86,23 @@ export default function OrderLineRow({
             ☕ {line.qty > 1 ? "One free today" : "Free today"}
           </div>
         )}
+        {comp && (
+          <div className="truncate text-xs font-bold" style={{ color: "var(--accent)" }}>
+            {line.qty > 1 ? `One comped: ${comp}` : `Comp: ${comp}`}
+          </div>
+        )}
       </div>
       <span className="shrink-0 text-sm" style={{ color: "var(--foreground)" }}>
-        {money(line.unit * line.qty)}
+        {comp && line.qty === 1 ? (
+          <>
+            <s className="mr-1 text-xs" style={{ color: "var(--muted)" }}>
+              {money(line.unit)}
+            </s>
+            {money(0)}
+          </>
+        ) : (
+          money(line.unit * line.qty - (comp ? line.unit : 0))
+        )}
       </span>
       <button className="h-9 w-9 shrink-0 rounded-md text-lg" style={{ color: "var(--danger-text)" }} onClick={onRemove} aria-label={`Remove ${line.name}`}>
         ×

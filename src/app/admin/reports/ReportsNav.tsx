@@ -14,6 +14,7 @@ const TABS = [
   { href: "/admin/reports/tax", label: "Sales tax" },
   { href: "/admin/reports/bar", label: "Bar usage" },
   { href: "/admin/reports/members", label: "Members" },
+  { href: "/admin/reports/organizations", label: "Organizations" },
   // Managers and up (the pages check too).
   { href: "/admin/reports/usage", label: "Website usage", managers: true },
   { href: "/admin/reports/register-checks", label: "Register checks", managers: true },

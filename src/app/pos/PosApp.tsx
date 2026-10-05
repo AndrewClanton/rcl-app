@@ -101,6 +101,8 @@ import { isStaleBuildError } from "@/lib/deployment";
 import { cents, dailyPerkPick, ENFORCE_REGISTER_TOTALS, memberDiscountRate, pointsEarned, registerTotals } from "@/lib/register-totals";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee, getTabletProfile } from "./member-actions";
+import { approveOrgOverLimit, getOrgOnOrder } from "./org-actions";
+import { compCountText, isDayPassName, orgCompPlan, roleLabel, TAX_INCLUDED_NOTE, type OrgOnOrder } from "@/lib/orgs";
 import {
   checkBeforePayment,
   completeOrder,
@@ -176,6 +178,9 @@ function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
     redemption_discount: t.redemptionDiscount,
     tax: t.tax,
     total: t.total,
+    // Only when there's one, so every other sale saves as it always has.
+    ...(t.orgCompDiscount > 0 ? { org_comp_discount: t.orgCompDiscount } : {}),
+    ...(t.taxIncluded ? { tax_included: true } : {}),
   };
 }
 
@@ -312,6 +317,32 @@ export default function PosApp({
   // On this order unless it's used, unknown, or staff took it off. Only one
   // member is on an order, so only their coffee can be.
   const coffeeOn = !!memberId && !!coffeeToday && !coffeeToday.usedAt && coffeeOffFor !== memberId;
+  // The member's organization (lib/orgs.ts): their comps today and, for a
+  // supported guest, tax-included prices. Looked up when they're put on the
+  // order, like the coffee; looked up again after a sale or a refused check.
+  const [orgState, setOrgState] = useState<{ memberId: string; org: OrgOnOrder | null } | null>(null);
+  const [orgTry, setOrgTry] = useState(0);
+  useEffect(() => {
+    if (!memberId) return;
+    let live = true;
+    getOrgOnOrder(memberId).then(
+      (org) => {
+        if (live) setOrgState({ memberId, org });
+      },
+      () => {
+        if (live) setOrgState({ memberId, org: null });
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId, orgTry]);
+  const orgOnOrder = memberId && orgState?.memberId === memberId ? orgState.org : null;
+  // A manager's OK to comp past today's limit, for one organization.
+  const [orgApproval, setOrgApproval] = useState<{ orgId: string; token: string } | null>(null);
+  const [orgPinOpen, setOrgPinOpen] = useState(false);
+  const orgOverride = !!orgOnOrder && orgApproval?.orgId === orgOnOrder.orgId;
+  const orgTaxIncluded = !!orgOnOrder?.active && orgOnOrder.role === "supported";
   const [taxFree, setTaxFree] = useState(false);
   const [monthlyMember, setMonthlyMember] = useState(false);
   // The manual "Monthly member (10% off)" tick counts only with no member on
@@ -681,11 +712,18 @@ export default function PosApp({
 
   // A line can be the free coffee if its item is ticked as a daily coffee
   // (Back office -> Menu): its menu price comes off, its add-ons don't.
-  const totalsLines = cart.map((l) => {
+  // An organization member's comps: their day pass and one ticket per
+  // showing, at $0 (lib/orgs.ts).
+  const compPlan = orgCompPlan(
+    cart.map((l) => ({ dayPass: !l.screeningId && isDayPassName(findItem(l.menuItemId)?.name), screeningId: l.screeningId ?? null, qty: l.qty, unit: l.unit })),
+    orgOnOrder,
+    orgOverride,
+  );
+  const totalsLines = cart.map((l, i) => {
     const item = findItem(l.menuItemId);
-    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null };
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i] };
   });
-  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn);
+  const totals = registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: orgTaxIncluded });
   // The line it would go on, whether or not it's on: "Use it" puts it back.
   const coffeePick = coffeeToday && !coffeeToday.usedAt ? dailyPerkPick(totalsLines) : null;
   const itemCount = cart.reduce((s, l) => s + l.qty, 0);
@@ -773,7 +811,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn]);
+  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded]);
 
   // Which tab is on screen right now, for a save that answers after the
   // screen has moved on.
@@ -844,10 +882,12 @@ export default function PosApp({
     items: cart.map((l) => ({ name: l.name, quantity: l.qty, modifiers: l.mods, lineTotal: Math.round(l.unit * l.qty * 100) / 100 })),
     subtotal: totals.subtotal,
     tax: totals.tax,
+    taxIncluded: totals.taxIncluded,
     total: totals.total,
     // The customer screen's live tally: savings, whose order it is, and the
     // points it earns (1 per $1 after discounts, as completeOrder pays).
     discounts: [
+      { label: orgOnOrder ? `${orgOnOrder.orgName} comp` : "Comp", amount: totals.orgCompDiscount },
       { label: DAILY_COFFEE_LINE, amount: totals.dailyPerkDiscount },
       // Named for the guest: "Insiders+ 10% off" is the perk they see applied.
       { label: isPlus && !member?.legacyUnlimited ? `Insiders+ ${Math.round(memberDiscountRate(member) * 100)}% off` : "Member discount", amount: totals.tierDiscount },
@@ -1159,11 +1199,16 @@ export default function PosApp({
     // A points reward the member no longer has the points for, or a daily
     // coffee they've already had today (on the other register, say), comes
     // off before anyone pays. If the check can't run, the sale goes ahead.
-    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
+    // An organization comp is checked again too: the other register may
+    // have used today's last one.
+    if ((pointsRedeemed && totals.redemptionDiscount > 0) || totals.dailyPerkDiscount > 0 || totals.orgCompDiscount > 0 || ENFORCE_REGISTER_TOTALS) {
       setBusy(true);
-      const r = await checkBeforePayment(currentFields(), totalsPayload(totals)).catch(() => null);
+      const r = await checkBeforePayment(currentFields(), totalsPayload(totals), orgOverride ? orgApproval?.token : null).catch(() => null);
       setBusy(false);
       if (r && !r.ok) {
+        // The other register used the last comp: look again (the order
+        // shows it's full, with the manager override).
+        if (r.orgFull) setOrgTry((n) => n + 1);
         if (r.points !== undefined) {
           setPointsRedeemed(false);
           if (member) setMember({ ...member, points: r.points });
@@ -1228,6 +1273,7 @@ export default function PosApp({
       ageVerified: cart.some((l) => l.isAlcohol),
       tip: cents(tip + (payment.tip ?? 0)),
       draftOrderId: activeTabId,
+      orgApproval: orgOverride ? (orgApproval?.token ?? null) : null,
     };
   }
 
@@ -1348,12 +1394,14 @@ export default function PosApp({
       lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
       subtotal: order.totals.subtotal,
       discounts: [
+        { label: "Organization comp", amount: order.totals.org_comp_discount ?? 0 },
         { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
         { label: "Monthly member discount", amount: order.totals.monthly_discount },
         { label: "Points reward", amount: order.totals.redemption_discount },
       ],
       tax: order.totals.tax,
+      taxIncluded: !!order.totals.tax_included,
       tip: allTip,
       total: order.totals.total + allTip,
       payments: [
@@ -1746,6 +1794,7 @@ export default function PosApp({
                   double={ctx && up !== null ? { on: doubled, upcharge: up } : null}
                   serve={ctx && canServe(ctx) ? { value: ctx.serve ?? null, upcharge: doubleSettings.serveUpcharge } : null}
                   freeToday={i === totals.dailyPerkLine}
+                  comp={compPlan.comps[i] > 0 ? orgOnOrder?.orgName : null}
                   onLess={() => updateQty(line.key, -1)}
                   onMore={() => updateQty(line.key, 1)}
                   onRemove={() => removeLine(line.key)}
@@ -1785,6 +1834,40 @@ export default function PosApp({
             )
           )}
 
+          {/* An organization member (lib/orgs.ts): whose, today's comps,
+              and what's comped or why not. */}
+          {orgOnOrder && (
+            <div
+              className="rounded-md border-2 px-2 py-1.5 text-xs"
+              style={{ borderColor: compPlan.blocked ? "var(--danger-text)" : "var(--accent)", color: "var(--foreground)" }}
+              role="status"
+            >
+              <div className="font-bold">
+                {orgOnOrder.orgName} · comps today {compCountText(orgOnOrder.used, orgOnOrder.limit)}
+                <InfoTip topic="organizations" />
+              </div>
+              <div style={{ color: "var(--muted)" }}>
+                {roleLabel(orgOnOrder.role)}
+                {!orgOnOrder.active
+                  ? " · this organization is paused, so nothing is comped"
+                  : orgOnOrder.personCompedToday
+                    ? " · already comped today: their movies today are free"
+                    : " · day pass and movies today ring up at $0"}
+              </div>
+              {compPlan.blocked && (
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 font-semibold" style={{ color: "var(--danger-text)" }}>
+                    All {orgOnOrder.limit} comps are used today, so the day pass and tickets are charged.
+                  </span>
+                  <button className="btn-secondary shrink-0 !px-2.5 !py-1.5 !text-xs" onClick={() => setOrgPinOpen(true)}>
+                    Manager override
+                  </button>
+                </div>
+              )}
+              {compPlan.overLimit && <div className="mt-1 font-semibold">Over the limit: a manager approved this comp.</div>}
+            </div>
+          )}
+
           {/* Its "+ Add name" / "+ Add email" show on the customer screen as they're typed. */}
           <TabletSetupContext value={tabletSetup}>
           <PosMemberPanel
@@ -1811,6 +1894,7 @@ export default function PosApp({
             }}
             readerId={readerId}
             toTablet={checkins.toTablet}
+            onOrgChange={() => setOrgTry((n) => n + 1)}
           />
           </TabletSetupContext>
 
@@ -1849,8 +1933,15 @@ export default function PosApp({
           <div className="mt-2 flex items-end justify-between gap-3 border-t pt-2" style={{ borderColor: "var(--border)" }}>
             <div className="text-xs leading-5 tabular-nums" style={{ color: "var(--muted)" }}>
               <div>Subtotal {money(totals.subtotal)}</div>
-              {totals.discount > 0 && <div>Discount -{money(totals.discount)}</div>}
-              <div>Tax {money(totals.tax)}</div>
+              {totals.orgCompDiscount > 0 && <div>Comp -{money(totals.orgCompDiscount)}</div>}
+              {totals.discount - totals.orgCompDiscount > 0.004 && <div>Discount -{money(totals.discount - totals.orgCompDiscount)}</div>}
+              {totals.taxIncluded ? (
+                <div className="font-semibold" style={{ color: "var(--foreground)" }}>
+                  {TAX_INCLUDED_NOTE(orgOnOrder?.orgName ?? "organization")}: {money(totals.tax)}
+                </div>
+              ) : (
+                <div>Tax {money(totals.tax)}</div>
+              )}
             </div>
             <div className="text-right">
               <div className="text-xs" style={{ color: "var(--muted)" }}>
@@ -2167,6 +2258,21 @@ export default function PosApp({
           readerDown={readerDown}
           onReaderOffline={onReaderOffline}
           onReaderPrompt={setReaderPrompt}
+        />
+      )}
+
+      {orgPinOpen && orgOnOrder && (
+        <ManagerPinModal
+          title="Comp past today's limit?"
+          description={`${orgOnOrder.orgName} has used all ${orgOnOrder.limit} comps today. A manager's PIN comps this one anyway.`}
+          onCancel={() => setOrgPinOpen(false)}
+          onSubmit={async (pin) => {
+            const r = await approveOrgOverLimit(pin, orgOnOrder.orgId);
+            if (!r.ok) throw new Error(r.error);
+            setOrgApproval({ orgId: orgOnOrder.orgId, token: r.token });
+            setOrgPinOpen(false);
+            setToast(`Comp approved${r.approvedBy ? ` by ${r.approvedBy}` : ""}. Take payment when ready.`);
+          }}
         />
       )}
 

@@ -19,7 +19,9 @@ function longestWord(name: string): number {
 // From a tablet up: one row, with the button at the right. The name has the
 // rest of the row to itself, so it wraps between words (balanced), never
 // inside one: a name with a very long word is set smaller instead.
-export default function AccountHeader({ member, showBackOffice }: { member: Member; showBackOffice: boolean }) {
+// org: their organization account (lib/orgs.ts), e.g. a helper's work
+// account with Easter Seals.
+export default function AccountHeader({ member, showBackOffice, org = null }: { member: Member; showBackOffice: boolean; org?: { name: string; role: string | null } | null }) {
   const rate = member.price_tier && member.price_tier !== "adult" ? `${RATE_LABEL[member.price_tier]} rate` : null;
   const plus = member.tier === "Insiders+";
   const balance = Math.floor(Number(member.points));
@@ -53,6 +55,12 @@ export default function AccountHeader({ member, showBackOffice }: { member: Memb
         <span className="flex flex-wrap items-center gap-2">
           <span className={`ctag ${plus ? "ctag-yellow" : "ctag-ink"}`}>{member.tier}</span>
           {rate && <span className="ctag bg-[var(--surface)]">{rate}</span>}
+          {org && (
+            <span className="ctag bg-[var(--surface)]">
+              {org.name}
+              {org.role === "helper" ? " · work account" : ""}
+            </span>
+          )}
         </span>
         {/* Each figure stays in one piece; on a narrow phone the second
             drops to its own line rather than splitting mid-phrase. */}

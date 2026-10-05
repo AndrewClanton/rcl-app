@@ -71,7 +71,10 @@ export default function PosMemberPanel({
   readerId,
   toTablet,
   visit = null,
+  onOrgChange,
 }: {
+  // Their organization account changed in the press-and-hold panel.
+  onOrgChange?: () => void;
   member: PosMember | null;
   onChange: (m: PosMember | null) => void;
   // Set for an Insiders+ member: their free daily coffee today.
@@ -353,7 +356,7 @@ export default function PosMemberPanel({
         </>
       )}
 
-      {member && glance && <MemberGlance key={member.id} member={member} employeeId={employeeId} onClose={() => setGlance(false)} />}
+      {member && glance && <MemberGlance key={member.id} member={member} employeeId={employeeId} onClose={() => setGlance(false)} onOrgAccount={() => onOrgChange?.()} />}
 
       {member && confirmTier && (
         <ConfirmModal

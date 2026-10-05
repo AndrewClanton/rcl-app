@@ -37,6 +37,7 @@ const KIND_LABELS: Record<string, string> = {
   sale_abandoned: "Stopped trying",
   items_not_saved: "Items not saved",
   below_cost: "Bar Book drink below cost",
+  org_over_limit: "Organization comp past the limit",
 };
 
 export function flagLabel(kind: string) {

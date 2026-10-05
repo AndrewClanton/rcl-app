@@ -5,6 +5,7 @@ import MemberAvatar from "@/components/MemberAvatar";
 import { maskEmail, maskPhone } from "@/lib/contact-mask";
 import { FLAG_NOTE_MAX, FLAG_REASONS, FLAG_REASON_KEYS, flagTime, type FlagReason } from "@/lib/member-flags";
 import MemberNotesPanel from "@/components/MemberNotesPanel";
+import OrgAccountPicker from "./OrgAccountPicker";
 import { addMemberNote, flagMember, getMemberGlance, setMemberOrganization, type GlanceFlag, type MemberGlanceInfo } from "./checkin-actions";
 import { NOT_ACTIVE_RED } from "./LegacyPlusCard";
 import type { PosMember } from "./member-actions";
@@ -108,12 +109,15 @@ export default function MemberGlance({
   onClose,
   onFlagged,
   onOrganization,
+  onOrgAccount,
 }: {
   member: PosMember;
   employeeId: string;
   onClose: () => void;
   onFlagged?: (memberId: string) => void;
   onOrganization?: (memberId: string, organization: string | null) => void;
+  // Their organization account changed (OrgAccountPicker).
+  onOrgAccount?: (memberId: string) => void;
 }) {
   // undefined while it's looked up, null if it couldn't be.
   const [info, setInfo] = useState<MemberGlanceInfo | null | undefined>(undefined);
@@ -242,6 +246,8 @@ export default function MemberGlance({
               setOrganization={(value) => setMemberOrganization(m.id, value)}
               onOrganization={(org) => onOrganization?.(m.id, org)}
             />
+            {/* The organization account (comps, tax-included prices). */}
+            <OrgAccountPicker memberId={m.id} onChanged={() => onOrgAccount?.(m.id)} />
           </div>
         )}
         {/* A new tab, so the register (and its open sale) stays put. */}
