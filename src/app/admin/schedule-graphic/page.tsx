@@ -1,4 +1,5 @@
 import { getUpcomingScreenings, isRestrictedRelease } from "@/lib/data/screenings";
+import { visibilityOf } from "@/lib/showing-visibility";
 import { getUpcomingEvents } from "@/lib/data/events";
 import { getUpcomingCalendarNotes } from "@/lib/data/calendar-notes";
 import PageHeader from "@/components/admin/PageHeader";
@@ -25,7 +26,11 @@ export default async function ScheduleGraphicPage() {
         // Every upcoming screening, with the ones our MPLC license doesn't let
         // us advertise flagged -- the builder hides those for a Public flyer
         // and the image route enforces the same rule server-side.
-        screenings={screenings.map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at, room: s.room.name, restricted: isRestrictedRelease(s.movie) }))}
+        // Members-only showings count as members-only here too; a private
+        // group's showing is never offered for the flyer.
+        screenings={screenings
+          .filter((s) => visibilityOf(s) !== "private")
+          .map((s) => ({ id: s.id, title: s.movie.title, startsAt: s.starts_at, room: s.room.name, restricted: isRestrictedRelease(s.movie) || visibilityOf(s) === "members" }))}
         // The name is only for staff picking what goes on; the flyer itself
         // always says "Private event". An inquiry nobody has confirmed yet
         // (nothing paid) starts unchecked.

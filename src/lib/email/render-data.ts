@@ -75,7 +75,8 @@ export async function composerOptions(): Promise<ComposerOptions> {
   const in14 = new Date(now.getTime() + 14 * 86_400_000).toISOString();
   const in60 = new Date(now.getTime() + 60 * 86_400_000).toISOString();
   const [scr, ev, items, camps, titles] = await Promise.all([
-    admin.from("screenings").select("starts_at, movie:movies(id, title, release_year)").gte("starts_at", now.toISOString()).lt("starts_at", in14).order("starts_at"),
+    // A private group's showing is never offered for an email.
+    admin.from("screenings").select("starts_at, movie:movies(id, title, release_year)").neq("visibility", "private").gte("starts_at", now.toISOString()).lt("starts_at", in14).order("starts_at"),
     admin.from("house_events").select("id, title, starts_at").gte("starts_at", now.toISOString()).lt("starts_at", in60).order("starts_at"),
     admin.from("menu_items").select("id, name, price").eq("active", true).order("name"),
     admin.from("email_campaigns").select("id, name").is("automation", null).in("status", ["sending", "sent", "scheduled"]).order("created_at", { ascending: false }).limit(40),
