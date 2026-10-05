@@ -93,7 +93,7 @@ export async function getBarBookData(): Promise<BarBookData | null> {
   const supabase = createAdminClient();
   const [rec, ing, outs, counts, target] = await Promise.all([
     supabase.from("recipes").select(BOOK_COLUMNS),
-    supabase.from("ingredients").select("id, name, carried, active, par_item_id, unit_cost"),
+    supabase.from("ingredients").select("id, name, unit, kind, family, carried, active, par_item_id, unit_cost"),
     supabase.from("stock_outages").select("par_item_id, label").is("resolved_at", null).not("par_item_id", "is", null),
     // The latest count per ingredient is all that matters; the newest few
     // thousand counts cover every ingredient anyone still counts.
@@ -116,6 +116,9 @@ export async function getBarBookData(): Promise<BarBookData | null> {
     outLabel: i.par_item_id ? (outByPar.get(i.par_item_id as string) ?? null) : null,
     lastCount: lastCount.has(i.id as string) ? lastCount.get(i.id as string)! : null,
     unitCost: i.unit_cost === null || i.unit_cost === undefined ? null : Number(i.unit_cost),
+    unit: i.unit as string,
+    family: (i.family as string | null) ?? null,
+    kind: (i.kind as string | null) ?? null,
   }));
   const recipes = ((rec.data ?? []) as unknown as RecipeRow[]).map(toRecipe).filter((r): r is BookRecipe => !!r);
   return { recipes, stock, target };
@@ -220,6 +223,44 @@ export async function getBoardEntries(): Promise<BoardEntries> {
     byRecipe[r.id] = { spec, card: r.lines.length > 0 || r.instructions ? { ...recipeCard(r), description: null } : null };
   }
   return { items: map, recipes: byRecipe };
+}
+
+// ---------- custom drinks on an order ("What's in it?") ----------
+
+export type KnownIngredient = { name: string; unit: string; family: string | null; kind: string | null; unitCost: number | null };
+
+// The ingredients a register order's custom drinks name
+// (order_items.custom_recipe), looked up so the server keeps only real ones
+// and writes their names, units and colors itself. Never throws: an empty
+// map drops every list, and the lines save as plain custom lines.
+export async function customIngredientsFor(lines: readonly { custom_recipe?: unknown }[]): Promise<Map<string, KnownIngredient>> {
+  const ids = new Set<string>();
+  for (const l of lines) {
+    if (!Array.isArray(l.custom_recipe)) continue;
+    for (const r of l.custom_recipe.slice(0, 12)) {
+      const id = r && typeof r === "object" ? (r as { ingredient_id?: unknown }).ingredient_id : null;
+      if (typeof id === "string" && UUID.test(id)) ids.add(id.toLowerCase());
+    }
+  }
+  const found = new Map<string, KnownIngredient>();
+  if (!ids.size) return found;
+  try {
+    const supabase = createAdminClient();
+    const full = await supabase.from("ingredients").select("id, name, unit, family, kind, unit_cost").in("id", [...ids]);
+    let rows = full.data as { id: string; name: string; unit: string; family?: string | null; kind?: string | null; unit_cost: number | null }[] | null;
+    if (full.error) {
+      if (!schemaMissing(full.error)) return found;
+      const plain = await supabase.from("ingredients").select("id, name, unit, unit_cost").in("id", [...ids]);
+      if (plain.error) return found;
+      rows = plain.data as typeof rows;
+    }
+    for (const r of rows ?? []) {
+      found.set(r.id.toLowerCase(), { name: r.name, unit: r.unit, family: r.family ?? null, kind: r.kind ?? null, unitCost: r.unit_cost === null ? null : Number(r.unit_cost) });
+    }
+  } catch {
+    // As if none were found.
+  }
+  return found;
 }
 
 // ---------- Bar Book drinks on an order ----------

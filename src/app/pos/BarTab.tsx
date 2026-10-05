@@ -17,14 +17,16 @@ type Placed = { item: MenuItem; sectionLabel: string | null; section: BarSection
 
 // The Bar Book in the tab's header strip: "loading" until the register has
 // read it, "off" before its migration (no strip at all).
-export type BarBookEntry = { state: "loading" | "ready" | "off"; count: number | null; onOpen: (query?: string) => void };
+// onWhatsInIt: "What's in it?" (WhatsInIt.tsx), from the same strip.
+export type BarBookEntry = { state: "loading" | "ready" | "off"; count: number | null; onOpen: (query?: string) => void; onWhatsInIt?: () => void };
 
 const GAP = 8;
 
 // The register's Bar tab: everything the bar sells on one screen at the
 // iPad's size, with nothing to scroll.
-//   - Across the top, the Bar Book: its button ("37 we can make") and a
-//     "Find a drink" box that opens it already searching.
+//   - Across the top, the Bar Book: its button ("37 we can make"), a
+//     "Find a drink" box that opens it already searching, and "What's in
+//     it?" for a drink the guest can only describe.
 //   - Down the left, the quick pours (beer, wine, shots), one button each in
 //     the same style, then "+ Custom item".
 //   - The rest is cocktails, tinted by their spirit with an icon drawn from
@@ -299,10 +301,18 @@ function BookStrip({ book }: { book: BarBookEntry }) {
           onChange={(e) => setQ(e.target.value)}
           aria-label="Find a drink in the Bar Book"
         />
-        <button className="btn-secondary min-h-12 shrink-0 !px-4" disabled={!ready}>
-          Find
+        <button className="btn-secondary flex min-h-12 w-12 shrink-0 items-center justify-center !p-0" disabled={!ready} aria-label="Find">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden>
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M15.5 15.5 21 21" />
+          </svg>
         </button>
       </form>
+      {book.onWhatsInIt && (
+        <button className="btn-secondary min-h-12 shrink-0 whitespace-nowrap !px-3.5" disabled={!ready} onClick={book.onWhatsInIt}>
+          What&apos;s in it?
+        </button>
+      )}
     </div>
   );
 }

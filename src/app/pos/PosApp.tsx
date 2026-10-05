@@ -28,6 +28,7 @@ import MenuTile from "@/components/menu/MenuTile";
 import CategoryIcon from "@/components/menu/CategoryIcon";
 import BarTab from "./BarTab";
 import BarBook from "./BarBook";
+import WhatsInIt from "./WhatsInIt";
 import { loadBarBook } from "./bar-book-actions";
 import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
 import { countMakeable, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
@@ -114,6 +115,9 @@ interface CartLine {
   // A Bar Book drink rung up off the menu (BarBook.tsx → Add to order): a
   // one-off line like "+ Custom item" that knows its recipe.
   recipeId?: string | null;
+  // A custom drink from "What's in it?" (WhatsInIt.tsx): a one-off line
+  // that knows what's in it.
+  customRecipe?: { ingredient_id: string; quantity: number }[] | null;
 }
 
 // The Movies tab sits alongside the menu categories, and so does Customers
@@ -500,6 +504,7 @@ export default function PosApp({
     target: 0.2,
   });
   const [bookOpen, setBookOpen] = useState(false);
+  const [whatsOpen, setWhatsOpen] = useState(false); // "What's in it?"
   // What the Bar tab's "Find a drink" box opened the book searching for.
   const [bookQuery, setBookQuery] = useState("");
   // Which page of cocktails the Bar tab is on: kept here, so ringing a
@@ -589,6 +594,7 @@ export default function PosApp({
         is_alcohol: l.isAlcohol,
         screening_id: l.screeningId ?? null,
         ...(l.recipeId ? { recipe_id: l.recipeId } : {}),
+        ...(l.customRecipe?.length ? { custom_recipe: l.customRecipe } : {}),
       })),
     };
   }
@@ -605,6 +611,7 @@ export default function PosApp({
         isAlcohol: l.is_alcohol,
         screeningId: l.screening_id ?? null,
         recipeId: l.recipe_id ?? null,
+        customRecipe: l.custom_recipe?.length ? l.custom_recipe.map((c) => ({ ingredient_id: c.ingredient_id, quantity: c.quantity })) : null,
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -1936,6 +1943,10 @@ export default function PosApp({
                 setBookLoading(true);
                 refreshBook();
               },
+              onWhatsInIt: () => {
+                setWhatsOpen(true);
+                refreshBook();
+              },
             }}
           />
         ) : (
@@ -2081,6 +2092,40 @@ export default function PosApp({
       )}
 
       {noteOpen && <DevNoteDialog about={NOTE_ABOUT} onClose={() => setNoteOpen(false)} />}
+
+      {whatsOpen && book.state === "ready" && (
+        <WhatsInIt
+          recipes={book.recipes}
+          stock={book.stock}
+          menuItems={bookMenu}
+          target={book.target}
+          outs={outs}
+          onClose={() => setWhatsOpen(false)}
+          // Exactly what tapping its button on the Bar tab does.
+          onRingUp={(id) => {
+            setWhatsOpen(false);
+            tapItem(id);
+          }}
+          // The Bar Book's own off-menu line, and a custom drink: both the
+          // same one-off line as "+ Custom item".
+          onAddLine={(l, note) => {
+            setWhatsOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: true, recipeId: l.recipeId }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+          onAddCustom={(l, note) => {
+            setWhatsOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: l.isAlcohol, customRecipe: l.customRecipe }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+        />
+      )}
 
       {bookOpen && book.state === "ready" && (
         <BarBook

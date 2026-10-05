@@ -33,9 +33,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // lockout after wrong tries, and the PIN log records who and for which
 // recipe). The sale itself is checked again on the server, which flags a
 // below-cost book drink for Reports → Register checks either way.
+// recipeId: the Bar Book drink, or "custom" for a drink from "What's in it?".
 export async function approveBelowCost(pin: string, recipeId: string): Promise<ApprovalResult> {
   const staff = await assertStaff();
-  if (typeof recipeId !== "string" || !UUID.test(recipeId)) return { ok: false, error: "That drink isn't in the book anymore. Close the book and open it again." };
+  if (typeof recipeId !== "string" || !(UUID.test(recipeId) || recipeId === "custom")) return { ok: false, error: "That drink isn't in the book anymore. Close the book and open it again." };
   const approval = await checkManagerPin(pin, "below-cost-drink", staff.employeeId, recipeId.toLowerCase());
   if (!approval.ok) return approval;
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };

@@ -760,6 +760,7 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     // Bar Book drinks rung up off the menu, poured from their recipe.
     bookDrinkLines(since),
   ]);
+  const customSold = await customDrinkLines(since);
   if (ingErr) throw ingErr;
   if (drinkErr) throw drinkErr;
   const notCarried = new Set(notCarriedRead.error ? [] : (notCarriedRead.data ?? []).map((i) => i.id as string));
@@ -787,6 +788,17 @@ export async function getAlcoholUsageReport(days: number): Promise<AlcoholUsageR
     for (const ri of bookSold.recipes.get(sold.recipe_id) ?? []) {
       barIngredients.add(ri.ingredient_id);
       theoreticalByIngredient.set(ri.ingredient_id, (theoreticalByIngredient.get(ri.ingredient_id) ?? 0) + ri.quantity * sold.quantity);
+    }
+  }
+  // And a custom drink pours what its list says.
+  for (const sold of customSold) {
+    if (!Array.isArray(sold.custom_recipe)) continue;
+    for (const ri of sold.custom_recipe as { ingredient_id?: unknown; quantity?: unknown }[]) {
+      const id = typeof ri?.ingredient_id === "string" ? ri.ingredient_id : null;
+      const q = Number(ri?.quantity);
+      if (!id || !Number.isFinite(q) || q <= 0) continue;
+      barIngredients.add(id);
+      theoreticalByIngredient.set(id, (theoreticalByIngredient.get(id) ?? 0) + q * sold.quantity);
     }
   }
 
@@ -870,6 +882,28 @@ async function bookDrinkLines(since: Date): Promise<BookSold> {
   } catch (e) {
     if (!schemaMissing(e as { code?: string })) console.warn("bar usage: Bar Book drinks not read", e);
     return none;
+  }
+}
+
+// Custom drinks ("What's in it?") sold since `since`, with the ingredient
+// list on each line (order_items.custom_recipe, migration 20261005010000).
+// Empty before that migration, or if it can't be read.
+async function customDrinkLines(since: Date): Promise<{ quantity: number; custom_recipe: unknown }[]> {
+  const supabase = createAdminClient();
+  try {
+    return await fetchAll<{ quantity: number; custom_recipe: unknown }>((from, to) =>
+      supabase
+        .from("order_items")
+        .select("quantity, custom_recipe, orders!inner(status, completed_at)")
+        .eq("orders.status", "completed")
+        .gte("orders.completed_at", since.toISOString())
+        .not("custom_recipe", "is", null)
+        .order("id")
+        .range(from, to),
+    );
+  } catch (e) {
+    if (!schemaMissing(e as { code?: string })) console.warn("bar usage: custom drinks not read", e);
+    return [];
   }
 }
 

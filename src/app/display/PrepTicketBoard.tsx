@@ -85,6 +85,7 @@ export default function PrepTicketBoard({
               is_alcohol: boolean;
               menu_item_id: string | null;
               recipe_id?: string | null; // a Bar Book drink (once its migration is in)
+              custom_recipe?: unknown; // a custom drink's list (once its migration is in)
             };
             if (row.is_event) return;
             const [{ data: order }, categoryKey] = await Promise.all([
@@ -127,6 +128,7 @@ export default function PrepTicketBoard({
                   station: rowStation,
                   menu_item_id: row.menu_item_id ?? null,
                   recipe_id: row.recipe_id ?? null,
+                  custom_recipe: row.custom_recipe ?? null,
                 },
                 ...prev,
               ].slice(0, 60)
