@@ -10,6 +10,7 @@ import { exactEmail, sameEmail } from "@/lib/email-match";
 import { memberHasBookingFor } from "@/lib/data/screening-detail";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import { isWithinPublicWindow } from "@/lib/public-window";
+import { visibilityOf } from "@/lib/showing-visibility";
 
 // Vercel/Next set these on the incoming request; falls back to localhost
 // for `next dev`. Avoids needing a hardcoded NEXT_PUBLIC_SITE_URL that
@@ -48,10 +49,16 @@ export async function startCheckout(fields: {
 
   const { data: screening, error: screeningErr } = await supabase
     .from("screenings")
-    .select("id, ticket_price, capacity, starts_at, movie:movies(title)")
+    .select("id, ticket_price, capacity, starts_at, visibility, movie:movies(title)")
     .eq("id", fields.screeningId)
     .single();
   if (screeningErr || !screening) return { ok: false, error: "Screening not found." };
+  // A private group's showing is never sold online (staff ring it up at the
+  // register), and a members-only one only to a signed-in member. Both look
+  // like no showing at all to anyone else.
+  const visibility = visibilityOf(screening);
+  if (visibility === "private") return { ok: false, error: "Screening not found." };
+  if (visibility === "members" && !(await getSignedInMember())) return { ok: false, error: "Screening not found." };
   // Sold online only while the showtime is on the public site: once it has
   // started its page is gone too (a late arrival buys at the box office), and
   // one further out than the public window isn't on sale yet.

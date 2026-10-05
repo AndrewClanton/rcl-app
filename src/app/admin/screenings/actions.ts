@@ -10,6 +10,7 @@ import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 import { centralToIso } from "@/lib/ops/time";
+import { SHOWING_VISIBILITIES, type ShowingVisibility } from "@/lib/showing-visibility";
 import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
 
 function revalidate() {
@@ -261,9 +262,13 @@ export interface ScreeningFields {
   time: string; // HH:MM, Central
   ticket_price: number;
   capacity: number;
+  // Who it's listed for (lib/showing-visibility.ts). Left out: public on a
+  // new showing, unchanged on an edit.
+  visibility?: ShowingVisibility;
 }
 
 function checkFields(f: ScreeningFields) {
+  if (f.visibility !== undefined && !SHOWING_VISIBILITIES.includes(f.visibility)) throw new UserFacingError("Pick who the showing is for: Public, Members only or Private.");
   if (!f.movie_id) throw new UserFacingError("Pick a movie.");
   if (!f.room_id) throw new UserFacingError("Pick a room.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(f.date) || !/^\d{1,2}:\d{2}$/.test(f.time)) throw new UserFacingError("Pick a date and start time.");
@@ -306,6 +311,7 @@ async function insertScreenings(list: ScreeningFields[]): Promise<number> {
       starts_at: centralToIso(f.date, f.time),
       ticket_price: f.ticket_price,
       capacity: f.capacity,
+      visibility: f.visibility ?? "public",
     };
   });
 
@@ -397,7 +403,14 @@ export async function updateScreening(
 
     const { error } = await supabase
       .from("screenings")
-      .update({ movie_id: fields.movie_id, room_id: fields.room_id, starts_at: startsAt, ticket_price: fields.ticket_price, capacity: fields.capacity })
+      .update({
+        movie_id: fields.movie_id,
+        room_id: fields.room_id,
+        starts_at: startsAt,
+        ticket_price: fields.ticket_price,
+        capacity: fields.capacity,
+        ...(fields.visibility && { visibility: fields.visibility }),
+      })
       .eq("id", id);
     if (error) throw error;
     revalidate();

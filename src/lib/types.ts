@@ -203,6 +203,8 @@ export interface Screening {
   attendance_reported: boolean;
   attendance_count: number | null;
   box_office_revenue: number | null;
+  // Who it's listed for: lib/showing-visibility.ts
+  visibility: "public" | "members" | "private";
   movie: Movie;
   room: Room;
 }

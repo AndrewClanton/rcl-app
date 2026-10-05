@@ -4,6 +4,7 @@ import { unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
+import { visibilityOf } from "@/lib/showing-visibility";
 import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow } from "@/lib/public-window";
 import type { Screening } from "@/lib/types";
 
@@ -158,6 +159,12 @@ export function excludeRestrictedReleases(screenings: Screening[]): Screening[] 
   return screenings.filter((s) => !isRestrictedRelease(s.movie));
 }
 
+// What anyone may see: public showings of titles we're allowed to advertise.
+// Members-only and private showings never pass, nor does an older MPLC title.
+export function onlyPublicShowings(screenings: Screening[]): Screening[] {
+  return excludeRestrictedReleases(screenings).filter((s) => visibilityOf(s) === "public");
+}
+
 // ---------- the public listings (Home, Showtimes, the sitemap) ----------
 
 // The tag on the cached rows below. admin/screenings/actions.ts expires it
@@ -190,7 +197,7 @@ async function readPublicRows(): Promise<PublicRows> {
 
 // About one database read a minute while people are browsing, shared by
 // every visitor and page (plus one after a quiet spell, see ROWS_MAX_AGE_MS).
-const cachedPublicRows = unstable_cache(readPublicRows, ["public-screening-rows-v1"], { revalidate: 60, tags: [PUBLIC_SCREENINGS_TAG] });
+const cachedPublicRows = unstable_cache(readPublicRows, ["public-screening-rows-v2"], { revalidate: 60, tags: [PUBLIC_SCREENINGS_TAG] });
 
 // Same as getUpcomingScreenings, but only screenings starting within the
 // next PUBLIC_SCHEDULE_WINDOW_DAYS, and excluding anything our MPLC license
@@ -210,5 +217,17 @@ export async function getPubliclyVisibleScreenings(): Promise<Screening[]> {
   const cached = await cachedPublicRows();
   // Too old to trust after a quiet spell: read them now.
   const { rows } = Date.now() - cached.fetchedAt > ROWS_MAX_AGE_MS ? await readPublicRows() : cached;
-  return excludeRestrictedReleases(rows.filter((s) => isWithinPublicWindow(s.starts_at)));
+  return onlyPublicShowings(rows.filter((s) => isWithinPublicWindow(s.starts_at)));
+}
+
+// The members-only showings inside the public window, for a signed-in
+// member's listing. Takes the member getSignedInMember() returned, so a
+// guest (null) gets nothing. Members are who the MPLC rule lets us tell
+// about older titles, so an older title marked members-only is listed too.
+export async function getMembersOnlyScreenings(member: { id: string } | null): Promise<Screening[]> {
+  if (!member) return [];
+  await connection();
+  const cached = await cachedPublicRows();
+  const { rows } = Date.now() - cached.fetchedAt > ROWS_MAX_AGE_MS ? await readPublicRows() : cached;
+  return rows.filter((s) => visibilityOf(s) === "members" && isWithinPublicWindow(s.starts_at));
 }

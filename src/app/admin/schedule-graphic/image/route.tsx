@@ -5,6 +5,7 @@ import { getStaffSession } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SITE_URL } from "@/lib/site";
 import { isRestrictedRelease } from "@/lib/data/screenings";
+import { visibilityOf } from "@/lib/showing-visibility";
 import {
   FLYER_W,
   QR_DARK,
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
     screeningIds.length > 0
       ? supabase
           .from("screenings")
-          .select("id, starts_at, movie:movies(title, poster_url, runtime_minutes, rating, release_year), room:rooms(name)")
+          .select("id, starts_at, visibility, movie:movies(title, poster_url, runtime_minutes, rating, release_year), room:rooms(name)")
           .in("id", screeningIds)
           .order("starts_at")
       : Promise.resolve({ data: [] as ScreeningWithYear[], error: null }),
@@ -72,9 +73,12 @@ export async function GET(request: NextRequest) {
   // Enforced here, not just in the builder's checklist -- the ids in the URL
   // are whatever the browser sent. For members, the older titles are still
   // split out into the flyer's own "film archive" section.
-  const screenings: ScreeningRow[] = ((screeningsRes.data ?? []) as unknown as ScreeningWithYear[])
+  // A private group's showing is never on a flyer; a members-only one only
+  // on the members' version, in the members-only section.
+  const screenings: ScreeningRow[] = ((screeningsRes.data ?? []) as unknown as (ScreeningWithYear & { visibility?: string })[])
+    .filter((s) => visibilityOf(s) !== "private" && (audience === "members" || visibilityOf(s) === "public"))
     .filter((s) => s.movie && (audience === "members" || !isRestrictedRelease(s.movie)))
-    .map((s) => ({ ...s, movie: s.movie && { ...s.movie, archive: isRestrictedRelease(s.movie) } }));
+    .map(({ visibility, ...s }) => ({ ...s, movie: s.movie && { ...s.movie, archive: isRestrictedRelease(s.movie) || visibility === "members" } }));
   const events = (eventsRes.data ?? []) as unknown as EventRow[];
   const notes = (notesRes.data ?? []) as unknown as NoteRow[];
 

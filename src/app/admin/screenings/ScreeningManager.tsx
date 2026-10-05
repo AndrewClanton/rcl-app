@@ -8,6 +8,7 @@ import type { Movie, Room, Screening } from "@/lib/types";
 import type { ScreeningTicket, TicketCount } from "@/lib/data/screenings";
 import { useRefreshingAction } from "@/lib/useRefreshingAction";
 import type { PosterOption } from "@/lib/tmdb-posters";
+import { SHOWING_VISIBILITIES, VISIBILITY_LABEL, isOutdoorRoom, visibilityOf, type ShowingVisibility } from "@/lib/showing-visibility";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import ConfirmModal from "@/components/ConfirmModal";
 import InfoTip from "@/components/help/InfoTip";
@@ -76,7 +77,7 @@ export default function ScreeningManager({
   function duplicate(s: Screening) {
     flushSync(() =>
       setDraft({
-        form: { movieId: s.movie_id, roomId: s.room_id, date: "", time: centralParts(s.starts_at).time, price: String(s.ticket_price), capacity: String(s.capacity) },
+        form: { movieId: s.movie_id, roomId: s.room_id, date: "", time: centralParts(s.starts_at).time, price: String(s.ticket_price), capacity: String(s.capacity), visibility: visibilityOf(s) },
         repeat: null,
         note: { tone: "info", text: `Copied from ${s.movie.title} (${when(s.starts_at)}). Pick a date for the new showing, or use Repeat to add several.` },
       }),
@@ -349,8 +350,24 @@ function MovieImporter({ movies }: { movies: Movie[] }) {
   );
 }
 
-function isOutdoorRoom(room: Room | undefined) {
-  return !!room?.name.toLowerCase().includes("outdoor");
+const VISIBILITY_HELP: Record<ShowingVisibility, string> = {
+  public: "On the website, the lobby TVs and the weekly email, as usual.",
+  members: "Only signed-in members see it on the website, marked Members only. It goes in the members-only part of the email, not the lobby TV.",
+  private: "Never on the website, TVs or emails, and not sold online. It stays here and on the register, labelled Private, to ring up.",
+};
+
+// Who a showing is listed for, as a small badge (none for Public: the
+// usual case stays quiet).
+function VisibilityBadge({ visibility }: { visibility: ShowingVisibility }) {
+  if (visibility === "public") return null;
+  return (
+    <span
+      className={`ml-1.5 inline-block rounded-full px-2 py-0.5 align-middle text-[11px] font-bold ${visibility === "private" ? "bg-[var(--foreground)] text-[var(--background)]" : "bg-[var(--gold)] text-[var(--foreground)]"}`}
+      title={VISIBILITY_HELP[visibility]}
+    >
+      {VISIBILITY_LABEL[visibility]}
+    </span>
+  );
 }
 
 const INPUT = "min-h-11 rounded-lg border border-[var(--border)] px-3 text-base";
@@ -366,13 +383,14 @@ interface FormState {
   time: string;
   price: string;
   capacity: string;
+  visibility: ShowingVisibility;
 }
 
 function toFields(f: FormState): ScreeningFields | null {
   const price = parseFloat(f.price);
   const capacity = parseInt(f.capacity, 10);
   if (!f.movieId || !f.roomId || !f.date || !f.time || !(price >= 0) || !(capacity > 0)) return null;
-  return { movie_id: f.movieId, room_id: f.roomId, date: f.date, time: f.time, ticket_price: price, capacity };
+  return { movie_id: f.movieId, room_id: f.roomId, date: f.date, time: f.time, ticket_price: price, capacity, visibility: f.visibility };
 }
 
 // Repeat: the same showing at each start time, on each chosen weekday, from
@@ -397,7 +415,7 @@ interface Draft {
 function blankDraft(rooms: Room[]): Draft {
   const room = rooms.find((r) => r.is_screening_room);
   return {
-    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? "") },
+    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? ""), visibility: "public" },
     repeat: null,
     note: null,
   };
@@ -520,6 +538,17 @@ function ScreeningFieldsForm({
         <label className={LABEL}>Capacity</label>
         <input type="number" min="1" className={`w-28 ${INPUT}`} value={value.capacity} onChange={(e) => set({ capacity: e.target.value })} />
       </div>
+      <fieldset className="basis-full">
+        <legend className={LABEL}>Who sees it</legend>
+        <div className="flex flex-wrap gap-2">
+          {SHOWING_VISIBILITIES.map((v) => (
+            <button key={v} type="button" className={`${CHIP} ${value.visibility === v ? "chip-selected" : ""}`} aria-pressed={value.visibility === v} onClick={() => set({ visibility: v })}>
+              {VISIBILITY_LABEL[v]}
+            </button>
+          ))}
+        </div>
+        <div className="mt-1 max-w-xl text-xs text-[var(--muted)]">{VISIBILITY_HELP[value.visibility]}</div>
+      </fieldset>
     </>
   );
 }
@@ -854,6 +883,7 @@ function ScreeningRow({
       <div className={grid}>
         <span className="truncate font-medium" title={s.movie.title}>
           {s.movie.title}
+          <VisibilityBadge visibility={visibilityOf(s)} />
         </span>
         <span className="text-[var(--muted)]">{when(s.starts_at)}</span>
         <span className="truncate text-[var(--muted)]" title={s.room.name}>
@@ -955,6 +985,7 @@ function EditScreening({
     time: start.time,
     price: String(s.ticket_price),
     capacity: String(s.capacity),
+    visibility: visibilityOf(s),
   });
   // The server's question when tickets are sold (see updateScreening), and
   // the changes it's about.

@@ -1,4 +1,4 @@
-import { getScreeningsForCountdown, excludeRestrictedReleases, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
+import { getScreeningsForCountdown, onlyPublicShowings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import BoxOfficeSignage from "./BoxOfficeSignage";
 import { NOW_SHOWING_MINUTES, shortRoom, type BoardShow } from "./board";
 
@@ -16,7 +16,8 @@ export default async function BoxOfficePage() {
   const { screenings, fetchedAt } = await getScreeningsForCountdown(NOW_SHOWING_MINUTES);
   // Same public window as the website: nothing further out than it lists.
   const windowEnd = fetchedAt + PUBLIC_SCHEDULE_WINDOW_DAYS * 24 * 60 * 60 * 1000;
-  const shows: BoardShow[] = excludeRestrictedReleases(screenings)
+  // Public showings only: no members-only or private ones on an open URL.
+  const shows: BoardShow[] = onlyPublicShowings(screenings)
     .filter((s) => new Date(s.starts_at).getTime() <= windowEnd)
     .slice(0, 12)
     .map((s) => ({

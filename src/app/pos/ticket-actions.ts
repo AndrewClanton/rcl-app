@@ -3,6 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
 import { businessDay } from "@/lib/ops/time";
+import { visibilityOf, type ShowingVisibility } from "@/lib/showing-visibility";
 
 // Movie tickets at the register: the showings staff can sell (today's and
 // tomorrow's business days, including a show that started a few minutes
@@ -21,6 +22,9 @@ export interface RegisterScreening {
   price: number;
   capacity: number;
   sold: number;
+  // Private and members-only showings are sold here like any other; the
+  // register labels them (lib/showing-visibility.ts).
+  visibility: ShowingVisibility;
 }
 
 const LATE_SEATING_MIN = 45;
@@ -45,7 +49,7 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
     // anything past tomorrow's is dropped.
     const { data, error } = await supabase
       .from("screenings")
-      .select("id, starts_at, ticket_price, capacity, movie:movies(title, poster_url, runtime_minutes, rating), room:rooms(name)")
+      .select("id, starts_at, ticket_price, capacity, visibility, movie:movies(title, poster_url, runtime_minutes, rating), room:rooms(name)")
       .gte("starts_at", new Date(now - LATE_SEATING_MIN * 60_000).toISOString())
       .lte("starts_at", new Date(now + 3 * 86_400_000).toISOString())
       .order("starts_at");
@@ -55,6 +59,7 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
       starts_at: string;
       ticket_price: number;
       capacity: number;
+      visibility: string;
       movie: { title: string; poster_url: string | null; runtime_minutes: number | null; rating: string | null } | null;
       room: { name: string } | null;
     }[];
@@ -76,6 +81,7 @@ export async function getRegisterScreenings(): Promise<{ ok: true; screenings: R
         price: Number(r.ticket_price),
         capacity: r.capacity,
         sold: taken.get(r.id) ?? 0,
+        visibility: visibilityOf(r),
       })),
     };
   } catch {

@@ -1,4 +1,5 @@
 import { isRestrictedRelease } from "@/lib/mplc";
+import { visibilityOf } from "@/lib/showing-visibility";
 import { SITE_URL } from "@/lib/site";
 import { THEATER_REF } from "@/lib/seo/theater";
 import type { Screening } from "@/lib/types";
@@ -12,7 +13,8 @@ import type { Screening } from "@/lib/types";
 // returns null for a restricted title even if a caller forgets to filter --
 // fail closed, same as the rest of the site.
 export function screeningEventJsonLd(s: Screening, seatsLeft?: number): Record<string, unknown> | null {
-  if (isRestrictedRelease(s.movie)) return null;
+  // Members-only and private showings are never described to the open web.
+  if (isRestrictedRelease(s.movie) || visibilityOf(s) !== "public") return null;
   const url = `${SITE_URL}/showtimes/${s.id}`;
   const start = new Date(s.starts_at);
   const end = s.movie.runtime_minutes ? new Date(start.getTime() + s.movie.runtime_minutes * 60_000) : null;

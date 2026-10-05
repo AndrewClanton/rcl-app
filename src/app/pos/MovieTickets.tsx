@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import MoviePoster from "@/components/MoviePoster";
 import { getRegisterScreenings, type RegisterScreening } from "./ticket-actions";
+import { VISIBILITY_LABEL, type ShowingVisibility } from "@/lib/showing-visibility";
 
 // The register's Movies tab: a tile for every showing today and tomorrow,
 // each with its seats left. Tapping one picks how many tickets; each ticket
@@ -20,6 +21,20 @@ const TZ = "America/Chicago";
 const time = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: TZ });
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: TZ });
 const money = (n: number) => (n === 0 ? "Free" : `$${n.toFixed(2)}`);
+
+// "Private" (a private group's showing: not listed or sold online, only here)
+// or "Members only".
+function ShowingLabel({ visibility }: { visibility: ShowingVisibility }) {
+  const priv = visibility === "private";
+  return (
+    <span
+      className="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold"
+      style={{ background: priv ? "var(--foreground)" : "var(--gold)", color: priv ? "var(--background)" : "var(--foreground)" }}
+    >
+      {VISIBILITY_LABEL[visibility]}
+    </span>
+  );
+}
 
 export default function MovieTickets({
   initial,
@@ -112,6 +127,7 @@ export default function MovieTickets({
                   <div className="truncate text-xs" style={{ color: "var(--muted)" }}>
                     {s.room}
                   </div>
+                  {s.visibility !== "public" && <ShowingLabel visibility={s.visibility} />}
                 </div>
               </div>
               <div className="flex items-center justify-between text-xs">
@@ -171,6 +187,7 @@ function TicketPicker({
           </div>
           <div className="min-w-0">
             <h3 className="font-display text-xl leading-tight">{show.title}</h3>
+            {show.visibility !== "public" && <ShowingLabel visibility={show.visibility} />}
             <div className="mt-1 text-lg font-bold" style={{ color: "var(--accent)" }}>
               {dayLabel(show.startsAt)} · {time(show.startsAt)}
             </div>

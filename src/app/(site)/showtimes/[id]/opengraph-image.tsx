@@ -39,11 +39,12 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { fonts, logo } = await loadShareAssets();
 
   const { data } = UUID.test(id)
-    ? await createAdminClient().from("screenings").select("starts_at, movie:movies(title, poster_url, release_year)").eq("id", id).maybeSingle()
+    ? await createAdminClient().from("screenings").select("starts_at, visibility, movie:movies(title, poster_url, release_year)").eq("id", id).maybeSingle()
     : { data: null };
-  const screening = data as { starts_at: string; movie: { title: string; poster_url: string | null; release_year: number | null } | null } | null;
+  const screening = data as { starts_at: string; visibility: string; movie: { title: string; poster_url: string | null; release_year: number | null } | null } | null;
 
-  if (!screening?.movie || !isWithinPublicWindow(screening.starts_at) || isRestrictedRelease(screening.movie)) {
+  // Members-only and private showings get the plain card too: nothing names the film.
+  if (!screening?.movie || screening.visibility !== "public" || !isWithinPublicWindow(screening.starts_at) || isRestrictedRelease(screening.movie)) {
     return new ImageResponse(<BrandCard logo={logo} photo={null} />, { ...SHARE_SIZE, fonts, headers: cacheFor() });
   }
 

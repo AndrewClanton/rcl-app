@@ -430,6 +430,18 @@ export const HELP_TOPICS = {
       "Pick the movie, room, date and time (Central). Picking a room fills in its capacity, and the outdoor screen is always free. Duplicate on a showing copies it here for another date. Repeat adds the same showing at several start times on the days you pick across a date range, listed first so you can check them. Adding, moving or removing a showing takes a manager. Changing the price later only affects tickets sold from then on. Our movie license only lets us advertise this year's releases, so the website and lobby TV leave older titles off automatically: those are announced to members by email.",
     trainingSlug: "what-we-can-post",
   },
+  "showing-visibility": {
+    title: "Public, Members only or Private",
+    area: "Showtimes, events and booths",
+    body:
+      "Every showing has a \"Who sees it\" choice; new ones start Public. Public: on the website, the lobby TV and the weekly email as usual. Members only: the website shows it only to members signed in to their account, marked Members only; guests don't see it at all. It goes in the members-only part of the weekly email and stays off the lobby TV (the ramp TV still counts it down). Private: a private group's showing, like a school or charity matinee. It's never on the website, TVs, emails or flyers and can't be bought online; it shows here and on the register's Movies tab labelled Private, so ring their tickets up there. Older titles stay off the public website whatever you pick. On the showtimes spreadsheet, add the choice to the title: \"Beetlejuice 2 (member screening)\" or \"(members only)\" for members, \"(private event do not list)\", \"(private)\" or \"(do not list)\" for private. The note comes off the title when it's loaded.",
+  },
+  "outdoor-screen": {
+    title: "The outdoor screen link",
+    area: "Showtimes, events and booths",
+    body:
+      "The website labels every showing with its screen: \"Outdoor screen · weather permitting\" or the indoor cinema, from the room you pick. Showtimes has an \"On the outdoor screen this weekend\" box, and royalecinemajoplin.com/outdoor lists only the outdoor showings: paste that link when someone asks what's on outside. Older titles and members-only showings aren't on it, same as the rest of the public site.",
+  },
   "house-events": {
     title: "House events",
     area: "Showtimes, events and booths",

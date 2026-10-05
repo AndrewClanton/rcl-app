@@ -14,6 +14,9 @@ import { hasPlusPerks } from "@/lib/plus-checkout";
 import { RATE_PRICE } from "@/lib/membership-rates";
 import { issueFormToken } from "@/lib/public-form-guard";
 import { pageMeta } from "@/lib/seo/page-meta";
+import { isOutdoorRoom, visibilityOf } from "@/lib/showing-visibility";
+import ScreenTag from "@/components/site/ScreenTag";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -35,13 +38,14 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   const { id } = await params;
   const path = `/showtimes/${id}`;
   const screening = await getScreeningById(id);
-  if (!screening || !isWithinPublicWindow(screening.starts_at)) return { title: "Showtime", robots: { index: false, follow: false } };
+  if (!screening || !isWithinPublicWindow(screening.starts_at) || visibilityOf(screening) === "private") return { title: "Showtime", robots: { index: false, follow: false } };
 
   // An older title (MPLC) can be reached by direct link -- the members'
   // email -- but must not be advertised. Keep it out of search results, and
   // give link previews (a share on Facebook, a text message) nothing that
-  // names the movie. (Its preview image is the plain site card.)
-  if (isRestrictedRelease(screening.movie)) {
+  // names the movie. (Its preview image is the plain site card.) Members-only
+  // and private showings get the same.
+  if (isRestrictedRelease(screening.movie) || visibilityOf(screening) !== "public") {
     const generic = "A screening at Royale Cinema Lounge";
     const meta = pageMeta({ title: "Members' screening", description: "Royale Cinema Lounge, Joplin, MO.", path, image: null, noindex: true });
     return { ...meta, openGraph: { ...meta.openGraph, title: generic }, twitter: { ...meta.twitter, title: generic } };
@@ -79,9 +83,30 @@ export default async function ScreeningDetailPage({
   const isPublic = isWithinPublicWindow(screening.starts_at);
   const checkoutReturn = (checkout === "success" && !!session_id) || (checkout === "free" && !!booking_id);
   if (!isPublic && !checkoutReturn) notFound();
+  // A private group's showing has no page: it's never listed or sold online.
+  // (A checkout return still gets through, for a ticket bought before it was
+  // made private; the payment is checked below.)
+  const visibility = visibilityOf(screening);
+  if (visibility === "private" && !checkoutReturn) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
   const member = await getSignedInMember();
+  // A members-only showing opened by a guest (a forwarded email link): ask
+  // them to sign in, without naming the film or the time.
+  if (visibility === "members" && !member && !checkoutReturn) {
+    return (
+      <div className="mx-auto max-w-xl">
+        <div className="sheet p-6">
+          <span className="ctag ctag-red">Members only</span>
+          <h1 className="font-display mt-4 text-3xl leading-tight">This showing is for members.</h1>
+          <p className="mt-3 text-[15px]">Sign in to your Royale account to see it and get tickets.</p>
+          <Link href={`/account/login?next=${encodeURIComponent(`/showtimes/${id}`)}`} className="btn-primary mt-5 inline-block px-5 py-2.5">
+            Sign in
+          </Link>
+        </div>
+      </div>
+    );
+  }
   // The free Insiders+ seat is one per screening, so a member who already
   // booked this show pays for any more.
   const plus = !!member && hasPlusPerks(member);
@@ -154,7 +179,7 @@ export default async function ScreeningDetailPage({
   const day = when.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "America/Chicago" });
   const shortDay = when.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: "America/Chicago" });
   const time = when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
-  const outdoor = screening.room.name.toLowerCase().includes("outdoor");
+  const outdoor = isOutdoorRoom(screening.room);
   const spec: [string, string][] = [
     ["Date", shortDay],
     ["Time", time],
@@ -180,6 +205,7 @@ export default async function ScreeningDetailPage({
             <MoviePoster posterUrl={screening.movie.poster_url} title={screening.movie.title} sizes="230px" priority />
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
+            {visibility === "members" && <span className="ctag ctag-red">Members only</span>}
             {outdoor && <span className="ctag ctag-yellow">Outdoor</span>}
             {seatsLeft > 0 && seatsLeft <= 10 && <span className="ctag ctag-red">{seatsLeft} left</span>}
             {seatsLeft <= 0 && <span className="ctag ctag-red">Sold out</span>}
@@ -191,7 +217,7 @@ export default async function ScreeningDetailPage({
               Royale Proof Sheet sets it. */}
           <section className="sheet crop">
             <div className="spec-head rounded-t-[4px]">
-              <span>{screening.room.name}</span>
+              <ScreenTag room={screening.room} />
               <span className="flex items-center gap-4">
                 <span>{time}</span>
               </span>
