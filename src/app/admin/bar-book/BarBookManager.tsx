@@ -142,15 +142,21 @@ function IngredientRow({ ingredient }: { ingredient: BarIngredient }) {
 
 // What it costs: a bottle's price and size for anything poured (the cost
 // per oz is worked out and kept), or the cost of one for anything counted.
+const ML_PER_OZ = 29.5735;
+
 function CostEditor({ ingredient }: { ingredient: BarIngredient }) {
   const [pending, run, error] = useRefreshingAction();
   const unit = ingredient.unit === "count" ? "ct" : ingredient.unit;
   const counted = ingredient.unit === "count";
   const size0 = ingredient.bottle_size && ingredient.bottle_size > 0 ? ingredient.bottle_size : ingredient.unit === "oz" ? 25.4 : ingredient.unit === "ml" ? 750 : null;
-  const [size, setSize] = useState(size0 !== null ? String(size0) : "");
+  // Bottles are labelled in ml (750, 1000, 1750), so an oz ingredient's bottle
+  // size is typed in ml and kept in oz, the unit recipes pour in.
+  const sizeInMl = ingredient.unit === "oz";
+  const [size, setSize] = useState(size0 !== null ? String(sizeInMl ? Math.round(size0 * ML_PER_OZ) : size0) : "");
+  const sizeStored = (v: string) => (sizeInMl ? Math.round((Number(v) / ML_PER_OZ) * 100) / 100 : Number(v));
   const [bottle, setBottle] = useState(!counted && ingredient.unit_cost !== null && size0 ? (ingredient.unit_cost * size0).toFixed(2) : "");
   const [each, setEach] = useState(counted && ingredient.unit_cost !== null ? String(ingredient.unit_cost) : "");
-  const perUnit = counted ? (each.trim() === "" ? null : Number(each)) : bottle.trim() === "" ? null : unitCostFromBottle(Number(bottle), Number(size));
+  const perUnit = counted ? (each.trim() === "" ? null : Number(each)) : bottle.trim() === "" ? null : unitCostFromBottle(Number(bottle), sizeStored(size));
 
   function save() {
     if (counted) {
@@ -165,7 +171,7 @@ function CostEditor({ ingredient }: { ingredient: BarIngredient }) {
       return;
     }
     const price = Number(bottle);
-    const sz = Number(size);
+    const sz = sizeStored(size);
     if (!Number.isFinite(price) || !(sz > 0)) return;
     if (unitCostFromBottle(price, sz) === ingredient.unit_cost && sz === ingredient.bottle_size) return;
     run(() => setIngredientCost(ingredient.id, { bottlePrice: price, bottleSize: sz }), { quiet: true });
@@ -186,8 +192,8 @@ function CostEditor({ ingredient }: { ingredient: BarIngredient }) {
           </label>
           <label className="flex items-center gap-1.5">
             for
-            <input className="input !w-20 !py-1" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value.replace(/[^0-9.]/g, ""))} onBlur={save} aria-label={`Bottle size in ${unit}`} />
-            {unit}
+            <input className="input !w-20 !py-1" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value.replace(/[^0-9.]/g, ""))} onBlur={save} aria-label={`Bottle size in ${sizeInMl ? "ml" : unit}`} />
+            {sizeInMl ? "ml" : unit}
           </label>
         </>
       )}
