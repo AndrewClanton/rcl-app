@@ -310,16 +310,6 @@ export default async function ShowtimesPage({ searchParams }: { searchParams: Se
         }
       />
 
-      {/* Which screen: everything, or just the outdoor one. */}
-      <nav aria-label="Which screen" className="mt-4 flex flex-wrap gap-2">
-        <Link href={showtimesHref(tab, false)} className={`day-chip ${outdoorOnly ? "" : "day-chip-today"}`} aria-current={outdoorOnly ? undefined : "page"}>
-          All screens
-        </Link>
-        <Link href={showtimesHref(tab, true)} className={`day-chip ${outdoorOnly ? "day-chip-today" : ""}`} aria-current={outdoorOnly ? "page" : undefined}>
-          Outdoor screen
-        </Link>
-      </nav>
-
       <Suspense fallback={<TabBar tab={tab} outdoorOnly={outdoorOnly} locked />}>
         <ShowtimesTabs tab={tab} outdoorOnly={outdoorOnly} />
       </Suspense>
