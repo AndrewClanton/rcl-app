@@ -24,6 +24,12 @@
 //     (and which recipe ids the server keeps).
 // 10. The Bar tab: the cocktail grid fills its box at both iPad sizes and
 //     pages when it must; quick pour names.
+// 12. Doubles: a shot at each tier, a 1.5 oz cocktail at each tier, the
+//     Long Island and Butter beer, no recipe, rounding, no beer or wine,
+//     an item's own "Double" left alone, and the server's re-check.
+// 11. "What's in it?": the matcher on the drinks guests describe, never
+//     across spirits; a custom drink's cost, name, icon and order line; and
+//     which ingredient lists the server keeps.
 //
 // Usage: node scripts/check-bar-book.mjs   (Node 22.18+ runs the .ts directly)
 import { register } from "node:module";
@@ -40,6 +46,8 @@ const I = await import("../src/lib/bar/icons.ts");
 const B = await import("../src/lib/bar/book.ts");
 const M = await import("../src/lib/bar/menu.ts");
 const P = await import("../src/lib/bar/pricing.ts");
+const X = await import("../src/lib/bar/match.ts");
+const D = await import("../src/lib/bar/double.ts");
 const { SEED_DRINKS, SEED_INGREDIENTS } = await import("../src/lib/bar/seed-drinks.ts");
 
 let failures = 0;
@@ -51,7 +59,7 @@ const read = (rel) => readFileSync(new URL(`../${rel}`, import.meta.url), "utf8"
 
 // ---------- 1. client-safe imports ----------
 const SERVER = [/["']server-only["']/, /@\/lib\/supabase/, /["']next\/headers["']/, /["']next\/cache["']/, /@\/lib\/data\//, /@\/lib\/auth["']/, /["']pg["']/, /["']node:/, /["']fs["']/];
-const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/pricing.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
+const CLIENT_SAFE = ["src/lib/bar/icons.ts", "src/lib/bar/book.ts", "src/lib/bar/menu.ts", "src/lib/bar/pricing.ts", "src/lib/bar/match.ts", "src/lib/bar/double.ts", "src/lib/bar/seed-drinks.ts", "src/components/bar/DrinkIcon.tsx"];
 const seen = new Set();
 function walk(rel) {
   if (seen.has(rel)) return;
@@ -364,6 +372,197 @@ const pos = read("src/app/pos/PosApp.tsx");
 check("the cocktail page lives in the register, reset only by switching tabs", /const \[barPage, setBarPage\] = useState\(0\)/.test(pos) && /setBarPage\(0\)/.test(pos) && (pos.match(/setBarPage\(0\)/g) ?? []).length === 1 && /page=\{barPage\}/.test(pos));
 check("the pager's buttons are 44 px or more", (tab.match(/min-h-11 min-w-14/g) ?? []).length === 2 && /h-11 w-6/.test(tab));
 check("the Bar tab never scrolls: no overflow-y-auto in it", !/overflow-y-auto/.test(tab));
+
+// ---------- 11. "What's in it?" ----------
+const asDrink = (d) => ({ name: d.name, lines: d.ingredients.map((l) => ({ name: l.name, kind: SEED_INGREDIENTS[l.name].kind, family: SEED_INGREDIENTS[l.name].family, optional: !!l.optional })) });
+const seedBook = SEED_DRINKS.map(asDrink);
+const g = (name, kind, family) => ({ name, kind, family });
+const VODKA = g("Well Vodka", "spirit", "vodka");
+const CRAN = g("Cranberry juice", "juice", "grapefruit");
+const LIME = g("Lime juice", "juice", "citrus");
+const cases = [
+  ["vodka, cranberry and a splash of lime", [VODKA, CRAN, LIME], "Cape Codder"],
+  ["Tito's, cranberry, grapefruit", [g("Tito's", "spirit", "vodka"), g("Cranberry", "juice", "grapefruit"), g("Grapefruit juice", "juice", "grapefruit")], "Sea Breeze"],
+  ["vodka, cranberry, pineapple", [VODKA, CRAN, g("Pineapple juice", "juice", "ginger")], "Bay Breeze"],
+  ["tequila with grapefruit soda", [g("Well Tequila", "spirit", "tequila"), g("Grapefruit soda", "mixer", "grapefruit")], "Paloma"],
+  ["vodka and orange juice", [VODKA, g("Orange juice", "juice", "syrup")], "Screwdriver"],
+  ["vodka, OJ and Galliano", [VODKA, g("OJ", "juice", "syrup"), g("Galliano", "liqueur", "liqueur")], "Harvey Wallbanger"],
+  ["rum and Coke with lime", [g("Bacardi", "spirit", "rum"), g("Coke", "mixer", "cola"), LIME], "Cuba Libre"],
+  ["rum and Coke", [g("Captain Morgan", "spirit", "rum"), g("Fountain Coke", "mixer", "cola")], "Rum & Coke"],
+  ["gin and tonic", [g("Well Gin", "spirit", "gin"), g("Tonic", "mixer", "soda")], "Gin & Tonic"],
+];
+for (const [said, picked, want] of cases) {
+  const r = X.matchDrinks(picked, seedBook);
+  check(`"${said}" is ${want}`, r.best?.drink.name === want, r.best ? `${r.best.drink.name} ${r.best.score}` : "no match");
+}
+const sea = X.matchDrinks(cases[1][1], seedBook);
+check("a Sea Breeze offers the Bay Breeze as a near miss", sea.alternatives.some((a) => a.drink.name === "Bay Breeze" && a.text === "Swap grapefruit for pineapple and it's a Bay Breeze."), sea.alternatives.map((a) => a.text).join(" | "));
+const screw = X.matchDrinks(cases[4][1], seedBook);
+check("a Screwdriver offers a Harvey Wallbanger: add Galliano", screw.alternatives.some((a) => a.drink.name === "Harvey Wallbanger" && a.text === "A Harvey Wallbanger adds Galliano."), screw.alternatives.map((a) => a.text).join(" | "));
+const cranOnly = X.matchDrinks([VODKA, CRAN], seedBook);
+check("vodka and cranberry: a Vodka Cranberry, and a Cape Codder adds lime", cranOnly.best?.drink.name === "Vodka Cranberry" && cranOnly.alternatives.some((a) => a.text === "A Cape Codder adds lime."));
+const cosmo = X.matchDrinks([VODKA, CRAN, LIME], seedBook);
+check("add triple sec and it's close to a Cosmopolitan", cosmo.alternatives.some((a) => a.drink.name === "Cosmopolitan" && /triple sec/.test(a.text)), cosmo.alternatives.map((a) => a.text).join(" | "));
+// never across spirits
+const spiritOf = (d) => [...new Set(d.lines.filter((l) => !l.optional).flatMap(X.tokensOf).filter((t) => t.key.startsWith("spirit:")).map((t) => t.key))].sort().join();
+for (const [said, picked] of [
+  ["vodka and Coke", [VODKA, g("Coke", "mixer", "cola")]],
+  ["gin and cranberry", [g("Well Gin", "spirit", "gin"), CRAN]],
+  ["whiskey and grapefruit soda", [g("Well Whiskey", "spirit", "whiskey"), g("Grapefruit soda", "mixer", "grapefruit")]],
+  ["vodka, cranberry and lime", [VODKA, CRAN, LIME]],
+  ["tequila with grapefruit soda", cases[3][1]],
+]) {
+  const r = X.matchDrinks(picked, seedBook);
+  const want = [...new Set(picked.flatMap(X.tokensOf).filter((t) => t.key.startsWith("spirit:")).map((t) => t.key))].sort().join();
+  const all = [r.best, ...r.alternatives].filter(Boolean);
+  check(`"${said}": nothing offered with another spirit`, all.every((c) => spiritOf(c.drink) === want), all.map((c) => c.drink.name).join(", "));
+}
+check("vodka and Coke is no drink in the book (no Rum & Coke)", X.matchDrinks([VODKA, g("Coke", "mixer", "cola")], seedBook).best === null);
+check("gin and cranberry is no drink in the book", X.matchDrinks([g("Well Gin", "spirit", "gin"), CRAN], seedBook).best === null);
+check("nothing picked, nothing matched", X.matchDrinks([], seedBook).best === null && X.matchDrinks([], seedBook).alternatives.length === 0);
+check("deterministic", JSON.stringify(X.matchDrinks(cases[1][1], seedBook)) === JSON.stringify(X.matchDrinks(cases[1][1], seedBook)));
+check("an optional line never counts against a match", X.compare([g("Well Tequila", "spirit", "tequila")], asDrink(SEED_DRINKS.find((d) => d.name === "Tequila Shot"))).exact);
+check("any vodka is vodka", X.tokensOf(g("Grey Goose", "spirit", "vodka"))[0].key === "spirit:vodka" && X.tokensOf(g("Tito's", null, null))[0].key === "spirit:vodka");
+check("cranberry is cranberry juice, Coke is cola, Cointreau is triple sec", X.tokensOf(g("Cranberry", "juice"))[0].key === X.tokensOf(g("Cranberry juice", "juice"))[0].key && X.tokensOf(g("Coke"))[0].key === "cola" && X.tokensOf(g("Cointreau", "liqueur"))[0].key === X.tokensOf(g("Triple sec", "liqueur"))[0].key);
+check("a grapefruit soda is grapefruit and soda water", X.tokensOf(g("Grapefruit soda", "mixer")).map((t) => t.key).join() === "grapefruit,soda water");
+check("a/an", X.withArticle("Old Fashioned") === "an Old Fashioned" && X.withArticle("Cape Codder") === "a Cape Codder");
+// default amounts and steps
+check("default amounts by kind", [["spirit", 1.5], ["liqueur", 0.75], ["mixer", 4], ["juice", 0.5], ["syrup", 0.5], ["bitters", 0.05]].every(([k, v]) => X.defaultAmount(k) === v));
+check("− / + steps and limits", X.nudge(1.5, 0.25, 1) === 1.75 && X.nudge(0.25, 0.25, -1) === 0.25 && X.nudge(9.9, 0.5, 1) === 10 && X.nudge(0.05, 0.025, -1) === 0.025);
+// a custom drink
+const pk = (id, name, unit, kind, family, amount) => ({ id, name, unit, kind, family, amount });
+const I1 = "11111111-1111-4111-8111-111111111111", I2 = "22222222-2222-4222-8222-222222222222", I3 = "33333333-3333-4333-8333-333333333333";
+const vcl = [pk(I1, "Well Vodka", "oz", "spirit", "vodka", 1.5), pk(I2, "Cranberry juice", "oz", "juice", "grapefruit", 4), pk(I3, "Lime juice", "oz", "juice", "citrus", 0.5)];
+check("a custom drink is named for what's in it", X.customName(vcl) === "Vodka, cranberry juice, lime juice", X.customName(vcl));
+const cspec = X.customSpec(vcl);
+check("a custom drink's icon: a tall glass, vodka on top", cspec.glass === "highball" && cspec.base === "vodka" && !/NaN|undefined/.test(I.drinkIconSvg(cspec)));
+check("a shot of spirit alone is a shot glass", X.customSpec([pk(I1, "Well Vodka", "oz", "spirit", "vodka", 1.5)]).glass === "shot");
+const ccost = P.drinkCost(vcl.map((p, i) => ({ name: p.name, quantity: p.amount, unitCost: [0.5, 0.1, null][i] })));
+check("a custom drink's cost names what's missing", ccost.cost === null && ccost.missing.join() === "Lime juice" && P.priceSummary({ cost: ccost, target: 0.2 }).text === "Cost unknown: no price for Lime juice.");
+const ccost2 = P.drinkCost(vcl.map((p, i) => ({ name: p.name, quantity: p.amount, unitCost: [0.5, 0.1, 0.2][i] })));
+check("a custom drink's cost and suggested price", ccost2.cost === 1.25 && P.suggestedPrice(ccost2.cost, 0.2) === 7);
+check("alcohol when anything in it is", X.customIsAlcohol(vcl) && !X.customIsAlcohol([pk(I2, "Cranberry juice", "oz", "juice", "grapefruit", 4)]) && X.customIsAlcohol([g("Prosecco", "wine")]) && X.customIsAlcohol([g("Peach schnapps", "liqueur")]));
+const col = X.customOrderLine("  Vodka,  cranberry, lime ", 7.004, [...vcl, pk(I1, "Well Vodka", "oz", "spirit", "vodka", 0.5)]);
+check(
+  "a custom drink's order line: one-off, alcohol, its list merged",
+  JSON.stringify(col) ===
+    JSON.stringify({ menuItemId: null, name: "Vodka, cranberry, lime", unit: 7, qty: 1, mods: [], isAlcohol: true, customRecipe: [{ ingredient_id: I1, quantity: 2 }, { ingredient_id: I2, quantity: 4 }, { ingredient_id: I3, quantity: 0.5 }] }),
+  JSON.stringify(col),
+);
+// what the server keeps
+const knownIngs = new Map([
+  [I1, { name: "Well Vodka", unit: "oz", family: "vodka", kind: "spirit" }],
+  [I2, { name: "Cranberry juice", unit: "oz", family: "grapefruit", kind: "juice" }],
+]);
+const good = { menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: 1.5 }, { ingredient_id: I2.toUpperCase(), quantity: 4 }] };
+const kept = X.cleanCustomRecipe(good, knownIngs);
+check("the server keeps a good list and writes the names itself", kept?.length === 2 && kept[0].name === "Well Vodka" && kept[1].ingredient_id === I2 && kept[1].unit === "oz", JSON.stringify(kept));
+check("…merging the same ingredient twice", X.cleanCustomRecipe({ menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: 1 }, { ingredient_id: I1, quantity: 0.5 }] }, knownIngs)?.[0].quantity === 1.5);
+const bad = [
+  ["on a menu item's line", { ...good, menu_item_id: "m1" }],
+  ["on a Bar Book drink's line", { ...good, recipe_id: I3 }],
+  ["on a ticket", { ...good, screening_id: "s1" }],
+  ["an ingredient we don't have", { menu_item_id: null, custom_recipe: [{ ingredient_id: I3, quantity: 1 }] }],
+  ["not an id", { menu_item_id: null, custom_recipe: [{ ingredient_id: "x' or 1=1", quantity: 1 }] }],
+  ["an amount of 0", { menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: 0 }] }],
+  ["an amount over 10", { menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: 10.5 }] }],
+  ["two that add up over 10", { menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: 6 }, { ingredient_id: I1, quantity: 6 }] }],
+  ["an amount that isn't a number", { menu_item_id: null, custom_recipe: [{ ingredient_id: I1, quantity: "2" }] }],
+  ["13 lines", { menu_item_id: null, custom_recipe: Array.from({ length: 13 }, () => ({ ingredient_id: I1, quantity: 0.1 })) }],
+  ["an empty list", { menu_item_id: null, custom_recipe: [] }],
+  ["not a list", { menu_item_id: null, custom_recipe: { ingredient_id: I1, quantity: 1 } }],
+  ["nothing", { menu_item_id: null }],
+];
+for (const [what, line] of bad) check(`the server drops a list ${what}`, X.cleanCustomRecipe(line, knownIngs) === null);
+check("a list in a line of text", X.customRecipeText(kept) === "well vodka 1.5 oz, cranberry juice 4 oz");
+// the bar tablet
+const ticketMaps = { items: {}, recipes: {} };
+const ce = B.boardEntryForTicket(ticketMaps, { menu_item_id: null, recipe_id: null, custom_recipe: kept, name: "Vodka cran" });
+check("the bar tablet builds a custom drink's Recipe card from its list", ce?.card?.lines.length === 2 && ce.card.lines[0].amount === "1½ oz" && ce.card.name === "Vodka cran" && ce.spec.base === "vodka");
+let threw3 = null;
+try {
+  check("a custom list that's junk gets nothing", [null, 5, "x", [], [{}], [{ name: 5 }], { a: 1 }].every((v) => B.boardEntryForTicket(ticketMaps, { menu_item_id: null, custom_recipe: v, name: "x" }) === null));
+  check("the kitchen board (no maps) shows no custom drink", B.boardEntryForTicket(undefined, { menu_item_id: null, custom_recipe: kept, name: "x" }) === null);
+} catch (e) {
+  threw3 = e;
+}
+check("…and never throws", threw3 === null, threw3?.message);
+check("the tablet reads custom_recipe, and falls back without it", /read\(", recipe_id, custom_recipe"\)/.test(read("src/lib/data/prepTickets.ts")) && /custom_recipe: row\.custom_recipe \?\? null/.test(read("src/app/display/PrepTicketBoard.tsx")));
+// the server and the migration
+const act = read("src/app/pos/actions.ts");
+check("the server checks lists before saving and saves without them before the migration", /customRecipeOf\(l, extras\)/.test(act) && /schemaMissing\(insertErr\) && withCustoms !== withRecipes/.test(act) && /schemaMissing\(insertErr\) && withRecipes !== rows/.test(act));
+check("tabs keep the list through save and reload", /items:order_items\(\$\{ITEM_COLUMNS\}, recipe_id, custom_recipe\)/.test(act) && /custom_recipe: l\.customRecipe/.test(read("src/app/pos/PosApp.tsx")) && /customRecipe: l\.custom_recipe/.test(read("src/app/pos/PosApp.tsx")));
+const third = "20261005010000_order_item_custom_recipe.sql";
+const sql3 = read(`supabase/migrations/${third}`).replace(/--.*$/gm, "");
+check("order_items.custom_recipe: after the recipe link, columns only, safe to run twice", migrations.includes(third) && third > second && /add column if not exists custom_recipe jsonb/.test(sql3) && !/create\s+(table|function|view|sequence)/i.test(sql3) && /drop constraint if exists order_items_custom_recipe_check/.test(sql3));
+check("sale math untouched by the matcher", !/register-totals|register-sale-checks/.test(read("src/lib/bar/match.ts")));
+
+// ---------- 12. doubles ----------
+const S = D.DOUBLE_DEFAULTS;
+const shot = (price) => D.doubleUpcharge(price, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S);
+check("a double shot is twice the single at each tier", shot(5) === 5 && shot(7) === 7 && shot(9) === 9);
+const one = (name) => D.recipeUpcharge([{ name, quantity: 1.5, unit: "oz", kind: "spirit" }, { name: "Lime juice", quantity: 1, unit: "oz", kind: "juice" }], S);
+check("a 1.5 oz cocktail: well +$4, call +$6, premium +$8", one("Well Vodka") === 4 && one("Call Vodka") === 6 && one("Premium Tequila") === 8, [one("Well Vodka"), one("Call Vodka"), one("Premium Tequila")].join());
+check("only the spirit doubles (the lime doesn't add)", D.recipeUpcharge([{ name: "Well Vodka", quantity: 1.5, kind: "spirit" }], S) === one("Well Vodka"));
+const li = SEED_DRINKS.find((d) => d.name === "Long Island Iced Tea");
+const liLines = li.ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind, optional: !!l.optional }));
+check("a Long Island (4 × ½ oz of spirit, the triple sec left out): +$5.50", D.recipeUpcharge(liLines, S) === 5.5, String(D.recipeUpcharge(liLines, S)));
+const butter = [{ name: "Butterscotch schnapps", quantity: 1, unit: "oz", kind: "liqueur" }, { name: "Cream soda", quantity: 6, unit: "oz", kind: "mixer" }];
+check("Butter beer (no spirit: its 1 oz of schnapps): +$2.50", D.recipeUpcharge(butter, S) === 2.5, String(D.recipeUpcharge(butter, S)));
+check("a spirit drink with no recipe: +$4", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: null }, S) === 4);
+check("rounding to the nearest $0.50", D.recipeUpcharge([{ name: "Vodka", quantity: 1.75, kind: "spirit" }], S) === 4.5 && D.recipeUpcharge([{ name: "Vodka", quantity: 1.875, kind: "spirit" }], S) === 5 && D.roundTo(4.25, 0.5) === 4.5);
+check("ml counts as ounces", D.recipeUpcharge([{ name: "Vodka", quantity: 44.36, unit: "ml", kind: "spirit" }], S) === 4);
+check("no double on beer or wine", D.doubleUpcharge(5, { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S) === null && D.doubleUpcharge(5, { isAlcohol: true, section: "wine", ownDouble: false, recipe: null }, S) === null);
+check("no double on something that isn't alcohol", D.doubleUpcharge(4, { isAlcohol: false, section: "other", ownDouble: false, recipe: null }, S) === null);
+check("no double on a drink with nothing to double (a Mimosa)", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: [{ name: "Prosecco", quantity: 4, kind: "wine" }, { name: "Orange juice", quantity: 2, kind: "juice" }] }, S) === null);
+check("an alcohol item outside the bar with no recipe has no double", D.doubleUpcharge(8, { isAlcohol: true, section: null, ownDouble: false, recipe: null }, S) === null);
+// the collision guard
+const espressoGroups = [{ options: [{ name: "Single" }, { name: "Double" }] }];
+check("an item's own \"Double\" option is found", D.hasOwnDouble(espressoGroups) && !D.hasOwnDouble([{ options: [{ name: "Double shot" }] }]) && !D.hasOwnDouble(null));
+check("…and then it's never our double", D.doubleUpcharge(4, { isAlcohol: true, section: "other", ownDouble: true, recipe: null }, S) === null && JSON.stringify(D.withoutDouble(["Oat milk", "Double"], true)) === JSON.stringify(["Oat milk", "Double"]));
+check("our Double isn't priced as a menu option", JSON.stringify(D.withoutDouble(["Rocks", "Double"], false)) === JSON.stringify(["Rocks"]));
+// the server's re-check
+const ofLines = SEED_DRINKS.find((d) => d.name === "Old Fashioned").ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind }));
+const ofCtx = { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: ofLines };
+const valid = D.priceWithDouble(10, ["Double"], ofCtx, S);
+check("the server accepts a double rung at its price (Old fashioned $10 + $5.50)", "unit" in valid && valid.unit === 15.5, JSON.stringify(valid));
+check("…and flags one rung at the wrong price", "unit" in valid && Math.abs(valid.unit - 14) > 0.0101);
+check("…and refuses a double on a beer", "error" in D.priceWithDouble(5, ["Double"], { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S));
+check("…and leaves a line without one alone", JSON.stringify(D.priceWithDouble(10, ["Rocks"], ofCtx, S)) === JSON.stringify({ unit: 10 }));
+check("…and an item's own Double alone", JSON.stringify(D.priceWithDouble(3.5, ["Double"], { isAlcohol: false, section: null, ownDouble: true, recipe: null }, S)) === JSON.stringify({ unit: 3.5 }));
+check("taking a double off gives the single back", D.undoDouble(10, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S) === 5 && D.undoDouble(15.5, ofCtx, S) === 10);
+check("tiers from the name", D.tierOf("Call Vodka") === "call" && D.tierOf("Premium Tequila") === "premium" && D.tierOf("Tito's") === "well" && D.tierOf("Well Gin") === "well");
+check("settings: bad numbers fall back one by one", JSON.stringify(D.readDoubleSettings({ shotMultiplier: 9, pourDiscount: 2, tiers: { well: "x", call: 8 }, rounding: 0 })) === JSON.stringify({ shotMultiplier: 2, pourDiscount: 2, tiers: { well: 5, call: 8, premium: 9 }, noRecipeUpcharge: 4, rounding: 0.5 }));
+check("doubled lines: only the base spirit", JSON.stringify(D.doubledLines(ofLines).map((l) => l.quantity)) === JSON.stringify(ofLines.map((l, i) => (i === 0 ? l.quantity * 2 : l.quantity))));
+check("a doubled line's order line carries Double", JSON.stringify(P.bookOrderLine({ recipeId: RID, name: "Mojito" }, 13, true).mods) === JSON.stringify(["Double"]) && JSON.stringify(X.customOrderLine("x", 9, vcl, true).mods) === JSON.stringify(["Double"]));
+const sc = read("src/lib/register-sale-checks.ts");
+check("the server's sale check prices doubles with the same function", /priceWithDouble\(/.test(sc) && /withoutDouble\(l\.modifiers \?\? \[\], ownDouble\)/.test(sc));
+check("printed tickets and the bar tablet show DOUBLE", /"  DOUBLE  "/.test(read("src/lib/print/receipt.ts")) && /DOUBLE/.test(read("src/app/display/PrepTicketBoard.tsx")));
+check("Bar usage pours a double's spirit twice", /isDouble\(oi\.modifiers\)/.test(read("src/lib/data/reports.ts")) && /isDouble\(sold\.modifiers\)/.test(read("src/lib/data/reports.ts")));
+// The menu's 11 cocktails with the starter list's specs (2 oz pours, all
+// well), as a table for the report. The live numbers come from their own
+// recipes: Back office → Bar Book → Doubles lists them.
+const menu11 = [
+  ["Butter beer", 8, butter],
+  ["Long island iced tea", 10, liLines],
+  ...[
+    ["Manhattan", 9, "Manhattan"],
+    ["Margarita", 8, "Margarita"],
+    ["Moscow mule", 8, "Moscow Mule"],
+    ["NY whiskey sour", 9, "New York Sour"],
+    ["Old fashioned", 10, "Old Fashioned"],
+    ["Paloma", 8, "Paloma"],
+    ["Rum or whiskey & coke", 8, "Rum & Coke"],
+    ["Whiskey sour", 9, "Whiskey Sour"],
+    ["White russian", 8, "White Russian"],
+  ].map(([n, p, seed]) => [n, p, SEED_DRINKS.find((d) => d.name === seed).ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind, optional: !!l.optional }))]),
+];
+console.log("\nDoubles on the menu's cocktails (starter-list specs, well spirits):");
+for (const [n, p, lines] of menu11) {
+  const up = D.doubleUpcharge(p, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: lines }, S);
+  console.log(`  ${n.padEnd(24)} $${p.toFixed(2)}  ${up === null ? "no double" : `+$${up.toFixed(2)} = $${(p + up).toFixed(2)}`}`);
+}
+console.log("  Shots: Well $5 → $10, Call $7 → $14, Premium $9 → $18");
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll Bar Book checks passed.");
 process.exit(failures ? 1 : 0);

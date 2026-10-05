@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import type { MenuItem, Recipe } from "@/lib/types";
+import DrinkIcon from "@/components/bar/DrinkIcon";
+import type { IconSpec } from "@/lib/bar/icons";
+import { DOUBLE, doubleUpcharge, plus, type DoubleContext, type DoubleSettings } from "@/lib/bar/double";
 
 function money(n: number) {
   return `$${n.toFixed(2)}`;
@@ -20,18 +23,27 @@ export interface BuiltLine {
   isAlcohol: boolean;
 }
 
+// The choices sheet a menu button opens. A drink shows its icon large (so
+// tapping its tile never makes it vanish), and one that can be a double
+// gets a Double choice (lib/bar/double.ts): twice the spirit, its upcharge
+// in the price, "Double" on the line.
 export default function ItemBuilder({
   item,
   recipe,
+  icon,
+  double,
   onAdd,
   onCancel,
 }: {
   item: MenuItem;
   recipe: Recipe | null;
+  icon?: IconSpec | null;
+  double?: { ctx: DoubleContext; settings: DoubleSettings; start: boolean } | null;
   onAdd: (line: BuiltLine) => void;
   onCancel: () => void;
 }) {
   const [qty, setQty] = useState(1);
+  const [doubled, setDoubled] = useState(!!double?.start);
   const [sel, setSel] = useState<Record<string, string[]>>(() => {
     const initial: Record<string, string[]> = {};
     for (const g of item.modifier_groups) {
@@ -46,12 +58,22 @@ export default function ItemBuilder({
     return group?.options.find((o) => o.name === name)?.price_delta ?? 0;
   }
 
-  function unitPrice() {
+  function singlePrice() {
     let price = item.price;
     for (const g of item.modifier_groups) {
       for (const name of sel[g.key] ?? []) price += optionDelta(g.key, name);
     }
     return price;
+  }
+
+  // What a double adds to the single (a shot's own price; a cocktail's by
+  // its spirit), or null when it can't be one.
+  const upcharge = double ? doubleUpcharge(singlePrice(), double.ctx, double.settings) : null;
+  const isDoubled = doubled && upcharge !== null;
+
+  function unitPrice() {
+    const single = singlePrice();
+    return isDoubled ? Math.round((single + upcharge!) * 100) / 100 : single;
   }
 
   function toggleOption(groupKey: string, type: "single" | "multi", name: string) {
@@ -68,6 +90,7 @@ export default function ItemBuilder({
     for (const g of item.modifier_groups) {
       for (const name of sel[g.key] ?? []) mods.push(name);
     }
+    if (isDoubled) mods.push(DOUBLE);
     onAdd({ menuItemId: item.id, name: item.name, unit: unitPrice(), qty, mods, isAlcohol: item.is_alcohol });
   }
 
@@ -75,12 +98,32 @@ export default function ItemBuilder({
 
   return (
     <div className="card-flat" style={{ background: "var(--surface-hover)" }}>
-      <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
-        {item.name}
-      </h3>
-      <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
-        Base {money(item.price)}
-      </p>
+      <div className="flex items-start gap-4">
+        {icon && (
+          <span className="shrink-0" style={{ color: "var(--foreground)" }}>
+            <DrinkIcon spec={icon} size={120} label={item.name} />
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <h3 className={icon ? "font-display text-2xl leading-tight" : "text-lg font-semibold"} style={{ color: "var(--foreground)" }}>
+            {item.name}
+            {isDoubled && <span> · Double</span>}
+          </h3>
+          <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
+            Base {money(item.price)}
+          </p>
+          {upcharge !== null && (
+            <div className="mb-3">
+              <button className={`chip min-h-11 !px-4 !text-sm font-bold ${isDoubled ? "chip-selected" : ""}`} aria-pressed={isDoubled} onClick={() => setDoubled(!isDoubled)}>
+                {isDoubled ? "✓ " : ""}Double {plus(upcharge)}
+              </button>
+              <span className="ml-2 text-xs" style={{ color: "var(--muted)" }}>
+                Twice the spirit; the mixers stay the same.
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
 
       {item.is_alcohol && recipe && (recipe.ingredients.length > 0 || recipe.instructions || recipe.glassware || recipe.garnish) && (
         <div className="mb-4 rounded-lg border p-3" style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}>

@@ -12,8 +12,10 @@ import {
   type BookStock,
   type RecipeSource,
 } from "@/lib/bar/book";
-import { barSectionOf, itemIconSpec } from "@/lib/bar/menu";
-import { iconSpecFor } from "@/lib/bar/icons";
+import { barSectionOf, isBarCategory, itemIconSpec } from "@/lib/bar/menu";
+import { iconSpecFor, type BarSection } from "@/lib/bar/icons";
+import { DOUBLE_SETTING, doubleUpcharge, hasOwnDouble, readDoubleSettings, sectionOfCategory, type DoubleSettings } from "@/lib/bar/double";
+import { getRecipesByItem } from "@/lib/data/recipes";
 import { DEFAULT_TARGET_POUR_COST, TARGET_POUR_COST_SETTING, drinkCost, validTarget, type DrinkCost } from "@/lib/bar/pricing";
 
 // The Bar Book's data (server only: it reads with the service role). The
@@ -80,6 +82,51 @@ export interface BarBookData {
   target: number; // the target pour cost for suggested prices
 }
 
+export interface MenuDouble {
+  id: string;
+  name: string;
+  section: BarSection | null;
+  price: number;
+  upcharge: number | null; // null: no double (beer, wine, nothing to double)
+}
+
+// Back office → Bar Book → Doubles: what a double of each alcohol drink on
+// the menu costs right now, from its section, its recipe and the settings.
+export async function getMenuDoubles(settings: DoubleSettings): Promise<MenuDouble[]> {
+  const supabase = createAdminClient();
+  const [items, cats, groups, recipes] = await Promise.all([
+    supabase.from("menu_items").select("id, name, price, category_id, is_alcohol, active, sort_order").eq("is_alcohol", true).eq("active", true).order("sort_order"),
+    supabase.from("menu_categories").select("id, key, label, parent_id, sort_order").order("sort_order"),
+    supabase.from("menu_modifier_groups").select("item_id, options:menu_modifier_options(name)"),
+    getRecipesByItem(),
+  ]);
+  if (items.error || cats.error) return [];
+  const categories = (cats.data ?? []) as { id: string; key: string | null; label: string | null; parent_id: string | null }[];
+  const groupsByItem = new Map<string, { options: { name: string }[] }[]>();
+  for (const g of (groups.data ?? []) as unknown as { item_id: string; options: { name: string }[] }[]) groupsByItem.set(g.item_id, [...(groupsByItem.get(g.item_id) ?? []), g]);
+  const order = new Map(categories.map((c, i) => [c.id, i]));
+  return ((items.data ?? []) as { id: string; name: string; price: number; category_id: string; is_alcohol: boolean }[])
+    .sort((a, b) => (order.get(a.category_id) ?? 0) - (order.get(b.category_id) ?? 0))
+    .map((i) => {
+      const section = sectionOfCategory(i.category_id, categories, isBarCategory, barSectionOf);
+      const r = recipes[i.id];
+      const recipe = r ? r.ingredients.map((x) => ({ name: x.ingredient_name, quantity: x.quantity, unit: x.unit, kind: x.kind ?? null, optional: x.optional === true })) : null;
+      const upcharge = doubleUpcharge(Number(i.price), { isAlcohol: true, section, ownDouble: hasOwnDouble(groupsByItem.get(i.id)), recipe }, settings);
+      return { id: i.id, name: i.name, section, price: Number(i.price), upcharge };
+    });
+}
+
+// How a double is priced (lib/bar/double.ts): settings.bar_double, each
+// knob falling back to the bar standard on its own. Never throws.
+export async function getDoubleSettings(): Promise<DoubleSettings> {
+  try {
+    const { data, error } = await createAdminClient().from("settings").select("value").eq("key", DOUBLE_SETTING).maybeSingle();
+    return readDoubleSettings(error ? null : data?.value);
+  } catch {
+    return readDoubleSettings(null);
+  }
+}
+
 // The pour cost suggested prices aim for (Back office → Bar Book, owners
 // and admins): settings.bar_target_pour_cost, 20% until someone sets it.
 export async function getTargetPourCost(): Promise<number> {
@@ -93,7 +140,7 @@ export async function getBarBookData(): Promise<BarBookData | null> {
   const supabase = createAdminClient();
   const [rec, ing, outs, counts, target] = await Promise.all([
     supabase.from("recipes").select(BOOK_COLUMNS),
-    supabase.from("ingredients").select("id, name, carried, active, par_item_id, unit_cost"),
+    supabase.from("ingredients").select("id, name, unit, kind, family, carried, active, par_item_id, unit_cost"),
     supabase.from("stock_outages").select("par_item_id, label").is("resolved_at", null).not("par_item_id", "is", null),
     // The latest count per ingredient is all that matters; the newest few
     // thousand counts cover every ingredient anyone still counts.
@@ -116,6 +163,9 @@ export async function getBarBookData(): Promise<BarBookData | null> {
     outLabel: i.par_item_id ? (outByPar.get(i.par_item_id as string) ?? null) : null,
     lastCount: lastCount.has(i.id as string) ? lastCount.get(i.id as string)! : null,
     unitCost: i.unit_cost === null || i.unit_cost === undefined ? null : Number(i.unit_cost),
+    unit: i.unit as string,
+    family: (i.family as string | null) ?? null,
+    kind: (i.kind as string | null) ?? null,
   }));
   const recipes = ((rec.data ?? []) as unknown as RecipeRow[]).map(toRecipe).filter((r): r is BookRecipe => !!r);
   return { recipes, stock, target };
@@ -220,6 +270,44 @@ export async function getBoardEntries(): Promise<BoardEntries> {
     byRecipe[r.id] = { spec, card: r.lines.length > 0 || r.instructions ? { ...recipeCard(r), description: null } : null };
   }
   return { items: map, recipes: byRecipe };
+}
+
+// ---------- custom drinks on an order ("What's in it?") ----------
+
+export type KnownIngredient = { name: string; unit: string; family: string | null; kind: string | null; unitCost: number | null };
+
+// The ingredients a register order's custom drinks name
+// (order_items.custom_recipe), looked up so the server keeps only real ones
+// and writes their names, units and colors itself. Never throws: an empty
+// map drops every list, and the lines save as plain custom lines.
+export async function customIngredientsFor(lines: readonly { custom_recipe?: unknown }[]): Promise<Map<string, KnownIngredient>> {
+  const ids = new Set<string>();
+  for (const l of lines) {
+    if (!Array.isArray(l.custom_recipe)) continue;
+    for (const r of l.custom_recipe.slice(0, 12)) {
+      const id = r && typeof r === "object" ? (r as { ingredient_id?: unknown }).ingredient_id : null;
+      if (typeof id === "string" && UUID.test(id)) ids.add(id.toLowerCase());
+    }
+  }
+  const found = new Map<string, KnownIngredient>();
+  if (!ids.size) return found;
+  try {
+    const supabase = createAdminClient();
+    const full = await supabase.from("ingredients").select("id, name, unit, family, kind, unit_cost").in("id", [...ids]);
+    let rows = full.data as { id: string; name: string; unit: string; family?: string | null; kind?: string | null; unit_cost: number | null }[] | null;
+    if (full.error) {
+      if (!schemaMissing(full.error)) return found;
+      const plain = await supabase.from("ingredients").select("id, name, unit, unit_cost").in("id", [...ids]);
+      if (plain.error) return found;
+      rows = plain.data as typeof rows;
+    }
+    for (const r of rows ?? []) {
+      found.set(r.id.toLowerCase(), { name: r.name, unit: r.unit, family: r.family ?? null, kind: r.kind ?? null, unitCost: r.unit_cost === null ? null : Number(r.unit_cost) });
+    }
+  } catch {
+    // As if none were found.
+  }
+  return found;
 }
 
 // ---------- Bar Book drinks on an order ----------

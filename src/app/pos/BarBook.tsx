@@ -6,7 +6,8 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import { approveBelowCost } from "./bar-book-actions";
 import { makeMenuItemFromRecipe } from "@/app/admin/bar-book/actions";
-import { bookOrderLine, isBelowCost, money as costMoney, priceSummary, readPrice, type BookOrderLine } from "@/lib/bar/pricing";
+import { bookOrderLine, isBelowCost, money as costMoney, priceSummary, readPrice, type BookOrderLine, type DrinkCost } from "@/lib/bar/pricing";
+import { doubledLines, doubleUpcharge, plus, type DoubleSettings } from "@/lib/bar/double";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { FAMILY_COLOR, FAMILY_LABEL, GLASS_LABEL, SPIRITS, type Family } from "@/lib/bar/icons";
 import {
@@ -70,6 +71,7 @@ export default function BarBook({
   outs,
   updating,
   canMakeMenuItems,
+  doubleSettings,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -83,7 +85,8 @@ export default function BarBook({
   outs: Map<string, RegisterOut>;
   updating: boolean;
   canMakeMenuItems: boolean; // an owner or admin is signed in
-  onRingUp: (menuItemId: string) => void;
+  doubleSettings: DoubleSettings;
+  onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
   onClose: () => void;
@@ -280,6 +283,7 @@ export default function BarBook({
               target={target}
               average={average}
               canMakeMenuItems={canMakeMenuItems}
+              doubleSettings={doubleSettings}
               onRingUp={onRingUp}
               onAddLine={onAddLine}
               onMenuChanged={onMenuChanged}
@@ -299,6 +303,7 @@ function Card({
   target,
   average,
   canMakeMenuItems,
+  doubleSettings,
   onRingUp,
   onAddLine,
   onMenuChanged,
@@ -310,13 +315,25 @@ function Card({
   target: number;
   average: number | null;
   canMakeMenuItems: boolean;
-  onRingUp: (menuItemId: string) => void;
+  doubleSettings: DoubleSettings;
+  onRingUp: (menuItemId: string, double?: boolean) => void;
   onAddLine: (line: BookOrderLine, note?: string) => void;
   onMenuChanged: () => void;
 }) {
   const [sheet, setSheet] = useState<"add" | "menu" | null>(null);
-  const cost = costOf(drink, stockById);
-  const pricing = priceSummary({ cost, target, menuPrice: drink.menu?.price ?? null, average });
+  // A double, picked before ringing it up: twice the spirit in the amounts
+  // shown and the cost, the upcharge on the price (lib/bar/double.ts).
+  const [dbl, setDbl] = useState(false);
+  const single = costOf(drink, stockById);
+  const singlePricing = priceSummary({ cost: single, target, menuPrice: drink.menu?.price ?? null, average });
+  const upcharge = doubleUpcharge(drink.menu?.price ?? singlePricing.suggested ?? 0, { isAlcohol: true, section: drink.menu?.section ?? "cocktails", ownDouble: false, recipe: drink.lines }, doubleSettings);
+  const doubled = dbl && upcharge !== null;
+  const shownLines = doubled ? doubledLines(drink.lines) : drink.lines;
+  const cost = doubled ? costOf({ lines: shownLines }, stockById) : single;
+  const pricing = doubled
+    ? priceSummary({ cost, target, menuPrice: drink.menu ? drink.menu.price + upcharge! : null, average })
+    : singlePricing;
+  const suggestedNow = doubled ? (singlePricing.suggested !== null ? Math.round((singlePricing.suggested + upcharge!) * 100) / 100 : null) : singlePricing.suggested;
   const card = recipeCard(drink);
   const glass = card.glass ?? (drink.glass ? GLASS_LABEL[drink.glass] : null);
   const kicker = ["Recipe card", card.method, glass].filter(Boolean).join(" · ");
@@ -345,13 +362,20 @@ function Card({
         </div>
 
         <div>
-          <div className="label-xs font-bold uppercase tracking-wider">Ingredients</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="label-xs font-bold uppercase tracking-wider">Ingredients{doubled ? " (a double)" : ""}</div>
+            {upcharge !== null && (
+              <button className={`chip min-h-11 !px-3.5 !text-sm font-bold ${doubled ? "chip-selected" : ""}`} aria-pressed={doubled} onClick={() => setDbl(!doubled)}>
+                {doubled ? "✓ " : ""}Double {plus(upcharge)}
+              </button>
+            )}
+          </div>
           {drink.lines.length === 0 && (
             <p className="text-sm" style={{ color: "var(--muted)" }}>
               None listed yet.
             </p>
           )}
-          {drink.lines.map((l, i) => {
+          {shownLines.map((l, i) => {
             const st = lineState(l, stockById);
             const good = st === "ok";
             return (
@@ -386,13 +410,13 @@ function Card({
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
           {drink.menu ? (
-            <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => onRingUp(drink.menu!.id)}>
-              Ring it up · {money(drink.menu.price)}
+            <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => onRingUp(drink.menu!.id, doubled)}>
+              Ring it up{doubled ? " a double" : ""} · {money(drink.menu.price + (doubled ? upcharge! : 0))}
             </button>
           ) : (
             <>
               <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("add")}>
-                Add to order{pricing.suggested !== null ? ` · $${pricing.suggested}` : ""}
+                Add to order{suggestedNow !== null ? ` · ${costMoney(suggestedNow).replace(".00", "")}` : ""}
               </button>
               <span className="text-sm" style={{ color: "var(--muted)" }}>
                 Not on our menu yet
@@ -409,14 +433,16 @@ function Card({
       {sheet && (
         <PriceSheet
           mode={sheet}
-          drink={drink}
-          suggested={pricing.suggested}
-          cost={cost}
+          title={sheet === "add" && doubled ? `${drink.name} · Double` : drink.name}
+          suggested={sheet === "add" ? suggestedNow : singlePricing.suggested}
+          cost={sheet === "add" ? cost : single}
+          approvalTarget={drink.id}
           onClose={() => setSheet(null)}
-          onAddLine={(line, note) => {
+          onAdd={(price, note) => {
             setSheet(null);
-            onAddLine(line, note);
+            onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, price, doubled), note);
           }}
+          onMakeMenuItem={(price) => makeMenuItemFromRecipe(drink.id, price)}
           onMadeMenuItem={() => {
             setSheet(null);
             onMenuChanged();
@@ -429,23 +455,32 @@ function Card({
 
 // "Add to order" (a one-off line at this price) or "Make this a menu item"
 // (owners and admins), named after the drink. The price starts at the
-// suggested one; with no costs to suggest from, staff type it.
-function PriceSheet({
+// suggested one; with no costs to suggest from, staff type it. Below what
+// it's known to cost, adding it takes a manager's PIN (approveBelowCost,
+// for this recipe or "custom"). Used by the Bar Book's cards and by
+// "What's in it?" (WhatsInIt.tsx), so both ring drinks up the same way.
+export function PriceSheet({
   mode,
-  drink,
+  title,
+  blurb,
   suggested,
   cost,
+  approvalTarget,
   onClose,
-  onAddLine,
+  onAdd,
+  onMakeMenuItem,
   onMadeMenuItem,
 }: {
   mode: "add" | "menu";
-  drink: BookDrink;
+  title: string; // the drink's name
+  blurb?: string;
   suggested: number | null;
-  cost: ReturnType<typeof costOf>;
+  cost: DrinkCost;
+  approvalTarget: string; // the recipe's id, or "custom"
   onClose: () => void;
-  onAddLine: (line: BookOrderLine, note?: string) => void;
-  onMadeMenuItem: () => void;
+  onAdd?: (price: number, note?: string) => void;
+  onMakeMenuItem?: (price: number) => Promise<{ ok: true } | { ok: false; error: string }>;
+  onMadeMenuItem?: () => void;
 }) {
   const [text, setText] = useState(suggested !== null ? String(suggested) : "");
   const [error, setError] = useState<string | null>(null);
@@ -462,13 +497,14 @@ function PriceSheet({
     setError(null);
     if (mode === "add") {
       if (below) setAskPin(true);
-      else onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, read.price));
+      else onAdd?.(read.price);
       return;
     }
+    if (!onMakeMenuItem) return;
     setBusy(true);
-    const r = await makeMenuItemFromRecipe(drink.id, read.price).catch(() => ({ ok: false as const, error: "Couldn't reach the website. Try again." }));
+    const r = await onMakeMenuItem(read.price).catch(() => ({ ok: false as const, error: "Couldn't reach the website. Try again." }));
     setBusy(false);
-    if (r.ok) onMadeMenuItem();
+    if (r.ok) onMadeMenuItem?.();
     else setError(r.error);
   }
 
@@ -482,12 +518,13 @@ function PriceSheet({
         }}
       >
         <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
-          {mode === "add" ? drink.name : `Put ${drink.name} on the menu`}
+          {mode === "add" ? title : `Put ${title} on the menu`}
         </h3>
         <p className="text-sm" style={{ color: "var(--muted)" }}>
-          {mode === "add"
-            ? "Goes on the order like a custom item, at this price. It counts as alcohol, so the ID check applies."
-            : "Adds it to Cocktails under Alcohol at this price. It shows as a button on the Bar tab and rings up like any drink."}
+          {blurb ??
+            (mode === "add"
+              ? "Goes on the order like a custom item, at this price. It counts as alcohol, so the ID check applies."
+              : "Adds it to Cocktails under Alcohol at this price. It shows as a button on the Bar tab and rings up like any drink.")}
         </p>
         <label className="block">
           <div className="label-xs">Price</div>
@@ -522,13 +559,13 @@ function PriceSheet({
       {askPin && read.ok && (
         <ManagerPinModal
           title="Below cost"
-          description={`${drink.name} at $${read.price.toFixed(2)} is less than it costs to make. A manager's PIN puts it on the order.`}
+          description={`${title} at $${read.price.toFixed(2)} is less than it costs to make. A manager's PIN puts it on the order.`}
           onCancel={() => setAskPin(false)}
           onSubmit={async (pin) => {
-            const r = await approveBelowCost(pin, drink.id);
+            const r = await approveBelowCost(pin, approvalTarget);
             if (!r.ok) throw new Error(r.error);
             setAskPin(false);
-            onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, read.price), `${drink.name} added below cost. ${approvalText(r)}`);
+            onAdd?.(read.price, `${title} added below cost. ${approvalText(r)}`);
           }}
         />
       )}

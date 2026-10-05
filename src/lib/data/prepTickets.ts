@@ -19,6 +19,9 @@ export interface PrepTicket {
   // A Bar Book drink rung up off the menu: its recipe (null otherwise, and
   // before migration 20261004030000_order_item_recipe.sql).
   recipe_id: string | null;
+  // A custom drink from "What's in it?": its ingredient list (null
+  // otherwise, and before migration 20261005010000).
+  custom_recipe: unknown;
 }
 
 export type Station = "kitchen" | "bar";
@@ -60,7 +63,8 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       .gte("order.created_at", since)
       .order("created_at", { ascending: false })
       .limit(120);
-  let { data, error } = await read(", recipe_id");
+  let { data, error } = await read(", recipe_id, custom_recipe");
+  if (error && schemaMissing(error)) ({ data, error } = await read(", recipe_id"));
   if (error && schemaMissing(error)) ({ data, error } = await read(""));
   if (error) throw error;
 
@@ -76,6 +80,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
     is_alcohol: boolean;
     menu_item_id: string | null;
     recipe_id?: string | null;
+    custom_recipe?: unknown;
     menu_item: { category: { key: string } | null } | null;
     order: { order_number: number; order_name: string | null };
   }[];
@@ -98,6 +103,7 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       station: station as Station,
       menu_item_id: row.menu_item_id ?? null,
       recipe_id: row.recipe_id ?? null,
+      custom_recipe: row.custom_recipe ?? null,
     }));
 }
 

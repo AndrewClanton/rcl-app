@@ -26,6 +26,7 @@ import {
   type Method,
 } from "@/lib/bar/icons";
 import { averagePourCost, drinkCost, type CostLine, type DrinkCost } from "@/lib/bar/pricing";
+import { customSpec } from "@/lib/bar/match";
 
 export type RecipeSource = "menu" | "house" | "seed";
 
@@ -37,6 +38,10 @@ export interface BookStock {
   outLabel: string | null; // an open Ran out on its par line: what was reported
   lastCount: number | null; // the latest shelf count, if it's ever been counted
   unitCost?: number | null; // ingredients.unit_cost: per oz (or ml, or each)
+  // For "What's in it?": how it's measured and what it is.
+  unit?: string;
+  family?: string | null;
+  kind?: string | null;
 }
 
 export interface BookLine {
@@ -307,11 +312,41 @@ export interface BoardMaps {
   recipes: Readonly<Record<string, BoardEntry>>;
 }
 
-// A ticket's entry: its menu item's, else its Bar Book recipe's, else null.
-export function boardEntryForTicket(maps: BoardMaps | null | undefined, ticket: { menu_item_id?: string | null; recipe_id?: string | null }): BoardEntry | null {
-  if (!maps || !ticket) return null;
-  if (ticket.menu_item_id) return boardEntryFor(maps.items, ticket.menu_item_id);
-  return boardEntryFor(maps.recipes, ticket.recipe_id);
+// A ticket's entry: its menu item's, else its Bar Book recipe's, else a
+// custom drink's own ingredient list ("What's in it?"), else null.
+export function boardEntryForTicket(
+  maps: BoardMaps | null | undefined,
+  ticket: { menu_item_id?: string | null; recipe_id?: string | null; custom_recipe?: unknown; name?: string },
+): BoardEntry | null {
+  if (!ticket) return null;
+  if (ticket.menu_item_id) return maps ? boardEntryFor(maps.items, ticket.menu_item_id) : null;
+  if (ticket.recipe_id) return maps ? boardEntryFor(maps.recipes, ticket.recipe_id) : null;
+  if (maps) return customBoardEntry(ticket.custom_recipe, ticket.name ?? "Custom drink");
+  return null;
+}
+
+// A custom drink's icon and Recipe card, from the list on its order line.
+// Null for anything that isn't a usable list.
+export function customBoardEntry(list: unknown, name: string): BoardEntry | null {
+  if (!Array.isArray(list) || list.length === 0 || list.length > 12) return null;
+  const lines = list.filter(
+    (l): l is { name: string; quantity: number; unit?: string; family?: string | null; kind?: string | null } =>
+      !!l && typeof l === "object" && typeof (l as { name?: unknown }).name === "string" && Number.isFinite(Number((l as { quantity?: unknown }).quantity)),
+  );
+  if (!lines.length) return null;
+  const picked = lines.map((l) => ({ id: "", name: l.name, unit: l.unit ?? "oz", family: l.family ?? null, kind: l.kind ?? null, amount: Number(l.quantity) }));
+  return {
+    spec: customSpec(picked),
+    card: {
+      name,
+      glass: null,
+      method: null,
+      garnish: null,
+      description: null,
+      instructions: "A custom drink: build it from the list.",
+      lines: picked.map((p) => ({ name: p.name, amount: formatAmount(p.amount, p.unit), optional: false, family: isFamily(p.family) ? p.family : familyFor(p.name) })),
+    },
+  };
 }
 
 // A ticket line's entry, or null: coffee, sodas, custom lines and items

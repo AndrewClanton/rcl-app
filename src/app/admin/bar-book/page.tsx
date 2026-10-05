@@ -1,5 +1,6 @@
 import { hasAdminAccess, requireManager } from "@/lib/auth";
-import { getBarBookAdmin } from "@/lib/data/barBook";
+import { getBarBookAdmin, getDoubleSettings, getMenuDoubles } from "@/lib/data/barBook";
+import Doubles from "./Doubles";
 import PageHeader from "@/components/admin/PageHeader";
 import BarBookManager from "./BarBookManager";
 
@@ -12,7 +13,8 @@ export const dynamic = "force-dynamic";
 // A menu item's recipe is still changed in Menu → the item → Recipe.
 export default async function BarBookPage() {
   const staff = await requireManager();
-  const data = await getBarBookAdmin();
+  const [data, doubleSettings] = await Promise.all([getBarBookAdmin(), getDoubleSettings()]);
+  const menuDoubles = await getMenuDoubles(doubleSettings).catch(() => []);
   return (
     <div>
       <PageHeader
@@ -21,7 +23,10 @@ export default async function BarBookPage() {
         purpose="The register's book of drinks (Bar tab → Bar Book). Mark which ingredients the bar carries so the book knows what we can make, enter what bottles cost so every card can suggest a price, set each one's color on the drink icons, and add our own drinks."
       />
       {data ? (
-        <BarBookManager ingredients={data.ingredients} drinks={data.drinks} target={data.target} canOwn={hasAdminAccess(staff.role)} />
+        <div className="space-y-6">
+          <Doubles settings={doubleSettings} drinks={menuDoubles} canOwn={hasAdminAccess(staff.role)} />
+          <BarBookManager ingredients={data.ingredients} drinks={data.drinks} target={data.target} canOwn={hasAdminAccess(staff.role)} />
+        </div>
       ) : (
         <p className="notice text-sm">The Bar Book isn&apos;t set up yet: its database update (20261004010000_bar_book.sql) hasn&apos;t been applied. The register&apos;s Bar tab works without it.</p>
       )}

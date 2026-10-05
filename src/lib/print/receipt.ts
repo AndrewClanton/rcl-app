@@ -391,7 +391,11 @@ export function orderTicketXml(t: OrderTicket): string {
     d.size(2, 2).bold(true).lines(hang(`${qty}${l.name}`, 24, 0, qty.length)).bold(false);
     if (l.mods.length) {
       d.size(1, 2);
-      for (const m of l.mods) d.lines(hang(`- ${m}`, COLS, 6, 8));
+      for (const m of l.mods) {
+        // A double (lib/bar/double.ts) prints big and dark, so it's poured right.
+        if (m === "Double") d.size(2, 2).bold(true).reverse(true).line("  DOUBLE  ").reverse(false).bold(false).size(1, 2);
+        else d.lines(hang(`- ${m}`, COLS, 6, 8));
+      }
     }
     d.size(1, 1).gap(14);
   }

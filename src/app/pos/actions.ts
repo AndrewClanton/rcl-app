@@ -20,8 +20,9 @@ import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type Co
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
-import { bookRecipesFor } from "@/lib/data/barBook";
-import { bookRecipeIdOf, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
+import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
+import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
+import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -36,6 +37,11 @@ export interface CheckoutLine {
   // was. The server keeps it only for a real off-menu recipe on a one-off
   // line (bookRecipeOf); anything else is dropped.
   recipe_id?: string | null;
+  // A custom drink from "What's in it?": a one-off line carrying what's in
+  // it ([{ ingredient_id, quantity }]). The server keeps it only on a
+  // one-off line with no Bar Book recipe, checks every ingredient, and
+  // writes the names itself (cleanCustomRecipe); anything else is dropped.
+  custom_recipe?: CustomRecipeLine[] | null;
 }
 
 export interface CheckoutTotals {
@@ -98,10 +104,24 @@ function revalidate() {
 
 type BookRecipes = Awaited<ReturnType<typeof bookRecipesFor>>;
 
+// What the server found for an order's Bar Book drinks and custom drinks,
+// looked up once per save.
+type LineExtras = { book: BookRecipes; ingredients: Awaited<ReturnType<typeof customIngredientsFor>> };
+
+async function lineExtrasFor(lines: CheckoutLine[]): Promise<LineExtras> {
+  const [book, ingredients] = await Promise.all([bookRecipesFor(lines), customIngredientsFor(lines)]);
+  return { book, ingredients };
+}
+
 // The recipe a line may keep: a one-off line (no menu item, not a ticket)
 // naming an off-menu Bar Book drink the server found (bookRecipesFor).
 function bookRecipeOf(l: CheckoutLine, book: BookRecipes): string | null {
   return bookRecipeIdOf(l, book);
+}
+
+// The ingredient list a custom drink may keep (cleanCustomRecipe).
+function customRecipeOf(l: CheckoutLine, extras: LineExtras): CustomRecipeLine[] | null {
+  return cleanCustomRecipe(l, extras.ingredients);
 }
 
 // Swaps an order's items for `lines`. The new rows go in first and the old
@@ -113,16 +133,18 @@ async function replaceOrderItems(
   supabase: ReturnType<typeof createAdminClient>,
   orderId: string,
   lines: CheckoutLine[],
-  book?: BookRecipes,
+  given?: LineExtras,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: old, error: readErr } = await supabase.from("order_items").select("id").eq("order_id", orderId);
   if (readErr) return { ok: false, error: readErr.message };
   let addedIds: string[] = [];
   if (lines.length) {
-    // Bar Book drinks keep their recipe (and always count as alcohol); a
-    // line without one saves exactly as it always has.
-    const known = book ?? (await bookRecipesFor(lines));
-    const recipeIds = lines.map((l) => bookRecipeOf(l, known));
+    // Bar Book drinks keep their recipe and custom drinks their list (both
+    // count as alcohol when they are); a line without either saves exactly
+    // as it always has.
+    const extras = given ?? (await lineExtrasFor(lines));
+    const recipeIds = lines.map((l) => bookRecipeOf(l, extras.book));
+    const customs = lines.map((l) => customRecipeOf(l, extras));
     const rows = lines.map((l, i) => ({
       order_id: orderId,
       menu_item_id: l.menu_item_id,
@@ -130,16 +152,19 @@ async function replaceOrderItems(
       unit_price: l.unit_price,
       quantity: l.quantity,
       modifiers: l.modifiers,
-      is_alcohol: recipeIds[i] ? true : l.is_alcohol,
+      is_alcohol: recipeIds[i] ? true : l.is_alcohol || (customs[i] ? customIsAlcohol(customs[i]!.map((c) => ({ name: c.name ?? "", kind: c.kind }))) : false),
       screening_id: l.screening_id ?? null,
       // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
       is_event: !!l.screening_id,
     }));
-    const withRecipes = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i] } : r)) : rows;
-    const insert = (r: typeof rows) => supabase.from("order_items").insert(r).select("id");
-    let { data: added, error: insertErr } = await insert(withRecipes);
-    // Before migration 20261004030000 adds order_items.recipe_id: saved
-    // without the link, like any custom line.
+    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
+    const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
+    const withCustoms: Row[] = customs.some(Boolean) ? withRecipes.map((r, i) => (customs[i] ? { ...r, custom_recipe: customs[i]! } : r)) : withRecipes;
+    const insert = (r: Row[]) => supabase.from("order_items").insert(r).select("id");
+    let { data: added, error: insertErr } = await insert(withCustoms);
+    // Before migration 20261005010000 adds order_items.custom_recipe, or
+    // 20261004030000 adds recipe_id: saved without them, like any custom line.
+    if (insertErr && schemaMissing(insertErr) && withCustoms !== withRecipes) ({ data: added, error: insertErr } = await insert(withRecipes));
     if (insertErr && schemaMissing(insertErr) && withRecipes !== rows) ({ data: added, error: insertErr } = await insert(rows));
     if (insertErr) return { ok: false, error: insertErr.message };
     addedIds = (added ?? []).map((r) => r.id);
@@ -204,9 +229,9 @@ async function saveSaleItems(
   supabase: ReturnType<typeof createAdminClient>,
   sale: { orderId: string; orderNumber: number; employeeId: string; paymentIntentId: string | null },
   lines: CheckoutLine[],
-  book: BookRecipes,
+  extras: LineExtras,
 ) {
-  const r = await replaceOrderItems(supabase, sale.orderId, lines, book);
+  const r = await replaceOrderItems(supabase, sale.orderId, lines, extras);
   if (r.ok) return;
   console.error("sale items not saved", sale.orderId, r.error);
   const items = lines.slice(0, 50).map((l) => `${l.quantity} x ${String(l.name).slice(0, 80)}`);
@@ -391,7 +416,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   let totalsCheck: TotalsCheck | null = null;
   // The Bar Book drinks on it (off-menu, rung up from the book), looked up
   // once: only those keep their recipe, and they aren't custom items.
-  const book = await bookRecipesFor(params.lines);
+  const extras = await lineExtrasFor(params.lines);
+  const book = extras.book;
 
   // The Insiders+ daily coffee (lib/daily-perk.ts): checked again here
   // (Insiders+, a daily coffee item on the order, not had today), then
@@ -459,7 +485,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       orderId = params.draftOrderId;
       orderNumber = Number(existing.order_number);
       wasTab = existing.status === "tab";
-      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, book);
+      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
     } else {
       // This payment's own close may have landed a moment ago (a retry).
       const saved = await orderForPayment();
@@ -495,7 +521,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       throw orderErr;
     }
     orderId = order.id;
-    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, book);
+    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
   }
 
   // The member's balance before this sale moves it. A reward's points come
@@ -533,16 +559,21 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     // A Bar Book drink rung up for less than its ingredients cost. The
     // register asks for a manager PIN first (the PIN log has who); this is
     // the server's own record of it, priced like any custom line.
+    // A custom drink from "What's in it?" the same way, costed from its list.
     const under = params.lines.flatMap((l) => {
       const id = bookRecipeOf(l, book);
       const found = id ? book.get(id) : undefined;
-      return found && isBelowCost(Number(l.unit_price), found.cost) ? [{ name: l.name, recipeId: id, price: Number(l.unit_price), cost: found.cost.known }] : [];
+      if (found) return isBelowCost(Number(l.unit_price), found.cost) ? [{ name: l.name, recipeId: id, price: Number(l.unit_price), cost: found.cost.known, list: null as string | null }] : [];
+      const custom = customRecipeOf(l, extras);
+      if (!custom) return [];
+      const cost = drinkCost(custom.map((c) => ({ name: c.name ?? "?", quantity: c.quantity, unitCost: extras.ingredients.get(c.ingredient_id)?.unitCost ?? null })));
+      return isBelowCost(Number(l.unit_price), cost) ? [{ name: l.name, recipeId: null, price: Number(l.unit_price), cost: cost.known, list: customRecipeText(custom) }] : [];
     });
     if (under.length) {
       await flagSale("below_cost", {
         ...saved,
         details: {
-          summary: `Rung up below what its ingredients cost: ${under.map((u) => `${u.name} at ${barMoney(u.price)} (costs ${barMoney(u.cost)})`).join(", ")}. The register asks for a manager PIN for this.`,
+          summary: `Rung up below what its ingredients cost: ${under.map((u) => `${u.name}${u.list ? ` (${u.list})` : ""} at ${barMoney(u.price)} (costs ${barMoney(u.cost)})`).join(", ")}. The register asks for a manager PIN for this.`,
           lines: under,
         },
       });
@@ -581,7 +612,13 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // Nor is a Bar Book drink: the book described it.
   const customLines = params.lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !bookRecipeOf(l, book));
   if (customLines.length) {
-    const items = customLines.map((l) => `"${l.name}" $${(l.unit_price * l.quantity).toFixed(2)}`).join(", ");
+    // A custom drink says what was in it.
+    const items = customLines
+      .map((l) => {
+        const list = customRecipeText(customRecipeOf(l, extras));
+        return `"${l.name}"${list ? ` (${list})` : ""} $${(l.unit_price * l.quantity).toFixed(2)}`;
+      })
+      .join(", ");
     await supabase
       .from("dev_notes")
       .insert({
@@ -802,10 +839,12 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   };
   const ORDER_COLUMNS = "id, order_name, member_id, tax_free, monthly_member, points_redeemed";
   const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
-  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`);
+  // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
+  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`);
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS})`));
   if (error || !order) throw new Error("That order was already closed on another register.");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -824,6 +863,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       is_alcohol: i.is_alcohol,
       screening_id: i.screening_id,
       ...(i.recipe_id ? { recipe_id: i.recipe_id } : {}),
+      ...(Array.isArray(i.custom_recipe) && i.custom_recipe.length ? { custom_recipe: i.custom_recipe } : {}),
     })),
   };
 }
