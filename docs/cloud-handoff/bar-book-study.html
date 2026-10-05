@@ -1,0 +1,379 @@
+<title>The Royale Bar Book</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Black&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: a reading column for the study, with full-width figures for the iPad mockups and the icon sheet. */
+:root{
+  --bg:#f8f5ec;--surface:#ffffff;--soft:#f1ecdd;--ink:#14110c;--muted:#5f584a;--line:#e0d9c4;
+  --red:#c81017;--gold:#ffc72c;--ok:#1f6b3a;--okbg:#e3f2e7;--warn:#8a5a0a;--warnbg:#fbf1d2;--bad:#b3141a;--badbg:#fde8e8;
+  --glass:#14110c;--glassfill:rgba(20,17,12,.04);
+  /* the fixed spirit legend: the same in both themes so staff learn one code */
+  --whiskey:#c27a2c;--rum:#8a3b22;--tequila:#cdb84a;--vodka:#9cc3e6;--gin:#6fb69c;--liqueur:#8c4a86;--brandy:#a4502f;
+  --cola:#3a2216;--citrus:#b9d33f;--grapefruit:#ef8f80;--ginger:#e5cf8a;--cream:#efe6d6;--syrup:#d9a441;--coffee:#4a2c1d;--soda:#d8e6ea;--vermouth:#7a1f2b;--beer:#e0a930;--wine:#7b1e3a;
+  --display:'Archivo Black','Arial Black',Arial,sans-serif;--body:Archivo,Arial,Helvetica,sans-serif;--mono:'Space Mono','Courier New',monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#16130e;--surface:#211d17;--soft:#2a251d;--ink:#f3eee0;--muted:#b3aa97;--line:#3a3428;
+  --red:#ff6b70;--ok:#7fd49a;--okbg:#15301f;--warn:#f0c46a;--warnbg:#352c12;--bad:#ff8a8f;--badbg:#3b1618;
+  --glass:#f3eee0;--glassfill:rgba(243,238,224,.05);color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#16130e;--surface:#211d17;--soft:#2a251d;--ink:#f3eee0;--muted:#b3aa97;--line:#3a3428;
+  --red:#ff6b70;--ok:#7fd49a;--okbg:#15301f;--warn:#f0c46a;--warnbg:#352c12;--bad:#ff8a8f;--badbg:#3b1618;
+  --glass:#f3eee0;--glassfill:rgba(243,238,224,.05);color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;padding-inline:16px;padding-block:28px 80px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+.col{max-width:760px}
+h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;text-wrap:balance;line-height:1.05}
+h1{font-size:clamp(36px,7vw,64px)}
+h2{font-size:clamp(26px,4vw,36px)}
+h3{font-size:20px;line-height:1.2}
+p{margin:0}
+.kicker{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--red)}
+.lead{font-size:19px;max-width:62ch;margin-top:14px}
+section{display:flex;flex-direction:column;gap:18px}
+.sec-head{display:flex;flex-direction:column;gap:6px;border-bottom:3px solid var(--ink);padding-bottom:10px}
+ul.plain{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.chip{display:inline-block;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.c-pub{background:var(--okbg);color:var(--ok)}.c-inf{background:var(--warnbg);color:var(--warn)}.c-2nd{background:var(--badbg);color:var(--bad)}
+.tbl{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:14px}
+table{border-collapse:collapse;width:100%;min-width:720px;font-size:14.5px}
+th,td{text-align:left;padding:11px 14px;border-top:1px solid var(--line);vertical-align:top}
+thead th{border-top:0;font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+td.y{color:var(--ok);font-weight:700}td.n{color:var(--bad);font-weight:700}td.p{color:var(--warn);font-weight:700}
+.summary{background:var(--gold);color:#14110c;border-radius:20px;padding:28px;display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.summary h3{color:#14110c}.summary p{color:#3d3528}
+.num{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.1em}
+/* iPad mockups: drawn at 1180x820 and scaled to the column */
+.ipad-outer{width:100%;overflow:hidden;border-radius:26px;background:#0d0b08;padding:14px}
+.ipad{width:1180px;height:820px;transform-origin:0 0;background:var(--bg);border-radius:14px;overflow:hidden;display:grid;grid-template-columns:1fr 330px;font-size:15px}
+.pos-main{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+.tabs{display:flex;gap:4px;padding:10px 12px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:nowrap}
+.tab{padding:9px 13px;border-radius:9px;font-weight:700;font-size:14px;color:var(--muted)}
+.tab.on{background:var(--ink);color:var(--bg)}
+.bar{flex:1;display:grid;grid-template-columns:250px 1fr;gap:12px;padding:12px;min-height:0}
+.rail{display:flex;flex-direction:column;gap:10px;min-height:0}
+.blk{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:7px}
+.blk h4{margin:0;font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.tap{display:grid;grid-template-columns:1fr auto;align-items:center;gap:6px;font-size:13px;font-weight:700}
+.sizes{display:flex;gap:4px}
+.sz{border:1.5px solid var(--line);border-radius:7px;padding:4px 7px;font-size:12px;font-weight:700;background:var(--bg)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;align-content:start}
+.tile{position:relative;border-radius:12px;padding:8px 8px 9px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;border:1.5px solid color-mix(in oklab,var(--sp) 45%,var(--line));background:color-mix(in oklab,var(--sp) 16%,var(--surface));min-height:128px}
+.tile .nm{font-weight:700;font-size:13.5px;line-height:1.15}
+.tile .pr{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.tile .dot{position:absolute;top:7px;left:7px;width:9px;height:9px;border-radius:99px;background:var(--sp)}
+.tile.out{opacity:.45}.tile.out::after{content:"Ran out";position:absolute;bottom:6px;right:6px;font-family:var(--mono);font-size:10px;font-weight:700;color:var(--bad)}
+.order{display:flex;flex-direction:column;background:var(--surface)}
+.order .hd{padding:14px;border-bottom:1px solid var(--line);font-weight:700}
+.line{display:flex;justify-content:space-between;padding:9px 14px;border-bottom:1px dashed var(--line);font-size:14px}
+.line small{display:block;color:var(--muted);font-size:12px}
+.pay{margin-top:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
+.btn{border-radius:10px;padding:13px;text-align:center;font-weight:700}
+.btn.red{background:var(--red);color:#fff}.btn.ghost{border:2px solid var(--ink)}
+.sheet{position:absolute;inset:auto 0 0 0;background:var(--surface);border-top:3px solid var(--ink);padding:16px 18px;display:grid;grid-template-columns:auto 1fr;gap:16px;box-shadow:0 -12px 30px rgba(0,0,0,.18)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg span{border:1.5px solid var(--line);border-radius:9px;padding:8px 12px;font-weight:700;font-size:14px;background:var(--bg)}
+.seg span.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.lbl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+/* bar book */
+.book{display:grid;grid-template-columns:330px 1fr;height:100%;min-height:0}
+.list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.filters{display:flex;gap:6px;flex-wrap:wrap;padding:10px;border-bottom:1px solid var(--line)}
+.f{border:1.5px solid var(--line);border-radius:999px;padding:6px 11px;font-size:13px;font-weight:700;background:var(--surface)}
+.f.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.rows{overflow:hidden;display:flex;flex-direction:column}
+.letter{font-family:var(--display);font-size:15px;padding:6px 12px;background:var(--soft)}
+.row{display:grid;grid-template-columns:40px 1fr auto;gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--line);font-size:14px}
+.row.sel{background:color-mix(in oklab,var(--gold) 30%,var(--surface))}
+.st{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px;white-space:nowrap}
+.st.ok{background:var(--okbg);color:var(--ok)}.st.miss{background:var(--warnbg);color:var(--warn)}.st.out{background:var(--badbg);color:var(--bad)}
+.rcard{padding:20px 24px;display:grid;grid-template-columns:200px 1fr;gap:22px;align-content:start}
+.ing{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+.sw{width:14px;height:14px;border-radius:4px}
+/* icon sheet */
+.icons{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.ic{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center}
+.ic .nm{font-weight:700;font-size:14px}.ic .sub{font-size:12px;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:14px}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:16px;height:16px;border-radius:5px;display:inline-block}
+.sizes-demo{display:flex;align-items:end;gap:18px;flex-wrap:wrap}
+code{font-family:var(--mono);font-size:13px;background:var(--soft);padding:1px 5px;border-radius:5px}
+.phase{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:start}
+.phase .n{font-family:var(--display);font-size:30px;color:var(--red);line-height:1}
+.src{font-size:14px;color:var(--muted)}
+.src a{color:var(--muted)}
+@media (max-width:600px){.summary{padding:20px}}
+</style>
+
+<div class="wrap">
+
+<header class="col">
+  <div class="kicker">Royale Cinema Lounge · Bar study · Oct 4, 2026</div>
+  <h1 style="margin-top:8px">The Royale Bar Book</h1>
+  <p class="lead">A study of how the best bar registers work, what ours lacks, and a proposal: one bar screen you can read at a glance, color-coded by spirit, with drink icons drawn from each recipe, and a recipe book that knows what we can make tonight.</p>
+</header>
+
+<section class="summary" aria-label="The proposal in short">
+  <div><span class="num">THE SCREEN</span><h3 style="margin-top:6px">Everything on one page</h3><p>Taps, cans, wine, cocktails and shots on one screen, no scrolling. Each drink's tile is tinted by its spirit, so the eye finds "the tequila ones" before reading.</p></div>
+  <div><span class="num">THE ICONS</span><h3 style="margin-top:6px">Drawn from the recipe</h3><p>A small program draws each drink: the right glass, filled with its ingredients' colors, with its garnish on top. Staff pick up recipes without trying.</p></div>
+  <div><span class="num">THE BOOK</span><h3 style="margin-top:6px">Can we make it?</h3><p>Hundreds of drinks A–Z, each with its recipe card and a live answer: yes, or "out of Cointreau". Filter to what we can make right now, and ring any of them up in one tap.</p></div>
+</section>
+
+<section aria-labelledby="h-best">
+  <div class="sec-head"><span class="kicker">1 · Benchmarks</span><h2 id="h-best">How the best bar registers handle drinks</h2></div>
+  <p class="col">The bar-focused systems (Toast, Square for Restaurants, Lightspeed, TouchBistro, Clover) all solve the same few problems the same way. What a bartender taps, in order:</p>
+  <div class="tbl"><table>
+    <thead><tr><th>What the guest asks for</th><th>How good bar registers ring it</th><th>Our register today</th></tr></thead>
+    <tbody>
+      <tr><td><strong>"A vodka soda"</strong> (no menu item)</td><td>A spirit button, then a mixer. Price comes from the spirit's tier plus the mixer.</td><td class="n">Not possible without a custom item</td></tr>
+      <tr><td><strong>Well, call or premium</strong> ("Tito's" vs house)</td><td>A tier step on every spirit drink: Well, Call (+$), Premium (+$$), or a named brand list.</td><td class="n">None</td></tr>
+      <tr><td><strong>Neat, rocks, up</strong></td><td>One required "serve" choice on spirits and stirred drinks.</td><td class="n">None</td></tr>
+      <tr><td><strong>A double, or extra shot</strong></td><td>A "Double" add-on that doubles the pour and adds a fixed upcharge.</td><td class="n">None</td></tr>
+      <tr><td><strong>Draft sizes, pitchers, buckets</strong></td><td>Size buttons right on the tap; pitchers and buckets as their own sizes with their own prices.</td><td class="p">One price per kind (pending Andrew's sizes)</td></tr>
+      <tr><td><strong>Wine by glass or bottle</strong></td><td>Pick the wine, then glass or bottle.</td><td class="y">Yes (glass $5 / bottle $18, pick the wine)</td></tr>
+      <tr><td><strong>"Another round"</strong></td><td>Repeat the last round on a tab in one tap.</td><td class="n">Ring each again</td></tr>
+      <tr><td><strong>Open tabs, card held</strong></td><td>Start a tab with a card (pre-authorized), close at the end.</td><td class="y">Tabs with a card on file</td></tr>
+      <tr><td><strong>Happy hour</strong></td><td>Price levels that switch on by day and time.</td><td class="n">None</td></tr>
+      <tr><td><strong>Pour tracking</strong></td><td>Each sale takes its recipe's ounces out of stock; counts are compared to what sales say should be left (variance).</td><td class="p">Recipes and counts exist; sales don't deplete yet</td></tr>
+    </tbody>
+  </table></div>
+  <p class="src">Sources: tier, serve and nested pour modifiers as described in <a href="https://support.arryved.com/portal/en/kb/articles/best-practices-for-liquor-cocktails">Arryved's liquor best practices</a> and <a href="https://www.getbackbar.com/support/setup-modifiers-pos-integration">Backbar's modifier setup</a>; tabs, pre-authorization, happy-hour price schedules and pour tracking from <a href="https://www.merchantmaverick.com/essential-pos-features-for-your-bar-or-brewery/">Merchant Maverick</a> and <a href="https://Rezku.com/blog/seven-must-have-features-for-bar-pos">Rezku</a>.</p>
+</section>
+
+<section aria-labelledby="h-chains">
+  <div class="sec-head"><span class="kicker">2 · The big chains</span><h2 id="h-chains">What Outback, Chili's and the rest do</h2></div>
+  <p class="col">Chains like Outback, Chili's, Applebee's, Buffalo Wild Wings, TGI Fridays and Olive Garden run enterprise registers (NCR Voyix Aloha, Oracle MICROS Simphony) or their own builds. Very little of how their bar screens look is public, so each point below is marked.</p>
+  <div class="grid">
+    <div class="card"><span class="chip c-pub">Public</span><h3>Outback uses Aloha and MICROS</h3><p>Outback's own bartender job postings ask for Aloha or MICROS experience and say drinks are made "following Outback Steakhouse recipes and standards".</p></div>
+    <div class="card"><span class="chip c-pub">Public</span><h3>Tablets at the table</h3><p>Chili's put Ziosk tablets on its tables and Applebee's rolled out E la Carte tablets, both widely covered in 2013–2014: guests reorder drinks and pay without waiting. Not re-checked for today.</p></div>
+    <div class="card"><span class="chip c-inf">Inferred</span><h3>Chains standardize the spec</h3><p>Every chain drink has one recipe, one glass and one garnish, shown to the bartender, so a margarita is the same in every state. The register enforces the recipe through fixed modifiers rather than free typing.</p></div>
+    <div class="card"><span class="chip c-inf">Inferred</span><h3>Fixed price levels</h3><p>Aloha and MICROS both sell time-based price levels; chains use them for happy hour and late-night menus that switch on by themselves.</p></div>
+    <div class="card"><span class="chip c-2nd">Secondhand</span><h3>Outback's drink library</h3><p>Andrew heard Outback's bar screen has hundreds of drinks A–Z, each with its recipe card, and can show what can be made with what's in stock. We couldn't confirm this publicly. Consumer apps do exactly this (Jigger, Drinkshelf, Muddled, Bar Assistant), so it's very buildable.</p></div>
+    <div class="card"><span class="chip c-pub">To borrow</span><h3>What a small lounge can take</h3><ul class="plain"><li>One recipe per drink, shown on the screen</li><li>Tiers, serve and doubles as fixed choices</li><li>Price levels for happy hour</li><li>A recipe book with "can we make it"</li></ul></div>
+  </div>
+  <p class="src">Sources: <a href="https://careers.outback.com/bartender/job/27133764">Outback bartender posting</a>; what-can-I-make apps: <a href="https://apps.apple.com/app/id6759573682">Jigger</a>, <a href="https://apps.apple.com/us/app/-/id6747364935">Drinkshelf</a>, <a href="https://hunted.space/product/muddled">Muddled</a>, <a href="https://www.selfhostyourself.com/services/bar-assistant">Bar Assistant</a>. Tablet rollouts are from press coverage at the time.</p>
+</section>
+
+<section aria-labelledby="h-gaps">
+  <div class="sec-head"><span class="kicker">3 · Our register</span><h2 id="h-gaps">What the Alcohol tab lacks today</h2></div>
+  <div class="grid">
+    <div class="card"><h3>Hard to read at a glance</h3><p>Beer, wine, cocktails and shots are separate lists you scroll through, and the buttons look alike. The fix is visual: color and shape, more than fewer screens.</p></div>
+    <div class="card"><h3>No way to ring a call drink</h3><p>"Tito's and soda, double" has no button. Staff either guess an item or type a custom one, which skips stock and the price checks.</p></div>
+    <div class="card"><h3>Sizes and specials are missing</h3><p>One price per beer kind; no pint, pitcher or bucket; no happy hour. Andrew's pending prices need sizes to exist first.</p></div>
+    <div class="card"><h3>Recipes don't do anything yet</h3><p>Recipes, ingredients, costs, counts and Ran out already exist, but a sale doesn't use them: nothing says a drink can't be made, and stock never goes down by itself.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-screen">
+  <div class="sec-head"><span class="kicker">4 · Proposal</span><h2 id="h-screen">One bar screen, color-coded by spirit</h2></div>
+  <p class="col">The Bar tab at the register's real size (1180 × 820). Taps with their sizes down the left, cans and wine under them, cocktails as tinted tiles with their drawn icons, shots at the end, and the Bar Book one tap away. Prices are today's where we have them; sizes use Andrew's pending numbers.</p>
+  <div class="ipad-outer" data-ipad><div class="ipad">
+    <div class="pos-main">
+      <div class="tabs"><span class="tab">Movies</span><span class="tab">Food</span><span class="tab">Candy</span><span class="tab">Drinks</span><span class="tab">Coffee</span><span class="tab on">Bar</span><span class="tab">VHS &amp; merch</span><span class="tab">Customers</span></div>
+      <div class="bar" style="position:relative">
+        <div class="rail">
+          <div class="blk"><h4>On tap · 12 oz · pint · pitcher</h4>
+            <div class="tap">Space Dust<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+            <div class="tap">Mango Cart<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+            <div class="tap">KC Dunkel<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+            <div class="tap">Big Wave<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+            <div class="tap">Amber Bock<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+            <div class="tap">Stella<div class="sizes"><span class="sz">$5</span><span class="sz">$6</span><span class="sz">$20</span></div></div>
+          </div>
+          <div class="blk"><h4>Cans · $4 · bucket of 4 $14</h4>
+            <div class="tap">Bud · Bud Light<span class="sz">Bucket</span></div>
+            <div class="tap">Ultra Zero · O'Doul's<span class="sz">Bucket</span></div>
+            <div class="tap">Space Dust can $5<span class="sz">Bucket</span></div>
+          </div>
+          <div class="blk"><h4>Wine · glass $5 · bottle $18</h4>
+            <div class="tap">Eagles' Landing (6)<div class="sizes"><span class="sz">Glass</span><span class="sz">Bottle</span></div></div>
+          </div>
+          <div class="blk" style="flex-direction:row;gap:8px;justify-content:space-between;align-items:center"><strong>Bar Book</strong><span class="sz" style="background:var(--gold);color:#14110c;border-color:var(--gold)">142 we can make</span></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px;min-width:0">
+          <div class="tiles" data-tiles></div>
+          <div class="blk" style="flex-direction:row;flex-wrap:wrap;gap:8px;align-items:center"><h4 style="margin-right:6px">Shots</h4><span class="sz">Well shot $5</span><span class="sz">Fireball $6</span><span class="sz">Premium $8</span><span class="sz" style="margin-left:auto">Vodka soda +</span><span class="sz">Whiskey coke +</span></div>
+        </div>
+        <div class="sheet" aria-label="Choices for a margarita">
+          <div data-sheet-icon></div>
+          <div style="display:grid;grid-template-columns:repeat(4,auto);gap:14px 26px;align-content:start">
+            <div><div class="lbl">Margarita · tequila</div><div class="seg"><span>Well</span><span class="on">Call +$2</span><span>Premium +$4</span></div></div>
+            <div><div class="lbl">Serve</div><div class="seg"><span class="on">Rocks</span><span>Up</span><span>Frozen</span></div></div>
+            <div><div class="lbl">Rim</div><div class="seg"><span class="on">Salt</span><span>No salt</span></div></div>
+            <div><div class="lbl">Make it</div><div class="seg"><span>Double +$4</span></div></div>
+            <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><span class="btn red" style="padding:11px 22px">Add · $11.00</span><span style="color:var(--muted);font-size:14px">Call tequila: Espolòn. Stock goes down by 2 oz tequila, 1 oz triple sec, 1 oz lime.</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="order">
+      <div class="hd">Tab · Booth 3</div>
+      <div class="line"><span>Space Dust · pint<small>tap</small></span><span>$6.00</span></div>
+      <div class="line"><span>Old Fashioned<small>call · rocks</small></span><span>$10.00</span></div>
+      <div class="line"><span>Paloma<small>well · salt rim</small></span><span>$9.00</span></div>
+      <div class="line"><span>Bucket of 4<small>2 Bud Light, 2 Ultra Zero</small></span><span>$14.00</span></div>
+      <div class="pay"><span class="btn ghost">Another round</span><span class="btn red">Charge $41.36</span></div>
+    </div>
+  </div></div>
+  <p class="src">A tap on a cocktail opens the choices sheet at the bottom (shown open for a margarita): tier, serve, rim and double, as fixed choices with fixed prices. Ran-out drinks fade and say so. "Another round" repeats the tab's last round.</p>
+</section>
+
+<section aria-labelledby="h-book">
+  <div class="sec-head"><span class="kicker">5 · Headline feature</span><h2 id="h-book">The Bar Book: can we make it?</h2></div>
+  <p class="col">Every drink the bar could make, A–Z, each with its recipe card. Each card checks our ingredients against what's in stock and answers plainly: can make, missing something, or ran out. "Makeable now" filters the book to tonight's possibilities, and "Uses what we have" sorts drinks by how much of our current stock they use. One tap rings the drink up with the right price and choices.</p>
+  <div class="ipad-outer" data-ipad><div class="ipad" style="grid-template-columns:1fr">
+    <div class="book">
+      <div class="list">
+        <div class="filters"><span class="f on">Makeable now · 142</span><span class="f">Uses what we have</span><span class="f">Tequila</span><span class="f">Whiskey</span><span class="f">On our menu</span></div>
+        <div class="rows" data-rows></div>
+      </div>
+      <div class="rcard">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:10px"><div data-card-icon></div><span class="st ok">Can make</span></div>
+        <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+          <div><div class="lbl">Recipe card · shaken · rocks glass</div><h3 style="font-size:32px">Margarita</h3><p style="color:var(--muted);margin-top:4px">On our menu as Margarita, $9. Salt rim, lime wheel.</p></div>
+          <div data-ings></div>
+          <div class="lbl" style="margin-top:4px">Method</div>
+          <p>Salt half the rim. Shake tequila, triple sec and lime with ice. Strain over fresh ice.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px"><span class="btn red" style="padding:13px 22px">Ring it up · $9.00</span><span class="btn ghost" style="padding:13px 18px">Rocks</span><span class="btn ghost" style="padding:13px 18px">Up</span><span class="btn ghost" style="padding:13px 18px">Call +$2</span></div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+  <div class="grid">
+    <div class="card"><h3>Linked to stock we already keep</h3><p>Each ingredient is linked to its par-sheet line. When someone marks a bottle as ran out, every drink that needs it turns to "can't make" at once, and the shopping list and the ran-out email to Nathan and Mary work as today. No second inventory.</p></div>
+    <div class="card"><h3>Not empty on day one</h3><p>A seed list of about 150 well-known drinks (the classic cocktail canon plus common bar calls like a vodka soda), written in our own words, with glass, method and garnish. Our own recipes and house drinks sit on top and win.</p></div>
+    <div class="card"><h3>Off-menu drinks ring correctly</h3><p>A book drink that isn't on the menu rings at a set price by type (standard cocktail, premium cocktail, spirit and mixer) plus the tier, so the price check still works and nobody types a price.</p></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-icons">
+  <div class="sec-head"><span class="kicker">6 · Drink icons</span><h2 id="h-icons">Icons drawn from the recipe</h2></div>
+  <p class="col">Every icon below is drawn by the same small program from the recipe alone: pick the glass, stack the ingredients from the bottom in their colors and in proportion, add ice, then the garnish. Nothing is hand-drawn, so a new drink gets its icon the moment its recipe is saved. The spirit colors are fixed, the same in light and dark, so staff learn one code.</p>
+  <div class="legend" data-legend></div>
+  <div class="icons" data-icons></div>
+  <div class="card"><h3>Legible at button size</h3><p>The same margarita at the register's tile size, a small chip size and the order-line size. The glass outline follows the theme; the drink colors stay the same.</p><div class="sizes-demo" data-sizes></div></div>
+  <div class="card"><h3>Glasses and garnishes it knows</h3><div class="icons" data-glasses style="grid-template-columns:repeat(auto-fill,minmax(110px,1fr))"></div></div>
+</section>
+
+<section aria-labelledby="h-data">
+  <div class="sec-head"><span class="kicker">7 · Under the hood</span><h2 id="h-data">One set of recipe data for the book, the icons and the stock</h2></div>
+  <div class="grid">
+    <div class="card"><h3>Ingredients (exists, gains a few fields)</h3><p><code>ingredients</code> already has name, unit, bottle size, cost and its par-sheet link. Add a <strong>kind</strong> (spirit, liqueur, mixer, juice, syrup, bitters, garnish), a <strong>family</strong> for spirits (whiskey, rum, gin, vodka, tequila) that drives the colors, a <strong>tier</strong> (well, call, premium) and the brand.</p></div>
+    <div class="card"><h3>Recipes become the book</h3><p><code>recipes</code> today belongs to a menu item. Let a recipe stand alone with its own name, so the book can hold drinks we don't sell yet. Add <strong>glass</strong>, <strong>method</strong> (build, shake, stir, blend), <strong>ice</strong>, <strong>garnishes</strong>, a <strong>price type</strong> and where it came from (seed list, house, menu).</p></div>
+    <div class="card"><h3>"Can we make it?"</h3><p>Worked out live, never stored: a drink is makeable when none of its required ingredients has an open Ran out and, where a count exists, the count isn't zero. Optional ingredients (a garnish) never block it, but show as "no orange peel".</p></div>
+    <div class="card"><h3>Stock that moves</h3><p>Later phase: each sale takes its recipe's ounces out of the expected stock, so the next count shows what's missing (the variance) and the par sheet knows when a bottle is nearly gone.</p></div>
+  </div>
+  <p class="col src">Migrations go to the local agent to apply. They mostly add columns (no grants needed). Any new table or function ships with its grants, per the Oct 30 rule.</p>
+</section>
+
+<section aria-labelledby="h-plan">
+  <div class="sec-head"><span class="kicker">8 · Plan</span><h2 id="h-plan">Four phases, each useful on its own</h2></div>
+  <div class="grid">
+    <div class="card phase"><span class="n">1</span><div><h3>The look · M</h3><p>The one-screen Bar tab, spirit tints and the icon generator for today's drinks. One migration adding the ingredient family. Register change, ships after close.</p></div></div>
+    <div class="card phase"><span class="n">2</span><div><h3>Pour choices · M</h3><p>Tiers, serve, rim and double on cocktails and spirits; spirit-and-mixer drinks; beer sizes, pitchers and buckets; another round. Needs Andrew's prices and pour size.</p></div></div>
+    <div class="card phase"><span class="n">3</span><div><h3>The Bar Book · L</h3><p>A–Z book, recipe cards, can-we-make with the Ran out link, filters and sort, one-tap ring-up, and the seed list of about 150 drinks. Two migrations.</p></div></div>
+    <div class="card phase"><span class="n">4</span><div><h3>Stock that moves · M</h3><p>Sales take ounces out of expected stock; counts show the variance; the par sheet warns before a bottle runs out. Happy-hour pricing can ride along here.</p></div></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-ask" class="col">
+  <div class="sec-head"><span class="kicker">9 · Your call</span><h2 id="h-ask">What we need from Andrew</h2></div>
+  <ul class="plain">
+    <li><strong>Which phase first.</strong> Our pick: 1 and 3 together. The look and the book are what make the bar feel different; 2 waits on prices.</li>
+    <li><strong>Pour size</strong> (1.5 oz or 2 oz) and <strong>tier prices</strong> (call and premium upcharges, double).</li>
+    <li><strong>Beer prices:</strong> confirm 12 oz $5 / pint $6 / 60 oz pitcher $20, cans $4 or a bucket of 4 for $14, and Space Dust cans $5.</li>
+    <li><strong>Off-menu book drinks:</strong> may staff ring a drink that isn't on our menu, at the set price for its type?</li>
+    <li><strong>The icon colors:</strong> keep this legend, or adjust any spirit's color.</li>
+  </ul>
+</section>
+
+</div>
+
+<script>
+(() => {
+  const C = (n) => `var(--${n})`;
+  // Glasses: outline path, the liquid area (clip), and where the liquid's top sits (0..1 of the bowl, measured from the bottom).
+  const GLASS = {
+    rocks:   { outline: "M18 30 L22 88 Q22 92 26 92 L74 92 Q78 92 78 88 L82 30 Z", clip: "M19.5 32 L23.4 87 Q23.5 90 26 90 L74 90 Q76.5 90 76.6 87 L80.5 32 Z", top: 36, bottom: 90, rim: [18, 30, 82, 30] },
+    highball:{ outline: "M28 12 L31 90 Q31 93 34 93 L66 93 Q69 93 69 90 L72 12 Z", clip: "M29.6 14 L32.4 89 Q32.6 91 34.5 91 L65.5 91 Q67.4 91 67.6 89 L70.4 14 Z", top: 20, bottom: 91, rim: [28, 12, 72, 12] },
+    coupe:   { outline: "M14 26 Q16 54 50 56 Q84 54 86 26 Z M48 56 L48 84 M52 56 L52 84 M34 90 Q50 82 66 90 Z", clip: "M16 28 Q18 52 50 54 Q82 52 84 28 Z", top: 30, bottom: 54, rim: [14, 26, 86, 26] },
+    martini: { outline: "M12 22 L50 58 L88 22 Z M48 58 L48 86 M52 58 L52 86 M34 92 Q50 84 66 92 Z", clip: "M15 24 L50 55 L85 24 Z", top: 26, bottom: 55, rim: [12, 22, 88, 22] },
+    margarita:{ outline: "M10 22 Q12 40 36 42 Q30 50 40 56 L48 58 L48 84 M52 58 L52 84 L52 58 L60 56 Q70 50 64 42 Q88 40 90 22 Z M34 92 Q50 84 66 92 Z", clip: "M12 24 Q14 39 36 40 Q31 48 41 54 L50 56 L59 54 Q69 48 64 40 Q86 39 88 24 Z", top: 26, bottom: 56, rim: [10, 22, 90, 22] },
+    mug:     { outline: "M22 20 L26 90 Q26 93 30 93 L66 93 Q70 93 70 90 L74 20 Z M74 34 Q90 34 90 52 Q90 70 72 70", clip: "M23.6 22 L27.4 89 Q27.6 91 30.5 91 L65.5 91 Q68.4 91 68.6 89 L72.4 22 Z", top: 26, bottom: 91, rim: [22, 20, 74, 20], copper: true },
+    shot:    { outline: "M32 40 L36 90 Q36 92 38 92 L62 92 Q64 92 64 90 L68 40 Z", clip: "M33.6 42 L37.4 89 Q37.6 90.5 39 90.5 L61 90.5 Q62.4 90.5 62.6 89 L66.4 42 Z", top: 48, bottom: 90.5, rim: [32, 40, 68, 40] },
+    pint:    { outline: "M24 10 L30 90 Q30 93 34 93 L66 93 Q70 93 70 90 L76 10 Z", clip: "M25.7 12 L31.6 89 Q31.8 91 34.5 91 L65.5 91 Q68.2 91 68.4 89 L74.3 12 Z", top: 16, bottom: 91, rim: [24, 10, 76, 10] },
+    wine:    { outline: "M30 10 Q24 40 34 52 Q42 60 50 60 Q58 60 66 52 Q76 40 70 10 Z M48 60 L48 86 M52 60 L52 86 M34 92 Q50 84 66 92 Z", clip: "M31.7 12 Q26.5 40 35.5 51 Q42.5 58 50 58 Q57.5 58 64.5 51 Q73.5 40 68.3 12 Z", top: 30, bottom: 58, rim: [30, 10, 70, 10] },
+  };
+  const FAMILY = { whiskey:"whiskey", bourbon:"whiskey", rye:"whiskey", rum:"rum", tequila:"tequila", vodka:"vodka", gin:"gin", triplesec:"liqueur", coffeeliqueur:"coffee", schnapps:"syrup", cola:"cola", lime:"citrus", lemon:"citrus", sour:"citrus", grapefruit:"grapefruit", gingerbeer:"ginger", cream:"cream", simple:"syrup", bitters:"vermouth", vermouth:"vermouth", creamsoda:"ginger", soda:"soda" };
+  let uid = 0;
+  function icon(d, size = 96) {
+    const g = GLASS[d.glass]; const id = "c" + (++uid);
+    const total = d.parts.reduce((s, p) => s + p[1], 0);
+    let y = g.bottom; const span = g.bottom - g.top; let fills = "";
+    for (const [ing, amt] of d.parts) {
+      const h = (amt / total) * span; y -= h;
+      fills += `<rect x="0" y="${y.toFixed(2)}" width="100" height="${(h + 0.6).toFixed(2)}" fill="${C(FAMILY[ing] || "syrup")}"/>`;
+    }
+    let ice = "";
+    if (d.ice) for (let i = 0; i < d.ice; i++) { const x = 34 + (i % 2) * 18 + (i > 1 ? 6 : 0), yy = g.top + 6 + i * 12; ice += `<rect x="${x}" y="${yy}" width="14" height="12" rx="2.5" fill="rgba(255,255,255,.45)" stroke="rgba(255,255,255,.75)" stroke-width="1"/>`; }
+    const [rx1, ry, rx2] = g.rim; let gar = "";
+    for (const k of d.garnish || []) {
+      if (k === "salt") gar += `<line x1="${rx1}" y1="${ry}" x2="${rx2}" y2="${ry}" stroke="#ffffff" stroke-width="3.5" stroke-dasharray="1.5 2.2" stroke-linecap="round"/>`;
+      if (k === "lime") gar += `<g transform="translate(${rx2 - 4} ${ry - 4})"><circle r="9" fill="${C("citrus")}" stroke="#4f6b12" stroke-width="1.6"/><path d="M0 -7 V7 M-7 0 H7 M-5 -5 L5 5 M5 -5 L-5 5" stroke="#f2f7d6" stroke-width="1"/></g>`;
+      if (k === "cherry") gar += `<g transform="translate(${(rx1 + rx2) / 2 + 6} ${ry - 7})"><path d="M0 0 Q4 -12 12 -16" stroke="#3d6b2a" stroke-width="1.8" fill="none"/><circle r="6" fill="#c8141b"/><circle cx="-2" cy="-2" r="1.6" fill="#ff9aa0"/></g>`;
+      if (k === "orange") gar += `<path d="M${rx1 + 6} ${ry - 4} q10 -10 22 -2 q-10 2 -22 2 z" fill="#f08a1c" stroke="#b85b0a" stroke-width="1.2"/>`;
+      if (k === "mint") gar += `<g transform="translate(${rx1 + 14} ${ry - 6})"><path d="M0 0 q-8 -10 2 -16 q6 8 -2 16 z" fill="#3f9b52"/><path d="M4 0 q2 -12 12 -12 q0 10 -12 12 z" fill="#2f7d40"/></g>`;
+      if (k === "whip") gar += `<path d="M${rx1 + 2} ${ry + 2} q8 -14 16 -6 q8 -12 16 -2 q8 -12 16 0 q4 -6 6 8 z" fill="#fbf6ec" stroke="#d9cdb6" stroke-width="1"/>`;
+      if (k === "lemon") gar += `<g transform="translate(${rx2 - 4} ${ry - 4})"><circle r="8" fill="#f5d94a" stroke="#a88a10" stroke-width="1.5"/><path d="M0 -6 V6 M-6 0 H6" stroke="#fff7c9" stroke-width="1"/></g>`;
+    }
+    const copper = g.copper ? `<path d="${g.outline}" fill="#b8693a" opacity=".22"/>` : "";
+    return `<svg width="${size}" height="${size}" viewBox="0 0 100 100" role="img" aria-label="${d.name} icon"><defs><clipPath id="${id}"><path d="${g.clip}"/></clipPath></defs><path d="${g.clip}" fill="var(--glassfill)"/>${copper}<g clip-path="url(#${id})">${fills}${ice}</g><path d="${g.outline}" fill="none" stroke="var(--glass)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>${gar}</svg>`;
+  }
+  // Our 11 cocktails (classic specs; the real generator reads our own recipes).
+  const DRINKS = [
+    { name: "Moscow Mule", base: "vodka", price: "$9", glass: "mug", ice: 3, parts: [["lime", .5], ["gingerbeer", 4], ["vodka", 2]], garnish: ["lime", "mint"] },
+    { name: "Margarita", base: "tequila", price: "$9", glass: "margarita", parts: [["lime", 1], ["triplesec", 1], ["tequila", 2]], garnish: ["salt", "lime"] },
+    { name: "Old Fashioned", base: "whiskey", price: "$10", glass: "rocks", ice: 2, parts: [["simple", .25], ["bitters", .1], ["bourbon", 2]], garnish: ["orange", "cherry"] },
+    { name: "Manhattan", base: "whiskey", price: "$10", glass: "coupe", parts: [["vermouth", 1], ["bitters", .1], ["rye", 2]], garnish: ["cherry"] },
+    { name: "Long Island", base: "vodka", price: "$10", glass: "highball", ice: 3, parts: [["sour", 1], ["triplesec", .5], ["tequila", .5], ["rum", .5], ["gin", .5], ["vodka", .5], ["cola", .5]], garnish: ["lemon"] },
+    { name: "Whiskey Sour", base: "whiskey", price: "$9", glass: "rocks", ice: 2, parts: [["simple", .75], ["lemon", .75], ["whiskey", 2]], garnish: ["cherry", "orange"] },
+    { name: "Paloma", base: "tequila", price: "$9", glass: "highball", ice: 3, parts: [["lime", .5], ["grapefruit", 4], ["tequila", 2]], garnish: ["salt", "lime"] },
+    { name: "White Russian", base: "vodka", price: "$9", glass: "rocks", ice: 2, parts: [["coffeeliqueur", 1], ["vodka", 2], ["cream", 1]] },
+    { name: "Rum & Coke", base: "rum", price: "$8", glass: "highball", ice: 3, parts: [["rum", 2], ["cola", 4]], garnish: ["lime"] },
+    { name: "Whiskey & Coke", base: "whiskey", price: "$8", glass: "highball", ice: 3, parts: [["whiskey", 2], ["cola", 4]] },
+    { name: "Butter Beer", base: "liqueur", price: "$9", glass: "mug", parts: [["schnapps", 1], ["creamsoda", 4]], garnish: ["whip"] },
+  ];
+  const tint = { vodka: "vodka", tequila: "tequila", whiskey: "whiskey", rum: "rum", gin: "gin", liqueur: "liqueur" };
+  // Register tiles
+  const tiles = document.querySelector("[data-tiles]");
+  tiles.innerHTML = DRINKS.map((d, i) => `<div class="tile${i === 5 ? " out" : ""}" style="--sp:${C(tint[d.base])}"><span class="dot"></span>${icon(d, 62)}<span class="nm">${d.name}</span><span class="pr">${d.price}</span></div>`).join("") +
+    `<div class="tile" style="--sp:var(--muted)"><span class="nm" style="margin-top:28px">+ Any drink<br>from the book</span></div>`;
+  document.querySelector("[data-sheet-icon]").innerHTML = icon(DRINKS[1], 104);
+  // Bar Book rows
+  const BOOK = [["A", [["Aperol Spritz", "Aperol, prosecco", "miss", "No Aperol"], ["Amaretto Sour", "amaretto, lemon", "ok", "Can make"]]], ["B", [["Bloody Mary", "vodka, tomato", "miss", "No tomato juice"], ["Butter Beer", "house", "ok", "Can make"]]], ["C", [["Cosmopolitan", "vodka, cranberry", "ok", "Can make"], ["Cuba Libre", "rum, cola, lime", "ok", "Can make"]]], ["D", [["Daiquiri", "rum, lime", "ok", "Can make"], ["Dark 'n' Stormy", "rum, ginger beer", "ok", "Can make"]]], ["G", [["Gimlet", "gin, lime", "ok", "Can make"], ["Gin & Tonic", "gin, tonic", "out", "Gin ran out"]]], ["M", [["Margarita", "tequila, lime", "ok", "Can make"], ["Mojito", "rum, mint", "miss", "No mint"]]]];
+  const glassOf = { "Aperol Spritz": "wine", "Amaretto Sour": "rocks", "Bloody Mary": "highball", "Butter Beer": "mug", "Cosmopolitan": "martini", "Cuba Libre": "highball", "Daiquiri": "coupe", "Dark 'n' Stormy": "highball", "Gimlet": "coupe", "Gin & Tonic": "highball", "Margarita": "margarita", "Mojito": "highball" };
+  const mini = { "Aperol Spritz": [["soda", 1], ["grapefruit", 2]], "Amaretto Sour": [["lemon", 1], ["schnapps", 2]], "Bloody Mary": [["grapefruit", 4], ["vodka", 1]], "Butter Beer": [["schnapps", 1], ["creamsoda", 4]], "Cosmopolitan": [["lime", .5], ["grapefruit", 1], ["vodka", 1.5]], "Cuba Libre": [["rum", 2], ["cola", 4]], "Daiquiri": [["simple", .75], ["lime", 1], ["rum", 2]], "Dark 'n' Stormy": [["gingerbeer", 4], ["rum", 2]], "Gimlet": [["lime", .75], ["gin", 2]], "Gin & Tonic": [["gin", 2], ["soda", 4]], "Margarita": [["lime", 1], ["triplesec", 1], ["tequila", 2]], "Mojito": [["lime", 1], ["soda", 2], ["rum", 2]] };
+  document.querySelector("[data-rows]").innerHTML = BOOK.map(([L, rows]) => `<div class="letter">${L}</div>` + rows.map(([n, s, st, t]) => `<div class="row${n === "Margarita" ? " sel" : ""}">${icon({ name: n, glass: glassOf[n], parts: mini[n] }, 36)}<div><strong>${n}</strong><div style="font-size:12px;color:var(--muted)">${s}</div></div><span class="st ${st}">${t}</span></div>`).join("")).join("");
+  document.querySelector("[data-card-icon]").innerHTML = icon(DRINKS[1], 180);
+  const ING = [["tequila", "Tequila (well: El Jimador)", "2 oz", "In stock"], ["liqueur", "Triple sec", "1 oz", "In stock"], ["citrus", "Lime juice", "1 oz", "In stock"], ["cream", "Salt rim · lime wheel", "garnish", "In stock"]];
+  document.querySelector("[data-ings]").innerHTML = `<div class="lbl">Ingredients</div>` + ING.map(([c, n, a, s]) => `<div class="ing"><span class="sw" style="background:${C(c)}"></span><span>${n}</span><span style="font-family:var(--mono);font-size:13px">${a} · <span style="color:var(--ok)">${s}</span></span></div>`).join("");
+  // Legend
+  const LEG = [["whiskey", "Whiskey"], ["rum", "Rum"], ["tequila", "Tequila"], ["vodka", "Vodka"], ["gin", "Gin"], ["liqueur", "Liqueur"], ["coffee", "Coffee liqueur"], ["vermouth", "Vermouth & bitters"], ["citrus", "Lime & lemon"], ["grapefruit", "Grapefruit"], ["ginger", "Ginger beer"], ["cola", "Cola"], ["cream", "Cream"], ["syrup", "Syrup & schnapps"], ["soda", "Soda & tonic"]];
+  document.querySelector("[data-legend]").innerHTML = LEG.map(([k, n]) => `<span><i style="background:${C(k)}"></i>${n}</span>`).join("");
+  document.querySelector("[data-icons]").innerHTML = DRINKS.map((d) => `<div class="ic">${icon(d, 110)}<span class="nm">${d.name}</span><span class="sub">${d.parts.slice().reverse().map((p) => p[0].replace("triplesec", "triple sec").replace("gingerbeer", "ginger beer").replace("coffeeliqueur", "coffee liqueur").replace("creamsoda", "cream soda")).join(" · ")}</span></div>`).join("");
+  document.querySelector("[data-sizes]").innerHTML = [96, 62, 36, 24].map((s) => `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">${icon(DRINKS[1], s)}<span class="src">${s}px</span></div>`).join("");
+  const GL = [["rocks", "Rocks"], ["highball", "Highball"], ["coupe", "Coupe"], ["martini", "Martini"], ["margarita", "Margarita"], ["mug", "Copper mug"], ["shot", "Shot"], ["pint", "Pint"], ["wine", "Wine"]];
+  const glassDemo = { rocks: [["whiskey", 1]], highball: [["cola", 1]], coupe: [["vermouth", 1]], martini: [["vodka", 1]], margarita: [["tequila", 1]], mug: [["ginger", 1]], shot: [["whiskey", 1]], pint: [["beer", 1]], wine: [["wine", 1]] };
+  FAMILY.beer = "beer"; FAMILY.wine = "wine"; FAMILY.ginger = "ginger";
+  const GAR = [["salt", "Salt rim"], ["lime", "Lime"], ["cherry", "Cherry"], ["orange", "Orange peel"], ["mint", "Mint"], ["whip", "Whipped top"]];
+  document.querySelector("[data-glasses]").innerHTML = GL.map(([g, n]) => `<div class="ic">${icon({ name: n, glass: g, parts: glassDemo[g] }, 72)}<span class="sub">${n}</span></div>`).join("") +
+    GAR.map(([k, n]) => `<div class="ic">${icon({ name: n, glass: "rocks", parts: [["soda", 1]], garnish: [k] }, 72)}<span class="sub">${n}</span></div>`).join("");
+  // Scale the 1180x820 iPad mockups to the column width.
+  const fit = () => document.querySelectorAll("[data-ipad]").forEach((o) => { const s = Math.min(1, (o.clientWidth - 28) / 1180); const p = o.firstElementChild; p.style.transform = `scale(${s})`; o.style.height = 820 * s + 28 + "px"; });
+  fit(); addEventListener("resize", fit);
+})();
+</script>
