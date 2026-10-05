@@ -15,6 +15,8 @@ import { visitBusinessDate } from "@/lib/visits";
 import MemberDetail from "./MemberDetail";
 import EmailPanel from "./EmailPanel";
 import FlagBox from "./FlagBox";
+import NotesBox from "./NotesBox";
+import { memberNotes, organizationsInUse } from "@/lib/member-notes-server";
 import PaidThroughCard, { type PaidThroughInfo } from "./PaidThroughCard";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +31,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
   const member = await getMemberById(id, role);
   if (!member) notFound();
 
-  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp, cards, flags] = await Promise.all([
+  const [purchases, communityPrograms, gifts, eraseLog, pointsHistory, pastVisits, signInHelp, cards, flags, notes, organizations] = await Promise.all([
     getMemberPurchaseHistory(id),
     getCommunityPrograms(),
     getGiftsForMember(id),
@@ -44,6 +46,9 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
     member.erased_at ? Promise.resolve([]) : getMemberCards(id),
     // "Flag suspicious activity" from the register (lib/member-flags.ts).
     member.erased_at ? Promise.resolve([]) : memberFlags(id),
+    // Staff-only notes and the organization label (lib/member-notes.ts).
+    member.erased_at ? Promise.resolve([]) : memberNotes(id),
+    member.erased_at ? Promise.resolve([]) : organizationsInUse(),
   ]);
   const staffInfo = await getStaffInfoForMembers([member], session?.employeeId ?? null);
   // Insiders+ paid ahead until a date (lib/paid-through.ts).
@@ -83,6 +88,7 @@ export default async function AdminMemberDetailPage({ params }: { params: Promis
       paidThroughCard={member.erased_at ? null : <PaidThroughCard member={member} info={paidThrough} canEdit={!!session && hasAdminAccess(session.role)} />}
       prepaidRenewsAs={paidThrough.inForce?.renewsAs ?? null}
       renewalNotice={renewalNotice}
+      notes={member.erased_at ? null : <NotesBox memberId={member.id} notes={notes} organization={member.organization ?? null} suggestions={organizations.slice(0, 30)} />}
       flags={flags.length ? <FlagBox flags={flags} canAct={!!session && hasAdminAccess(session.role)} today={visitBusinessDate(new Date())} /> : null}
     />
     {emailPanel && (

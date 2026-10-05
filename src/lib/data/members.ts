@@ -30,6 +30,7 @@ export async function getMembersPage(opts: {
   page?: number;
   pageSize?: number;
   compedOnly?: boolean;
+  organization?: string;
   viewerRole: EmployeeRole;
 }): Promise<MembersPage> {
   const pageSize = opts.pageSize ?? 25;
@@ -50,6 +51,10 @@ export async function getMembersPage(opts: {
     q = q.or(filters.join(","));
   }
   if (opts.compedOnly) q = q.eq("comped", true);
+  // Everyone with this "Group / organization" label (lib/member-notes.ts),
+  // any capitals.
+  const org = opts.organization?.trim();
+  if (org) q = q.ilike("organization", org.replace(/[\\%_]/g, (c) => `\\${c}`));
 
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;

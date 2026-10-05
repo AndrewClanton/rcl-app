@@ -5,24 +5,27 @@ import { getStaffInfoForMembers } from "@/lib/data/employees";
 import { getLegacySummary } from "@/lib/data/legacy";
 import PageHeader from "@/components/admin/PageHeader";
 import MemberManager from "./MemberManager";
+import { organizationsInUse } from "@/lib/member-notes-server";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminMembersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string; comped?: string; removed?: string; warn?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; comped?: string; org?: string; removed?: string; warn?: string }>;
 }) {
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
+  const org = typeof params.org === "string" ? params.org.trim().slice(0, 80) : "";
 
   // Who's looking decides how much contact info comes back: a cashier sees
   // emails and phones shortened (lib/contact-mask.ts). No session can't
   // happen under the admin layout, but would get the cashier view.
   const session = await getStaffSession();
-  const [membersPage, communityPrograms] = await Promise.all([
-    getMembersPage({ query: params.q, page, compedOnly: params.comped === "1", viewerRole: session?.role ?? "cashier" }),
+  const [membersPage, communityPrograms, organizations] = await Promise.all([
+    getMembersPage({ query: params.q, page, compedOnly: params.comped === "1", organization: org, viewerRole: session?.role ?? "cashier" }),
     getCommunityPrograms(),
+    organizationsInUse(),
   ]);
   const staffInfo = await getStaffInfoForMembers(membersPage.members, session?.employeeId ?? null);
   const legacy = session && hasAdminAccess(session.role) ? await getLegacySummary() : null;
@@ -106,6 +109,8 @@ export default async function AdminMembersPage({
         staffInfo={staffInfo}
         query={params.q ?? ""}
         compedOnly={params.comped === "1"}
+        organization={org}
+        organizations={organizations}
         canManage={!!session && hasManagerAccess(session.role)}
       />
     </div>

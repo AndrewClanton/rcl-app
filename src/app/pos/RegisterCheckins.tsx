@@ -619,6 +619,8 @@ export function CheckedInToday({
   const [glance, setGlance] = useState<PosMember | null>(null);
   // Flagged here since the list was read (it's read again every couple of minutes).
   const [flaggedNow, setFlaggedNow] = useState<ReadonlySet<string>>(new Set());
+  // Organizations set here since the list was read (null: removed).
+  const [orgNow, setOrgNow] = useState<ReadonlyMap<string, string | null>>(new Map());
   const hold = useLongPress();
   const shown = all ? here : here.slice(0, HERE_FIRST);
   return (
@@ -636,6 +638,7 @@ export function CheckedInToday({
           <ul className="grid gap-2 [grid-template-columns:repeat(auto-fill,minmax(16rem,1fr))]">
             {shown.map((h) => {
               const on = current?.id === h.member.id;
+              const org = orgNow.has(h.member.id) ? orgNow.get(h.member.id) : h.organization;
               return (
                 <li key={h.member.id}>
                   {/* Their favorite color (lib/flair.ts), as a stripe down the
@@ -660,6 +663,11 @@ export function CheckedInToday({
                           </span>
                         )}
                       </span>
+                      {org && (
+                        <span className="mt-0.5 inline-block max-w-full truncate rounded-full border px-1.5 text-[11px] font-bold leading-4" style={{ borderColor: "var(--border)" }} title="Group / organization (staff only)">
+                          🏷 {org}
+                        </span>
+                      )}
                       <span className="block text-xs" style={{ color: "var(--muted)" }}>
                         {new Date(h.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}
                         {h.streak && h.streak > 1 ? ` · ${h.streak}-week streak` : ""}
@@ -694,6 +702,7 @@ export function CheckedInToday({
           employeeId={employeeId}
           onClose={() => setGlance(null)}
           onFlagged={(id) => setFlaggedNow((s) => new Set(s).add(id))}
+          onOrganization={(id, org) => setOrgNow((s) => new Map(s).set(id, org))}
         />
       )}
     </section>

@@ -9,6 +9,8 @@ import { getPosMember, getPosMembers, type PosMember } from "./member-actions";
 import { openRewards, redeemReward, todaysVisitors, undoVisit, unredeemReward, visitToday, type OpenReward, type VisitToday } from "@/lib/visits-server";
 import { addFlag, flaggedAmong, memberFlags } from "@/lib/member-flags-server";
 import { FLAG_NOTE_MAX, isFlagReason, type FlagReason } from "@/lib/member-flags";
+import { addNote, memberNotes, memberOrganization, organizationsAmong, organizationsInUse, setOrganization } from "@/lib/member-notes-server";
+import { cleanNote, type MemberNote } from "@/lib/member-notes";
 import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { visitBusinessDate } from "@/lib/visits";
 import { tabletDuplicateOf } from "@/lib/data/member-merge";
@@ -158,6 +160,7 @@ export interface HereToday {
   at: string;
   streak: number | null; // weeks in a row, as of today's visit
   flagged: boolean; // a flag on the account that isn't cleared (lib/member-flags.ts)
+  organization: string | null; // their "Group / organization" label (lib/member-notes.ts), staff only
 }
 
 // Everyone who's checked in today, newest first: faces and names for the
@@ -166,11 +169,11 @@ export async function getHereToday(): Promise<HereToday[]> {
   await assertStaff();
   const visits = await todaysVisitors();
   const ids = visits.map((v) => v.memberId);
-  const [members, flagged] = await Promise.all([getPosMembers(ids), flaggedAmong(ids)]);
+  const [members, flagged, orgs] = await Promise.all([getPosMembers(ids), flaggedAmong(ids), organizationsAmong(ids)]);
   const byId = new Map(members.map((m) => [m.id, m]));
   return visits.flatMap((v) => {
     const member = byId.get(v.memberId);
-    return member ? [{ member, at: v.at, streak: v.streak, flagged: flagged.has(v.memberId) }] : [];
+    return member ? [{ member, at: v.at, streak: v.streak, flagged: flagged.has(v.memberId), organization: orgs.get(v.memberId) ?? null }] : [];
   });
 }
 
@@ -189,6 +192,11 @@ export interface MemberGlanceInfo {
   lastVisit: string | null; // a business date, "2026-09-28"
   todayAt: string | null;
   flag: GlanceFlag | null;
+  // Staff-only account notes (the latest few, newest first) and the
+  // "Group / organization" label, with the ones in use as suggestions.
+  notes: MemberNote[];
+  organization: string | null;
+  organizations: string[];
 }
 
 export async function getMemberGlance(memberId: string): Promise<MemberGlanceInfo | null> {
@@ -196,12 +204,15 @@ export async function getMemberGlance(memberId: string): Promise<MemberGlanceInf
   if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return null;
   const supabase = createAdminClient();
   const today = visitBusinessDate(new Date());
-  const [m, count, before, now, flags] = await Promise.all([
+  const [m, count, before, now, flags, notes, organization, organizations] = await Promise.all([
     supabase.from("members").select("created_at").eq("id", memberId).maybeSingle(),
     supabase.from("member_visits").select("id", { count: "exact", head: true }).eq("member_id", memberId),
     supabase.from("member_visits").select("business_date").eq("member_id", memberId).lt("business_date", today).order("business_date", { ascending: false }).limit(1),
     supabase.from("member_visits").select("checked_in_at").eq("member_id", memberId).eq("business_date", today).maybeSingle(),
     memberFlags(memberId, true),
+    memberNotes(memberId, 5),
+    memberOrganization(memberId),
+    organizationsInUse(),
   ]);
   if (m.error || count.error || before.error || now.error) return null;
   return {
@@ -210,6 +221,9 @@ export async function getMemberGlance(memberId: string): Promise<MemberGlanceInf
     lastVisit: (before.data?.[0]?.business_date as string | undefined) ?? null,
     todayAt: (now.data?.checked_in_at as string | undefined) ?? null,
     flag: flags[0] ? { by: flags[0].flaggedBy, at: flags[0].flaggedAt } : null,
+    notes,
+    organization,
+    organizations: organizations.slice(0, 30),
   };
 }
 
@@ -230,15 +244,49 @@ export async function flagMember(
   const note = String(fields.note ?? "").trim().replace(/\s+/g, " ").slice(0, FLAG_NOTE_MAX) || null;
   if (!(await allowAttempt(`member-flag:${staff.employeeId}`, 10, 300))) return { ok: false, error: BUSY };
   const id = (await currentMemberId(memberId)) ?? memberId;
-  // The cashier picked on the register, if that's a real employee.
-  let by = staff.employeeId;
-  if (typeof employeeId === "string" && /^[0-9a-f-]{36}$/i.test(employeeId) && employeeId !== by) {
-    const { data } = await createAdminClient().from("employees").select("id").eq("id", employeeId).maybeSingle();
-    if (data) by = employeeId;
-  }
+  const by = await registerEmployee(staff.employeeId, employeeId);
   const flag = await addFlag(id, fields.reason, note, by);
   if (!flag) return { ok: false, error: "Couldn't save the flag. Try again." };
   return { ok: true, flag: { by: flag.flaggedBy, at: flag.flaggedAt } };
+}
+
+const TOO_FAST = "Too many changes at once. Wait a minute, then try again.";
+
+// The cashier picked on the register, if that's a real employee; else the
+// signed-in staff account.
+async function registerEmployee(signedIn: string | null, employeeId: string | null): Promise<string | null> {
+  if (typeof employeeId === "string" && /^[0-9a-f-]{36}$/i.test(employeeId) && employeeId !== signedIn) {
+    const { data } = await createAdminClient().from("employees").select("id").eq("id", employeeId).maybeSingle();
+    if (data) return employeeId;
+  }
+  return signedIn;
+}
+
+// "Add a note" in that panel (Andrew, 10/5): any cashier, no PIN. Staff
+// only (lib/member-notes.ts). Who: the cashier on the register.
+export async function addMemberNote(
+  memberId: string,
+  text: string,
+  employeeId: string | null,
+): Promise<{ ok: true; note: MemberNote } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return { ok: false, error: "Couldn't find that member." };
+  if (!cleanNote(text)) return { ok: false, error: "Type a note first." };
+  if (!(await allowAttempt(`member-note:${staff.employeeId}`, 30, 300))) return { ok: false, error: TOO_FAST };
+  const id = (await currentMemberId(memberId)) ?? memberId;
+  const note = await addNote(id, text, await registerEmployee(staff.employeeId, employeeId));
+  return note ? { ok: true, note } : { ok: false, error: "Couldn't save the note. Try again." };
+}
+
+// The organization chip in that panel: sets it, or clears it when empty.
+// Returns the label as saved.
+export async function setMemberOrganization(memberId: string, value: string): Promise<{ ok: true; organization: string | null } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  if (typeof memberId !== "string" || !/^[0-9a-f-]{36}$/i.test(memberId)) return { ok: false, error: "Couldn't find that member." };
+  if (!(await allowAttempt(`member-org:${staff.employeeId}`, 30, 300))) return { ok: false, error: TOO_FAST };
+  const id = (await currentMemberId(memberId)) ?? memberId;
+  const org = await setOrganization(id, value);
+  return org === undefined ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true, organization: org };
 }
 
 export async function getMemberRewards(memberId: string): Promise<OpenReward[]> {

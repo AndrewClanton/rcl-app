@@ -65,12 +65,15 @@ export default function MemberDetail({
   canUndoCardMatch,
   canManage,
   flags = null,
+  notes = null,
   paidThroughCard = null,
   prepaidRenewsAs = null,
   renewalNotice = null,
 }: {
   // Flags from the register's "Flag suspicious activity" (FlagBox.tsx), up top.
   flags?: React.ReactNode;
+  // Staff-only notes and the organization label (NotesBox.tsx).
+  notes?: React.ReactNode;
   // Insiders+ paid ahead until a date (PaidThroughCard.tsx), and the plan a
   // prepaid year renews as (the card page offers it first).
   paidThroughCard?: React.ReactNode;
@@ -148,6 +151,7 @@ export default function MemberDetail({
         </Link>
       </div>
       {flags && <div className="xl:col-span-2">{flags}</div>}
+      {notes && <div className="xl:col-span-2">{notes}</div>}
 
       <ProfileCard member={member} staffInfo={staffInfo} canEditContact={canEditContact} canManage={canManage} />
       <div className="space-y-6">

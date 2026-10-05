@@ -234,6 +234,8 @@ export interface Member {
   // Their own switch for card-linked points (lib/member-cards.ts). Optional:
   // not every members query selects it.
   link_cards?: boolean;
+  // "Group / organization" label (lib/member-notes.ts), staff only.
+  organization?: string | null;
   // Set when staff removed this member's personal info on request.
   erased_at?: string | null;
   erased_by_staff?: { name: string } | null;
