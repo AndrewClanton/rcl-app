@@ -13,7 +13,7 @@
 //
 // Rules:
 //   - Outdoor-column titles go on the Outdoor Cinema at the outdoor time;
-//     indoor titles go on the Indoor Cinema. Price $8 indoor / $0 outdoor,
+//     indoor titles go on the Indoor Cinema. Price: $0 outdoor, $5 indoor Insider classics, $8 new releases,
 //     capacity the room's, as in Back office > Showtimes.
 //   - "(do not include on website)", "private ...", "Private Rental/Event/
 //     Screening <TITLE> - name" -> Private (the film's title is kept).
@@ -521,7 +521,7 @@ if (apply) {
         movie_id: e.movie.id,
         room_id: e.room.id,
         starts_at: e.starts_at,
-        ticket_price: e.room === outdoorRoom ? 0 : 8,
+        ticket_price: e.room === outdoorRoom ? 0 : e.visibility === "members" ? 5 : 8, // outdoor free, Insider classics $5, new releases $8
         capacity: e.room.capacity,
         visibility: e.visibility,
       })),
