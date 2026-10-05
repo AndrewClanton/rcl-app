@@ -20,9 +20,8 @@ import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type Co
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
 import { DAILY_COFFEE_LINE, type DailyCoffeeState } from "@/lib/daily-perk";
-import { readApproval } from "@/lib/approval-token";
-import { ownerOrderExtras, ownerSaleProblems, parseOwnerRateScope, sameOwnerLines, type OwnerPricing } from "@/lib/register-totals";
-import { firstName as firstNameOf, ownerOrderHash, ownerRatePeople, priceOwnerSale } from "@/lib/owner-rate-server";
+import { ownerOrderExtras, ownerSaleProblems, type OwnerPricing } from "@/lib/register-totals";
+import { firstName as firstNameOf, ownerForMember, priceOwnerSale, type OwnerMember, type OwnerPricedLine } from "@/lib/owner-rate-server";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
@@ -37,9 +36,9 @@ export interface CheckoutLine {
   modifiers: string[];
   is_alcohol: boolean;
   screening_id?: string | null; // a movie ticket for this screening
-  // An owner-tab line (completeOwnerTabOrder): the menu price the owner
-  // rate replaced, and how it was priced. Set by the server, never taken
-  // from the register.
+  // An owner-rate line (completeOrder with ownerRate): the menu price the
+  // owner rate replaced, and how it was priced. Set by the server, never
+  // taken from the register.
   menu_unit_price?: number;
   owner_pricing?: OwnerPricing;
   // A Bar Book drink rung up off the menu (register → Bar Book → Add to
@@ -95,6 +94,10 @@ export interface DraftFields {
   // group by count, or today's group. Checked by the server; not kept on a
   // held order or tab.
   orgGroup?: OrgGroupInput | null;
+  // The register's "Owner rate" tick (checkOwnerSale): the lines stay as
+  // rung (menu prices) and the totals are the owner rate's. Not kept on a
+  // held order or tab.
+  ownerRate?: boolean;
 }
 
 export interface DraftOrderSummary {
@@ -174,7 +177,7 @@ async function replaceOrderItems(
       screening_id: l.screening_id ?? null,
       // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
       is_event: !!l.screening_id,
-      // Only on an owner-tab line, so every other sale saves exactly as before.
+      // Only on an owner-rate line, so every other sale saves exactly as before.
       ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
     }));
     type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
@@ -350,6 +353,12 @@ export type PaymentCheck = { ok: true } | { ok: false; error: string; points?: n
 
 export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTotals, orgApproval: string | null = null): Promise<PaymentCheck> {
   const staff = await assertStaff();
+  // The owner rate: the owner's own account, nothing else off, and the
+  // server's prices (no member perks to check: they're off with it).
+  if (fields.ownerRate) {
+    const owner = await checkOwnerSale(await currentMemberId(fields.memberId), fields, totals);
+    return owner.ok ? { ok: true } : { ok: false, error: owner.error };
+  }
   // An organization's comps: today's limit, looked at again (the other
   // register may have used the last one). A manager can go past it.
   if (Number(totals.org_comp_discount ?? 0) > 0 && (fields.memberId || fields.orgGroup)) {
@@ -415,9 +424,8 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
 // to show.
 export type CompleteOrderResult = { ok: true; orderNumber: number; warning?: string; card: CardNotice | null } | { ok: false; error: string; cardCharged: boolean };
 
-// How a paid sale can be paid here. An owner-tab order goes through
-// completeOwnerTabOrder (the owner's PIN approval and the server's own
-// prices), never through this.
+// How a paid sale can be paid here. ('owner_tab', the monthly owner tab
+// before 10/5, is gone: an owner-rate order is paid like any other.)
 const PAID_METHODS = ["cash", "card", "split", "voucher"];
 
 export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
@@ -470,8 +478,23 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     ? { organization_id: termsOrg(orgTerms)?.orgId ?? null, org_comp_discount: cents(Number(params.totals.org_comp_discount ?? 0)), tax_included: !!params.totals.tax_included }
     : {};
 
+  // The owner rate (checkOwnerSale): saved at the server's prices, with
+  // the menu value it replaced. Refused before anyone pays (the register
+  // checked before payment too); a card already charged is saved as rung
+  // instead, and a manager sees it in Register checks.
+  let ownerSale: Extract<OwnerSale, { ok: true }> | null = null;
+  let ownerRefused: string | null = null;
+  if (params.ownerRate) {
+    const o = await checkOwnerSale(memberId, params, params.totals);
+    if (o.ok) ownerSale = o;
+    else if (!paymentIntentId) return { ok: false, error: o.error, cardCharged: false };
+    else ownerRefused = o.error;
+  }
+  const saleLines: CheckoutLine[] = ownerSale ? ownerSale.lines : params.lines;
+
   const orderFields = {
     ...orgFields,
+    ...(ownerSale ? { owner_menu_value: ownerSale.menuValue } : {}),
     source: "pos" as const,
     status: "completed" as const,
     employee_id: params.employeeId,
@@ -559,7 +582,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // enforcing, a sale whose card is already charged is still saved (and
   // flagged): the register checked before payment, and losing the record
   // of a charged card is worse.
-  if (ENFORCE_REGISTER_TOTALS) {
+  // (An owner-rate sale was checked against the server's prices above.)
+  if (ENFORCE_REGISTER_TOTALS && !ownerSale) {
     totalsCheck = await checkSaleTotals({ ...saleForCheck, dailyCoffee });
     if (totalsCheck.problems.length && !paymentIntentId) {
       const refused = totalsCheck;
@@ -598,7 +622,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       orderId = params.draftOrderId;
       orderNumber = Number(existing.order_number);
       wasTab = existing.status === "tab";
-      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
+      await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, saleLines, extras);
     } else {
       // This payment's own close may have landed a moment ago (a retry).
       const saved = await orderForPayment();
@@ -634,7 +658,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       throw orderErr;
     }
     orderId = order.id;
-    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, params.lines, extras);
+    await saveSaleItems(supabase, { orderId, orderNumber, ...flagBase }, saleLines, extras);
   }
 
   // The organization's comps on this sale, logged now so the next count
@@ -675,9 +699,9 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     }
     // The coffee as judged before this sale saved (once saved, its own
     // coffee would look like today's already used).
-    const check = totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore }));
-    if (check.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
-    if (check.problems.length) {
+    const check = ownerSale ? null : (totalsCheck ?? (await checkSaleTotals({ ...saleForCheck, dailyCoffee, memberPointsBefore: balanceBefore })));
+    if (check?.skipped) console.warn("[register-check] totals not checked", orderNumber, check.skipped);
+    if (check?.problems.length) {
       await flagSale("totals_mismatch", { ...saved, details: { problems: check.problems, sent: params.totals, server: check.server, lines: check.lines, member: check.member, payment: params.payment, tip, draft: !!params.draftOrderId } });
     }
     // A Bar Book drink rung up for less than its ingredients cost. The
@@ -704,10 +728,11 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     }
   });
 
+  // (None at the owner rate: it earns no points.)
   // 1 point per $1 of the order after discounts, and 100 back out when a
   // reward was used. Each change lands in the member's points history, tied
   // to this order.
-  if (memberId) {
+  if (memberId && !ownerSale) {
     if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
       // The register checked the balance before payment; this catches a
       // reward used meanwhile (or a register that skipped the check). The
@@ -751,6 +776,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   if (closedElsewhere) {
     warnings.push(`That tab was already closed on another register, so this card payment was saved as new order #${orderNumber}. The customer may have paid twice: get a manager to check Recent orders and refund one.`);
   }
+  if (ownerRefused) warnings.push(`The card was charged, but the owner rate didn't check out (${ownerRefused}), so the sale was saved as rung. A manager will see it in Register checks.`);
   // Saved with the free coffee, but it didn't count as today's.
   const coffee = dailyCoffee as CoffeeCheck | undefined;
   if (coffee && !coffee.ok) warnings.push(`${coffee.reason} The sale was saved with the free coffee anyway, and a manager will see it in Register checks.`);
@@ -792,201 +818,35 @@ export async function logAbandonedSale(order: CompleteOrderInput, tries: number)
   });
 }
 
-// ---------- the owner tab ----------
-// "Put on owner tab" (lib/register-totals.ts says what the owner rate is):
-// the order is saved as finished, with no money taken, on the owner's
-// monthly tab (payment_method 'owner_tab'). Only with the owner's own PIN
-// approval (approveOwnerRate in ./owner-rate-actions.ts): signed, for that
-// owner, for this one order (a nonce) and exactly the order and total the
-// owner saw (its hash), and still in time. The server prices the order
-// itself from today's menu and recipes and refuses it if anything differs:
-// nothing has been paid, so refusing costs nothing. No member, so no
-// points, no member discount, no daily coffee and no reward.
-//
-// In this order: the signature; whether the approval was already used (a
-// repeat of the same sale, whose answer got lost, gets the order it made,
-// with its own lines and totals, even after the 10 minutes; a different
-// order is refused); then the clock; then the prices and the order's hash.
+// ---------- the owner rate ----------
+// The register's "Owner rate" tick (lib/register-totals.ts says what it
+// is): the member on the order is an owner's own account with the owner
+// rate on (the only way the tick shows, and checked here again), nothing
+// else comes off, and the order priced by the server from today's menu and
+// recipes comes to what the register shows. It's then paid like any sale.
+// No PIN: the owner's own account has to be on the order; the order keeps
+// who rang it (employee_id) and whose account it was (member_id).
+type OwnerSale = { ok: true; owner: OwnerMember; lines: OwnerPricedLine[]; menuValue: number } | { ok: false; error: string };
 
-export type OwnerTabOrderInput = DraftFields & {
-  // The lines as rung (menu prices), and the owner totals the register
-  // shows (the approval's): checked, never saved as sent.
-  totals: { subtotal: number; tax: number; total: number };
-  ownerRate: { ownerId: string; token: string; nonce: string };
-  ageVerified: boolean;
-  draftOrderId?: string | null;
-  // Never sent by the register (the owner rate clears them); refused if they come.
-  orgComps?: number;
-  taxIncluded?: boolean;
-};
-
-// again: the approval can't be used (run out, used for another order, or
-// the order changed after it), so the register drops the owner rate and the
-// owner enters their PIN again. already: this approval's order was saved
-// earlier (a repeat), and these are its own lines and totals.
-export type OwnerTabOrderResult =
-  | { ok: true; orderNumber: number; owner: string; lines: CheckoutLine[]; totals: { subtotal: number; tax: number; total: number }; menuValue: number; already?: boolean }
-  | { ok: false; error: string; again?: boolean };
-
-type SavedOwnerOrder = {
-  id: string;
-  orderNumber: number;
-  status: string;
-  lines: CheckoutLine[];
-  totals: { subtotal: number; tax: number; total: number };
-  menuValue: number;
-};
-
-// The order an approval already made, with its saved lines. Null: none.
-async function savedOwnerOrder(supabase: ReturnType<typeof createAdminClient>, nonce: string): Promise<SavedOwnerOrder | null> {
-  const { data } = await supabase.from("orders").select("id, order_number, status, subtotal, tax, total, owner_menu_value").eq("owner_rate_nonce", nonce).limit(1);
-  const o = data?.[0];
-  if (!o) return null;
-  const { data: items } = await supabase
-    .from("order_items")
-    .select("menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id, menu_unit_price, owner_pricing")
-    .eq("order_id", o.id);
-  return {
-    id: o.id as string,
-    orderNumber: Number(o.order_number),
-    status: o.status as string,
-    lines: ((items ?? []) as (CheckoutLine & { menu_unit_price: number | null })[]).map((i) => ({
-      ...i,
-      unit_price: Number(i.unit_price),
-      menu_unit_price: Number(i.menu_unit_price ?? i.unit_price),
-      modifiers: i.modifiers ?? [],
-    })),
-    totals: { subtotal: Number(o.subtotal), tax: Number(o.tax), total: Number(o.total) },
-    menuValue: Number(o.owner_menu_value ?? o.subtotal),
-  };
-}
-
-export async function completeOwnerTabOrder(params: OwnerTabOrderInput): Promise<OwnerTabOrderResult> {
-  const staff = await assertStaff();
-  const lines = Array.isArray(params?.lines) ? params.lines : [];
-  if (lines.length === 0) return { ok: false, error: "There's nothing on the order." };
-  // No member perks, organization comps or tax-included pricing: nothing is saved.
-  const carried = ownerOrderExtras(params);
-  if (carried) return { ok: false, again: true, error: carried };
-  const rate = params.ownerRate ?? { ownerId: "", token: "", nonce: "" };
-  const again = "Tap Owner rate and have them enter their PIN again.";
-
-  // 1. Signed by us, for this sign-in, for this owner and nonce.
-  const read = readApproval(rate.token, staff.employeeId);
-  const scope = read ? parseOwnerRateScope(read.scope) : null;
-  if (!read || !scope || scope.ownerId !== rate.ownerId || scope.nonce !== rate.nonce || read.approverId !== rate.ownerId) {
-    return { ok: false, again: true, error: `The owner rate wasn't approved for this order. ${again}` };
-  }
-  const supabase = createAdminClient();
-  const people = await ownerRatePeople();
-  const ownerRow = (await supabase.from("employees").select("id, name").eq("id", scope.ownerId).maybeSingle()).data;
-  const ownerName = firstNameOf(String(ownerRow?.name ?? "the owner"));
-
-  // 2. Used already? Before the clock, so a repeat after the 10 minutes
-  // still finds its order.
-  const fromSaved = async (): Promise<OwnerTabOrderResult | null> => {
-    const saved = await savedOwnerOrder(supabase, scope.nonce);
-    if (!saved) return null;
-    if (saved.status !== "completed") return { ok: false, again: true, error: `${ownerName}'s approval made order #${saved.orderNumber}, and it's been taken off the tab since. ${again}` };
-    if (!sameOwnerLines(lines, saved.lines.map((l) => ({ ...l, menu_unit_price: l.menu_unit_price ?? l.unit_price })))) {
-      return { ok: false, again: true, error: `${ownerName}'s approval already put order #${saved.orderNumber} on the tab, and this order is different. ${again}` };
-    }
-    return { ok: true, orderNumber: saved.orderNumber, owner: ownerName, lines: saved.lines, totals: saved.totals, menuValue: saved.menuValue, already: true };
-  };
-  const earlier = await fromSaved();
-  if (earlier) return earlier;
-
-  // 3. The clock.
-  if (read.expires < Date.now()) return { ok: false, again: true, error: `The owner's PIN approval has run out (it lasts 10 minutes). ${again}` };
-  const owner = people?.find((p) => p.id === scope.ownerId);
-  if (!owner) return { ok: false, again: true, error: "That person doesn't get the owner rate anymore. Ring it up as a normal sale." };
-
-  // 4. Today's prices. A line rung before a price changed is named, to take
-  // off and ring again; then the order has to be the one the owner approved.
+async function checkOwnerSale(memberId: string | null, fields: DraftFields, totals: CheckoutTotals): Promise<OwnerSale> {
+  const owner = await ownerForMember(memberId);
+  if (owner === undefined) return { ok: false, error: "The owner rate couldn't be checked. Try again." };
+  if (!owner) return { ok: false, error: "The owner rate is only for an owner's own account on the order. Untick Owner rate, or attach the owner's account." };
+  const extra = ownerOrderExtras({
+    monthlyMember: fields.monthlyMember,
+    pointsRedeemed: fields.pointsRedeemed,
+    taxFree: fields.taxFree,
+    orgComps: totals.org_comp_discount,
+    taxIncluded: totals.tax_included,
+    discounts: Number(totals.tier_discount) + Number(totals.monthly_discount) + Number(totals.redemption_discount) + Number(totals.daily_perk_discount ?? 0),
+  });
+  if (extra) return { ok: false, error: extra };
+  const lines = Array.isArray(fields.lines) ? fields.lines : [];
   const priced = await priceOwnerSale(lines);
-  if (!priced.ok) return { ok: false, error: `This can't go on the owner tab: ${priced.problems[0]}` };
-  const stale = ownerSaleProblems({ lines }, priced);
-  if (stale.length) return { ok: false, error: stale[0] };
-  if (ownerOrderHash(priced.lines, priced.totals.total) !== scope.orderHash || ownerSaleProblems({ lines, totals: params.totals }, priced).length) {
-    return { ok: false, again: true, error: `This isn't the order ${ownerName} approved: it or its prices changed after the PIN. ${again}` };
-  }
-
-  const done = (orderNumber: number): OwnerTabOrderResult => ({ ok: true, orderNumber, owner: ownerName, lines: priced.lines, totals: priced.totals, menuValue: priced.menuValue });
-  const saleFields = {
-    source: "pos" as const,
-    status: "completed" as const,
-    employee_id: params.employeeId,
-    member_id: null,
-    order_name: params.orderName || null,
-    subtotal: priced.totals.subtotal,
-    tier_discount: 0,
-    monthly_discount: 0,
-    redemption_discount: 0,
-    // Taxed like any sale: owners aren't tax-exempt.
-    tax_free: false,
-    monthly_member: false,
-    tax: priced.totals.tax,
-    tip: 0,
-    total: priced.totals.total,
-    payment_method: "owner_tab",
-    payment_cash_amount: 0,
-    payment_voucher_amount: 0,
-    payment_card_amount: 0,
-    stripe_payment_intent_id: null,
-    points_redeemed: false,
-    age_verified: !!params.ageVerified,
-    completed_at: new Date().toISOString(),
-    owner_tab_employee_id: owner.id,
-    owner_menu_value: priced.menuValue,
-    owner_rate_nonce: scope.nonce,
-  };
-  const failed = async (e: { code?: string; message?: string }): Promise<OwnerTabOrderResult> => {
-    // The same approval saved by a repeat a moment ago.
-    if (e.code === "23505" && (e.message ?? "").includes("owner_rate_nonce")) {
-      const saved = await fromSaved();
-      if (saved) return saved;
-    }
-    if (schemaMissing(e) || e.code === "23514") return { ok: false, error: "The owner tab needs its database update first (20261003060000_owner_tab.sql). Nothing was saved." };
-    console.error("owner tab order not saved", e.message);
-    return { ok: false, error: "Couldn't save the order. Nothing was put on the tab. Try again." };
-  };
-
-  let orderId = "";
-  let orderNumber = 0;
-  let wasTab = false;
-  if (params.draftOrderId) {
-    const { data: existing } = await supabase.from("orders").select("order_number, status").eq("id", params.draftOrderId).maybeSingle();
-    const { data: closed, error } = await supabase.from("orders").update(saleFields).eq("id", params.draftOrderId).in("status", ["draft", "held", "tab"]).select("id");
-    if (error) return failed(error);
-    if (!closed?.length || !existing) {
-      const saved = await fromSaved();
-      if (saved) return saved;
-      return { ok: false, error: "This tab was already closed on another register, so nothing went on the owner tab. Check Recent orders." };
-    }
-    orderId = params.draftOrderId;
-    orderNumber = Number(existing.order_number);
-    wasTab = existing.status === "tab";
-  } else {
-    const { data: newNumber, error: numberErr } = await supabase.rpc("next_order_number");
-    if (numberErr) return failed(numberErr);
-    orderNumber = Number(newNumber);
-    const { data: order, error } = await supabase
-      .from("orders")
-      .insert({ order_number: orderNumber, ...saleFields })
-      .select("id")
-      .single();
-    if (error || !order) return failed(error ?? { message: "The order didn't save." });
-    orderId = order.id;
-  }
-
-  const extras = await lineExtrasFor(priced.lines);
-  await saveSaleItems(supabase, { orderId, orderNumber, employeeId: params.employeeId, paymentIntentId: null }, priced.lines, extras);
-  await syncTicketBookings(supabase, { id: orderId, memberId: null, name: params.orderName || null }, priced.lines);
-  if (params.draftOrderId) await releaseTabCard(orderId);
-  await noteCustomItems(supabase, orderNumber, priced.lines, params.employeeId, extras);
-  await sendKitchenTicket({ orderId, orderNumber, name: params.orderName || null, tab: wasTab, station: asStation(params.station), lines: priced.lines }, "now");
-  revalidate();
-  return done(orderNumber);
+  if (!priced.ok) return { ok: false, error: `This can't be rung at the owner rate: ${priced.problems[0]}` };
+  const problems = ownerSaleProblems({ lines, totals }, priced);
+  if (problems.length) return { ok: false, error: problems[0] };
+  return { ok: true, owner, lines: priced.lines, menuValue: priced.menuValue };
 }
 
 // ---------- held orders & tabs (persisted drafts, status 'held' | 'tab') ----------

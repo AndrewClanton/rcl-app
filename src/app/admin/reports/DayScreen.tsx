@@ -5,8 +5,9 @@ import { shiftDate } from "@/lib/ops/time";
 import type { DayOrder, DayReport, RevenueDay } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
 import type { PaymentSyncStatus } from "@/lib/membership-payments/read";
-import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, OWNER_TAB_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
+import { BOOTHS_LABEL, FOOD_AND_DRINK, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import { ownerRateLine } from "@/lib/register-totals";
 import MembershipsCard from "./MembershipsCard";
 import OrdersTable from "./OrdersTable";
 import DateJump from "./DateJump";
@@ -137,14 +138,14 @@ export default function DayScreen({
                       : []),
                     ...(r.partialRefunds > 0 ? [{ label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: to({ show: "refunds" }) }] : []),
                     { label: "Net sales", value: money(r.netSales), strong: true, href: to({ show: "net" }) },
-                    // Not taken off: the owner tab line is already at what the owners pay.
-                    ...(r.ownerTab.orders > 0
+                    // Not taken off: the owner-rate sales are already at what the owners paid.
+                    ...(r.ownerRate.orders > 0
                       ? [
                           {
-                            label: `Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost`,
-                            value: `${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu`,
+                            label: `${ownerRateLine(r.ownerRate).label} (${ownerRateLine(r.ownerRate).who})`,
+                            value: ownerRateLine(r.ownerRate).value,
                             muted: true,
-                            href: to({ show: "orders", cat: OWNER_TAB_LABEL }),
+                            href: to({ show: "orders", pay: "owner" }),
                           },
                         ]
                       : []),

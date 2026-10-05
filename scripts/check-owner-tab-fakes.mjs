@@ -1,4 +1,4 @@
-// In-memory stand-ins for scripts/check-owner-tab.mjs: the email marketing
+// In-memory stand-ins for scripts/check-owner-tab.mjs (the owner rate): the email marketing
 // fakes (scripts/check-email-marketing-fakes.mjs: the Supabase service-role
 // client, next/server, next/cache and a signed-in staff login), plus the
 // register's tables and its order-number function. No database, no
@@ -16,6 +16,7 @@ for (const t of [
   "pin_attempts",
   "dev_notes",
   "owner_tab_payments",
+  "member_merges",
   "register_sale_flags",
   "points_ledger",
   "order_ticket_state",

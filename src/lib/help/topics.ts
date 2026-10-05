@@ -224,11 +224,11 @@ export const HELP_TOPICS = {
   },
 
   "owner-rate": {
-    title: "The owner rate and the owner tab",
+    title: "The owner rate",
     area: "Register: payments",
     body:
-      "The owners picked in Back office (Owner tab) can have anything on the menu at what it cost us, so it doesn't quietly eat into the bottom line. Ring the order up as usual, tap Owner rate, pick the owner, and they type their own PIN: nobody else's PIN works. Each item shows its owner price with the menu price crossed out: at cost from its recipe, or half price when a cost is missing. Tickets and custom items stay at their normal price, it's taxed as usual, and member discounts, the daily coffee, rewards and points don't go with it. Put on owner tab finishes it with no card or cash; it goes on that owner's tab, which they settle once a month. Undo owner rate puts the order back to normal prices before then.",
-    links: [{ label: "Owner tab (owners)", href: "/admin/owner-tab" }],
+      "The owners switched on in Back office (Owner rate) pay cost + 10% for anything on the menu, so it doesn't quietly eat into the bottom line. Attach the owner's own account to the order, and an Owner rate box shows beside Tax exempt; tick it. No PIN: it only shows for an owner's own account, and the order keeps whose account it was and who rang it up. Each item shows its owner price with the menu price crossed out: its recipe's cost plus 10%, or half the menu price when no cost is on file. Tickets and custom items stay at their normal price, it's taxed as usual, and member discounts, the daily coffee, rewards, organization comps and points don't go with it. Then take payment like any order: card, cash or a split. Untick it to go back to normal prices. Reports show owner-rate sales on their own line, with who used it.",
+    links: [{ label: "Owner rate (owners)", href: "/admin/owner-rate" }],
   },
 
   // ---------- register: members and the door ----------

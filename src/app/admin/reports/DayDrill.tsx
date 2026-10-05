@@ -7,6 +7,7 @@ import type { DayOrder, DayReport } from "@/lib/data/reports";
 import type { DayDrillData } from "@/lib/data/day-drill";
 import { BOOTHS_LABEL, FOOD_AND_DRINK, FOOD_AND_DRINK_CATEGORIES, MEMBERSHIPS_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import { ownerRateLine } from "@/lib/register-totals";
 import { DRILL_PARAMS, closeDrill, forgetPush, setDrillParams, type DrillParam } from "./drill-nav";
 import DrillLink from "./DrillLink";
 import TipsDrill from "./TipsDrill";
@@ -40,9 +41,9 @@ function monthName(month: string) {
 const goods = (o: DayOrder) => o.total - o.tax - o.tip - (o.refunded - o.refundedTax);
 const moneyIn = (o: DayOrder) => (o.source === "pos" ? o.cash + o.card - o.refundedCash - o.refundedCard : o.total - o.refunded);
 
-// "owner": put on an owner's monthly tab (no money in until it's paid).
+// "owner": rung at the owner rate (or, before 10/5, put on an owner's monthly tab).
 type Pay = "card" | "cash" | "vouchers" | "online" | "owner";
-const PAY_LABEL: Record<Pay, string> = { card: "Card", cash: "Cash", vouchers: "Vouchers", online: "Online", owner: "Owner tab" };
+const PAY_LABEL: Record<Pay, string> = { card: "Card", cash: "Cash", vouchers: "Vouchers", online: "Online", owner: "Owner rate" };
 
 type Filters = { status: string; pay: Pay | ""; who: string; cat: string; item: string; q: string };
 
@@ -64,7 +65,7 @@ function matches(o: DayOrder, f: Filters) {
   if (f.pay === "cash" && !(o.source === "pos" && o.cash > 0)) return false;
   if (f.pay === "vouchers" && !(o.source === "pos" && o.voucher > 0)) return false;
   if (f.pay === "online" && o.source === "pos") return false;
-  if (f.pay === "owner" && !o.ownerTab) return false;
+  if (f.pay === "owner" && !o.ownerTab && !o.ownerRate) return false;
   if (f.who && (f.who === NO_CASHIER ? !!o.cashier : o.cashier !== f.who)) return false;
   if (f.cat && !o.lines.some((l) => inCategory(l.category, f.cat))) return false;
   if (f.item && !o.lines.some((l) => l.name === f.item)) return false;
@@ -225,7 +226,7 @@ function OrdersView({
             : f.pay === "online"
               ? { label: "Paid online, less partial refunds", of: (o) => o.total - o.refunded }
               : f.pay === "owner"
-                ? { label: "Put on an owner's monthly tab, with tax: money in once it's paid", of: (o) => o.total }
+                ? { label: "Rung at the owner rate, with tax", of: (o) => o.total }
               : view === "net"
                 ? { label: "Goods: before tax and tip, after discounts and partial refunds", of: goods }
                 : view === "collected"
@@ -277,13 +278,13 @@ function OrdersView({
                 : []),
               ...(r.partialRefunds > 0 ? [{ key: "part", label: "Given back in partial refunds", value: `−${money(r.partialRefunds)}`, muted: true, href: hrefFor({ show: "refunds" }) }] : []),
               { key: "net", label: "Net sales", value: money(r.netSales), strong: true },
-              // Not taken off: the owner tab line is already at what the owners pay.
-              ...(r.ownerTab.orders > 0
+              // Not taken off: the owner-rate sales are already at what the owners paid.
+              ...(r.ownerRate.orders > 0
                 ? [
                     {
                       key: "owner",
-                      label: `Owner rate: ${money(r.ownerTab.menuValue)} at menu prices, ${money(r.ownerTab.sales)} at cost`,
-                      value: `${money(r.ownerTab.menuValue - r.ownerTab.sales)} under menu`,
+                      label: `${ownerRateLine(r.ownerRate).label} (${ownerRateLine(r.ownerRate).who})`,
+                      value: ownerRateLine(r.ownerRate).value,
                       muted: true,
                       href: hrefFor({ show: "orders", pay: "owner" }),
                     },

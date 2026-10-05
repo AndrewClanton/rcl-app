@@ -119,7 +119,7 @@ async function takeOffOwnerTab(orderId: string, tabOwnerId: string | null, pin: 
   // Movie tickets on it give their seats back. No points: an owner-tab order earns none.
   await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
   revalidatePath("/admin/reports");
-  revalidatePath("/admin/owner-tab");
+  revalidatePath("/admin/owner-rate");
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: false };
 }
 
