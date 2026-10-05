@@ -6,6 +6,7 @@ import { checkManagerPin } from "@/lib/manager-pin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { currentMemberId } from "@/lib/member-forward";
 import { compsOn, orgDay, orgGroupFor, orgOnOrderFor, peopleComped, sealOverLimit, todaysGroups } from "@/lib/orgs-server";
+import { sendOrgInvite } from "@/lib/org-invite-server";
 import type { OrgGroupInput, OrgGroupOnOrder, OrgOnOrder, OrgRole } from "@/lib/orgs";
 
 export interface OrgGroupChoices {
@@ -112,4 +113,12 @@ export async function setMemberOrg(memberId: string, orgId: string | null, role:
   const patch = orgId ? { organization_id: orgId, org_role: role, organization: label } : { organization_id: null, org_role: null };
   const { error } = await supabase.from("members").update(patch).eq("id", id);
   return error ? { ok: false, error: "Couldn't save that. Try again." } : { ok: true };
+}
+
+// "Invite a helper" at the register: the helper types their work email and
+// gets the organization's sign-up link. Only the organization's name comes
+// back, so the screen never shows anyone else's data.
+export async function inviteHelper(orgId: string, email: string): Promise<{ ok: true; orgName: string } | { ok: false; error: string }> {
+  const staff = await assertStaff();
+  return sendOrgInvite(orgId, email, "register", staff);
 }

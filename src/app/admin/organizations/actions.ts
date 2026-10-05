@@ -7,6 +7,7 @@ import { ORG_COLUMNS, type OrgRow } from "@/lib/orgs-server";
 import { DEFAULT_DAILY_COMP_LIMIT, DEFAULT_MONTHLY_FEE, type OrgRole, type OrgStatus } from "@/lib/orgs";
 import { startOrgSubscription, stopOrgSubscription } from "@/lib/org-billing";
 import { memberLabel } from "@/lib/member-name";
+import { sendOrgInvite } from "@/lib/org-invite-server";
 
 // Back office → Organizations (lib/orgs.ts). Owners and admins.
 
@@ -156,6 +157,15 @@ export async function newInviteLink(orgId: string): Promise<Result> {
   const code = crypto.randomUUID().replace(/-/g, "");
   const { error } = await createAdminClient().from("organizations").update({ invite_code: code }).eq("id", orgId);
   if (error) return { ok: false, error: "Couldn't make a new link. Try again." };
+  refresh(orgId);
+  return { ok: true };
+}
+
+// "Email the helper link": sends the sign-up link to one address and logs it.
+export async function emailInviteLink(orgId: string, email: string): Promise<Result> {
+  const staff = await assertAdmin();
+  const res = await sendOrgInvite(orgId, email, "back_office", staff);
+  if (!res.ok) return res;
   refresh(orgId);
   return { ok: true };
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ORG_ROLES, roleLabel, type OrgRole } from "@/lib/orgs";
 import {
   createOrganization,
+  emailInviteLink,
   findPeople,
   newInviteLink,
   organizationFromLabel,
@@ -272,6 +273,58 @@ export function InviteLink({ orgId, url }: { orgId: string; url: string }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// "Email the helper link": one address, Send. Logged on the page.
+export function EmailInvite({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  function send(e: React.FormEvent) {
+    e.preventDefault();
+    const to = email.trim();
+    if (!to) return;
+    setError(null);
+    setSent(null);
+    start(async () => {
+      const r = await emailInviteLink(orgId, to);
+      if (!r.ok) return setError(r.error);
+      setSent(to);
+      setEmail("");
+      router.refresh();
+    });
+  }
+  return (
+    <form className="space-y-2" onSubmit={send}>
+      <div className="label-xs">Email the helper link</div>
+      <div className="flex flex-wrap gap-2">
+        <input
+          className="input min-w-0 flex-1"
+          type="email"
+          inputMode="email"
+          autoComplete="off"
+          placeholder="helper@workplace.org"
+          aria-label="Helper's email"
+          value={email}
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setSent(null);
+          }}
+        />
+        <button type="submit" className="btn-primary" disabled={pending || !email.trim()}>
+          {pending ? "Sending…" : "Send"}
+        </button>
+      </div>
+      {sent && (
+        <p className="notice notice-success text-sm" role="status">
+          Sent to {sent}: &quot;You&apos;re invited to join {orgName} at the Royale.&quot;
+        </p>
+      )}
+      <Problem error={error} />
+    </form>
   );
 }
 
