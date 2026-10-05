@@ -25,13 +25,14 @@ export default async function DayReportPage({ searchParams }: { searchParams: Pr
   const today = businessDay().date;
   // Order search (?order=7851): the order, and its day below it.
   const orderNumber = p.order && /^\d{1,12}$/.test(p.order) ? Number(p.order) : null;
-  const [staff, found] = await Promise.all([requireStaff(), orderNumber ? getOrderByNumber(orderNumber) : null]);
+  const staff = await requireStaff();
+  const found = orderNumber ? await getOrderByNumber(orderNumber, staff) : null;
   const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date <= today ? p.date : (found?.businessDate ?? today);
   const days = DAY_RANGES.includes(Number(p.days)) ? Number(p.days) : 30;
 
   // Membership payments are read from Stripe first if it's been a while.
   await ensureMemberPaymentsFresh();
-  const [r, before, trend, sync] = await Promise.all([getDayReport(date), getDayReport(shiftDate(date, -7)), getRevenueTrend(days), getPaymentSyncStatus()]);
+  const [r, before, trend, sync] = await Promise.all([getDayReport(date, staff), getDayReport(shiftDate(date, -7), staff), getRevenueTrend(days), getPaymentSyncStatus()]);
   // What's behind each figure (shifts, refund approvers, showings, the tip payout), for the drill-downs.
   const drill = await getDayDrill(r);
   return <DayScreen r={r} before={before} trend={trend} date={date} today={today} days={days} orderNumber={orderNumber} found={found} drill={drill} canRecord={hasManagerAccess(staff.role)} sync={sync} />;

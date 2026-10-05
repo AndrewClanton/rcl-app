@@ -18,8 +18,8 @@ export const dynamic = "force-dynamic";
 // pos/OwnerRateModal.tsx and completeOwnerTabOrder in pos/actions.ts.
 
 export default async function OwnerTabPage() {
-  await requireOwner();
-  const [o, prices] = await Promise.all([getOwnerTabOverview(), ownerPriceList()]);
+  const session = await requireOwner();
+  const [o, prices] = await Promise.all([getOwnerTabOverview(session), ownerPriceList()]);
   const today = businessDay().date;
   const shown = o.people.filter((p) => p.ticked || (o.current[p.id]?.length ?? 0) > 0);
   const earlier = o.people.flatMap((p) => p.months.filter((m) => m.month < o.thisMonth && (m.orders > 0 || m.paid > 0)).map((m) => ({ p, m })));

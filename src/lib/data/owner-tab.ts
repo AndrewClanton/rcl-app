@@ -103,6 +103,13 @@ export function monthLabel(month: string) {
   const [y, m] = month.split("-").map(Number);
   return `${MONTHS[m - 1]} ${y}`;
 }
+// The owner tab's names and amounts are for owners: every reader here is
+// told who's asking and refuses anyone else (the pages gate too).
+type Viewer = { role?: string | null } | null | undefined;
+function mustBeOwner(viewer: Viewer) {
+  if (viewer?.role !== "owner") throw new Error("Not authorized");
+}
+
 export const businessMonth = (iso: string) => businessDay(new Date(iso)).date.slice(0, 7);
 const firstName = (name: string) => name.trim().split(/\s+/)[0] || name;
 
@@ -262,7 +269,8 @@ function monthsFor(orders: OrderRow[], payments: PaymentRow[], thisMonth: string
     });
 }
 
-export async function getOwnerTabOverview(now = new Date()): Promise<OwnerTabOverview> {
+export async function getOwnerTabOverview(viewer: Viewer, now = new Date()): Promise<OwnerTabOverview> {
+  mustBeOwner(viewer);
   const db = createAdminClient();
   const thisMonth = businessDay(now).date.slice(0, 7);
   const emptyOverview: OwnerTabOverview = { ready: false, thisMonth, people: [], current: {}, candidates: [], rateChanges: [] };
@@ -333,7 +341,8 @@ export interface OwnerStatement {
 // One owner's statement for one month: every order (refunded ones shown,
 // not counted) with its lines, and the payments against it. Null: no such
 // person, or the owner tab isn't set up yet.
-export async function getOwnerStatement(ownerId: string, month: string, now = new Date()): Promise<OwnerStatement | null> {
+export async function getOwnerStatement(viewer: Viewer, ownerId: string, month: string, now = new Date()): Promise<OwnerStatement | null> {
+  mustBeOwner(viewer);
   const db = createAdminClient();
   const thisMonth = businessDay(now).date.slice(0, 7);
   const { data: person, error } = await db.from("employees").select("id, name").eq("id", ownerId).maybeSingle();
@@ -375,7 +384,8 @@ export async function getOwnerStatement(ownerId: string, month: string, now = ne
 }
 
 // The Today page's line for owners: this month so far, all owners together.
-export async function ownerTabThisMonth(now = new Date()): Promise<{ owed: number; menuValue: number; orders: number } | null> {
+export async function ownerTabThisMonth(viewer: Viewer, now = new Date()): Promise<{ owed: number; menuValue: number; orders: number } | null> {
+  if (viewer?.role !== "owner") return null;
   const db = createAdminClient();
   const thisMonth = businessDay(now).date.slice(0, 7);
   try {

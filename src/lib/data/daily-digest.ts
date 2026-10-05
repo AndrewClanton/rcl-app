@@ -53,12 +53,12 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
   const next = businessDayWindow(nextDate);
 
   const day = await getDayReport(date);
-  const completed = day.orders.filter((o) => o.status === "completed");
+  const completed = day.orders.filter((o) => o.status === "completed" && !o.ownerTab);
 
   // Same weekday over the four weeks before, for "is this a good Monday?"
   const priorWeeks = await safely([] as { date: string; collected: number; orders: number }[], async () => {
     const reports = await Promise.all([1, 2, 3, 4].map((w) => getDayReport(shiftDate(date, -7 * w))));
-    return reports.map((r) => ({ date: r.date, collected: r.collected, orders: r.orders.filter((o) => o.status === "completed").length }));
+    return reports.map((r) => ({ date: r.date, collected: r.collected, orders: r.orders.filter((o) => o.status === "completed" && !o.ownerTab).length }));
   });
   const lastWeek = priorWeeks[0] ?? null;
   const open = priorWeeks.filter((w) => w.collected > 0);
@@ -122,7 +122,10 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     if (book.length) watch.push(`${book.length} Bar Book drink${book.length === 1 ? "" : "s"} rung up off the menu: ${book.map((i) => `${i.name} ${money(Number(i.unit_price) * i.quantity)}`).join(", ")}.`);
   });
 
-  const refunded = day.orders.filter((o) => o.status === "refunded");
+  const refunded = day.orders.filter((o) => o.status === "refunded" && !o.ownerTab);
+  // An owner-tab order taken off the tab is no refund of money: its own line, no amount.
+  const offTab = day.orders.filter((o) => o.status === "refunded" && o.ownerTab);
+  if (offTab.length) watch.push(`${offTab.length} order${offTab.length === 1 ? "" : "s"} taken off owner tab: ${offTab.map((o) => `#${o.orderNumber}`).join(", ")}.`);
   if (refunded.length) watch.push(`${refunded.length} refund${refunded.length === 1 ? "" : "s"}: ${refunded.map((o) => `#${o.orderNumber} ${money(o.total)}`).join(", ")}.`);
   const voided = day.orders.filter((o) => o.status === "voided");
   if (voided.length) watch.push(`${voided.length} order${voided.length === 1 ? " was" : "s were"} voided: ${voided.map((o) => `#${o.orderNumber}`).join(", ")}.`);

@@ -275,7 +275,7 @@ export async function getTodayBoard(staff: { employeeId: string; role: EmployeeR
       : null,
     manager ? quietly(() => getOftenOut()) : null,
     manager ? quietly(() => getRanOutWeek()) : null,
-    staff.role === "owner" ? quietly(() => ownerTabThisMonth()) : null,
+    staff.role === "owner" ? quietly(() => ownerTabThisMonth(staff)) : null,
   ]);
 
   const mine = sheet?.find((p) => p.employeeId === staff.employeeId);

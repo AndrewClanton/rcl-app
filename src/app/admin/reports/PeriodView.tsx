@@ -155,7 +155,7 @@ export default function PeriodView({
                 { key: "total", label: "Collected", value: money(s.collected), strong: true },
                 { key: "tips", label: "Of it, tips", value: money(s.tips), muted: true },
                 // The owner tabs' tax is owed with the tab, not collected yet.
-                { key: "tax", label: "Of it, sales tax", value: money(s.tax - s.ownerTab.tax), muted: true },
+                { key: "tax", label: s.ownerTab.paid !== 0 ? "Of it, sales tax (not the tax inside owner payments)" : "Of it, sales tax", value: money(s.tax - s.ownerTab.tax), muted: true },
                 ...(s.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in)", value: money(s.vouchers), muted: true }] : []),
                 ...(s.ownerTab.owed > 0 ? [{ key: "owner", label: "Put on owner tabs (money in once it's paid)", value: money(s.ownerTab.owed), muted: true }] : []),
               ]}

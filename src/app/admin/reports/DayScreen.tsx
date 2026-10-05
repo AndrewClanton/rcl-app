@@ -149,7 +149,7 @@ export default function DayScreen({
                         ]
                       : []),
                     ...(fullRefunds.length > 0
-                      ? [{ label: `Refunded in full · ${fullRefunds.length} (not counted)`, value: money(fullRefunds.reduce((s, o) => s + o.total, 0)), muted: true, href: to({ show: "refunds" }) }]
+                      ? [{ label: `Refunded in full · ${fullRefunds.length} (not counted${fullRefunds.some((o) => o.ownerTab) ? `; ${fullRefunds.filter((o) => o.ownerTab).length} taken off owner tab` : ""})`, value: money(fullRefunds.reduce((s, o) => s + o.total, 0)), muted: true, href: to({ show: "refunds" }) }]
                       : []),
                   ]}
                 />

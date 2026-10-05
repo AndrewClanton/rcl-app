@@ -61,13 +61,15 @@ function bullets(items: string[], color = INK) {
 }
 
 export function dailyDigestSubject(d: DailyDigest) {
-  const orders = d.day.orders.filter((o) => o.status === "completed").length;
+  const orders = d.day.orders.filter((o) => o.status === "completed" && !o.ownerTab).length;
   return `Royale ${d.label}: ${money(d.day.collected)} in, ${orders} order${orders === 1 ? "" : "s"}, ${d.day.ticketsSold} ticket${d.day.ticketsSold === 1 ? "" : "s"}`;
 }
 
 export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   const r = d.day;
-  const orders = r.orders.filter((o) => o.status === "completed").length;
+  const orders = r.orders.filter((o) => o.status === "completed" && !o.ownerTab).length;
+  // Owner-tab orders aren't in the order count, the money or the average: one line of their own.
+  const ownerLine = r.ownerTab.orders > 0 ? `<div style="font:13px/1.5 Arial,sans-serif;color:${MUTED};margin-top:2px">Owner tab: ${r.ownerTab.orders} order${r.ownerTab.orders === 1 ? "" : "s"}, ${money(r.ownerTab.sales)} at cost</div>` : "";
   // Memberships and owner-tab payments are in the money in, but they aren't orders.
   const orderMoney = r.collected - r.memberships.collected - r.ownerTab.paid;
   const compare: string[] = [];
@@ -158,7 +160,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
       <tr><td>
         <div style="font:900 40px/1 'Arial Black',Arial,sans-serif;color:${RED}">${money(r.collected)}</div>
-        <div style="font:15px/1.5 Arial,sans-serif;color:${INK};margin-top:6px">${orders} order${orders === 1 ? "" : "s"} · ${r.ticketsSold} ticket${r.ticketsSold === 1 ? "" : "s"}${orders ? ` · ${money(orderMoney / Math.max(1, orders))} average` : ""}</div>
+        <div style="font:15px/1.5 Arial,sans-serif;color:${INK};margin-top:6px">${orders} order${orders === 1 ? "" : "s"} · ${r.ticketsSold} ticket${r.ticketsSold === 1 ? "" : "s"}${orders ? ` · ${money(orderMoney / Math.max(1, orders))} average` : ""}</div>${ownerLine}
         ${compare.length ? `<div style="font:14px/1.5 Arial,sans-serif;color:${MUTED};margin-top:2px">${esc(compare.join(" · "))}</div>` : ""}
       </td></tr>
       ${body}

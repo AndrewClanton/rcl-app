@@ -16,12 +16,12 @@ export const dynamic = "force-dynamic";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function OwnerStatementPage({ searchParams }: { searchParams: Promise<{ owner?: string; month?: string }> }) {
-  await requireOwner();
+  const session = await requireOwner();
   const p = await searchParams;
   const owner = p.owner ?? "";
   const month = p.month ?? "";
   if (!UUID.test(owner) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) notFound();
-  const s = await getOwnerStatement(owner, month);
+  const s = await getOwnerStatement(session, owner, month);
   if (!s) notFound();
   const m = s.month;
   const counted = s.orders.filter((o) => !o.refunded);

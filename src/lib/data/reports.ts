@@ -394,15 +394,32 @@ function partsByOrder(partials: PartialRefundRow[]): Map<string, RefundedParts> 
   return out;
 }
 
-export async function getDayReport(date: string): Promise<DayReport> {
+// Who may see an owner's name and amounts: owners only. Managers and admins
+// get "Owner tab" and its totals, never whose or what (the order's lines,
+// its total, the payments' names and amounts). The default is the safe one:
+// a caller that doesn't say who is looking gets the redacted report.
+export const OWNER_TAB_HIDDEN = "an owner";
+export const mayViewOwnerTab = (viewer?: { role?: string | null } | null) => viewer?.role === "owner";
+
+export function redactOwnerOrder(o: DayOrder): DayOrder {
+  if (!o.ownerTab) return o;
+  return { ...o, ownerTab: OWNER_TAB_HIDDEN, items: OWNER_TAB_LABEL, lines: [], total: 0, refunded: 0, refundable: 0, cash: 0, card: 0, voucher: 0, refundedTax: 0, refundedCard: 0, refundedCash: 0 };
+}
+
+export async function getDayReport(date: string, viewer?: { role?: string | null } | null): Promise<DayReport> {
   const { start, end } = businessDayWindow(date);
   const { rows, buckets } = await loadSales(start, end);
   const refundedByOrder = partsByOrder(rows.partials);
-  const names = await firstNames([...rows.orders.filter(isOwnerTab).map((o) => o.owner_tab_employee_id), ...rows.ownerPayments.map((p) => p.owner_id)]);
+  const seeOwners = mayViewOwnerTab(viewer);
+  // Not even read for anyone else.
+  const names = seeOwners ? await firstNames([...rows.orders.filter(isOwnerTab).map((o) => o.owner_tab_employee_id), ...rows.ownerPayments.map((p) => p.owner_id)]) : new Map<string, string>();
   return {
     date,
-    orders: rows.orders.map((o) => toDayOrder(o, refundedByOrder.get(o.id) ?? NOTHING_REFUNDED, buckets, names)),
-    ownerPaymentLines: [...rows.ownerPayments]
+    orders: rows.orders.map((o) => {
+      const order = toDayOrder(o, refundedByOrder.get(o.id) ?? NOTHING_REFUNDED, buckets, names);
+      return seeOwners ? order : redactOwnerOrder(order);
+    }),
+    ownerPaymentLines: (seeOwners ? [...rows.ownerPayments] : [])
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
       .map((p) => ({ owner: names.get(p.owner_id) ?? "owner", month: p.month, amount: Number(p.amount), method: p.method, at: p.created_at })),
     // The same seats and money summarizeSales counts (bookingSeats), one per booking.
@@ -588,16 +605,21 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
 
   const ticketsSold = bookings.reduce((s, b) => s + b.quantity, 0);
   const tickets = { online: 0, register: 0, free: 0, revenue: 0 };
+  // Tickets rung on an owner's tab: sold at their price, but not box office ($4 a ticket is for paid tickets).
+  const ownerTabOrderIds = new Set(completed.filter(isOwnerTab).map((o) => o.id));
+  let ownerTabTickets = 0;
   let onlineTicketRevenue = 0;
   for (const b of bookings) {
     const { paid, free } = bookingSeats(b);
     const revenue = paid * Number(b.unit_price);
     tickets[b.order_id ? "register" : "online"] += paid;
+    if (b.order_id && ownerTabOrderIds.has(b.order_id)) ownerTabTickets += paid;
     tickets.free += free;
     tickets.revenue += revenue;
     if (!b.order_id) onlineTicketRevenue += revenue;
   }
   const paidTickets = tickets.online + tickets.register;
+  const boxOfficeTickets = paidTickets - ownerTabTickets;
   const ticketRevenue = tickets.revenue;
   // Online tickets: price plus the sales tax Stripe added (register tickets'
   // tax is already in their order).
@@ -689,7 +711,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       })),
     accounts: [
       { label: "Tax account", rule: `10% of ${money(grossSales)} sold`, amount: grossSales * TAX_ACCOUNT_RATE },
-      { label: "Box office", rule: `$4 × ${paidTickets} paid ticket${paidTickets === 1 ? "" : "s"}`, amount: paidTickets * BOX_OFFICE_PER_TICKET },
+      { label: "Box office", rule: `$4 × ${boxOfficeTickets} paid ticket${boxOfficeTickets === 1 ? "" : "s"}${ownerTabTickets ? ` (not the ${ownerTabTickets} on owner tabs)` : ""}`, amount: boxOfficeTickets * BOX_OFFICE_PER_TICKET },
       { label: "Inventory", rule: `20% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * INVENTORY_SHARE },
       { label: "Expenses", rule: `80% of ${money(foodAndDrink)} food & drink`, amount: foodAndDrink * EXPENSE_SHARE },
     ],
@@ -697,7 +719,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     // $4 carve-out, candy/other, memberships and the owner tab (which the
     // Tax account's 10% of everything sold does count). The owner tab isn't
     // food and drink money here: none came in yet.
-    unassigned: ticketRevenue - paidTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other + memberships.sales + ownerTab.sales,
+    unassigned: ticketRevenue - boxOfficeTickets * BOX_OFFICE_PER_TICKET + boothRevenue + category.other + memberships.sales + ownerTab.sales,
     ownerTab: {
       ...ownerTab,
       sales: round2(ownerTab.sales),
@@ -1182,7 +1204,7 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
 // One order by its number, with the business day it belongs to (for "see
 // that day"). Null when there's no such order, or it was never finished
 // (open tabs and held orders aren't in Reports).
-export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | null> {
+export async function getOrderByNumber(orderNumber: number, viewer?: { role?: string | null } | null): Promise<DayOrder | null> {
   if (!Number.isSafeInteger(orderNumber) || orderNumber <= 0) return null;
   const supabase = createAdminClient();
   const { data, error } = await supabase.from("orders").select(DAY_ORDER_COLUMNS).eq("order_number", orderNumber).in("status", ["completed", "refunded", "voided"]).maybeSingle();
@@ -1193,9 +1215,10 @@ export async function getOrderByNumber(orderNumber: number): Promise<DayOrder | 
   const [partials, buckets, names] = await Promise.all([
     row.status === "completed" ? getPartialRefunds(start, end) : [],
     loadBuckets(),
-    firstNames(isOwnerTab(row) ? [row.owner_tab_employee_id] : []),
+    firstNames(isOwnerTab(row) && mayViewOwnerTab(viewer) ? [row.owner_tab_employee_id] : []),
   ]);
-  return toDayOrder(row, partsByOrder(partials.filter((p) => p.order_id === row.id)).get(row.id) ?? NOTHING_REFUNDED, buckets, names);
+  const order = toDayOrder(row, partsByOrder(partials.filter((p) => p.order_id === row.id)).get(row.id) ?? NOTHING_REFUNDED, buckets, names);
+  return mayViewOwnerTab(viewer) ? order : redactOwnerOrder(order);
 }
 
 // ---------- sales tax ----------

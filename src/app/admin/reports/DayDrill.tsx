@@ -310,7 +310,7 @@ function OrdersView({
                 : []),
               { key: "tips", label: "Of it, tips", value: money(r.tips), muted: true, href: hrefFor({ show: "tips" }) },
               // The owner tabs' tax is owed with the tab, not collected yet.
-              { key: "tax", label: "Of it, sales tax", value: money(r.tax - r.ownerTab.tax), muted: true, href: hrefFor({ show: "tax" }) },
+              { key: "tax", label: r.ownerTab.paid !== 0 ? "Of it, sales tax (not the tax inside owner payments)" : "Of it, sales tax", value: money(r.tax - r.ownerTab.tax), muted: true, href: hrefFor({ show: "tax" }) },
             ]}
           />
           {r.ownerPaymentLines.length > 0 && (
@@ -499,7 +499,7 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
 
   return (
     <>
-      <Section title={money(r.tax)} subtitle="Sales tax collected, by where it came from.">
+      <Section title={money(r.tax)} subtitle={`Sales tax collected, by where it came from.${r.ownerTab.tax > 0 ? ` ${money(r.ownerTab.tax)} of it is owed on owner tabs, collected with the monthly statement.` : ""}`}>
         <Lines
           rows={[
             { key: "pos", label: "Register orders", value: money(sumTax(completed.filter((o) => o.source === "pos" && !o.ownerTab))), href: hrefFor({ show: "orders" }) },
@@ -681,6 +681,7 @@ function MembershipsView({ r }: { r: DayReport }) {
 
 function RefundsView({ r, drill, orderHref }: { r: DayReport; drill: DayDrillData; orderHref: (n: number) => string }) {
   const full = drill.refunds.filter((x) => x.kind === "full");
+  const offTab = full.filter((x) => r.orders.some((o) => o.id === x.orderId && o.ownerTab)).length;
   const partial = drill.refunds.filter((x) => x.kind === "partial");
   const voided = r.orders.filter((o) => o.status === "voided");
   const partialTotal = partial.reduce((s, x) => s + x.amount, 0);
@@ -693,7 +694,7 @@ function RefundsView({ r, drill, orderHref }: { r: DayReport; drill: DayDrillDat
           rows={[
             { key: "p", label: `Partial refunds · ${partial.length}`, value: money(partialTotal) },
             { key: "pg", label: "Of it, goods (taken off net sales)", value: money(r.partialRefunds), muted: true },
-            { key: "f", label: `Refunded in full · ${full.length}`, value: money(fullTotal) },
+            { key: "f", label: `Refunded in full · ${full.length}${offTab ? ` (${offTab} taken off owner tab)` : ""}`, value: money(fullTotal) },
             { key: "fn", label: "Full refunds aren't counted in any figure (the sale is left out altogether).", value: "", muted: true },
             { key: "v", label: `Voided · ${voided.length}`, value: voided.length ? money(voided.reduce((s, o) => s + o.total, 0)) : "—" },
             ...(r.memberships.refunds > 0
