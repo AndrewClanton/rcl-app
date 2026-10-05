@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
-import { getDoubleSettings } from "@/lib/data/barBook";
+import { getBarPrices } from "@/lib/data/barBook";
 import { hasAdminAccess, requireStaff } from "@/lib/auth";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
@@ -36,14 +36,14 @@ export default async function PosPage() {
   // Signing in again comes back here, not to the back office.
   const session = await requireStaff("/pos");
 
-  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, doubleSettings] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, barPrices] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getDraftOrders("held"),
     getDraftOrders("tab"),
     getRecipesByItem(),
     getRegisterScreenings(),
-    getDoubleSettings(),
+    getBarPrices(),
   ]);
 
   // Tickets are sold from the Movies tab (per showing, with seats counted),
@@ -88,8 +88,8 @@ export default async function PosPage() {
           registerTopic={registerTopic()}
           // Dev note only while an admin is signed in (submitting checks again).
           canNote={hasAdminAccess(session.role)}
-          // How a double is priced (Back office → Bar Book).
-          doubleSettings={doubleSettings}
+          // The Prices sheet: doubles, neat or rocks, the off-menu rule (Back office → Bar Book → Prices).
+          barPrices={barPrices}
         />
       </ItemSettingsProvider>
     </div>

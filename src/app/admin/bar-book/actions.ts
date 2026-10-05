@@ -5,13 +5,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getStaffSession, hasAdminAccess, hasManagerAccess } from "@/lib/auth";
 import { GLASS_LABEL, isFamily, isGlass, isIce, isKind, isMethod, type GlassKey, type Ice, type Method } from "@/lib/bar/icons";
 import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
-import { TARGET_POUR_COST_SETTING, unitCostFromBottle, validTarget } from "@/lib/bar/pricing";
+import { BAR_PRICES_SETTING, TARGET_POUR_COST_SETTING, checkBarPrices, unitCostFromBottle, type BarPrices } from "@/lib/bar/pricing";
 import { findPictureLater, insertMenuItem } from "@/lib/menu-items";
-import { DOUBLE_SETTING, readDoubleSettings, type DoubleSettings } from "@/lib/bar/double";
 
 // Back office → Bar Book: managers and up set what an ingredient is (kind,
 // color family, carried) and what it costs, and add or change the book's own
-// drinks (no menu item). Owners and admins set the target pour cost and turn
+// drinks (no menu item). Owners and admins set the Prices sheet and turn
 // a book drink into a menu item (that's a new price on the register). Every
 // input is checked here: the browser could send anything.
 
@@ -71,45 +70,27 @@ export async function setIngredientCost(id: string, cost: { bottlePrice: number;
   return { ok: true };
 }
 
-// The pour cost suggested prices aim for (0.20 is 20%). Owners and admins.
-export async function setTargetPourCost(target: number): Promise<Result> {
+// The Prices sheet (lib/bar/pricing.ts): serve, level, mixer and double
+// prices, the pour standard, and the target pour cost. Owners and admins.
+// Every knob is checked here, the same way the register and the server's
+// sale check read it back; the target keeps its own setting.
+export async function setBarPrices(input: BarPrices): Promise<Result> {
   const { no, employeeId } = await notOwner();
   if (no) return no;
-  const t = validTarget(target);
-  if (t === null) return { ok: false, error: "Pick a target between 5% and 60%." };
+  const checked = checkBarPrices(input);
+  if (!checked.ok) return { ok: false, error: checked.error };
+  const { target, ...sheet } = checked.prices;
+  const now = new Date().toISOString();
   const { error } = await createAdminClient()
     .from("settings")
-    .upsert({ key: TARGET_POUR_COST_SETTING, value: Math.round(t * 1000) / 1000, updated_at: new Date().toISOString(), updated_by: employeeId }, { onConflict: "key" });
-  if (error) return { ok: false, error: "Couldn't save the target. Try again." };
-  revalidate();
-  return { ok: true };
-}
-
-// How a double is priced (lib/bar/double.ts): the shot multiplier, the
-// per-pour discount, each tier's shot price, the no-recipe upcharge and the
-// rounding. Owners and admins. Each knob is checked on its own, the same
-// way the register reads it back.
-export async function setDoubleSettings(input: DoubleSettings): Promise<Result> {
-  const { no, employeeId } = await notOwner();
-  if (no) return no;
-  const s = readDoubleSettings(input);
-  const same = (a: unknown, b: unknown) => typeof a === "number" && Math.abs(a - (b as number)) < 1e-9;
-  const i = (input ?? {}) as Partial<DoubleSettings>;
-  if (
-    !same(i.shotMultiplier, s.shotMultiplier) ||
-    !same(i.pourDiscount, s.pourDiscount) ||
-    !same(i.noRecipeUpcharge, s.noRecipeUpcharge) ||
-    !same(i.rounding, s.rounding) ||
-    !same(i.tiers?.well, s.tiers.well) ||
-    !same(i.tiers?.call, s.tiers.call) ||
-    !same(i.tiers?.premium, s.tiers.premium)
-  ) {
-    return { ok: false, error: "One of those isn't a number the register can use (a multiplier of 1 to 4, prices of $0 to $100, rounding of $0.01 to $5)." };
-  }
-  const { error } = await createAdminClient()
-    .from("settings")
-    .upsert({ key: DOUBLE_SETTING, value: s, updated_at: new Date().toISOString(), updated_by: employeeId }, { onConflict: "key" });
-  if (error) return { ok: false, error: "Couldn't save the double prices. Try again." };
+    .upsert(
+      [
+        { key: BAR_PRICES_SETTING, value: sheet, updated_at: now, updated_by: employeeId },
+        { key: TARGET_POUR_COST_SETTING, value: Math.round(target * 1000) / 1000, updated_at: now, updated_by: employeeId },
+      ],
+      { onConflict: "key" },
+    );
+  if (error) return { ok: false, error: "Couldn't save the prices. Try again." };
   revalidate();
   revalidatePath("/pos");
   return { ok: true };

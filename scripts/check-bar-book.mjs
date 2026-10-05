@@ -24,9 +24,19 @@
 //     (and which recipe ids the server keeps).
 // 10. The Bar tab: the cocktail grid fills its box at both iPad sizes and
 //     pages when it must; quick pour names.
-// 12. Doubles: a shot at each tier, a 1.5 oz cocktail at each tier, the
-//     Long Island and Butter beer, no recipe, rounding, no beer or wine,
-//     an item's own "Double" left alone, and the server's re-check.
+// 12. Doubles: a shot at each tier (its second pour: +$4/+6/+8), a 1.5 oz
+//     cocktail at each tier, the Long Island and Butter beer, no recipe,
+//     rounding, no beer or wine, an item's own "Double" left alone, and the
+//     server's re-check.
+// 13. The Prices sheet and the Royale rule: code defaults before a save,
+//     each knob read on its own, the strict save check; the review's four
+//     examples, a rum & coke, a straight call shot, a Long Island-style
+//     cocktail, a ginger-beer mule and more; the manager's check and its
+//     flag; off-menu prices start at the rule price.
+// 14. Neat or on the rocks: only the Liquor shots, the collision guard,
+//     each shot single, double, neat and neat double, the order line, the
+//     server's re-check accepting right lines and flagging wrong ones, and
+//     Bar usage pouring 2 oz (4 doubled).
 // 11. "What's in it?": the matcher on the drinks guests describe, never
 //     across spirits; a custom drink's cost, name, icon and order line; and
 //     which ingredient lists the server keeps.
@@ -321,7 +331,7 @@ check("the server looks recipes up before saving and drops what it can't find", 
 check("before the recipe migration it saves without the link", /schemaMissing\(insertErr\) && withRecipes !== rows/.test(actions));
 check("only off-menu recipes count (menu_item_id is null)", /\.in\("id", ids\)\s*\.is\("menu_item_id", null\)/.test(read("src/lib/data/barBook.ts")));
 const bb = read("src/app/admin/bar-book/actions.ts");
-check("making a menu item and the target are owners and admins, on the server", /export async function makeMenuItemFromRecipe[\s\S]*?await notOwner\(\)/.test(bb) && /export async function setTargetPourCost[\s\S]*?await notOwner\(\)/.test(bb) && /hasAdminAccess\(staff\.role\)/.test(bb));
+check("making a menu item and the Prices sheet (the target too) are owners and admins, on the server", /export async function makeMenuItemFromRecipe[\s\S]*?await notOwner\(\)/.test(bb) && /export async function setBarPrices[\s\S]*?await notOwner\(\)/.test(bb) && /hasAdminAccess\(staff\.role\)/.test(bb));
 check("costs are managers and up, on the server", /export async function setIngredientCost[\s\S]*?await denied\(\)/.test(bb));
 check("below cost asks the register's manager PIN", /checkManagerPin\(pin, "below-cost-drink"/.test(read("src/app/pos/bar-book-actions.ts")));
 check("sale math untouched: register-totals.ts isn't imported by the pricing", !/register-totals/.test(read("src/lib/bar/pricing.ts")));
@@ -499,8 +509,11 @@ check("sale math untouched by the matcher", !/register-totals|register-sale-chec
 
 // ---------- 12. doubles ----------
 const S = D.DOUBLE_DEFAULTS;
-const shot = (price) => D.doubleUpcharge(price, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S);
-check("a double shot is twice the single at each tier", shot(5) === 5 && shot(7) === 7 && shot(9) === 9);
+const liquor = [{ key: "liquor", label: "Liquor", options: [{ name: "Vodka" }, { name: "Rum" }] }];
+const shotCtx = (name, serve = null) => ({ isAlcohol: true, section: "shots", ownDouble: false, recipe: null, name, liquor: D.hasLiquorChoice(liquor), ownServe: D.hasOwnServe(liquor), serve });
+const shot = (name, serve) => D.doubleUpcharge(shotCtx(name, serve), S);
+check("a double shot is its level's second pour: well +$4, call +$6, premium +$8", shot("Well shot") === 4 && shot("Call shot") === 6 && shot("Premium shot") === 8, [shot("Well shot"), shot("Call shot"), shot("Premium shot")].join());
+check("…so a double well shot is $9, not $10", 5 + shot("Well shot") === 9);
 const one = (name) => D.recipeUpcharge([{ name, quantity: 1.5, unit: "oz", kind: "spirit" }, { name: "Lime juice", quantity: 1, unit: "oz", kind: "juice" }], S);
 check("a 1.5 oz cocktail: well +$4, call +$6, premium +$8", one("Well Vodka") === 4 && one("Call Vodka") === 6 && one("Premium Tequila") === 8, [one("Well Vodka"), one("Call Vodka"), one("Premium Tequila")].join());
 check("only the spirit doubles (the lime doesn't add)", D.recipeUpcharge([{ name: "Well Vodka", quantity: 1.5, kind: "spirit" }], S) === one("Well Vodka"));
@@ -509,44 +522,140 @@ const liLines = li.ingredients.map((l) => ({ name: l.name, quantity: l.amount, u
 check("a Long Island (4 × ½ oz of spirit, the triple sec left out): +$5.50", D.recipeUpcharge(liLines, S) === 5.5, String(D.recipeUpcharge(liLines, S)));
 const butter = [{ name: "Butterscotch schnapps", quantity: 1, unit: "oz", kind: "liqueur" }, { name: "Cream soda", quantity: 6, unit: "oz", kind: "mixer" }];
 check("Butter beer (no spirit: its 1 oz of schnapps): +$2.50", D.recipeUpcharge(butter, S) === 2.5, String(D.recipeUpcharge(butter, S)));
-check("a spirit drink with no recipe: +$4", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: null }, S) === 4);
+check("a spirit drink with no recipe: +$4", D.doubleUpcharge({ isAlcohol: true, section: "cocktails", ownDouble: false, recipe: null }, S) === 4);
 check("rounding to the nearest $0.50", D.recipeUpcharge([{ name: "Vodka", quantity: 1.75, kind: "spirit" }], S) === 4.5 && D.recipeUpcharge([{ name: "Vodka", quantity: 1.875, kind: "spirit" }], S) === 5 && D.roundTo(4.25, 0.5) === 4.5);
 check("ml counts as ounces", D.recipeUpcharge([{ name: "Vodka", quantity: 44.36, unit: "ml", kind: "spirit" }], S) === 4);
-check("no double on beer or wine", D.doubleUpcharge(5, { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S) === null && D.doubleUpcharge(5, { isAlcohol: true, section: "wine", ownDouble: false, recipe: null }, S) === null);
-check("no double on something that isn't alcohol", D.doubleUpcharge(4, { isAlcohol: false, section: "other", ownDouble: false, recipe: null }, S) === null);
-check("no double on a drink with nothing to double (a Mimosa)", D.doubleUpcharge(8, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: [{ name: "Prosecco", quantity: 4, kind: "wine" }, { name: "Orange juice", quantity: 2, kind: "juice" }] }, S) === null);
-check("an alcohol item outside the bar with no recipe has no double", D.doubleUpcharge(8, { isAlcohol: true, section: null, ownDouble: false, recipe: null }, S) === null);
+check("no double on beer or wine", D.doubleUpcharge({ isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S) === null && D.doubleUpcharge({ isAlcohol: true, section: "wine", ownDouble: false, recipe: null }, S) === null);
+check("no double on something that isn't alcohol", D.doubleUpcharge({ isAlcohol: false, section: "other", ownDouble: false, recipe: null }, S) === null);
+check("no double on a drink with nothing to double (a Mimosa)", D.doubleUpcharge({ isAlcohol: true, section: "cocktails", ownDouble: false, recipe: [{ name: "Prosecco", quantity: 4, kind: "wine" }, { name: "Orange juice", quantity: 2, kind: "juice" }] }, S) === null);
+check("an alcohol item outside the bar with no recipe has no double", D.doubleUpcharge({ isAlcohol: true, section: null, ownDouble: false, recipe: null }, S) === null);
 // the collision guard
 const espressoGroups = [{ options: [{ name: "Single" }, { name: "Double" }] }];
 check("an item's own \"Double\" option is found", D.hasOwnDouble(espressoGroups) && !D.hasOwnDouble([{ options: [{ name: "Double shot" }] }]) && !D.hasOwnDouble(null));
-check("…and then it's never our double", D.doubleUpcharge(4, { isAlcohol: true, section: "other", ownDouble: true, recipe: null }, S) === null && JSON.stringify(D.withoutDouble(["Oat milk", "Double"], true)) === JSON.stringify(["Oat milk", "Double"]));
-check("our Double isn't priced as a menu option", JSON.stringify(D.withoutDouble(["Rocks", "Double"], false)) === JSON.stringify(["Rocks"]));
+check("…and then it's never our double", D.doubleUpcharge({ isAlcohol: true, section: "other", ownDouble: true, recipe: null }, S) === null && JSON.stringify(D.withoutOurs(["Oat milk", "Double"], true, false)) === JSON.stringify(["Oat milk", "Double"]));
+check("our Double isn't priced as a menu option", JSON.stringify(D.withoutOurs(["Rocks", "Double"], false, false)) === JSON.stringify(["Rocks"]));
 // the server's re-check
 const ofLines = SEED_DRINKS.find((d) => d.name === "Old Fashioned").ingredients.map((l) => ({ name: l.name, quantity: l.amount, unit: SEED_INGREDIENTS[l.name].unit, kind: SEED_INGREDIENTS[l.name].kind }));
-const ofCtx = { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: ofLines };
-const valid = D.priceWithDouble(10, ["Double"], ofCtx, S);
+const ofCtx = { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: ofLines, name: "Old fashioned" };
+const valid = D.priceWithOptions(10, ["Double"], ofCtx, S);
 check("the server accepts a double rung at its price (Old fashioned $10 + $5.50)", "unit" in valid && valid.unit === 15.5, JSON.stringify(valid));
 check("…and flags one rung at the wrong price", "unit" in valid && Math.abs(valid.unit - 14) > 0.0101);
-check("…and refuses a double on a beer", "error" in D.priceWithDouble(5, ["Double"], { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S));
-check("…and leaves a line without one alone", JSON.stringify(D.priceWithDouble(10, ["Rocks"], ofCtx, S)) === JSON.stringify({ unit: 10 }));
-check("…and an item's own Double alone", JSON.stringify(D.priceWithDouble(3.5, ["Double"], { isAlcohol: false, section: null, ownDouble: true, recipe: null }, S)) === JSON.stringify({ unit: 3.5 }));
-check("taking a double off gives the single back", D.undoDouble(10, { isAlcohol: true, section: "shots", ownDouble: false, recipe: null }, S) === 5 && D.undoDouble(15.5, ofCtx, S) === 10);
-check("tiers from the name", D.tierOf("Call Vodka") === "call" && D.tierOf("Premium Tequila") === "premium" && D.tierOf("Tito's") === "well" && D.tierOf("Well Gin") === "well");
-check("settings: bad numbers fall back one by one", JSON.stringify(D.readDoubleSettings({ shotMultiplier: 9, pourDiscount: 2, tiers: { well: "x", call: 8 }, rounding: 0 })) === JSON.stringify({ shotMultiplier: 2, pourDiscount: 2, tiers: { well: 5, call: 8, premium: 9 }, noRecipeUpcharge: 4, rounding: 0.5 }));
+check("…and refuses a double on a beer", "error" in D.priceWithOptions(5, ["Double"], { isAlcohol: true, section: "beer", ownDouble: false, recipe: null }, S));
+check("…and leaves a line without one alone", JSON.stringify(D.priceWithOptions(10, ["Rocks"], ofCtx, S)) === JSON.stringify({ unit: 10 }));
+check("…and an item's own Double alone", JSON.stringify(D.priceWithOptions(3.5, ["Double"], { isAlcohol: false, section: null, ownDouble: true, recipe: null }, S)) === JSON.stringify({ unit: 3.5 }));
+check("taking a double off gives the single back", D.undoDouble(9, shotCtx("Well shot"), S) === 5 && D.undoDouble(15.5, ofCtx, S) === 10);
+check("tiers from the name", D.tierOf("Call Vodka") === "call" && D.tierOf("Premium Tequila") === "premium" && D.tierOf("Tito's") === "well" && D.tierOf("Well Gin") === "well" && D.tierOf("Call shot") === "call");
 check("doubled lines: only the base spirit", JSON.stringify(D.doubledLines(ofLines).map((l) => l.quantity)) === JSON.stringify(ofLines.map((l, i) => (i === 0 ? l.quantity * 2 : l.quantity))));
 check("a doubled line's order line carries Double", JSON.stringify(P.bookOrderLine({ recipeId: RID, name: "Mojito" }, 13, true).mods) === JSON.stringify(["Double"]) && JSON.stringify(X.customOrderLine("x", 9, vcl, true).mods) === JSON.stringify(["Double"]));
 const sc = read("src/lib/register-sale-checks.ts");
-check("the server's sale check prices doubles with the same function", /priceWithDouble\(/.test(sc) && /withoutDouble\(l\.modifiers \?\? \[\], ownDouble\)/.test(sc));
+check(
+  "the server's sale check prices doubles and neat or rocks with the same function",
+  /priceWithOptions\(/.test(sc) && /withoutOurs\(l\.modifiers \?\? \[\], ownDouble, ownServe\)/.test(sc) && /hasLiquorChoice\(itemGroups\)/.test(sc) && /name: item\.name/.test(sc),
+);
+check("…and reads the Prices sheet for them", /doubleSettingsOf\(prices\)/.test(sc) && /getBarPrices\(\)/.test(sc));
 check("printed tickets and the bar tablet show DOUBLE", /"  DOUBLE  "/.test(read("src/lib/print/receipt.ts")) && /DOUBLE/.test(read("src/app/display/PrepTicketBoard.tsx")));
 check("Bar usage pours a double's spirit twice", /isDouble\(oi\.modifiers\)/.test(read("src/lib/data/reports.ts")) && /isDouble\(sold\.modifiers\)/.test(read("src/lib/data/reports.ts")));
+
+// ---------- 13. the Prices sheet and the Royale rule ----------
+const BP = P.BAR_PRICES_DEFAULTS;
+check("the sheet's defaults price a double exactly as before it (well $5, call $7, premium $9 shots; $1 off; +$4 no recipe; $0.50)", JSON.stringify(P.doubleSettingsOf(BP)) === JSON.stringify(D.DOUBLE_DEFAULTS));
+check("before anything is saved, the code defaults apply", JSON.stringify(P.readBarPrices(null)) === JSON.stringify(BP) && JSON.stringify(P.readBarPrices(undefined, undefined)) === JSON.stringify(BP));
+const savedSheet = P.readBarPrices({ serve: { shot: 6, highball: "x" }, level: { call: 300 }, mixers: { gingerBeer: { price: 1.5, names: ["Ginger Beer ", "fever-tree"] }, energy: { names: "red bull" } }, pours: { neat: 2.25 } }, 0.22);
+check(
+  "a saved sheet: each knob on its own, bad ones fall back",
+  savedSheet.serve.shot === 6 && savedSheet.serve.highball === 8 && savedSheet.level.call === 2 && savedSheet.mixers.gingerBeer.price === 1.5 && JSON.stringify(savedSheet.mixers.gingerBeer.names) === JSON.stringify(["ginger beer", "fever-tree"]) && JSON.stringify(savedSheet.mixers.energy.names) === JSON.stringify(BP.mixers.energy.names) && savedSheet.pours.neat === 2.25 && savedSheet.target === 0.22,
+  JSON.stringify(savedSheet),
+);
+check("saving: the defaults are a sheet the register can use", P.checkBarPrices(JSON.parse(JSON.stringify(BP))).ok);
+const badSave = P.checkBarPrices({ ...BP, serve: { ...BP.serve, shot: 500 }, target: 0.9 });
+check("saving: an out-of-range knob is refused, by name", !badSave.ok && /shot price/.test(badSave.error) && /target/.test(badSave.error), badSave.error);
+check("saving: an empty box (NaN) is refused, not saved as $0", !P.checkBarPrices({ ...BP, level: { ...BP.level, call: NaN } }).ok);
+const ex = Object.fromEntries(P.ruleExamples(BP).map((e) => [e.name, e.rule]));
+check("the review: Tito's soda (call highball) $10", ex["Tito's soda"]?.price === 10 && ex["Tito's soda"].label === "call highball", JSON.stringify(ex["Tito's soda"]));
+check("the review: Patrón margarita (premium) $12", ex["Patrón margarita"]?.price === 12 && ex["Patrón margarita"].label === "premium highball", JSON.stringify(ex["Patrón margarita"]));
+check("the review: double Jack & Coke (call) $16", ex["Double Jack & Coke"]?.price === 16 && ex["Double Jack & Coke"].double === 6, JSON.stringify(ex["Double Jack & Coke"]));
+check("the review: Lemon Drop with house vodka $10", ex["Lemon Drop with house vodka"]?.price === 10 && ex["Lemon Drop with house vodka"].serve === "cocktail", JSON.stringify(ex["Lemon Drop with house vodka"]));
+const L = (name, quantity, kind, extra = {}) => ({ name, quantity, unit: "oz", kind, ...extra });
+const rule = (lines, opts) => P.ruleprice(lines, BP, opts);
+check("a rum & coke (well highball): $8", rule([L("Well rum", 1.5, "spirit"), L("Cola", 4, "mixer")])?.price === 8);
+check("a straight call shot: $7", rule([L("Call vodka", 1.5, "spirit")])?.price === 7 && rule([L("Call vodka", 1.5, "spirit")]).serve === "shot");
+check("…2 oz of it alone is neat or rocks: $9", rule([L("Call whiskey", 2, "spirit")])?.serve === "neat" && rule([L("Call whiskey", 2, "spirit")]).price === 9);
+check("…and its double through the rule is $13 (+$6)", rule([L("Call vodka", 1.5, "spirit")], { double: true })?.price === 13);
+const liRule = rule(liLines);
+check("a Long Island-style cocktail (four well spirits, triple sec, sour, cola): $10", liRule?.price === 10 && liRule.serve === "cocktail", JSON.stringify(liRule));
+check("…with one premium spirit in it, the highest level: $14", rule(liLines.map((l, i) => (i === 0 ? { ...l, name: "Premium vodka" } : l)))?.price === 14);
+const mule = rule([L("Well vodka", 1.5, "spirit"), L("Lime juice", 0.5, "juice"), L("Ginger beer", 4, "mixer")]);
+check("a ginger-beer mule: highball $8 + ginger beer $1 = $9", mule?.price === 9 && mule.serve === "highball" && mule.parts.some((x) => x.label === "ginger beer" && x.amount === 1), JSON.stringify(mule));
+check("an energy drink: Vodka Red Bull $10", rule([L("Well vodka", 1.5, "spirit"), L("Red Bull", 4, "mixer")])?.price === 10);
+check("a liqueur makes it a cocktail (Black Russian): $10", rule([L("Vodka", 2, "spirit"), L("Coffee liqueur", 1, "liqueur")])?.serve === "cocktail");
+check("garnishes and optional lines don't change the serve", rule([L("Vodka", 1.5, "spirit"), L("Soda water", 4, "mixer"), L("Lime wedge", 1, "garnish"), L("Simple syrup", 0.25, "syrup", { optional: true })])?.serve === "highball");
+check("soda-gun mixers, juice and cream are included", rule([L("Vodka", 1.5, "spirit"), L("Cranberry juice", 3, "juice"), L("Tonic water", 2, "mixer")])?.price === 8 && P.mixerRuleFor({ name: "Heavy cream", kind: "mixer", family: "cream" }) === "included");
+check("ginger beer by name wins over its kind (a mixer)", P.mixerRuleFor({ name: "Ginger beer", kind: "mixer", family: "ginger" }) === "gingerBeer" && P.mixerRuleFor({ name: "Ginger ale", kind: "mixer" }) === "included");
+check("no spirit or liqueur (a Mimosa): no rule price", rule([L("Prosecco", 4, "wine"), L("Orange juice", 2, "juice")]) === null);
+check("the rule follows the sheet (call +$3: Tito's soda $11)", P.ruleExamples({ ...BP, level: { ...BP.level, call: 3 } })[0].rule.price === 11);
+// the manager's check
+const c162 = P.drinkCost([{ name: "Call vodka", quantity: 1, unitCost: 1.62 }]);
+check("the manager's check: \"Rule price $10 · Cost $1.62 · 16% pour cost\"", P.managersCheck(10, c162, 0.2).text === "Rule price $10 · Cost $1.62 · 16% pour cost" && P.managersCheck(10, c162, 0.2).flag === null, P.managersCheck(10, c162, 0.2).text);
+check("…over 20% gets the gentle flag: \"Over 20%: cost suggests $12\"", P.managersCheck(10, P.drinkCost([{ name: "x", quantity: 1, unitCost: 2.3 }]), 0.2).flag === "Over 20%: cost suggests $12");
+check("…exactly 20% isn't over", P.managersCheck(10, P.drinkCost([{ name: "x", quantity: 1, unitCost: 2 }]), 0.2).flag === null);
+check("…unknown and missing costs say so", /No bottle costs yet/.test(P.managersCheck(10, P.drinkCost([{ name: "x", quantity: 1, unitCost: null }]), 0.2).text) && /Cost unknown: no price for Lime/.test(P.managersCheck(10, P.drinkCost([{ name: "x", quantity: 1, unitCost: 1 }, { name: "Lime", quantity: 1, unitCost: null }]), 0.2).text));
+const off = P.offMenuPricing([L("Call vodka", 1.5, "spirit"), L("Soda water", 4, "mixer")], c162, BP, { double: true });
+check("an off-menu drink starts at the rule price (a double Tito's soda: $16)", off.price === 16 && /^Rule price \$16/.test(off.text), JSON.stringify(off));
+check("…and one with no spirit at the cost suggestion, as before", P.offMenuPricing([L("Prosecco", 4, "wine")], c162, BP).price === P.suggestedPrice(1.62, 0.2));
+check("the pour standard starts a custom drink's spirit and wine", X.defaultAmount("spirit", BP.pours) === 1.5 && X.defaultAmount("wine", BP.pours) === 5 && X.defaultAmount("spirit", { standard: 1.25, wine: 6 }) === 1.25);
+const bbPage = read("src/app/admin/bar-book/Prices.tsx");
+check("Back office → Bar Book → Prices computes its examples live (ruleExamples, shotPrices), saves through setBarPrices", /ruleExamples\(live\)/.test(bbPage) && /shotPrices\(live\)/.test(bbPage) && /setBarPrices\(/.test(bbPage) && /What changed \(Oct 5\)/.test(bbPage) && /Bar manager signs off/.test(bbPage));
+const acts = read("src/app/admin/bar-book/actions.ts");
+check("…owners and admins save it, checked strictly on the server", /export async function setBarPrices[\s\S]{0,200}notOwner\(\)[\s\S]{0,120}checkBarPrices\(input\)/.test(acts));
+
+// ---------- 14. neat or on the rocks ----------
+const own = [{ key: "serve", label: "Serve", options: [{ name: "Neat" }, { name: "Up" }] }];
+check("a Liquor shot can be neat or on the rocks", D.canServe(shotCtx("Call shot")) && D.hasLiquorChoice(liquor) && D.hasLiquorChoice([{ key: "x", label: "Liquor" }]));
+check("…not a cocktail, a beer, or a shot with no Liquor choice", !D.canServe(ofCtx) && !D.canServe({ isAlcohol: true, section: "beer", ownDouble: false, recipe: null, liquor: true }) && !D.canServe({ ...shotCtx("Jello shot"), liquor: false }));
+check("…and never over an item's own \"Neat\" (the collision guard)", D.hasOwnServe(own) && !D.canServe({ ...shotCtx("Well shot"), ownServe: true }) && JSON.stringify(D.withoutOurs(["Neat", "Double"], false, true)) === JSON.stringify(["Neat"]));
+check("the markers", D.NEAT === "Neat" && D.ROCKS === "On the rocks" && D.serveOf(["Vodka", "On the rocks"]) === "rocks" && D.serveOf(["Neat"], true) === null);
+const sp = P.shotPrices(BP);
+check("a well shot: $5, double $9, neat $7, neat double $12.50", sp.well.single === 5 && sp.well.double === 9 && sp.well.neat === 7 && sp.well.neatDouble === 12.5, JSON.stringify(sp.well));
+check("a call shot: $7, double $13, neat $9, neat double $17", sp.call.single === 7 && sp.call.double === 13 && sp.call.neat === 9 && sp.call.neatDouble === 17, JSON.stringify(sp.call));
+check("a premium shot: $9, double $17, neat $11, neat double $21.50", sp.premium.single === 9 && sp.premium.double === 17 && sp.premium.neat === 11 && sp.premium.neatDouble === 21.5, JSON.stringify(sp.premium));
+check("neat's double is the per-pour formula on 2 oz (well 2 × 4 ÷ 1.5 = 5.33, so +$5.50)", shot("Well shot", "neat") === 5.5 && shot("Call shot", "rocks") === 8);
+check("the order line: neat on, then double, then neat off", (() => {
+  const ctx = shotCtx("Well shot");
+  const a = D.optionsUpcharge(ctx, { serve: "neat", double: false }, S);
+  const b = D.optionsUpcharge(ctx, { serve: "neat", double: true }, S);
+  const c = D.optionsUpcharge(ctx, { serve: null, double: true }, S);
+  return a === 2 && b === 7.5 && c === 4 && D.optionsUpcharge(ofCtx, { serve: "neat", double: false }, S) === null;
+})());
+// the server's re-check, the way register-sale-checks.ts runs it: the
+// item's price and its other options, then ours.
+const serverPrice = (itemPrice, mods, ctx) => D.priceWithOptions(itemPrice + 0, mods, ctx, S);
+const neatCall = serverPrice(7, ["Vodka", "Neat"], shotCtx("Call shot"));
+check("the server accepts a neat call shot at $9", "unit" in neatCall && neatCall.unit === 9, JSON.stringify(neatCall));
+const neatDblWell = serverPrice(5, ["Rum", "On the rocks", "Double"], shotCtx("Well shot"));
+check("…and a doubled well shot on the rocks at $12.50", "unit" in neatDblWell && neatDblWell.unit === 12.5, JSON.stringify(neatDblWell));
+const dblWell = serverPrice(5, ["Vodka", "Double"], shotCtx("Well shot"));
+check("…and a double well shot at $9, so one rung at the old $10 is flagged", "unit" in dblWell && dblWell.unit === 9 && Math.abs(dblWell.unit - 10) > 0.0101);
+check("…and flags neat on a cocktail", "error" in serverPrice(10, ["Neat"], ofCtx));
+check("…and both neat and on the rocks on one line", "error" in serverPrice(5, ["Neat", "On the rocks"], shotCtx("Well shot")));
+check("…and leaves an item's own \"Neat\" to the menu", JSON.stringify(serverPrice(6, ["Neat"], { ...shotCtx("Well shot"), ownServe: true })) === JSON.stringify({ unit: 6 }));
+// Bar usage
+const shotRecipe = [{ name: "Well vodka", quantity: 1.5, unit: "oz", kind: "spirit" }];
+const pourOf = (opts) => D.pouredLines(shotRecipe, opts)[0].quantity;
+check("Bar usage: a neat shot pours 2 oz, doubled 4, a plain double 3", pourOf({ pourOz: 2 }) === 2 && pourOf({ pourOz: 2, double: true }) === 4 && pourOf({ double: true }) === 3 && pourOf({}) === 1.5);
+check("…and a cocktail's double pours only its spirit twice", JSON.stringify(D.pouredLines(ofLines, { double: true }).map((l) => l.quantity)) === JSON.stringify(D.doubledLines(ofLines).map((l) => l.quantity)));
+const rep = read("src/lib/data/reports.ts");
+check("…the report pours neat lines at the sheet's neat pour", /pouredLines\(lines, \{ double, pourOz \}\)/.test(rep) && /serveOf\(oi\.modifiers\) \? prices\.pours\.neat : null/.test(rep));
+const posApp = read("src/app/pos/PosApp.tsx");
+check("the register's order line has the serve chips next to Double", /serve=\{ctx && canServe\(ctx\)/.test(posApp) && /onServe=/.test(posApp) && /SERVE_MOD\[next\.serve\]/.test(posApp));
+
 // The menu's 11 cocktails with the starter list's specs (2 oz pours, all
 // well), as a table for the report. The live numbers come from their own
-// recipes: Back office → Bar Book → Doubles lists them.
+// recipes: Back office → Bar Book → Prices lists them.
 const menu11 = [
   ["Butter beer", 8, butter],
   ["Long island iced tea", 10, liLines],
   ...[
-    ["Manhattan", 9, "Manhattan"],
+    ["Manhattan", 10, "Manhattan"],
     ["Margarita", 8, "Margarita"],
     ["Moscow mule", 8, "Moscow Mule"],
     ["NY whiskey sour", 9, "New York Sour"],
@@ -559,10 +668,13 @@ const menu11 = [
 ];
 console.log("\nDoubles on the menu's cocktails (starter-list specs, well spirits):");
 for (const [n, p, lines] of menu11) {
-  const up = D.doubleUpcharge(p, { isAlcohol: true, section: "cocktails", ownDouble: false, recipe: lines }, S);
+  const up = D.doubleUpcharge({ isAlcohol: true, section: "cocktails", ownDouble: false, recipe: lines }, S);
   console.log(`  ${n.padEnd(24)} $${p.toFixed(2)}  ${up === null ? "no double" : `+$${up.toFixed(2)} = $${(p + up).toFixed(2)}`}`);
 }
-console.log("  Shots: Well $5 → $10, Call $7 → $14, Premium $9 → $18");
+console.log("\nShots (single, double, neat or rocks, neat double):");
+for (const t of ["well", "call", "premium"]) console.log(`  ${t.padEnd(8)} $${sp[t].single.toFixed(2)}  $${sp[t].double.toFixed(2)}  $${sp[t].neat.toFixed(2)}  $${sp[t].neatDouble.toFixed(2)}`);
+console.log("\nThe rule (the review's examples):");
+for (const e of P.ruleExamples(BP)) console.log(`  ${e.name.padEnd(28)} ${e.rule.label.padEnd(18)} $${e.rule.price.toFixed(2)}`);
 
 console.log(failures ? `\n${failures} check(s) failed.` : "\nAll Bar Book checks passed.");
 process.exit(failures ? 1 : 0);

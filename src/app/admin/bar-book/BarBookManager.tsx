@@ -22,8 +22,8 @@ import {
   type Ice,
   type Method,
 } from "@/lib/bar/icons";
-import { drinkCost, pct, priceSummary, readPrice, unitCostFromBottle } from "@/lib/bar/pricing";
-import { deleteBookDrink, makeMenuItemFromRecipe, saveBookDrink, setIngredientBar, setIngredientCost, setTargetPourCost } from "./actions";
+import { drinkCost, offMenuPricing, readPrice, unitCostFromBottle, type BarPrices } from "@/lib/bar/pricing";
+import { deleteBookDrink, makeMenuItemFromRecipe, saveBookDrink, setIngredientBar, setIngredientCost } from "./actions";
 
 const KIND_LABEL: Record<string, string> = {
   spirit: "Spirit",
@@ -42,55 +42,19 @@ const ICE_LABEL: Record<Ice, string> = { none: "No ice", cubes: "Ice cubes", cru
 export default function BarBookManager({
   ingredients,
   drinks,
-  target,
+  prices,
   canOwn,
 }: {
   ingredients: BarIngredient[];
   drinks: BookRecipe[];
-  target: number; // the target pour cost
-  canOwn: boolean; // an owner or admin: the target, and making menu items
+  prices: BarPrices; // the Prices sheet (its target pour cost too)
+  canOwn: boolean; // an owner or admin: making menu items
 }) {
   return (
     <div className="space-y-6">
-      <Target target={target} canOwn={canOwn} />
-      <Drinks drinks={drinks} ingredients={ingredients} target={target} canOwn={canOwn} />
+      <Drinks drinks={drinks} ingredients={ingredients} prices={prices} canOwn={canOwn} />
       <Ingredients ingredients={ingredients} />
     </div>
-  );
-}
-
-// ---------- the target pour cost ----------
-
-function Target({ target, canOwn }: { target: number; canOwn: boolean }) {
-  const [pending, run, error] = useRefreshingAction();
-  const [text, setText] = useState(String(Math.round(target * 100)));
-  return (
-    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">Suggested prices</h2>
-      <p className="mt-1 text-sm text-[var(--muted)]">
-        Every recipe card suggests a price: what the drink costs to pour ÷ our target pour cost ({pct(target)}), rounded up to a whole dollar. It never changes a menu price.
-      </p>
-      {canOwn ? (
-        <form
-          className="mt-3 flex flex-wrap items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            run(() => setTargetPourCost(Number(text) / 100), { quiet: true });
-          }}
-        >
-          <label className="flex items-center gap-2 text-sm">
-            Target pour cost
-            <input className="input !w-20" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value.replace(/[^0-9.]/g, ""))} aria-label="Target pour cost, percent" />%
-          </label>
-          <button className="btn-secondary !px-3 !py-1.5" disabled={pending || Number(text) / 100 === target}>
-            {pending ? "Saving…" : "Save"}
-          </button>
-          {error && <span className="text-sm font-semibold text-[var(--danger-text)]">{error}</span>}
-        </form>
-      ) : (
-        <p className="mt-2 text-sm">Target pour cost: {pct(target)}. An owner or admin can change it.</p>
-      )}
-    </section>
   );
 }
 
@@ -237,11 +201,16 @@ function CostEditor({ ingredient }: { ingredient: BarIngredient }) {
 
 // ---------- drinks ----------
 
-function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[]; ingredients: BarIngredient[]; target: number; canOwn: boolean }) {
+function Drinks({ drinks, ingredients, prices, canOwn }: { drinks: BookRecipe[]; ingredients: BarIngredient[]; prices: BarPrices; canOwn: boolean }) {
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [making, setMaking] = useState<string | null>(null);
-  const costById = useMemo(() => new Map(ingredients.map((i) => [i.id, i.unit_cost])), [ingredients]);
-  const costFor = (d: BookRecipe) => drinkCost(d.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCost: costById.get(l.ingredientId) ?? null, optional: l.optional })));
+  // Each drink's rule price and the manager's check (lib/bar/pricing.ts).
+  const pricing = useMemo(() => {
+    const costById = new Map(ingredients.map((i) => [i.id, i.unit_cost]));
+    const costFor = (d: BookRecipe) => drinkCost(d.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCost: costById.get(l.ingredientId) ?? null, optional: l.optional })));
+    return new Map(drinks.map((d) => [d.id, offMenuPricing(d.lines, costFor(d), prices)]));
+  }, [drinks, ingredients, prices]);
+  const pricingFor = (d: BookRecipe) => pricing.get(d.id)!;
   const [showSeed, setShowSeed] = useState(false);
   const house = drinks.filter((d) => d.source !== "seed");
   const seed = drinks.filter((d) => d.source === "seed");
@@ -253,7 +222,7 @@ function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[];
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">Our drinks (not on the menu)</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            House drinks for the book. The register shows them as &quot;Not on our menu yet&quot; and rings them up as a one-off line at the suggested price (or one staff type). Drinks on the menu get their recipe in Menu → the item → Recipe.
+            House drinks for the book. The register shows them as &quot;Not on our menu yet&quot; and rings them up as a one-off line at the rule price (Prices, above), or one staff type. Drinks on the menu get their recipe in Menu → the item → Recipe.
             {seed.length > 0 && ` Plus ${seed.length} from the starter list.`}
           </p>
         </div>
@@ -288,7 +257,8 @@ function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[];
                   {d.source === "seed" && <span className="ml-2 text-xs font-normal text-[var(--muted)]">starter list</span>}
                 </span>
                 <span className="block truncate text-xs text-[var(--muted)]">{mainIngredients(d, 5) || "No ingredients yet"}</span>
-                <span className="block text-xs">{priceSummary({ cost: costFor(d), target }).text}</span>
+                <span className="block text-xs">{pricingFor(d).text}</span>
+                {pricingFor(d).flag && <span className="block text-xs font-semibold text-[var(--warn-text)]">{pricingFor(d).flag}</span>}
               </span>
               {canOwn && (
                 <button className="btn-secondary !px-3 !py-1.5" onClick={() => setMaking(d.id)}>
@@ -298,7 +268,7 @@ function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[];
               <button className="btn-secondary !px-3 !py-1.5" onClick={() => setEditing(d.id)}>
                 Edit
               </button>
-              {making === d.id && <MakeMenuItem drink={d} suggested={priceSummary({ cost: costFor(d), target }).suggested} onDone={() => setMaking(null)} />}
+              {making === d.id && <MakeMenuItem drink={d} suggested={pricingFor(d).price} onDone={() => setMaking(null)} />}
             </div>
           ),
         )}
@@ -308,7 +278,7 @@ function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[];
   );
 }
 
-// "Make this a menu item": a price (the suggested one to start), then it's
+// "Make this a menu item": a price (the rule price to start), then it's
 // in Cocktails under Alcohol and rings up from its own button.
 function MakeMenuItem({ drink, suggested, onDone }: { drink: BookRecipe; suggested: number | null; onDone: () => void }) {
   const [pending, run, error] = useRefreshingAction();
