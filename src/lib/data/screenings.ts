@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 import { connection } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isRestrictedRelease } from "@/lib/mplc";
-import { visibilityOf } from "@/lib/showing-visibility";
+import { isOutdoorRoom, visibilityOf } from "@/lib/showing-visibility";
 import { PUBLIC_SCHEDULE_WINDOW_DAYS, isWithinPublicWindow } from "@/lib/public-window";
 import type { Screening } from "@/lib/types";
 
@@ -226,8 +226,21 @@ export async function getPubliclyVisibleScreenings(): Promise<Screening[]> {
 // about older titles, so an older title marked members-only is listed too.
 export async function getMembersOnlyScreenings(member: { id: string } | null): Promise<Screening[]> {
   if (!member) return [];
+  return membersOnlyRows();
+}
+
+async function membersOnlyRows(): Promise<Screening[]> {
   await connection();
   const cached = await cachedPublicRows();
   const { rows } = Date.now() - cached.fetchedAt > ROWS_MAX_AGE_MS ? await readPublicRows() : cached;
   return rows.filter((s) => visibilityOf(s) === "members" && isWithinPublicWindow(s.starts_at));
+}
+
+// When the members-only showings are, and on which screen -- never what.
+// For the guests' teaser ("Outdoor movies this week: Thu, Fri & Sat at 8 PM.
+// Titles are for Insiders"): the outdoor screen and Midweek Movies aren't
+// licensed for public advertising, so a title must never reach a guest.
+export type InsiderSlot = { startsAt: string; outdoor: boolean };
+export async function getMembersOnlySlots(): Promise<InsiderSlot[]> {
+  return (await membersOnlyRows()).map((s) => ({ startsAt: s.starts_at, outdoor: isOutdoorRoom(s.room) }));
 }
