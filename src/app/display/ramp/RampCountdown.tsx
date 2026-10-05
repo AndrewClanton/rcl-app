@@ -211,7 +211,7 @@ function Poster({ film, width, height }: { film: RampScreening; width: number; h
           LIVE
         </div>
         <div className="font-mono" style={{ fontSize: width / 16, fontWeight: 700, letterSpacing: width / 90, color: GOLD }}>
-          AT THE ROYALE
+          AT ROYALE CINEMA
         </div>
       </div>
     );

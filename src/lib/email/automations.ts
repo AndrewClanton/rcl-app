@@ -192,7 +192,7 @@ export async function draftWeeklyLineup(now = new Date()): Promise<string | null
       kind: "lineup",
       category: "lineup",
       name: `Weekly lineup, ${rangeLabel(tuesday, 7)}`,
-      subject: "This week at the Royale",
+      subject: "This week at Royale Cinema",
       preheader: null,
       content: { ...s.content, autopilot: true },
       audience: s.audience,

@@ -2,7 +2,7 @@
 // place. No server imports: the loader script (scripts/load-fortis-cards.mjs),
 // the Back office screen and scripts/check-fortis-backfill.mjs all use it.
 //
-// Before mid-September 2026 the Royale took cards through Fortis. Its export
+// Before mid-September 2026 Royale Cinema took cards through Fortis. Its export
 // has one row per card transaction. We keep one row per card (fortis_cards),
 // keyed by the card's first six and last four digits -- never more of the
 // number -- with what it spent and the days it was used, then match each
@@ -45,7 +45,7 @@ export function classifyFortisRow(statusId: string, typeId: string): FortisRowKi
 }
 
 // What a row counts for, in dollars: the subtotal where the export has one,
-// otherwise the amount charged. (In the Royale's export the subtotal only
+// otherwise the amount charged. (In Royale Cinema's export the subtotal only
 // appears from May 2026, and always equals the amount charged: Fortis wasn't
 // told the tax separately, so both include sales tax. GrantSettings.taxOut
 // takes it out.)

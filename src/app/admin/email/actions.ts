@@ -73,7 +73,7 @@ export async function createCampaign(starterKey: string): Promise<Result<{ id: s
       kind: s.kind,
       category: s.category,
       name: s.kind === "lineup" && lineupStart ? `Weekly lineup, ${rangeLabel(lineupStart, 7)}` : s.name,
-      subject: s.subject || "This week at the Royale",
+      subject: s.subject || "This week at Royale Cinema",
       preheader: s.preheader || null,
       content,
       audience: s.audience,

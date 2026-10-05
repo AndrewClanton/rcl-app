@@ -385,7 +385,7 @@ export async function updateSharing(fields: { share: boolean; handle: string; di
   return { ok: true, handle: handle || null, displayName: name.value };
 }
 
-// Their check-in flair: a color from the palette (null for the Royale's
+// Their check-in flair: a color from the palette (null for Royale Cinema's
 // own), an effect, a sticker for Floating reactions, and whether their
 // birthday week gets the party.
 export async function updateFlair(fields: { color: string | null; effect: string; sticker: string; birthdayParty: boolean }): Promise<ProfileResult> {

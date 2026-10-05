@@ -277,7 +277,7 @@ export const HELP_TOPICS = {
     title: "Emailing a helper the sign-up link",
     area: "Register: members and the door",
     body:
-      "Helpers join their organization by signing up with their work email from the organization's link, and the website can email that link for you, so nobody has to copy and paste it. The email says \"You're invited to join Easter Seals at the Royale\" with one big \"Join as an Easter Seals helper\" button and a line that their day pass and movies are covered with the group; it's signed \"The Royale crew\". It's a transactional email like a receipt, so it goes out even when marketing email is off. Each send is logged on the organization's page (to whom, who sent it, when, from where), and there's a limit of 10 an hour per organization so it can't be used to spam anyone.",
+      "Helpers join their organization by signing up with their work email from the organization's link, and the website can email that link for you, so nobody has to copy and paste it. The email says \"You're invited to join Easter Seals at Royale Cinema\" with one big \"Join as an Easter Seals helper\" button and a line that their day pass and movies are covered with the group; it's signed \"The RCL crew\". It's a transactional email like a receipt, so it goes out even when marketing email is off. Each send is logged on the organization's page (to whom, who sent it, when, from where), and there's a limit of 10 an hour per organization so it can't be used to spam anyone.",
     steps: [
       "Back office → Organizations → the organization → Email the helper link: type the address, Send.",
       "At the register with the helper there: Organization guests → tap the organization → Invite a helper. Hand them the iPad; they type their work email and tap Send. \"Sent!\" clears after a few seconds. Tap Done to go back.",
@@ -395,7 +395,7 @@ export const HELP_TOPICS = {
     title: "The business day (4 AM to 4 AM)",
     area: "Register: shift tools",
     body:
-      "The Royale's day runs from 4 AM to 4 AM Central, not midnight to midnight. A closing shift that runs past 12, a 12:30 AM show and a late check-in all belong to the night they started. That keeps reports, the closing checklist, the box office and check-in points lined up with how the night actually went.",
+      "Royale Cinema's day runs from 4 AM to 4 AM Central, not midnight to midnight. A closing shift that runs past 12, a 12:30 AM show and a late check-in all belong to the night they started. That keeps reports, the closing checklist, the box office and check-in points lined up with how the night actually went.",
   },
 
   // ---------- members and memberships ----------
@@ -410,7 +410,7 @@ export const HELP_TOPICS = {
     title: "Changing a member's points",
     area: "Members and memberships",
     body:
-      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, a manager uses Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the Royale crew\", never your name; the back office keeps who did it.",
+      "Points work like a bank account: the balance only moves by a line in the member's points history, and every line says why (a check-in, a badge, a purchase, a reward, a refund). To give or take back points by hand, a manager uses Add or take away points on their page, with a reason of a few words like \"Birthday party credit\". You confirm the new balance before it saves, and it can't go below zero. The member sees the reason on their account as \"From the RCL crew\", never your name; the back office keeps who did it.",
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "gift-membership": {

@@ -144,7 +144,7 @@ export function cleanDisplayName(input: unknown): Cleaned {
   if (!t) return { ok: true, value: null };
   if ([...t].length > DISPLAY_NAME_MAX) return { ok: false, error: `Keep your display name to ${DISPLAY_NAME_MAX} characters.` };
   if (!LETTER_OR_DIGIT.test(t)) return { ok: false, error: "Your display name needs at least one letter or number." };
-  if (impersonatesRoyale(t)) return { ok: false, error: "That sounds like the Royale or our staff. Pick a name that's yours." };
+  if (impersonatesRoyale(t)) return { ok: false, error: "That sounds like Royale Cinema or our staff. Pick a name that's yours." };
   return { ok: true, value: t };
 }
 

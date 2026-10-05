@@ -518,7 +518,7 @@ function ItemForm({
     >
       <label className="block sm:col-span-2">
         <div className="label-xs">Item</div>
-        <input id="par-name" className="input !py-3 !text-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Royale stickers" autoFocus />
+        <input id="par-name" className="input !py-3 !text-base" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. RCL stickers" autoFocus />
       </label>
       <label className="block">
         <div className="label-xs">Sheet</div>

@@ -214,7 +214,7 @@ export async function renderReceiptPdf(r: Receipt): Promise<Uint8Array> {
   }
 
   footer(ctx, page, [
-    "Thank you for coming to the Royale.",
+    "Thank you for coming to Royale Cinema.",
     "Questions about this receipt? info@royalecinemajoplin.com  ·  417-281-4172",
     `Downloaded ${dateShort(new Date().toISOString())} from your Royale Cinema Lounge account.`,
   ]);

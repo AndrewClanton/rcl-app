@@ -119,7 +119,7 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     {
       href: "/admin/email/ready",
       label: "Ready to send",
-      about: "Three finished member emails (the new Royale, Come in, Press play): preview, test and send them, and see who signed up.",
+      about: "Three finished member emails (the new RCL, Come in, Press play): preview, test and send them, and see who signed up.",
       keywords: "email invite send claim password new royale come in press play unlimited restart insiders ready test",
       min: "manager",
     },

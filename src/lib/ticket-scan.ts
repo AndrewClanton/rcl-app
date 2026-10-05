@@ -239,5 +239,5 @@ export async function redeemScan(text: string, by: string | null): Promise<ScanR
   if (/^RCLT:/i.test(t)) return scanTicket(t, by);
   const member = t.match(MEMBER_CODE);
   if (member) return scanMember(member[1].toLowerCase(), by);
-  return refuse("unknown", "invalid", "That isn't a Royale ticket or member card.");
+  return refuse("unknown", "invalid", "That isn't a Royale Cinema ticket or member card.");
 }

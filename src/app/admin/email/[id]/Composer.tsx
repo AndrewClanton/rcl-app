@@ -257,7 +257,7 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
     case "signoff":
       return text("Signed", block.from ?? "", (v) => onChange({ ...block, from: v }), 60);
     case "lineup":
-      return <p className="text-xs text-[var(--muted)]">Now showing, the film archive (members only) and Also at the Royale, from {rangeLabel(data.range.start, data.range.days)}. Pick films and events above.</p>;
+      return <p className="text-xs text-[var(--muted)]">Now showing, the film archive (members only) and Also at Royale Cinema, from {rangeLabel(data.range.start, data.range.days)}. Pick films and events above.</p>;
     case "claim":
       return <p className="text-xs text-[var(--muted)]">Their personal &ldquo;Set my password&rdquo; link (good for 30 days), or &ldquo;Open my account&rdquo; if they already have a login.</p>;
     case "memberCard":
@@ -633,7 +633,7 @@ export default function Composer({
                 </label>
               </div>
               <div>
-                <div className="mb-1 text-xs text-[var(--muted)]">Also at the Royale (house events only, never private bookings)</div>
+                <div className="mb-1 text-xs text-[var(--muted)]">Also at Royale Cinema (house events only, never private bookings)</div>
                 {data.happenings.length === 0 && <p className="text-sm text-[var(--muted)]">No house events in these dates.</p>}
                 <ul className="space-y-1">
                   {data.happenings.map((h) => {

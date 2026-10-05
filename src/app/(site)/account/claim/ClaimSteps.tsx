@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { finishClaim, signOutForClaim, type FinishAnswer } from "./actions";
 
-const OFFLINE = "We couldn't reach the Royale just now. Check your connection and try again.";
+const OFFLINE = "We couldn't reach Royale Cinema just now. Check your connection and try again.";
 
 // "Use a different login": sign out here, then the page offers the choices.
 export function UseAnotherLogin({ className = "btn-secondary w-full" }: { className?: string }) {

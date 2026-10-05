@@ -15,7 +15,7 @@ export default async function AccountEmailPage() {
   const state = await emailStateFor(member.id);
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <Panel title="Email from the Royale">
+      <Panel title="Email from Royale Cinema">
         <p className="p-5 text-[15px] text-[var(--muted)]">
           What we send to <strong className="text-[var(--foreground)]">{maskEmail(member.email) ?? "your address"}</strong>. Receipts, tickets and account emails always come.
         </p>

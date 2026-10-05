@@ -100,7 +100,7 @@ export function HelperInviteSheet({ orgId, orgName, onClose }: { orgId: string; 
           <form className="space-y-6" onSubmit={send}>
             <div>
               <div className="text-xl" style={{ color: "var(--muted)" }}>
-                Join {orgName} at the Royale
+                Join {orgName} at Royale Cinema
               </div>
               <h2 className="text-4xl font-bold">Type your work email</h2>
             </div>

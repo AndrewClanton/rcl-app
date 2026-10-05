@@ -108,12 +108,12 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
         <h2 className="text-lg font-semibold">Helper sign-up link</h2>
         <p className="text-sm text-[var(--muted)]">
           Send this to the organization. A helper opens it and signs up (or signs in) with their <strong>work</strong> email; that login joins{" "}
-          {org.name} as a helper, separate from any personal Royale account.
+          {org.name} as a helper, separate from any personal Royale Cinema account.
         </p>
         <InviteLink orgId={org.id} url={`${origin}/account/join?c=${org.invite_code}`} />
         {org.status !== "closed" && <EmailInvite orgId={org.id} orgName={org.name} />}
         <p className="text-xs text-[var(--muted)]">
-          The email comes from the Royale, signed &quot;The Royale crew&quot;, with one big &quot;Join as {withArticle(org.name)} helper&quot; button. Up to {ORG_INVITES_PER_HOUR} an
+          The email comes from Royale Cinema, signed &quot;The RCL crew&quot;, with one big &quot;Join as {withArticle(org.name)} helper&quot; button. Up to {ORG_INVITES_PER_HOUR} an
           hour. At the register, &quot;Organization guests&quot; → Invite a helper lets a helper type their own work email.
         </p>
         {invites.length > 0 && (

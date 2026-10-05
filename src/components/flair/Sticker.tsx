@@ -2,7 +2,7 @@ import { shade, tint, type StickerKey } from "@/lib/flair";
 
 // The Floating reactions stickers (lib/flair.ts FLAIR_STICKERS), drawn
 // here as little ink-outlined pieces in the member's color, like the rest
-// of the Royale's print look. "mix" isn't a drawing: FlairEffect picks one
+// of Royale Cinema's print look. "mix" isn't a drawing: FlairEffect picks one
 // of the others per sticker.
 
 const INK = "#14110c";

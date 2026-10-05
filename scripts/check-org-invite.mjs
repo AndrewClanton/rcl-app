@@ -1,7 +1,7 @@
 // Checks the organization helper invite (lib/org-invite-server.ts and
 // lib/email/org-invite-email.ts) without a database or network: the email
 // (subject, one join button with the org's link, "an"/"a", escaping, signed
-// "The Royale crew"), a send through the fake Resend logged in
+// "The RCL crew"), a send through the fake Resend logged in
 // org_invite_sends, bad addresses and closed organizations refused, and the
 // limits (3 an hour to one address, 10 an hour per organization).
 // Optionally writes a preview of the email.
@@ -54,11 +54,11 @@ const check = (label, ok, detail = "") => {
 // 1. The email.
 const d = { orgName: "Easter Seals", joinUrl: "https://royale.test/account/join?c=abc123" };
 const html = E.orgInviteHtml(d);
-check("subject", E.orgInviteSubject(d) === "You're invited to join Easter Seals at the Royale");
+check("subject", E.orgInviteSubject(d) === "You're invited to join Easter Seals at Royale Cinema");
 check("one big join button", html.includes("Join as an Easter Seals helper</a>") && html.includes(`href="${d.joinUrl}"`));
 check("a/an", E.withArticle("Arc of the Ozarks") === "an Arc of the Ozarks" && E.withArticle("Joplin Group") === "a Joplin Group");
 check("comps line", html.includes("day pass and movies are on Easter Seals"));
-check("signed by the crew, no staff name", html.includes("The Royale crew") && !html.includes(staff.name) && !/Andrew/i.test(html));
+check("signed by the crew, no staff name", html.includes("The RCL crew") && !html.includes(staff.name) && !/Andrew/i.test(html));
 check("escapes the name", E.orgInviteHtml({ ...d, orgName: "<b>&" }).includes("&lt;b&gt;&amp;") && !E.orgInviteHtml({ ...d, orgName: "<b>" }).includes("<b>"));
 if (process.argv[2]) writeFileSync(process.argv[2], html);
 

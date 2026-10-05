@@ -24,7 +24,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function redeemScan(text: string): Promise<RegisterScan> {
   const staff = await assertStaff();
-  if (typeof text !== "string" || text.length > 200) return { ok: false, kind: "unknown", reason: "invalid", error: "That isn't a Royale ticket or member card." };
+  if (typeof text !== "string" || text.length > 200) return { ok: false, kind: "unknown", reason: "invalid", error: "That isn't a Royale Cinema ticket or member card." };
   if (!(await allowAttempt(`door-scan:${staff.employeeId}`, 60, 60))) return { ok: false, kind: "unknown", reason: "busy", error: BUSY };
   const r = await redeem(text, staff.employeeId);
   if (!r.ok) return r;

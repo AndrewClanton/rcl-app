@@ -60,7 +60,7 @@ export async function startOrgSubscription(org: OrgRow): Promise<{ ok: true; cus
         collection_method: "send_invoice",
         days_until_due: 30,
         metadata: { organization_id: org.id },
-        description: `${org.name}: Royale organization account`,
+        description: `${org.name}: Royale Cinema organization account`,
       },
       { idempotencyKey: `org-subscription-${org.id}-${Date.now().toString(36).slice(0, -4)}` },
     );

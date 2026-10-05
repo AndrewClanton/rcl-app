@@ -21,7 +21,7 @@ export default function MoviesView({ upcoming, past, tonight = [] }: { upcoming:
     <div className={STACK}>
       {watched.length > 0 && (
         <p className="font-display max-w-[30ch] text-2xl leading-tight text-balance sm:text-3xl">
-          You&apos;ve been to <span className="bg-[var(--gold)] px-1.5">{watched.length}</span> screening{watched.length === 1 ? "" : "s"} at the Royale
+          You&apos;ve been to <span className="bg-[var(--gold)] px-1.5">{watched.length}</span> screening{watched.length === 1 ? "" : "s"} at Royale Cinema
           {distinctTitles !== watched.length ? ` (${distinctTitles} different films)` : ""}.
         </p>
       )}

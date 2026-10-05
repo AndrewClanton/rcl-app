@@ -3,7 +3,7 @@
 //
 // Voice: the crew talking to a regular at the bar. The real film, night and
 // price, one job per email, no ALL CAPS, no fake urgency, signed "The
-// Royale crew" (no one's name: Andrew, 10/1). Subject lines and preview text only ever name this
+// RCL crew" (no one's name: Andrew, 10/1). Subject lines and preview text only ever name this
 // year's titles (MPLC); archive titles live in the members-only section.
 // No server code.
 import type { CampaignContent } from "./render";
@@ -25,7 +25,7 @@ export interface Starter {
   holdoutPct: number;
 }
 
-const SIGNOFF = { t: "signoff" as const, from: "The Royale crew" };
+const SIGNOFF = { t: "signoff" as const, from: "The RCL crew" };
 
 export function lineupStarter(start: string, days = 7): Starter {
   return {
@@ -40,7 +40,7 @@ export function lineupStarter(start: string, days = 7): Starter {
     content: {
       lineup: { start, days, skipMovieIds: [], skipHappeningIds: [], featuredMovieId: null },
       blocks: [
-        { t: "hero", eyebrow: "The weekly lineup", headline: "This week at the Royale", sub: "37 seats a show, so tap a time early." },
+        { t: "hero", eyebrow: "The weekly lineup", headline: "This week at Royale Cinema", sub: "37 seats a show, so tap a time early." },
         {
           t: "paragraph",
           text: "Hi {first name},\n\nHere's the week on Broadway. Tap any time to grab a seat. Insiders+ members walk in free, and the $5 Special is still popcorn and a soda for five bucks.",
@@ -56,7 +56,7 @@ export function lineupStarter(start: string, days = 7): Starter {
 }
 
 // "The invite" and "Insiders+ come-back" were retired (v1.10): they went to
-// the same people as the ready-made "The new Royale is here" and "Press
+// the same people as the ready-made "The new RCL is here" and "Press
 // play" (Ready to send), so anyone could have had two invites.
 export const STARTERS: Starter[] = [
   {
@@ -68,11 +68,11 @@ export const STARTERS: Starter[] = [
     name: "Halloween horror trivia",
     subject: "Horror trivia, two Tuesdays. Pick a team you'd survive with.",
     subjectB: "Know your final girls? Halloween trivia is Oct 13 and 27",
-    preheader: "7 PM at the Royale. Winners take home Royale vouchers. Costumes welcome, screaming tolerated.",
+    preheader: "7 PM at Royale Cinema. Winners take home RCL vouchers. Costumes welcome, screaming tolerated.",
     content: {
       blocks: [
         { t: "hero", eyebrow: "Tuesdays at 7", headline: "Halloween horror trivia", sub: "Two nights. Bring a team, bring a costume, bring your worst scream." },
-        { t: "paragraph", text: "Hi {first name},\n\nWe're doing horror trivia two Tuesdays this month. Winners take home Royale vouchers. Teams of up to six, and it's free to play." },
+        { t: "paragraph", text: "Hi {first name},\n\nWe're doing horror trivia two Tuesdays this month. Winners take home RCL vouchers. Teams of up to six, and it's free to play." },
         { t: "eventRow", houseEventId: "" },
         { t: "eventRow", houseEventId: "" },
         SIGNOFF,
@@ -112,7 +112,7 @@ export const STARTERS: Starter[] = [
     category: "rewards",
     name: "We saved your seat",
     subject: "It's been a minute. Your seat's still here.",
-    subjectB: "The Royale got a glow-up (the popcorn didn't need one)",
+    subjectB: "Royale Cinema got a glow-up (the popcorn didn't need one)",
     preheader: "New website, same 37 seats, same $5 popcorn and a soda. Here's what's on.",
     content: {
       blocks: [
@@ -152,7 +152,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     preheader: "Check in at the door on your first visit for the Welcome badge. 100 points = $5 off.",
     content: {
       blocks: [
-        { t: "hero", eyebrow: "Welcome to the Royale", headline: "You're an Insider now.", sub: "Here's how it works, in about ten seconds." },
+        { t: "hero", eyebrow: "Welcome to Royale Cinema", headline: "You're an Insider now.", sub: "Here's how it works, in about ten seconds." },
         { t: "memberCard" },
         {
           t: "paragraph",
@@ -170,7 +170,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     category: "rewards",
     automation: "welcome_2",
     name: "Welcome #2: walk in free",
-    subject: "How to walk in free at the Royale",
+    subject: "How to walk in free at Royale Cinema",
     preheader: "Two movies a month and Insiders+ has paid for itself. Here's the math.",
     content: {
       blocks: [
@@ -188,7 +188,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     category: "rewards",
     automation: "welcome_3",
     name: "Welcome #3: here's this week",
-    subject: "Here's what's on at the Royale this week",
+    subject: "Here's what's on at Royale Cinema this week",
     preheader: "Your first check-in gets the Welcome badge: 50 points.",
     content: {
       blocks: [
@@ -244,7 +244,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     automation: "winback_45",
     name: "Win-back, 45 days",
     subject: "It's been a minute. Your seat's still here.",
-    preheader: "Here's what's on this week at the Royale.",
+    preheader: "Here's what's on this week at Royale Cinema.",
     content: {
       blocks: [
         { t: "hero", eyebrow: "We miss you", headline: "Your seat's still here.", sub: "Here's what's on this week." },
@@ -261,7 +261,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     category: "rewards",
     automation: "winback_90",
     name: "Win-back, 90 days",
-    subject: "The Royale misses you (the popcorn does too)",
+    subject: "Royale Cinema misses you (the popcorn does too)",
     preheader: "Same 37 seats, same $5 popcorn and a soda. Here's what's on.",
     content: {
       blocks: [
@@ -281,7 +281,7 @@ export const AUTOMATION_STARTERS: Record<Automation, Omit<Starter, "key" | "labe
     category: "account",
     automation: "reconfirm",
     name: "Still want these?",
-    subject: "Still want the Royale's weekly lineup?",
+    subject: "Still want Royale Cinema's weekly lineup?",
     preheader: "One tap keeps you on. Otherwise we'll stop sending, no hard feelings.",
     content: {
       blocks: [

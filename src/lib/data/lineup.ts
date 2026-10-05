@@ -6,7 +6,7 @@ import { isWithinPublicWindow } from "@/lib/data/screenings";
 import { businessDay, businessDayWindow, shiftDate } from "@/lib/ops/time";
 import type { FilmData, HappeningData } from "@/lib/email/render";
 
-// What's on at the Royale over some business days, for the members' email:
+// What's on at Royale Cinema over some business days, for the members' email:
 // every screening still to come, grouped by film (older MPLC titles flagged
 // `archive`), plus the house events (trivia, comedy, the book swap).
 // Private rentals (the `events` table) are never read here. Only showings

@@ -432,7 +432,7 @@ function SideNav({
       <div className="shrink-0 space-y-2 p-3 pb-2">
         <div className="flex items-start gap-1">
           <Link href="/admin" onClick={onNavigate} className="block min-w-0 flex-1 rounded-lg px-2 py-1.5">
-            <span className="font-display block text-lg leading-tight">Royale</span>
+            <span className="font-display block text-lg leading-tight">RCL</span>
             <span className="block text-xs text-[var(--muted)]">Back office</span>
           </Link>
           {onHide && (

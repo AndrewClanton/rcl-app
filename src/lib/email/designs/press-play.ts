@@ -86,7 +86,7 @@ function close(ctx: Ctx, out: DesignOut): string {
   const d = DEV[dev];
   const m = dev === "m";
   const href = finishButton(ctx, "bottom");
-  if (dev === "d") out.text.push(`YOUR MOVE\nReady when you are.\nRestart my unlimited: ${href}\nOr tap your card at the register.\nQuestions? 417-281-4172\n\nSee you at the movies,\nThe Royale crew`);
+  if (dev === "d") out.text.push(`YOUR MOVE\nReady when you are.\nRestart my unlimited: ${href}\nOr tap your card at the register.\nQuestions? 417-281-4172\n\nSee you at the movies,\nThe RCL crew`);
   const row = (id: string, html: string) =>
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" width="24" style="width:24px;">${icon(id, 24)}</td><td valign="middle" style="padding-left:10px;">${txt(html, 17, 24, C.ink)}</td></tr></table>`;
   return band(
@@ -111,7 +111,7 @@ export function pressPlay(ctx: Omit<Ctx, "dev">): DesignOut {
       perks(c, out),
       extras(c, out),
       close(c, out),
-      footer(dev, "You're getting this because you had unlimited on the old Royale website.", ctx.L),
+      footer(dev, "You're getting this because you had unlimited on the old Royale Cinema website.", ctx.L),
     ].join("\n");
     if (dev === "d") out.desktop = html;
     else out.phone = html;

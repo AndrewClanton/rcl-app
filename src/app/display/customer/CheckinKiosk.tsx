@@ -411,7 +411,7 @@ export default function CheckinKiosk({
     const guest = isGuestName(name);
     if (withToast) {
       toast({
-        title: guest ? (p.isNew ? "Welcome to the Royale!" : "✓ You're checked in") : p.isNew ? `Welcome to the Royale, ${name}!` : `✓ ${name}, you're checked in`,
+        title: guest ? (p.isNew ? "Welcome to Royale Cinema!" : "✓ You're checked in") : p.isNew ? `Welcome to Royale Cinema, ${name}!` : `✓ ${name}, you're checked in`,
         detail: guest ? `Phone ${name.replace(/^Guest /, "")} · ${detail}` : detail,
         tone: "ok",
         emoji: null,
@@ -1151,7 +1151,7 @@ export default function CheckinKiosk({
           }}
         >
           <div>
-            <div className={k.eyebrow}>Welcome to the Royale</div>
+            <div className={k.eyebrow}>Welcome to Royale Cinema</div>
             <h1 className={k.title}>Let&apos;s get you in</h1>
             <p className={k.sub} style={{ marginTop: 6 }}>
               {step.missed ? "We couldn't find that email. Fix it below, or join free." : "Free to join. Every visit earns points."}

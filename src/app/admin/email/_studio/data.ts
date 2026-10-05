@@ -25,7 +25,7 @@ const waveDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString
 
 // ---------- thumbnails ----------
 // The headline's last word is the red one, as the ready-made designs set
-// it ("The new Royale is here.": "here" is red).
+// it ("The new RCL is here.": "here" is red).
 function splitAccent(kicker: string, headline: string, lede: string | null, accent: boolean): Thumb {
   const m = accent ? /^(.*\S)\s+(\S+?)([.!?]*)$/.exec(headline.trim()) : null;
   return m ? { kicker, head: m[1], accent: m[2], tail: m[3], lede } : { kicker, head: headline.trim(), accent: null, tail: "", lede };
@@ -413,7 +413,7 @@ export async function upNext(o: {
     ];
     return {
       title: c.name,
-      subject: c.subject || "This week at the Royale",
+      subject: c.subject || "This week at Royale Cinema",
       preheader: c.preheader,
       thumb: campaignThumb(c),
       who: count ? `For ${people(count.willSend)}` : "The weekly lineup",

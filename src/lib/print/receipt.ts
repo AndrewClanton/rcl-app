@@ -198,7 +198,7 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   d.bold(true).lines(columns("TOTAL", money(r.total))).bold(false);
   d.line();
   for (const p of r.payments) if (p.amount > 0) d.lines(columns(p.label, money(p.amount)));
-  d.line().align("center").line("Thank you for coming to the Royale!").line("royalecinemajoplin.com");
+  d.line().align("center").line("Thank you for coming to Royale Cinema!").line("royalecinemajoplin.com");
   if (isClaimUrl(opts.claimUrl)) {
     d.feed(1).bold(true).line("Scan to see your points online").bold(false);
     d.qr(opts.claimUrl, 5);
@@ -298,7 +298,7 @@ export function ticketXml(t: TicketPrint, pics: { logo?: Raster | null; poster?:
   d.align("center").line(typeof t.orderNumber === "number" ? `Order #${t.orderNumber}` : `Order ${t.orderNumber}`).align("left");
   d.line(rule("=")).feed(1).align("center");
   d.qr(t.code).feed(1);
-  d.line("Thanks for spending the night at the Royale.");
+  d.line("Thanks for spending the night at Royale Cinema.");
   d.line("Keep this ticket as a souvenir.");
   d.bold(true).line("royalecinemajoplin.com").bold(false);
   d.cut();

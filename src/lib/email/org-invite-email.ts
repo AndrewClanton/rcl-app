@@ -1,5 +1,5 @@
 // The organization helper invite: "You're invited to join Easter Seals at
-// the Royale", one big button to the join link (/account/join?c=…). Sent
+// Royale Cinema", one big button to the join link (/account/join?c=…). Sent
 // from the organization's Back office page or at the register
 // (src/lib/org-invite-server.ts). Plain tables and inline styles (what Gmail
 // and phone mail apps render) in the Royale print palette, like the gift
@@ -22,7 +22,7 @@ export interface OrgInviteEmailData {
 }
 
 export function orgInviteSubject(d: OrgInviteEmailData) {
-  return `You're invited to join ${d.orgName} at the Royale`;
+  return `You're invited to join ${d.orgName} at Royale Cinema`;
 }
 
 export function orgInviteHtml(d: OrgInviteEmailData) {
@@ -37,11 +37,11 @@ export function orgInviteHtml(d: OrgInviteEmailData) {
       <tr><td style="background:${INK};padding:14px 22px;font:900 13px/1 Arial,Helvetica,sans-serif;letter-spacing:3px;text-transform:uppercase;color:${GOLD}">Royale Cinema Lounge</td></tr>
       <tr><td style="background:${GOLD};padding:22px;border-bottom:3px solid ${INK}">
         <div style="font:700 13px/1 'Courier New',monospace;letter-spacing:2px;text-transform:uppercase;color:${INK}">You're invited</div>
-        <div style="margin-top:8px;font:900 30px/1.05 'Arial Black',Arial,Helvetica,sans-serif;color:${INK}">Join ${org} at the Royale</div>
+        <div style="margin-top:8px;font:900 30px/1.05 'Arial Black',Arial,Helvetica,sans-serif;color:${INK}">Join ${org} at Royale Cinema</div>
       </td></tr>
       <tr><td align="center" style="padding:26px 22px 8px">
         <a href="${url}" style="display:block;background:${INK};color:${GOLD};font:900 18px/1.2 Arial,Helvetica,sans-serif;letter-spacing:1px;text-transform:uppercase;text-decoration:none;padding:20px 18px;text-align:center">Join as ${esc(withArticle(d.orgName))} helper</a>
-        <div style="margin-top:10px;font:13px/1.4 Arial,Helvetica,sans-serif;color:${MUTED}">Sign up with your <strong style="color:${INK}">work</strong> email. It stays separate from any personal Royale account.</div>
+        <div style="margin-top:10px;font:13px/1.4 Arial,Helvetica,sans-serif;color:${MUTED}">Sign up with your <strong style="color:${INK}">work</strong> email. It stays separate from any personal Royale Cinema account.</div>
       </td></tr>
       <tr><td style="padding:14px 22px 4px">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
@@ -51,7 +51,7 @@ export function orgInviteHtml(d: OrgInviteEmailData) {
         </table>
       </td></tr>
       <tr><td style="padding:18px 22px 22px;font:15px/1.5 Arial,Helvetica,sans-serif;color:${INK}">
-        See you at the movies,<br><strong>The Royale crew</strong>
+        See you at the movies,<br><strong>The RCL crew</strong>
         <div style="margin-top:14px;font:12px/1.5 Arial,Helvetica,sans-serif;color:${MUTED}">Button not working? Paste this into your browser:<br><a href="${url}" style="color:${MUTED};word-break:break-all">${url}</a></div>
         <div style="margin-top:10px;font:12px/1.5 Arial,Helvetica,sans-serif;color:${MUTED}">Not expecting this? You can ignore it; nothing happens unless you sign up.</div>
       </td></tr>
@@ -62,7 +62,7 @@ export function orgInviteHtml(d: OrgInviteEmailData) {
 }
 
 export function orgInviteText(d: OrgInviteEmailData) {
-  return `You're invited to join ${d.orgName} at the Royale.
+  return `You're invited to join ${d.orgName} at Royale Cinema.
 
 Join as ${withArticle(d.orgName)} helper (sign up with your work email):
 ${d.joinUrl}
@@ -70,5 +70,5 @@ ${d.joinUrl}
 Your day pass and movies are on ${d.orgName} when you're here with the group. Food and drinks are regular price.
 
 See you at the movies,
-The Royale crew`;
+The RCL crew`;
 }

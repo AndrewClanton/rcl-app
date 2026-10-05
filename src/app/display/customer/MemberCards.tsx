@@ -269,7 +269,7 @@ export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddC
     <section
       className={`${k.memberCard} ${standing === "plus" ? k.memberCardPlus : ""}`}
       style={color ? ({ "--flair": color.hex } as React.CSSProperties) : undefined}
-      aria-label={`${name}'s Royale card`}
+      aria-label={`${name}'s RCL card`}
     >
       <div className={k.cardTop}>
         <Photo url={photo} name={name} />

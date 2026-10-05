@@ -87,7 +87,7 @@ export default function Rewind({ isAdmin }: { isAdmin: boolean }) {
 
       <div className="space-y-4 p-4">
         <p className="text-sm text-[var(--muted)]">
-          Ask them to open their bank app and find a Royale purchase from before mid-September 2026. Type the last 4 of that card and the purchase&apos;s
+          Ask them to open their bank app and find a Royale Cinema purchase from before mid-September 2026. Type the last 4 of that card and the purchase&apos;s
           date and amount: the total charged, to the cent.
         </p>
 

@@ -1138,9 +1138,9 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
     const had = (days) => facts({ sends: [{ c: "OTHER", t: new Date(at.getTime() - days * DAY).toISOString(), k: "invite", a: null, g: "account", x: null, s: "delivered", ck: false }] });
     const r = await audience.resolveAudience(
       { id: randomUUID(), kind: "announcement", category: "account", automation: null, audience: { include: [{ r: "all" }] }, holdoutPct: 0 },
-      { at, now: at, facts: [had(1), had(4), facts()], spacing: { others: new Map([["OTHER", "The new Royale is here"]]), days: 3 } },
+      { at, now: at, facts: [had(1), had(4), facts()], spacing: { others: new Map([["OTHER", "The new RCL is here"]]), days: 3 } },
     );
-    eq("gap: had another ready-made email yesterday -> a later wave; 4 days ago or never -> this one", [r.willSend, r.excluded.design_gap, [...r.spaced]], [2, 1, [["The new Royale is here", 1]]]);
+    eq("gap: had another ready-made email yesterday -> a later wave; 4 days ago or never -> this one", [r.willSend, r.excluded.design_gap, [...r.spaced]], [2, 1, [["The new RCL is here", 1]]]);
   }
   check("starters: the old invite and Insiders+ come-back are retired", !(await load("lib/email/templates.ts")).STARTERS.some((s) => ["invite", "plus_comeback"].includes(s.key)));
 

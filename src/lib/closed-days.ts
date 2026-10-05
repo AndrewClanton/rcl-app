@@ -1,4 +1,4 @@
-// The days the Royale is closed to the public, by its own clock
+// The days Royale Cinema is closed to the public, by its own clock
 // (America/Chicago). 0 = Sunday ... 6 = Saturday. The public booking forms
 // and their server actions refuse these days (lib/closed-days-server.ts);
 // staff screens don't, so a private event can still go on a closed day.

@@ -99,7 +99,7 @@ export default async function ScreeningDetailPage({
         <div className="sheet p-6">
           <span className="ctag ctag-red">Members only</span>
           <h1 className="font-display mt-4 text-3xl leading-tight">This showing is for members.</h1>
-          <p className="mt-3 text-[15px]">Sign in to your Royale account to see it and get tickets.</p>
+          <p className="mt-3 text-[15px]">Sign in to your Royale Cinema account to see it and get tickets.</p>
           <Link href={`/account/login?next=${encodeURIComponent(`/showtimes/${id}`)}`} className="btn-primary mt-5 inline-block px-5 py-2.5">
             Sign in
           </Link>

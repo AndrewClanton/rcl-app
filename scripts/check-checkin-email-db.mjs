@@ -226,7 +226,7 @@ try {
     await afterCalls.shift()?.();
     const sent = caught[0];
     check("one email, to the address they typed", caught.length === 1 && sent.to?.length === 1 && sent.to[0] === mail("mailed"));
-    check("it's the setup email, with their own 30-day link", sent?.subject === "Finish setting up your Royale account" && /\/account\/claim\?t=[A-Za-z0-9_-]{58}/.test(sent.html) && /works for 30 days/.test(sent.text ?? ""));
+    check("it's the setup email, with their own 30-day link", sent?.subject === "Finish setting up your Royale Cinema account" && /\/account\/claim\?t=[A-Za-z0-9_-]{58}/.test(sent.html) && /works for 30 days/.test(sent.text ?? ""));
     check("tagged transactional (no list, no unsubscribe needed)", (sent?.tags ?? []).some((t) => t.name === "kind" && t.value === "transactional"));
     const claimRows = id4 ? (await db.from("member_claims").select("kind").eq("member_id", id4)).data ?? [] : [];
     check("two links on record: the QR code's and the email's", claimRows.filter((r) => r.kind === "kiosk").length === 1 && claimRows.filter((r) => r.kind === "email").length === 1);

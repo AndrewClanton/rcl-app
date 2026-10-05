@@ -14,7 +14,7 @@
 //
 // fmt: "jpg" for photos, "png" for flat drawings (palette PNG).
 
-// Shared by all three (rendered once, from "The new Royale is here").
+// Shared by all three (rendered once, from "The new RCL is here").
 export const COMMON = [
   {
     name: "header",
@@ -70,7 +70,7 @@ export const DESIGN_PIECES = {
       {
         name: "hero",
         fmt: "jpg",
-        alt: "The new Royale website, showing the lounge you know: booths, the arcade cabinet and the poster wall in purple and gold neon.",
+        alt: "The new Royale Cinema website, showing the lounge you know: booths, the arcade cabinet and the poster wall in purple and gold neon.",
         rect: (R) => {
           const s = R.sec("hero");
           return { ...R.box(s), h: R.box(R.kids(s, 2, 0)).y - R.box(s).y };
@@ -213,8 +213,8 @@ export const DESIGN_PIECES = {
       {
         name: "filmstrip",
         fmt: "jpg",
-        alt: "The Royale: cocktails, the VHS lounge, popcorn and the neon lounge.",
-        altPhone: "The Royale: cocktails, the VHS lounge and popcorn.",
+        alt: "Royale Cinema: cocktails, the VHS lounge, popcorn and the neon lounge.",
+        altPhone: "Royale Cinema: cocktails, the VHS lounge and popcorn.",
         rect: (R) => R.box(R.kids(R.sec("close"), 0, 0)),
       },
     ],
@@ -225,7 +225,7 @@ export const DESIGN_PIECES = {
       {
         name: "hero",
         fmt: "jpg",
-        alt: "Two people in the Royale's red seats, sharing a drink, popcorn in hand.",
+        alt: "Two people in Royale Cinema's red seats, sharing a drink, popcorn in hand.",
         rect: (R) => R.box(R.kids(R.sec("hero"), 0)),
       },
       {
