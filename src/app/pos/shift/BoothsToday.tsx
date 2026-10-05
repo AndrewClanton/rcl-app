@@ -63,11 +63,16 @@ export default function BoothsToday({ booths, onChanged, bare = false }: { booth
       ) : (
         <ul className="mt-1.5">
           {today.map((h) => (
-            <li key={h.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t py-2 first:border-t-0" style={{ borderColor: "rgba(20,17,12,0.2)" }}>
-              <span className="w-36 shrink-0 font-black tabular-nums">{h.window}</span>
-              <span className="font-bold">{h.booth}</span>
-              <span className="min-w-0 flex-1 text-sm">
-                {h.name} · party of {h.party}
+            <li key={h.id} className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t py-2 first:border-t-0" style={{ borderColor: "rgba(20,17,12,0.2)" }}>
+              {/* When, where and who on their own lines of text, never squeezed
+                  to a word a line: with too little room beside them (the
+                  pop-up on an iPad), the button drops under them instead. */}
+              <span className="flex min-w-0 flex-[1_1_15rem] flex-wrap items-baseline gap-x-3 gap-y-0.5">
+                <span className="whitespace-nowrap font-black tabular-nums">{h.window}</span>
+                <span className="whitespace-nowrap font-bold">{h.booth}</span>
+                <span className="min-w-0 break-words text-sm">
+                  {h.name} · <span className="whitespace-nowrap">party of {h.party}</span>
+                </span>
               </span>
               {h.cardPrintedAt ? (
                 <span className="flex items-center gap-3 text-sm">

@@ -6,7 +6,7 @@ import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
 import { reprintOrderTicket, setItemReady } from "./actions";
 import DrinkIcon from "@/components/bar/DrinkIcon";
 import { FAMILY_COLOR } from "@/lib/bar/icons";
-import { boardEntryFor, type BoardEntry } from "@/lib/bar/book";
+import { boardEntryForTicket, type BoardEntry, type BoardMaps } from "@/lib/bar/book";
 
 function timeAgo(iso: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -35,7 +35,7 @@ export default function PrepTicketBoard({
   title: string;
   station: Board;
   initialTickets: PrepTicket[];
-  drinks?: Record<string, BoardEntry>;
+  drinks?: BoardMaps;
 }) {
   const [tickets, setTickets] = useState(initialTickets);
   // The recipe open on screen, if any.
@@ -84,6 +84,7 @@ export default function PrepTicketBoard({
               is_event: boolean;
               is_alcohol: boolean;
               menu_item_id: string | null;
+              recipe_id?: string | null; // a Bar Book drink (once its migration is in)
             };
             if (row.is_event) return;
             const [{ data: order }, categoryKey] = await Promise.all([
@@ -125,6 +126,7 @@ export default function PrepTicketBoard({
                   order_name: order.order_name,
                   station: rowStation,
                   menu_item_id: row.menu_item_id ?? null,
+                  recipe_id: row.recipe_id ?? null,
                 },
                 ...prev,
               ].slice(0, 60)
@@ -213,7 +215,7 @@ export default function PrepTicketBoard({
                 </div>
                 <div className="space-y-2">
                   {items.map((item) => {
-                    const drink = boardEntryFor(drinks, item.menu_item_id);
+                    const drink = boardEntryForTicket(drinks, item);
                     // Name and choices, as they've always been.
                     const text = (
                       <>

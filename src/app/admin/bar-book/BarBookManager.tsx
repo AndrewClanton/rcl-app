@@ -22,7 +22,8 @@ import {
   type Ice,
   type Method,
 } from "@/lib/bar/icons";
-import { deleteBookDrink, saveBookDrink, setIngredientBar } from "./actions";
+import { drinkCost, pct, priceSummary, readPrice, unitCostFromBottle } from "@/lib/bar/pricing";
+import { deleteBookDrink, makeMenuItemFromRecipe, saveBookDrink, setIngredientBar, setIngredientCost, setTargetPourCost } from "./actions";
 
 const KIND_LABEL: Record<string, string> = {
   spirit: "Spirit",
@@ -38,12 +39,58 @@ const KIND_LABEL: Record<string, string> = {
 };
 const ICE_LABEL: Record<Ice, string> = { none: "No ice", cubes: "Ice cubes", crushed: "Crushed ice" };
 
-export default function BarBookManager({ ingredients, drinks }: { ingredients: BarIngredient[]; drinks: BookRecipe[] }) {
+export default function BarBookManager({
+  ingredients,
+  drinks,
+  target,
+  canOwn,
+}: {
+  ingredients: BarIngredient[];
+  drinks: BookRecipe[];
+  target: number; // the target pour cost
+  canOwn: boolean; // an owner or admin: the target, and making menu items
+}) {
   return (
     <div className="space-y-6">
-      <Drinks drinks={drinks} ingredients={ingredients} />
+      <Target target={target} canOwn={canOwn} />
+      <Drinks drinks={drinks} ingredients={ingredients} target={target} canOwn={canOwn} />
       <Ingredients ingredients={ingredients} />
     </div>
+  );
+}
+
+// ---------- the target pour cost ----------
+
+function Target({ target, canOwn }: { target: number; canOwn: boolean }) {
+  const [pending, run, error] = useRefreshingAction();
+  const [text, setText] = useState(String(Math.round(target * 100)));
+  return (
+    <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">Suggested prices</h2>
+      <p className="mt-1 text-sm text-[var(--muted)]">
+        Every recipe card suggests a price: what the drink costs to pour ÷ our target pour cost ({pct(target)}), rounded up to a whole dollar. It never changes a menu price.
+      </p>
+      {canOwn ? (
+        <form
+          className="mt-3 flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(() => setTargetPourCost(Number(text) / 100), { quiet: true });
+          }}
+        >
+          <label className="flex items-center gap-2 text-sm">
+            Target pour cost
+            <input className="input !w-20" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value.replace(/[^0-9.]/g, ""))} aria-label="Target pour cost, percent" />%
+          </label>
+          <button className="btn-secondary !px-3 !py-1.5" disabled={pending || Number(text) / 100 === target}>
+            {pending ? "Saving…" : "Save"}
+          </button>
+          {error && <span className="text-sm font-semibold text-[var(--danger-text)]">{error}</span>}
+        </form>
+      ) : (
+        <p className="mt-2 text-sm">Target pour cost: {pct(target)}. An owner or admin can change it.</p>
+      )}
+    </section>
   );
 }
 
@@ -87,6 +134,7 @@ function IngredientRow({ ingredient }: { ingredient: BarIngredient }) {
   const family = isFamily(ingredient.family) ? ingredient.family : null;
   return (
     <div className="flex flex-wrap items-center gap-2 py-2" style={pending ? { opacity: 0.6 } : undefined}>
+      <div className="flex w-full flex-wrap items-center gap-2">
       <span className="h-4 w-4 shrink-0 rounded" style={{ background: family ? FAMILY_COLOR[family] : "var(--border)" }} aria-hidden />
       <span className="min-w-[160px] flex-1 text-sm font-medium">
         {ingredient.name}
@@ -122,14 +170,78 @@ function IngredientRow({ ingredient }: { ingredient: BarIngredient }) {
         <input type="checkbox" checked={ingredient.carried} onChange={(e) => run(() => setIngredientBar(ingredient.id, { carried: e.target.checked }))} />
         Carried
       </label>
+      </div>
+      <CostEditor ingredient={ingredient} />
+    </div>
+  );
+}
+
+// What it costs: a bottle's price and size for anything poured (the cost
+// per oz is worked out and kept), or the cost of one for anything counted.
+function CostEditor({ ingredient }: { ingredient: BarIngredient }) {
+  const [pending, run, error] = useRefreshingAction();
+  const unit = ingredient.unit === "count" ? "ct" : ingredient.unit;
+  const counted = ingredient.unit === "count";
+  const size0 = ingredient.bottle_size && ingredient.bottle_size > 0 ? ingredient.bottle_size : ingredient.unit === "oz" ? 25.4 : ingredient.unit === "ml" ? 750 : null;
+  const [size, setSize] = useState(size0 !== null ? String(size0) : "");
+  const [bottle, setBottle] = useState(!counted && ingredient.unit_cost !== null && size0 ? (ingredient.unit_cost * size0).toFixed(2) : "");
+  const [each, setEach] = useState(counted && ingredient.unit_cost !== null ? String(ingredient.unit_cost) : "");
+  const perUnit = counted ? (each.trim() === "" ? null : Number(each)) : bottle.trim() === "" ? null : unitCostFromBottle(Number(bottle), Number(size));
+
+  function save() {
+    if (counted) {
+      const v = each.trim() === "" ? null : Number(each);
+      if (v !== null && !Number.isFinite(v)) return;
+      if (v === ingredient.unit_cost) return;
+      run(() => setIngredientCost(ingredient.id, { unitCost: v }), { quiet: true });
+      return;
+    }
+    if (bottle.trim() === "") {
+      if (ingredient.unit_cost !== null) run(() => setIngredientCost(ingredient.id, { unitCost: null }), { quiet: true });
+      return;
+    }
+    const price = Number(bottle);
+    const sz = Number(size);
+    if (!Number.isFinite(price) || !(sz > 0)) return;
+    if (unitCostFromBottle(price, sz) === ingredient.unit_cost && sz === ingredient.bottle_size) return;
+    run(() => setIngredientCost(ingredient.id, { bottlePrice: price, bottleSize: sz }), { quiet: true });
+  }
+
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 pl-6 text-sm" style={pending ? { opacity: 0.6 } : undefined}>
+      {counted ? (
+        <label className="flex items-center gap-1.5">
+          Cost each $
+          <input className="input !w-20 !py-1" inputMode="decimal" value={each} placeholder="0.00" onChange={(e) => setEach(e.target.value.replace(/[^0-9.]/g, ""))} onBlur={save} />
+        </label>
+      ) : (
+        <>
+          <label className="flex items-center gap-1.5">
+            Bottle $
+            <input className="input !w-24 !py-1" inputMode="decimal" value={bottle} placeholder="0.00" onChange={(e) => setBottle(e.target.value.replace(/[^0-9.]/g, ""))} onBlur={save} />
+          </label>
+          <label className="flex items-center gap-1.5">
+            for
+            <input className="input !w-20 !py-1" inputMode="decimal" value={size} onChange={(e) => setSize(e.target.value.replace(/[^0-9.]/g, ""))} onBlur={save} aria-label={`Bottle size in ${unit}`} />
+            {unit}
+          </label>
+        </>
+      )}
+      <span className="text-xs text-[var(--muted)]">
+        {perUnit !== null && Number.isFinite(perUnit) ? `= $${perUnit.toFixed(perUnit < 1 ? 3 : 2)} per ${unit}` : "No cost yet"}
+      </span>
+      {error && <span className="text-xs font-semibold text-[var(--danger-text)]">{error}</span>}
     </div>
   );
 }
 
 // ---------- drinks ----------
 
-function Drinks({ drinks, ingredients }: { drinks: BookRecipe[]; ingredients: BarIngredient[] }) {
+function Drinks({ drinks, ingredients, target, canOwn }: { drinks: BookRecipe[]; ingredients: BarIngredient[]; target: number; canOwn: boolean }) {
   const [editing, setEditing] = useState<string | "new" | null>(null);
+  const [making, setMaking] = useState<string | null>(null);
+  const costById = useMemo(() => new Map(ingredients.map((i) => [i.id, i.unit_cost])), [ingredients]);
+  const costFor = (d: BookRecipe) => drinkCost(d.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCost: costById.get(l.ingredientId) ?? null, optional: l.optional })));
   const [showSeed, setShowSeed] = useState(false);
   const house = drinks.filter((d) => d.source !== "seed");
   const seed = drinks.filter((d) => d.source === "seed");
@@ -141,7 +253,7 @@ function Drinks({ drinks, ingredients }: { drinks: BookRecipe[]; ingredients: Ba
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--muted)]">Our drinks (not on the menu)</h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            House drinks for the book: the register shows them with &quot;Not on our menu yet&quot; and can&apos;t ring them up. Drinks on the menu get their recipe in Menu → the item → Recipe.
+            House drinks for the book. The register shows them as &quot;Not on our menu yet&quot; and rings them up as a one-off line at the suggested price (or one staff type). Drinks on the menu get their recipe in Menu → the item → Recipe.
             {seed.length > 0 && ` Plus ${seed.length} from the starter list.`}
           </p>
         </div>
@@ -176,16 +288,58 @@ function Drinks({ drinks, ingredients }: { drinks: BookRecipe[]; ingredients: Ba
                   {d.source === "seed" && <span className="ml-2 text-xs font-normal text-[var(--muted)]">starter list</span>}
                 </span>
                 <span className="block truncate text-xs text-[var(--muted)]">{mainIngredients(d, 5) || "No ingredients yet"}</span>
+                <span className="block text-xs">{priceSummary({ cost: costFor(d), target }).text}</span>
               </span>
+              {canOwn && (
+                <button className="btn-secondary !px-3 !py-1.5" onClick={() => setMaking(d.id)}>
+                  Make a menu item
+                </button>
+              )}
               <button className="btn-secondary !px-3 !py-1.5" onClick={() => setEditing(d.id)}>
                 Edit
               </button>
+              {making === d.id && <MakeMenuItem drink={d} suggested={priceSummary({ cost: costFor(d), target }).suggested} onDone={() => setMaking(null)} />}
             </div>
           ),
         )}
         {list.length === 0 && <p className="py-3 text-sm text-[var(--muted)]">No house drinks yet.</p>}
       </div>
     </section>
+  );
+}
+
+// "Make this a menu item": a price (the suggested one to start), then it's
+// in Cocktails under Alcohol and rings up from its own button.
+function MakeMenuItem({ drink, suggested, onDone }: { drink: BookRecipe; suggested: number | null; onDone: () => void }) {
+  const [pending, run, error] = useRefreshingAction();
+  const [text, setText] = useState(suggested !== null ? String(suggested) : "");
+  const read = readPrice(text);
+  return (
+    <form
+      className="flex w-full flex-wrap items-center gap-2 rounded-lg border-2 border-[var(--foreground)] p-3 text-sm"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!read.ok) return;
+        run(async () => {
+          const r = await makeMenuItemFromRecipe(drink.id, read.price);
+          if (r.ok) onDone();
+          return r;
+        }, { quiet: true });
+      }}
+    >
+      <span>
+        Put <strong>{drink.name}</strong> on the menu (Cocktails) at $
+      </span>
+      <input className="input !w-20 !py-1" inputMode="decimal" autoFocus value={text} onChange={(e) => setText(e.target.value.replace(/[^0-9.]/g, ""))} aria-label="Menu price" />
+      <button className="btn-primary !px-3 !py-1.5" disabled={pending || !read.ok}>
+        {pending ? "Adding…" : "Add to the menu"}
+      </button>
+      <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={onDone} disabled={pending}>
+        Cancel
+      </button>
+      {!read.ok && text.trim() !== "" && <span className="text-[var(--danger-text)]">{read.error}</span>}
+      {error && <span className="font-semibold text-[var(--danger-text)]">{error}</span>}
+    </form>
   );
 }
 

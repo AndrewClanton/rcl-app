@@ -29,7 +29,7 @@ import CategoryIcon from "@/components/menu/CategoryIcon";
 import BarTab from "./BarTab";
 import BarBook from "./BarBook";
 import { loadBarBook } from "./bar-book-actions";
-import { isBarCategory } from "@/lib/bar/menu";
+import { barSectionOf, isBarCategory } from "@/lib/bar/menu";
 import { countMakeable, type BookRecipe, type BookStock, type MenuRef } from "@/lib/bar/book";
 import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
@@ -111,6 +111,9 @@ interface CartLine {
   qty: number;
   mods: string[];
   isAlcohol: boolean;
+  // A Bar Book drink rung up off the menu (BarBook.tsx → Add to order): a
+  // one-off line like "+ Custom item" that knows its recipe.
+  recipeId?: string | null;
 }
 
 // The Movies tab sits alongside the menu categories, and so does Customers
@@ -446,6 +449,8 @@ export default function PosApp({
     setCategoryId(id);
     setBuilderItemId(null);
     setFindAt(0);
+    // The Bar tab's cocktails start on their first page again.
+    setBarPage(0);
     menuScrollRef.current?.scrollTo({ top: 0 });
   }
 
@@ -488,8 +493,19 @@ export default function PosApp({
   // The Bar Book (BarBook.tsx): read when the Bar tab first shows, and again
   // each time it opens. Until the Bar Book migration is applied it reports
   // not ready and the Bar tab shows no book button.
-  const [book, setBook] = useState<{ state: "idle" | "ready" | "not-ready" | "error"; recipes: BookRecipe[]; stock: BookStock[] }>({ state: "idle", recipes: [], stock: [] });
+  const [book, setBook] = useState<{ state: "idle" | "ready" | "not-ready" | "error"; recipes: BookRecipe[]; stock: BookStock[]; target: number }>({
+    state: "idle",
+    recipes: [],
+    stock: [],
+    target: 0.2,
+  });
   const [bookOpen, setBookOpen] = useState(false);
+  // What the Bar tab's "Find a drink" box opened the book searching for.
+  const [bookQuery, setBookQuery] = useState("");
+  // Which page of cocktails the Bar tab is on: kept here, so ringing a
+  // drink up (its choices replace the tab for a moment) or a change to the
+  // order doesn't lose it. Only switching tabs starts it over (pickTab).
+  const [barPage, setBarPage] = useState(0);
   const [bookLoading, setBookLoading] = useState(false);
   const bookAsked = useRef(false);
   // State changes only once the answer is back (the opening tap shows
@@ -499,7 +515,11 @@ export default function PosApp({
       .then(
         (r) =>
           setBook((prev) =>
-            r.ok ? { state: "ready", recipes: r.recipes, stock: r.stock } : prev.state === "ready" && !r.notReady ? prev : { state: r.notReady ? "not-ready" : "error", recipes: [], stock: [] },
+            r.ok
+              ? { state: "ready", recipes: r.recipes, stock: r.stock, target: r.target }
+              : prev.state === "ready" && !r.notReady
+                ? prev
+                : { state: r.notReady ? "not-ready" : "error", recipes: [], stock: [], target: prev.target },
           ),
         () => setBook((prev) => (prev.state === "ready" ? prev : { ...prev, state: "error" })),
       )
@@ -511,16 +531,18 @@ export default function PosApp({
     refreshBook();
   }, [barTab, refreshBook]);
   // The book rings up register items, so it knows only the alcohol ones
-  // that are on the register (not hidden).
+  // that are on the register (not hidden), with where each sits on the Bar
+  // tab (the cocktails make the card's average pour cost).
   const bookMenu = useMemo<MenuRef[]>(() => {
     const list: MenuRef[] = [];
-    const walk = (cs: MenuCategory[]) => {
-      for (const c of cs) {
-        for (const i of c.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price) });
-        walk(c.subcategories);
+    for (const c of categories) {
+      const bar = isBarCategory(c);
+      for (const i of c.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price), section: "other" });
+      for (const sub of c.subcategories) {
+        const section = bar ? barSectionOf(sub) : "other";
+        for (const i of sub.items) if (i.is_alcohol) list.push({ id: i.id, name: i.name, price: Number(i.price), section });
       }
-    };
-    walk(categories);
+    }
     return list;
   }, [categories]);
   const bookMakeable = useMemo(() => {
@@ -566,6 +588,7 @@ export default function PosApp({
         modifiers: l.mods,
         is_alcohol: l.isAlcohol,
         screening_id: l.screeningId ?? null,
+        ...(l.recipeId ? { recipe_id: l.recipeId } : {}),
       })),
     };
   }
@@ -581,6 +604,7 @@ export default function PosApp({
         mods: l.modifiers,
         isAlcohol: l.is_alcohol,
         screeningId: l.screening_id ?? null,
+        recipeId: l.recipe_id ?? null,
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -1900,24 +1924,19 @@ export default function PosApp({
             outs={outs}
             onTap={tapItem}
             onCustom={() => setCustomOpen(true)}
-            book={
-              book.state === "ready" ? (
-                <button
-                  className="flex min-h-14 shrink-0 items-center justify-between gap-2 rounded-lg border-2 px-3 py-2 text-left"
-                  style={{ borderColor: "var(--foreground)", background: "var(--surface)", color: "var(--foreground)" }}
-                  onClick={() => {
-                    setBookOpen(true);
-                    setBookLoading(true);
-                    refreshBook();
-                  }}
-                >
-                  <span className="font-display text-lg leading-none">Bar Book</span>
-                  <span className="rounded-full px-2 py-1 text-xs font-bold" style={{ background: "var(--gold)", color: "var(--gold-foreground)" }}>
-                    {bookMakeable} we can make
-                  </span>
-                </button>
-              ) : null
-            }
+            page={barPage}
+            onPage={setBarPage}
+            book={{
+              // Before the Bar Book migration (or if it can't be read) there's no strip.
+              state: book.state === "ready" ? "ready" : book.state === "idle" ? "loading" : "off",
+              count: book.state === "ready" ? bookMakeable : null,
+              onOpen: (query) => {
+                setBookQuery(query ?? "");
+                setBookOpen(true);
+                setBookLoading(true);
+                refreshBook();
+              },
+            }}
           />
         ) : (
           <div className="space-y-4">
@@ -2065,12 +2084,30 @@ export default function PosApp({
 
       {bookOpen && book.state === "ready" && (
         <BarBook
+          initialQuery={bookQuery}
           recipes={book.recipes}
           stock={book.stock}
           menuItems={bookMenu}
+          target={book.target}
           outs={outs}
           updating={bookLoading}
+          // Owners and admins (canNote is hasAdminAccess); the server checks again.
+          canMakeMenuItems={canNote}
           onClose={() => setBookOpen(false)}
+          // The same one-off line as "+ Custom item", knowing its recipe.
+          onAddLine={(l, note) => {
+            setBookOpen(false);
+            setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: null, name: l.name, unit: l.unit, qty: 1, mods: l.mods, isAlcohol: true, recipeId: l.recipeId }]);
+            if (note) {
+              setToast(note);
+              setTimeout(() => setToast((t) => (t === note ? null : t)), 8000);
+            }
+          }}
+          // A new menu item: the register's buttons and the book read again.
+          onMenuChanged={() => {
+            router.refresh();
+            refreshBook();
+          }}
           // Exactly what tapping its button on the Bar tab does.
           onRingUp={(id) => {
             setBookOpen(false);

@@ -36,6 +36,7 @@ const KIND_LABELS: Record<string, string> = {
   tab_closed_elsewhere: "Tab closed elsewhere",
   sale_abandoned: "Stopped trying",
   items_not_saved: "Items not saved",
+  below_cost: "Bar Book drink below cost",
 };
 
 export function flagLabel(kind: string) {

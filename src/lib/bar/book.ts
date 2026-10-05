@@ -20,10 +20,12 @@ import {
   normalizeGlass,
   type Family,
   type GlassKey,
+  type BarSection,
   type IconSpec,
   type Kind,
   type Method,
 } from "@/lib/bar/icons";
+import { averagePourCost, drinkCost, type CostLine, type DrinkCost } from "@/lib/bar/pricing";
 
 export type RecipeSource = "menu" | "house" | "seed";
 
@@ -34,6 +36,7 @@ export interface BookStock {
   carried: boolean; // the bar stocks it (and it's not deactivated)
   outLabel: string | null; // an open Ran out on its par line: what was reported
   lastCount: number | null; // the latest shelf count, if it's ever been counted
+  unitCost?: number | null; // ingredients.unit_cost: per oz (or ml, or each)
 }
 
 export interface BookLine {
@@ -65,6 +68,7 @@ export interface MenuRef {
   id: string;
   name: string;
   price: number;
+  section?: BarSection; // where it sits on the Bar tab (cocktails, beer...)
 }
 
 // A drink in the book, ready to show.
@@ -296,6 +300,20 @@ export interface BoardEntry {
   card: RecipeCard | null;
 }
 
+// The board's two maps: by menu item, and by recipe for Bar Book drinks rung
+// up off the menu (src/lib/data/barBook.ts getBoardEntries).
+export interface BoardMaps {
+  items: Readonly<Record<string, BoardEntry>>;
+  recipes: Readonly<Record<string, BoardEntry>>;
+}
+
+// A ticket's entry: its menu item's, else its Bar Book recipe's, else null.
+export function boardEntryForTicket(maps: BoardMaps | null | undefined, ticket: { menu_item_id?: string | null; recipe_id?: string | null }): BoardEntry | null {
+  if (!maps || !ticket) return null;
+  if (ticket.menu_item_id) return boardEntryFor(maps.items, ticket.menu_item_id);
+  return boardEntryFor(maps.recipes, ticket.recipe_id);
+}
+
 // A ticket line's entry, or null: coffee, sodas, custom lines and items
 // added after the page loaded have none, and draw as they always did.
 export function boardEntryFor(map: Readonly<Record<string, BoardEntry>> | null | undefined, menuItemId: string | null | undefined): BoardEntry | null {
@@ -303,4 +321,21 @@ export function boardEntryFor(map: Readonly<Record<string, BoardEntry>> | null |
   if (!Object.prototype.hasOwnProperty.call(map, menuItemId)) return null;
   const e = map[menuItemId];
   return e && typeof e === "object" && e.spec ? e : null;
+}
+
+// ---------- cost ----------
+
+// A drink's lines with what each ingredient costs, for src/lib/bar/pricing.ts.
+export function costLines(drink: { lines: readonly BookLine[] }, stock: ReadonlyMap<string, BookStock>): CostLine[] {
+  return drink.lines.map((l) => ({ name: l.name, quantity: l.quantity, unitCost: stock.get(l.ingredientId)?.unitCost ?? null, optional: l.optional }));
+}
+
+export function costOf(drink: { lines: readonly BookLine[] }, stock: ReadonlyMap<string, BookStock>): DrinkCost {
+  return drinkCost(costLines(drink, stock));
+}
+
+// "Our cocktails average 19% pour cost": the menu's cocktails whose
+// recipes are fully costed, cost ÷ menu price, averaged.
+export function cocktailAverage(book: readonly BookDrink[], stock: ReadonlyMap<string, BookStock>): number | null {
+  return averagePourCost(book.filter((d) => d.menu && d.menu.section === "cocktails").map((d) => ({ cost: costOf(d, stock).cost, price: d.menu!.price })));
 }

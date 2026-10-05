@@ -1,5 +1,5 @@
 import { requireStaff } from "@/lib/auth";
-import { getAlcoholUsageReport, getPourCostReport } from "@/lib/data/reports";
+import { getAlcoholUsageReport, getBookDrinkSales, getPourCostReport } from "@/lib/data/reports";
 import BarScreen, { BAR_RANGES } from "./BarScreen";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +10,6 @@ export const dynamic = "force-dynamic";
 export default async function BarUsagePage({ searchParams }: { searchParams: Promise<{ days?: string }> }) {
   const { days: asked } = await searchParams;
   const days = BAR_RANGES.includes(Number(asked)) ? Number(asked) : 30;
-  const [, usage, pour] = await Promise.all([requireStaff(), getAlcoholUsageReport(days), getPourCostReport()]);
-  return <BarScreen days={days} usage={usage} pour={pour} />;
+  const [, usage, pour, book] = await Promise.all([requireStaff(), getAlcoholUsageReport(days), getPourCostReport(), getBookDrinkSales(days)]);
+  return <BarScreen days={days} usage={usage} pour={pour} book={book} />;
 }

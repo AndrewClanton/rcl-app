@@ -2,10 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import DrinkIcon from "@/components/bar/DrinkIcon";
+import ManagerPinModal from "@/components/ManagerPinModal";
+import { approvalText } from "@/lib/pin-rules";
+import { approveBelowCost } from "./bar-book-actions";
+import { makeMenuItemFromRecipe } from "@/app/admin/bar-book/actions";
+import { bookOrderLine, isBelowCost, money as costMoney, priceSummary, readPrice, type BookOrderLine } from "@/lib/bar/pricing";
 import type { RegisterOut } from "@/lib/ops/shared";
 import { FAMILY_COLOR, FAMILY_LABEL, GLASS_LABEL, SPIRITS, type Family } from "@/lib/bar/icons";
 import {
   buildBook,
+  cocktailAverage,
+  costOf,
   drinkStatus,
   formatAmount,
   LINE_LABEL,
@@ -46,29 +53,42 @@ type Filter = "all" | "makeable" | "menu";
 // The Bar Book on the register (The Royale Bar Book, phase 3): every drink
 // we could make, A–Z, with its recipe card and a plain answer to "can we
 // make it?" from what's carried, Ran out and the latest counts. Opened from
-// the Bar tab, over the whole register. "Ring it up" shows only for drinks
-// on our menu and rings up that menu item exactly as its button does
+// the Bar tab, over the whole register. "Ring it up" shows for drinks on
+// our menu and rings up that menu item exactly as its button does
 // (onRingUp, the register's own tap), so its choices, Ran out question,
-// price and the ID check all still apply. Drinks off the menu can't be rung
-// up yet: Andrew hasn't set off-menu prices.
+// price and the ID check all still apply. A drink off the menu has "Add to
+// order" instead: a one-off line at the suggested price (or one staff
+// type), the same line as "+ Custom item" (onAddLine), always alcohol for
+// the ID check, and a manager PIN below what it costs. Every card shows
+// what the drink costs and a suggested price (src/lib/bar/pricing.ts).
 export default function BarBook({
+  initialQuery = "",
   recipes,
   stock,
   menuItems,
+  target,
   outs,
   updating,
+  canMakeMenuItems,
   onRingUp,
+  onAddLine,
+  onMenuChanged,
   onClose,
 }: {
+  initialQuery?: string; // opened from the Bar tab's "Find a drink" box
   recipes: BookRecipe[];
   stock: BookStock[];
   menuItems: MenuRef[];
+  target: number; // the target pour cost
   outs: Map<string, RegisterOut>;
   updating: boolean;
+  canMakeMenuItems: boolean; // an owner or admin is signed in
   onRingUp: (menuItemId: string) => void;
+  onAddLine: (line: BookOrderLine, note?: string) => void;
+  onMenuChanged: () => void;
   onClose: () => void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [filter, setFilter] = useState<Filter>("all");
   const [byStock, setByStock] = useState(false); // "Uses what we have"
   const [spirit, setSpirit] = useState<Family | null>(null);
@@ -83,6 +103,7 @@ export default function BarBook({
     return (d: BookDrink) => m.get(d.key) ?? drinkStatus(d, stockById);
   }, [book, stockById]);
   const makeableCount = useMemo(() => book.filter((d) => statusOf(d).state === "ok").length, [book, statusOf]);
+  const average = useMemo(() => cocktailAverage(book, stockById), [book, stockById]);
   const spirits = useMemo<Family[]>(() => [...SPIRITS, "liqueur" as Family].filter((s) => book.some((d) => d.base === s)), [book]);
 
   const shown = useMemo(() => {
@@ -249,7 +270,21 @@ export default function BarBook({
 
         {/* The recipe card. */}
         <div className="min-h-0 overflow-y-auto overscroll-contain p-5 md:p-6">
-          {selected ? <Card drink={selected} status={statusOf(selected)} stockById={stockById} outs={outs} onRingUp={onRingUp} /> : null}
+          {selected ? (
+            <Card
+              key={selected.key}
+              drink={selected}
+              status={statusOf(selected)}
+              stockById={stockById}
+              outs={outs}
+              target={target}
+              average={average}
+              canMakeMenuItems={canMakeMenuItems}
+              onRingUp={onRingUp}
+              onAddLine={onAddLine}
+              onMenuChanged={onMenuChanged}
+            />
+          ) : null}
         </div>
       </div>
     </div>
@@ -261,14 +296,27 @@ function Card({
   status,
   stockById,
   outs,
+  target,
+  average,
+  canMakeMenuItems,
   onRingUp,
+  onAddLine,
+  onMenuChanged,
 }: {
   drink: BookDrink;
   status: DrinkStatus;
   stockById: Map<string, BookStock>;
   outs: Map<string, RegisterOut>;
+  target: number;
+  average: number | null;
+  canMakeMenuItems: boolean;
   onRingUp: (menuItemId: string) => void;
+  onAddLine: (line: BookOrderLine, note?: string) => void;
+  onMenuChanged: () => void;
 }) {
+  const [sheet, setSheet] = useState<"add" | "menu" | null>(null);
+  const cost = costOf(drink, stockById);
+  const pricing = priceSummary({ cost, target, menuPrice: drink.menu?.price ?? null, average });
   const card = recipeCard(drink);
   const glass = card.glass ?? (drink.glass ? GLASS_LABEL[drink.glass] : null);
   const kicker = ["Recipe card", card.method, glass].filter(Boolean).join(" · ");
@@ -291,6 +339,9 @@ function Card({
             {card.garnish ? ` Garnish: ${card.garnish}.` : ""}
           </p>
           {card.description && <p className="mt-2 text-[15px]">{card.description}</p>}
+          <p className="mt-2 rounded-md px-2.5 py-1.5 text-sm font-semibold tabular-nums" style={{ background: "var(--surface-hover)" }}>
+            {pricing.text}
+          </p>
         </div>
 
         <div>
@@ -339,12 +390,148 @@ function Card({
               Ring it up · {money(drink.menu.price)}
             </button>
           ) : (
-            <span className="rounded-lg border-2 border-dashed px-4 py-3 text-sm font-bold" style={{ borderColor: "var(--border)", color: "var(--muted)" }}>
-              Not on our menu yet
-            </span>
+            <>
+              <button className="btn-primary min-h-12 !px-6 !text-base" onClick={() => setSheet("add")}>
+                Add to order{pricing.suggested !== null ? ` · $${pricing.suggested}` : ""}
+              </button>
+              <span className="text-sm" style={{ color: "var(--muted)" }}>
+                Not on our menu yet
+              </span>
+              {canMakeMenuItems && (
+                <button className="btn-secondary ml-auto min-h-11 !px-4 !text-sm" onClick={() => setSheet("menu")}>
+                  Make this a menu item
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
+      {sheet && (
+        <PriceSheet
+          mode={sheet}
+          drink={drink}
+          suggested={pricing.suggested}
+          cost={cost}
+          onClose={() => setSheet(null)}
+          onAddLine={(line, note) => {
+            setSheet(null);
+            onAddLine(line, note);
+          }}
+          onMadeMenuItem={() => {
+            setSheet(null);
+            onMenuChanged();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// "Add to order" (a one-off line at this price) or "Make this a menu item"
+// (owners and admins), named after the drink. The price starts at the
+// suggested one; with no costs to suggest from, staff type it.
+function PriceSheet({
+  mode,
+  drink,
+  suggested,
+  cost,
+  onClose,
+  onAddLine,
+  onMadeMenuItem,
+}: {
+  mode: "add" | "menu";
+  drink: BookDrink;
+  suggested: number | null;
+  cost: ReturnType<typeof costOf>;
+  onClose: () => void;
+  onAddLine: (line: BookOrderLine, note?: string) => void;
+  onMadeMenuItem: () => void;
+}) {
+  const [text, setText] = useState(suggested !== null ? String(suggested) : "");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [askPin, setAskPin] = useState(false);
+  const read = readPrice(text);
+  const below = read.ok && isBelowCost(read.price, cost);
+
+  async function submit() {
+    if (!read.ok) {
+      setError(read.error);
+      return;
+    }
+    setError(null);
+    if (mode === "add") {
+      if (below) setAskPin(true);
+      else onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, read.price));
+      return;
+    }
+    setBusy(true);
+    const r = await makeMenuItemFromRecipe(drink.id, read.price).catch(() => ({ ok: false as const, error: "Couldn't reach the website. Try again." }));
+    setBusy(false);
+    if (r.ok) onMadeMenuItem();
+    else setError(r.error);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <form
+        className="card w-full max-w-sm space-y-3 shadow-2xl"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          {mode === "add" ? drink.name : `Put ${drink.name} on the menu`}
+        </h3>
+        <p className="text-sm" style={{ color: "var(--muted)" }}>
+          {mode === "add"
+            ? "Goes on the order like a custom item, at this price. It counts as alcohol, so the ID check applies."
+            : "Adds it to Cocktails under Alcohol at this price. It shows as a button on the Bar tab and rings up like any drink."}
+        </p>
+        <label className="block">
+          <div className="label-xs">Price</div>
+          <input
+            autoFocus
+            className="input !text-lg"
+            inputMode="decimal"
+            placeholder={suggested !== null ? String(suggested) : "Type a price"}
+            value={text}
+            onChange={(e) => setText(e.target.value.replace(/[^0-9.$]/g, ""))}
+          />
+        </label>
+        <p className="text-xs" style={{ color: below ? "var(--danger-text)" : "var(--muted)" }}>
+          {suggested !== null ? `Suggested $${suggested}. ` : "No suggested price: its costs aren't all in yet. "}
+          {cost.anyCost ? `Costs ${cost.cost !== null ? costMoney(cost.cost) : `at least ${costMoney(cost.known)}`} to make.` : ""}
+          {below ? (mode === "add" ? " That's below cost, so it needs a manager's PIN." : " That's below cost.") : ""}
+        </p>
+        {error && (
+          <p className="text-sm font-semibold" style={{ color: "var(--danger-text)" }}>
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn-secondary min-h-11" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button className="btn-primary min-h-11" disabled={busy || !text.trim()}>
+            {busy ? "Adding…" : mode === "add" ? (below ? "Manager PIN" : `Add${read.ok ? ` $${read.price.toFixed(2)}` : ""}`) : `Add to the menu${read.ok ? ` at $${read.price.toFixed(2)}` : ""}`}
+          </button>
+        </div>
+      </form>
+      {askPin && read.ok && (
+        <ManagerPinModal
+          title="Below cost"
+          description={`${drink.name} at $${read.price.toFixed(2)} is less than it costs to make. A manager's PIN puts it on the order.`}
+          onCancel={() => setAskPin(false)}
+          onSubmit={async (pin) => {
+            const r = await approveBelowCost(pin, drink.id);
+            if (!r.ok) throw new Error(r.error);
+            setAskPin(false);
+            onAddLine(bookOrderLine({ recipeId: drink.id, name: drink.name }, read.price), `${drink.name} added below cost. ${approvalText(r)}`);
+          }}
+        />
+      )}
     </div>
   );
 }
