@@ -8,6 +8,7 @@ import {
   EMPTY_CART_SNAPSHOT,
   TABLET_SOUND_DEFAULT,
   type MemberOff,
+  parseCardOnFileAnswer,
   type ReaderPrompt,
   type RegisterCartSnapshot,
   type RickrollState,
@@ -16,7 +17,7 @@ import {
 } from "@/lib/registerChannel";
 import { TabletSetupContext, type TabletSetupLink } from "./tablet-setup";
 import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
-import PaymentModal from "./PaymentModal";
+import PaymentModal, { type CardOnFileLink, type CardOnFileListener } from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
 import TabCardModal from "./TabCardModal";
@@ -1072,6 +1073,18 @@ export default function PosApp({
   );
   // ✨ → Rickroll: the button changes only when the customer screen says
   // it's started or stopped (EasterEggs.tsx useRickroll).
+  // "Charge card on file": the guest's yes on the customer screen
+  // (PaymentModal asks; "cof-seen" and "cof-answer" come back here).
+  const cofHandler = useRef<CardOnFileListener | null>(null);
+  const cofLink = useMemo<CardOnFileLink>(
+    () => ({
+      send: (event, payload) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
+      listen: (h) => {
+        cofHandler.current = h;
+      },
+    }),
+    [],
+  );
   const sendRickroll = useCallback(
     (event: "rickroll" | "rickroll-stop", payload: object) => registerChannelRef.current?.send({ type: "broadcast", event, payload }),
     [],
@@ -1109,6 +1122,14 @@ export default function PosApp({
       .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
       .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
       .on("broadcast", { event: "rickroll-state" }, (msg) => onRickrollState(msg.payload))
+      .on("broadcast", { event: "cof-seen" }, (msg) => {
+        const id = msg.payload?.id;
+        if (typeof id === "string") cofHandler.current?.seen(id);
+      })
+      .on("broadcast", { event: "cof-answer" }, (msg) => {
+        const a = parseCardOnFileAnswer(msg.payload);
+        if (a) cofHandler.current?.answer(a);
+      })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -1410,6 +1431,11 @@ export default function PosApp({
   // recoverReaderPayments).
   function keepReaderPayment(payment: CheckoutPayment) {
     if (readerId) keepPendingReaderSale({ readerId, order: orderFor(payment), memberName: member?.name ?? null, startedAt: Date.now() });
+  }
+  // A member's card on file, about to be charged (no reader, and the amount
+  // and tip are already final): kept the same way.
+  function keepCardOnFilePayment(payment: CheckoutPayment) {
+    keepPendingReaderSale({ readerId: readerId ?? "", order: orderFor(payment), memberName: member?.name ?? null, startedAt: Date.now(), final: true });
   }
 
   async function finalizeCheckout(payment: CheckoutPayment, note?: string) {
@@ -2449,6 +2475,9 @@ export default function PosApp({
           tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
           tabName={activeTab?.order_name ?? "Tab"}
           onReaderStarted={keepReaderPayment}
+          memberId={memberId}
+          cardOnFileLink={cofLink}
+          onCardOnFileStarted={keepCardOnFilePayment}
           onReaderCanceled={clearPendingReaderSale}
           onConfirm={finalizeCheckout}
           onCancel={() => setPayOpen(false)}

@@ -162,6 +162,49 @@ export interface RickrollState {
   playing: boolean;
 }
 
+// "Charge card on file" (pos/PaymentModal.tsx): the guest says yes on the
+// customer screen (display/customer/CardOnFileAsk.tsx) before their saved
+// card is charged. "cof-ask" (this) puts the question up; the screen answers
+// "cof-seen" ({ id }) at once, so the register knows it's there, and then
+// "cof-answer" (CardOnFileAnswer). "cof-end" ({ id }): it's over (charged,
+// declined, or staff cancelled), the question comes down.
+// tipBaseCents: the reader's tip suggestions are figured on this; missing
+// when the register isn't asking for a tip (already taken, or tips off).
+export interface CardOnFileAsk {
+  id: string;
+  amountCents: number; // before any tip
+  label: string; // "Visa ••4242"
+  tipBaseCents?: number | null;
+}
+
+export interface CardOnFileAnswer {
+  id: string;
+  yes: boolean;
+  tipCents: number;
+}
+
+// The reader's tip choices (pos/terminal-actions.ts askTipOnReader), so the
+// customer screen offers the same ones.
+export const TIP_PERCENTS = [15, 20, 25] as const;
+
+export function parseCardOnFileAsk(p: unknown): CardOnFileAsk | null {
+  if (!p || typeof p !== "object") return null;
+  const a = p as Partial<CardOnFileAsk>;
+  if (typeof a.id !== "string" || !a.id || a.id.length > 80) return null;
+  if (typeof a.amountCents !== "number" || !Number.isInteger(a.amountCents) || a.amountCents <= 0) return null;
+  const label = typeof a.label === "string" ? a.label.replace(/[^A-Za-z0-9 •.-]/g, "").slice(0, 40) : "";
+  const base = typeof a.tipBaseCents === "number" && Number.isInteger(a.tipBaseCents) && a.tipBaseCents > 0 ? a.tipBaseCents : null;
+  return { id: a.id, amountCents: a.amountCents, label: label || "your card", tipBaseCents: base };
+}
+
+export function parseCardOnFileAnswer(p: unknown): CardOnFileAnswer | null {
+  if (!p || typeof p !== "object") return null;
+  const a = p as Partial<CardOnFileAnswer>;
+  if (typeof a.id !== "string" || !a.id || typeof a.yes !== "boolean") return null;
+  const tip = typeof a.tipCents === "number" && Number.isInteger(a.tipCents) && a.tipCents >= 0 && a.tipCents <= 100_000 ? a.tipCents : 0;
+  return { id: a.id, yes: a.yes, tipCents: a.yes ? tip : 0 };
+}
+
 // Mail providers shown whole; any other domain is masked like the name.
 const COMMON_MAIL = new Set([
   "gmail.com",

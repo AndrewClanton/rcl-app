@@ -14,7 +14,8 @@ import Rickroll from "./Rickroll";
 import { AccountPanel, MemberActions, MemberCard, NeedsCardCard, PlusWelcomeCard, needsCard, type TabletMember } from "./MemberCards";
 import StaffSetupView, { parseSetup, type ShownSetup } from "./StaffSetupView";
 import PayOnReader from "./PayOnReader";
-import { parseReaderPrompt, parseTabletSound, type MemberOff, type ReaderPrompt, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
+import CardOnFileAsk from "./CardOnFileAsk";
+import { parseCardOnFileAsk, parseReaderPrompt, parseTabletSound, type CardOnFileAsk as CofAsk, type MemberOff, type ReaderPrompt, type RickrollState, type StaffSetup } from "@/lib/registerChannel";
 import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
@@ -137,6 +138,34 @@ export default function CustomerDisplay({
     const timer = setTimeout(() => setSetup((s) => (s && s.sent ? { ...s, sent: false } : s)), 10_000);
     return () => clearTimeout(timer);
   }, [setup]);
+
+  // "Charge card on file": the guest's yes (CardOnFileAsk.tsx). Seen is said
+  // at once, so the register knows this screen is up; one left behind (the
+  // register closed mid-way) goes after a few minutes.
+  const [cof, setCof] = useState<CofAsk | null>(null);
+  const onCofAsk = useCallback(
+    (p: unknown) => {
+      const ask = parseCardOnFileAsk(p);
+      if (!ask) return;
+      toRegister("cof-seen", { id: ask.id });
+      setCof((was) => (was?.id === ask.id ? was : ask));
+    },
+    [toRegister],
+  );
+  const onCofEnd = useCallback((id: unknown) => setCof((was) => (was && was.id === id ? null : was)), []);
+  useEffect(() => {
+    if (!cof) return;
+    const timer = setTimeout(() => setCof(null), 5 * 60_000);
+    return () => clearTimeout(timer);
+  }, [cof]);
+  const cofAnswer = useCallback(
+    (yes: boolean, tipCents: number) => {
+      if (!cof) return;
+      toRegister("cof-answer", { id: cof.id, yes, tipCents });
+      if (!yes) setCof(null);
+    },
+    [cof, toRegister],
+  );
 
   // "Done" or "That's not me" under their card: hidden at once (by the first
   // name the screen shows) while the register takes them off the order. If
@@ -323,6 +352,8 @@ export default function CustomerDisplay({
         })
         .on("broadcast", { event: "sound-test" }, () => playSound("approved"))
         .on("broadcast", { event: "card-approved" }, () => onCardApproved())
+        .on("broadcast", { event: "cof-ask" }, (msg) => onCofAsk(msg.payload))
+        .on("broadcast", { event: "cof-end" }, (msg) => onCofEnd(msg.payload?.id))
         .on("broadcast", { event: "paid" }, () => onPaid())
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
@@ -337,7 +368,7 @@ export default function CustomerDisplay({
       channelRef.current = null;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [registerTopic, onCart, onSetup, onSetupEnd, onCardApproved, onPaid]);
+  }, [registerTopic, onCart, onSetup, onSetupEnd, onCardApproved, onPaid, onCofAsk, onCofEnd]);
 
   // Browsers keep sound off until the page is tapped: the first tap on the
   // tablet turns it on, and any later one wakes it if the iPad let it sleep.
@@ -470,6 +501,7 @@ export default function CustomerDisplay({
         readerPrompt && <PayOnReader prompt={readerPrompt} cart={cart} />
       )}
       {setup && <StaffSetupView setup={setup} greet={greet} onOk={setupOk} />}
+      {cof && <CardOnFileAsk key={cof.id} ask={cof} onAnswer={cofAnswer} />}
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
       {version && (

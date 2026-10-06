@@ -1,20 +1,47 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
 import { READER_OFFLINE_MESSAGE } from "@/lib/terminal/reader-status";
 import { createReaderPayment, sendReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
+import { getMemberCardOnFile, startMemberCardCharge, confirmMemberCardCharge } from "./member-card-actions";
+import ManagerPinModal from "@/components/ManagerPinModal";
 import TipModal from "./TipModal";
 import { isStaleBuildError, STALE_BUILD_MESSAGE } from "@/lib/deployment";
 import InfoTip from "@/components/help/InfoTip";
-import type { ReaderPrompt } from "@/lib/registerChannel";
+import type { CardOnFileAnswer, ReaderPrompt } from "@/lib/registerChannel";
 
 // Split: the cash part is taken first (change worked out, like Cash), then
 // the rest goes to this register's card reader, and the sale is saved as
 // cash + card once the card goes through. It needs a reader, so a register
 // without one doesn't offer it. (Set false to hide it again.)
 const SPLIT_ENABLED = true;
+
+// The register's side of the customer screen's "Charge $12.34 to your Visa
+// ending 4242?" (lib/registerChannel.ts CardOnFileAsk): PosApp sends on its
+// channel and hands back what the screen answers.
+export interface CardOnFileListener {
+  seen: (id: string) => void;
+  answer: (a: CardOnFileAnswer) => void;
+}
+export interface CardOnFileLink {
+  send: (event: "cof-ask" | "cof-end", payload: object) => void;
+  listen: (h: CardOnFileListener | null) => void;
+}
+
+// No "seen" from the customer screen by then: it isn't up, so staff can ask
+// the guest out loud (with a manager's PIN).
+const COF_SEEN_MS = 4000;
+
+type CofConsent = { how: "tablet" } | { how: "verbal"; pin: string };
+type CofState =
+  | { phase: "asking"; id: string; quiet: boolean }
+  | { phase: "verbal-tip"; id: string }
+  | { phase: "verbal-pin"; id: string; tipCents: number }
+  | { phase: "charging"; id: string; tipCents: number }
+  | { phase: "retry"; id: string; tipCents: number; how: CofConsent["how"]; message: string }
+  | { phase: "failed"; message: string };
 
 // Stripe won't charge a card less than 50 cents.
 const MIN_CARD = 0.5;
@@ -264,7 +291,16 @@ export default function PaymentModal({
   readerDown = false,
   onReaderOffline,
   onReaderPrompt,
+  memberId = null,
+  cardOnFileLink,
+  onCardOnFileStarted,
 }: {
+  // The member on the order: their own saved card can be charged ("Charge
+  // card on file"), once they say yes on the customer screen.
+  memberId?: string | null;
+  cardOnFileLink?: CardOnFileLink;
+  // About to charge their card on file: kept like a reader payment.
+  onCardOnFileStarted?: (payment: CheckoutPayment) => void;
   // What the guest does on the reader right now, for the customer screen's
   // "Finish on the card reader" (null: nothing on the reader).
   onReaderPrompt?: (prompt: Omit<ReaderPrompt, "side"> | null) => void;
@@ -595,6 +631,225 @@ export default function PaymentModal({
     watchReaderPayment(paymentIntentId, split);
   }
 
+  // ---------- a member's card on file ----------
+  // Their saved card's label for the button, looked up when the payment
+  // screen opens (none: no button, they tap as usual).
+  const [memberCard, setMemberCard] = useState<{ memberId: string; label: string } | null>(null);
+  useEffect(() => {
+    if (!memberId) return;
+    let live = true;
+    getMemberCardOnFile(memberId).then(
+      (r) => {
+        if (live) setMemberCard(r ? { memberId, label: r.label } : null);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [memberId]);
+  const cofLabel = memberId && memberCard?.memberId === memberId ? memberCard.label : null;
+  const [cof, setCof] = useState<CofState | null>(null);
+  // The payment made for this yes (and tip), so Charge again confirms that
+  // one rather than making another.
+  const cofPiRef = useRef<{ key: string; pi: string } | null>(null);
+  const cofAskRef = useRef<string | null>(null);
+  // A tip is asked the way the reader would: not when it's already taken.
+  const cofTip = tipEligible !== null && !tipTaken;
+  const dueCents = Math.round(due * 100);
+
+  function endCofAsk() {
+    if (cofAskRef.current) cardOnFileLink?.send("cof-end", { id: cofAskRef.current });
+    cofAskRef.current = null;
+  }
+  useEffect(() => () => endCofAsk(), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function askCardOnFile() {
+    if (!cofLabel || onFile.busy) return;
+    endCofAsk();
+    const id = `cof-${crypto.randomUUID()}`;
+    cofAskRef.current = id;
+    cofPiRef.current = null;
+    setCof({ phase: "asking", id, quiet: !cardOnFileLink });
+    cardOnFileLink?.send("cof-ask", { id, amountCents: dueCents, label: cofLabel, tipBaseCents: cofTip ? tipBaseCents : null });
+    setTimeout(() => setCof((c) => (c?.phase === "asking" && c.id === id && cofAskRef.current === id && !seenRef.current.has(id) ? { ...c, quiet: true } : c)), COF_SEEN_MS);
+  }
+  const seenRef = useRef(new Set<string>());
+
+  const onCofSeen = useEffectEvent((id: string) => {
+    seenRef.current.add(id);
+    setCof((c) => (c?.phase === "asking" && c.id === id ? { ...c, quiet: false } : c));
+  });
+  const onCofAnswer = useEffectEvent((a: CardOnFileAnswer) => {
+    if (cof?.phase !== "asking" || cof.id !== a.id) return;
+    if (!a.yes) {
+      cofAskRef.current = null;
+      setCof({ phase: "failed", message: "The guest tapped No on the customer screen, so nothing was charged." });
+      return;
+    }
+    void chargeCardOnFile(cof.id, a.tipCents, { how: "tablet" });
+  });
+  useEffect(() => {
+    if (!cardOnFileLink) return;
+    cardOnFileLink.listen({ seen: (id) => onCofSeen(id), answer: (a) => onCofAnswer(a) });
+    return () => cardOnFileLink.listen(null);
+  }, [cardOnFileLink]);
+
+  // Charge it: make the payment (kept by the register first), then confirm
+  // it with the guest's yes. Returns the PIN's error for the PIN box.
+  async function chargeCardOnFile(id: string, tipCents: number, consent: CofConsent): Promise<string | null> {
+    if (!memberId || confirmedRef.current) return null;
+    const amountCents = dueCents + tipCents;
+    const key = `${id}:${tipCents}`;
+    if (consent.how === "tablet") setCof({ phase: "charging", id, tipCents });
+    let pi = cofPiRef.current?.key === key ? cofPiRef.current.pi : null;
+    if (!pi) {
+      const s = await startMemberCardCharge(memberId, amountCents, tipCents, id).catch(() => ({ ok: false as const, error: "Couldn't reach Stripe. Try again, or use the reader." }));
+      if (!s.ok) {
+        endCofAsk();
+        setCof({ phase: "failed", message: s.error });
+        return null;
+      }
+      pi = s.paymentIntentId;
+      cofPiRef.current = { key, pi };
+      onCardOnFileStarted?.({ method: "card", cash: 0, card: amountCents / 100, stripePaymentIntentId: pi, tip: tipCents / 100, ...withVoucher });
+    }
+    const r = await confirmMemberCardCharge(pi, consent).catch(() => ({ ok: false as const, error: "Couldn't hear back from Stripe. Tap Charge again: it won't charge twice." }));
+    if (r.ok) {
+      endCofAsk();
+      cofPiRef.current = null;
+      if (confirmedRef.current) return null;
+      confirmedRef.current = true;
+      // Like a reader sale: the card amount is everything charged, tip included.
+      onConfirm({ method: "card", cash: 0, card: r.amountCents / 100, stripePaymentIntentId: pi, tip: tipCents / 100, ...withVoucher });
+      return null;
+    }
+    if ("pin" in r && r.pin) return r.error;
+    if ("declined" in r && r.declined) {
+      endCofAsk();
+      cofPiRef.current = null;
+      onReaderCanceled?.(pi);
+      setCof({ phase: "failed", message: r.error });
+      return null;
+    }
+    setCof({ phase: "retry", id, tipCents, how: consent.how, message: r.error });
+    return null;
+  }
+
+  // Backing out: the question comes down, and a payment made for it (not
+  // charged) is canceled.
+  async function cancelCardOnFile() {
+    endCofAsk();
+    const made = cofPiRef.current;
+    cofPiRef.current = null;
+    setCof(null);
+    if (made) {
+      await cancelReaderPayment(made.pi, "").catch(() => {});
+      onReaderCanceled?.(made.pi);
+    }
+  }
+
+  if (cof) {
+    if (cof.phase === "verbal-tip") {
+      return (
+        <TipModal
+          subtotal={tipEligible ?? due}
+          tabName={tabName}
+          onConfirm={(tip) => setCof({ phase: "verbal-pin", id: cof.id, tipCents: Math.max(0, Math.round(tip * 100)) })}
+          onCancel={() => void cancelCardOnFile()}
+        />
+      );
+    }
+    if (cof.phase === "verbal-pin") {
+      return (
+        <ManagerPinModal
+          title="Guest said yes?"
+          description={`Charge ${money((dueCents + cof.tipCents) / 100)} to ${cofLabel ?? "their card on file"}. Only if the guest told you yes. A manager's PIN approves it.`}
+          onCancel={() => void cancelCardOnFile()}
+          onSubmit={async (pin) => {
+            const err = await chargeCardOnFile(cof.id, cof.tipCents, { how: "verbal", pin });
+            if (err) throw new Error(err);
+          }}
+        />
+      );
+    }
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+        <div className="card w-full max-w-xs text-center shadow-2xl">
+          {cof.phase === "asking" ? (
+            <>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                Asking the guest
+                <InfoTip topic="member-card-on-file" />
+              </h3>
+              <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+                On the customer screen: charge {money(due)}
+                {cofTip ? " plus a tip" : ""} to {cofLabel}?
+              </p>
+              {cof.quiet && (
+                <>
+                  <p className="notice notice-warn mt-3 !p-2 text-xs">The customer screen isn&apos;t answering. Ask the guest, and if they say yes, a manager approves it.</p>
+                  <button className="btn-primary mt-3 w-full" onClick={() => (cofTip ? setCof({ phase: "verbal-tip", id: cof.id }) : setCof({ phase: "verbal-pin", id: cof.id, tipCents: 0 }))}>
+                    Guest said yes
+                  </button>
+                </>
+              )}
+              <button className="mt-4 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={() => void cancelCardOnFile()}>
+                Cancel
+              </button>
+            </>
+          ) : cof.phase === "charging" ? (
+            <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+              Charging {cofLabel}...
+            </h3>
+          ) : cof.phase === "retry" ? (
+            <>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                No answer from Stripe
+              </h3>
+              <p className="mt-2 text-sm" style={{ color: "var(--danger-text)" }}>
+                {cof.message}
+              </p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  className="btn-primary"
+                  onClick={() => (cof.how === "tablet" ? void chargeCardOnFile(cof.id, cof.tipCents, { how: "tablet" }) : setCof({ phase: "verbal-pin", id: cof.id, tipCents: cof.tipCents }))}
+                >
+                  Charge again
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+                Not charged
+              </h3>
+              <p className="mt-2 text-sm" style={{ color: "var(--danger-text)" }}>
+                {cof.message}
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <button className="btn-secondary" onClick={() => setCof(null)}>
+                  Back
+                </button>
+                {readerId && (
+                  <button
+                    className="btn-primary"
+                    onClick={() => {
+                      setCof(null);
+                      void handleReaderCharge();
+                    }}
+                  >
+                    Use the reader
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (readerTip) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -835,6 +1090,11 @@ export default function PaymentModal({
           </p>
         )}
         <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {cofLabel && due >= MIN_CARD && (
+            <button className="btn-primary w-full px-4 py-2" onClick={askCardOnFile}>
+              Charge card on file · {cofLabel}
+            </button>
+          )}
           <button className="btn-secondary px-4 py-2" onClick={() => setCashOpen(true)}>
             Cash
           </button>
