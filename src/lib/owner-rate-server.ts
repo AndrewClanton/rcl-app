@@ -75,7 +75,9 @@ function recipeFacts(r: RecipeRow | undefined, ingredients: Map<string, { name: 
   const lines = r?.lines ?? [];
   const cost = recipeCost(lines.map((l) => ({ ingredientId: l.ingredient_id, quantity: Number(l.quantity), unitCost: ingredients.get(l.ingredient_id)?.unit_cost ?? null })));
   const missing = lines.filter((l) => ingredients.get(l.ingredient_id)?.unit_cost === null || ingredients.get(l.ingredient_id)?.unit_cost === undefined).map((l) => ingredients.get(l.ingredient_id)?.name ?? "an ingredient");
-  return { cost, complete: r?.cost_complete === true, lines: lines.length, missing };
+  // Costed when it has a recipe and every ingredient has a cost (the Bar Book
+  // costs). The old manual "cost is complete" tick no longer gates it.
+  return { cost, complete: lines.length > 0 && missing.length === 0 && cost !== null, lines: lines.length, missing };
 }
 
 // Every menu item's price and what it cost: the recipe's cost only when a
