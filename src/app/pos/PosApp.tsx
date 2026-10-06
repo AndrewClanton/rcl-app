@@ -894,7 +894,8 @@ export default function PosApp({
   }
 
   function updateQty(key: string, delta: number) {
-    setCart((prev) => prev.map((l) => (l.key === key ? { ...l, qty: Math.max(1, l.qty + delta) } : l)));
+    // Minus on the last one takes the line off, same as the ×.
+    setCart((prev) => prev.flatMap((l) => (l.key !== key ? [l] : l.qty + delta <= 0 ? [] : [{ ...l, qty: l.qty + delta }])));
   }
 
   function removeLine(key: string) {
