@@ -215,7 +215,7 @@ export async function getCardPaymentsWithNoSale(date: string): Promise<OrphansRe
         at: new Date(pi.created * 1000).toISOString(),
         amount: (pi.amount_received || pi.amount) / 100,
         tip: (pi.amount_details?.tip?.amount ?? 0) / 100,
-        source: pi.metadata?.source === "pos-tab" ? ("Card on file" as const) : ("Reader" as const),
+        source: pi.metadata?.source === "pos-tab" || pi.metadata?.card_on_file === "member" ?("Card on file" as const) : ("Reader" as const),
         card: cardLabel(charge),
         refunded: (charge?.amount_refunded ?? 0) / 100,
         voidedOrder: voided ? voided.number : null,

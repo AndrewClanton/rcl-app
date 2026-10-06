@@ -203,6 +203,12 @@ export const HELP_TOPICS = {
     body:
       "When a tab opens, the customer can tap their card on the reader and Stripe saves it. Nothing is charged then. When the tab closes, \"Charge card on file\" charges the final total and tip to that card with no second tap, then takes the card off file. It's there for the person who wanders off without closing out.",
   },
+  "member-card-on-file": {
+    title: "Charging a member's card on file",
+    area: "Register: payments",
+    body:
+      "When the member on the order has a saved card (the one their Insiders+ bills), Take payment shows \"Charge card on file · Visa ••4242\". Tap it and the customer screen asks them: \"Charge $12.34 to your Visa ending 4242?\", with the reader's tip choices first if a tip is being asked. They tap \"Yes, charge it\" and it's charged, no tap needed. That yes is their OK, and it stops a charge to the wrong member. If the customer screen isn't up, ask them out loud; if they say yes, tap \"Guest said yes\" and a manager enters their PIN (it's logged which way they said yes). Declined, or their bank wants them to approve it: nothing is charged, so use the reader. It's a card sale like any other: receipt, points, discounts, Reports and refunds all work the same.",
+  },
   "manager-pin": {
     title: "Why this needs a manager PIN",
     area: "Register: payments",

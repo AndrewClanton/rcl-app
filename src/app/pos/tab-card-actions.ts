@@ -2,6 +2,7 @@
 
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
+import { chargeSavedCard } from "@/lib/saved-card-charge";
 import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { revalidatePath } from "next/cache";
@@ -134,20 +135,13 @@ export async function chargeTabCard(tabId: string, amountCents: number): Promise
   }
   if (earlier?.status === "processing") return { ok: false, error: "This tab's card is still being charged. Wait a moment, then tap Charge again: it won't charge twice." };
   if (earlier) return { ok: true, paymentIntentId: earlier.id, amountCents: earlier.amount_received, already: true };
-  try {
-    const pi = await getStripe().paymentIntents.create({
-      amount: amountCents,
-      currency: "usd",
-      customer: tab.tab_card_customer_id,
-      payment_method: tab.tab_card_payment_method_id,
-      payment_method_types: ["card"],
-      off_session: true,
-      confirm: true,
-      metadata: { source: "pos-tab", tab_id: tabId },
-    });
-    if (pi.status !== "succeeded") return { ok: false, error: "The card on file didn't go through. Ask for another way to pay." };
-    return { ok: true, paymentIntentId: pi.id, amountCents: pi.amount_received };
-  } catch (e) {
-    return { ok: false, error: `${stripeMessage(e, "The card on file was declined.")} Ask for another way to pay.` };
-  }
+  const r = await chargeSavedCard({
+    amountCents,
+    customerId: tab.tab_card_customer_id,
+    paymentMethodId: tab.tab_card_payment_method_id,
+    customerPresent: false,
+    metadata: { source: "pos-tab", tab_id: tabId },
+  });
+  if (!r.ok) return { ok: false, error: r.declined ? `${r.error} Ask for another way to pay.` : "Couldn't hear back from Stripe. Tap Charge again: it won't charge twice." };
+  return { ok: true, paymentIntentId: r.paymentIntent.id, amountCents: r.paymentIntent.amount_received };
 }
