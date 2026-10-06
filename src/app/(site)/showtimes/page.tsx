@@ -109,7 +109,7 @@ function weekendKeys(now = Date.now()): Set<string> {
 function FilmRow({ film, membersOnly = false }: { film: Film; membersOnly?: boolean }) {
   return (
     <li className="grid grid-cols-[56px_1fr] gap-4 border-b border-[var(--border)] p-4 last:border-b-0 sm:grid-cols-[72px_1fr] sm:p-5">
-      <Link href={`/showtimes/${film.showings[0].id}`} className="block overflow-hidden rounded-[3px] border-2 border-[var(--foreground)]">
+      <Link href={`/showtimes/${film.showings[0].id}`} className="block self-start overflow-hidden rounded-[3px] border-2 border-[var(--foreground)] [&_.poster-frame]:rounded-none">
         <MoviePoster posterUrl={film.movie.poster_url} title={film.movie.title} sizes="72px" />
       </Link>
       <div className="min-w-0">
