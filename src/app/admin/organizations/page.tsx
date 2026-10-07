@@ -63,7 +63,7 @@ export default async function OrganizationsPage() {
         <h2 className="mb-3 text-lg font-semibold">New organization</h2>
         <OrgEditor
           id={null}
-          initial={{ name: "", contactName: "", contactEmail: "", monthlyFee: DEFAULT_MONTHLY_FEE, dailyCompLimit: DEFAULT_DAILY_COMP_LIMIT, status: "active", notes: "" }}
+          initial={{ name: "", contactName: "", contactEmail: "", monthlyFee: DEFAULT_MONTHLY_FEE, dailyCompLimit: DEFAULT_DAILY_COMP_LIMIT, status: "active", notes: "", impactCategory: "disabilities" }}
         />
       </section>
     </div>

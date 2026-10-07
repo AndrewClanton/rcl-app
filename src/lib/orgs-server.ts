@@ -18,6 +18,7 @@ import {
   type OrgRole,
   type OrgStatus,
 } from "@/lib/orgs";
+import type { ImpactCategory } from "@/lib/org-invoices";
 
 // Organization accounts on the server (lib/orgs.ts has the rules): who's in
 // one, today's comps, the comps a sale gets, and logging them. Guests with
@@ -35,10 +36,13 @@ export interface OrgRow {
   stripe_subscription_id: string | null;
   invite_code: string;
   notes: string | null;
+  // Who the Royale Cinema Project serves through it (Community impact).
+  impact_category: ImpactCategory;
   created_at: string;
 }
 
-export const ORG_COLUMNS = "id, name, contact_name, contact_email, monthly_fee, daily_comp_limit, status, stripe_customer_id, stripe_subscription_id, invite_code, notes, created_at";
+export const ORG_COLUMNS =
+  "id, name, contact_name, contact_email, monthly_fee, daily_comp_limit, status, stripe_customer_id, stripe_subscription_id, invite_code, notes, impact_category, created_at";
 
 // Today's business date: the same day the Insiders+ daily coffee counts.
 export const orgDay = (now = new Date()) => coffeeDay(now);

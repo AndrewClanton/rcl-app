@@ -47,6 +47,9 @@ export default async function OrgStatementPage({ params, searchParams }: { param
             <Link className="btn-secondary" href={`?month=${shift(month, 1)}`}>
               Later →
             </Link>
+            <Link className="btn-primary" href={`/admin/organizations/${id}/invoice?month=${month}`}>
+              Invoice
+            </Link>
           </div>
         }
       />
