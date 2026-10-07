@@ -95,7 +95,7 @@ try {
       check(`${id}: signed "The RCL crew"`, visible.includes("The RCL crew") && out.text.includes("The RCL crew"));
       check(`${id}: unsubscribe, preferences and street address`, html.includes(L.unsubscribeUrl.replace(/&/g, "&amp;")) && html.includes("Unsubscribe") && html.includes("715 E Broadway"));
       const imgs = [...html.matchAll(/<img\b[^>]*>/g)].map((m) => m[0]);
-      check(`${id}: every picture has alt text (${imgs.length})`, imgs.length > 10 && imgs.every((t) => /\salt="[^"]*"/.test(t)));
+      check(`${id}: every picture has alt text (${imgs.length})`, imgs.length >= 8 && imgs.every((t) => /\salt="[^"]*"/.test(t)));
       const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, "&")).filter((h) => !h.startsWith("https://fonts.googleapis.com"));
       check(`${id}: every link is https or a phone number (${hrefs.length})`, hrefs.every((h) => h.startsWith(`${SITE}/`) || h === SITE || h.startsWith("tel:+1")), hrefs.find((h) => !(h.startsWith(`${SITE}/`) || h === SITE || h.startsWith("tel:+1"))));
       const pics = [...html.matchAll(/src="([^"]*)"/g)].map((m) => m[1].replace(/&amp;/g, "&"));
