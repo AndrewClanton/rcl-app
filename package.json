@@ -17,6 +17,7 @@
     "qrcode": "^1.5.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "read-excel-file": "9.3.10",
     "server-only": "^0.0.1",
     "sharp": "^0.35.5",
     "stripe": "^22.6.2"

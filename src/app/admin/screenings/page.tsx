@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getMovies } from "@/lib/data/movies";
 import { getRooms } from "@/lib/data/rooms";
 import { getTicketCounts, getUpcomingScreenings } from "@/lib/data/screenings";
@@ -23,6 +24,13 @@ export default async function AdminScreeningsPage() {
         area="shows"
         title="Showtimes"
         purpose="Add movies, schedule showings and see how many tickets each has sold. House events (trivia, comedy, the book swap) are at the bottom."
+        actions={
+          canEdit ? (
+            <Link href="/admin/screenings/sync" className="btn-secondary inline-flex min-h-11 items-center text-base">
+              Sync from calendar
+            </Link>
+          ) : undefined
+        }
       />
       {!canEdit && (
         <p className="notice mb-4 text-sm">You can look up showings and who has tickets here. Adding, moving or removing a showing or a house event takes a manager.</p>
