@@ -61,6 +61,27 @@ function bullets(items: string[], color = INK) {
   return `<ul style="margin:0;padding-left:18px;font:15px/1.5 Arial,Helvetica,sans-serif;color:${color}">${items.map((i) => `<li style="margin:0 0 6px">${esc(i)}</li>`).join("")}</ul>`;
 }
 
+// Dev notes: the real ones listed (what, who, page), the register's
+// custom-item auto-notes as one summary line, all linked to Back office →
+// Dev notes. A day with nothing new is one quiet line.
+function devNotesSection(n: NonNullable<DailyDigest["devNotes"]>, url: string) {
+  const href = esc(url);
+  if (!n.notes.length && !n.custom.length) {
+    return `<p style="margin:0;font:14px/1.5 Arial,sans-serif;color:${MUTED}">No new notes · <a href="${href}" style="color:${MUTED}">${n.open} open</a></p>`;
+  }
+  const head = `<p style="margin:0 0 6px;font:14px/1.5 Arial,sans-serif;color:${MUTED}">${n.notes.length} new today · ${n.open} open · <a href="${href}" style="color:${RED};font-weight:700">Open Dev notes</a></p>`;
+  const list = n.notes
+    .map(
+      (x) =>
+        `<tr><td style="padding:6px 0;border-bottom:1px solid ${RULE}"><a href="${href}" style="color:${INK};text-decoration:none;font:15px/1.5 Arial,Helvetica,sans-serif">${esc(x.message)}</a><div style="font:13px/1.4 Arial,sans-serif;color:${MUTED}">${esc(x.by ?? "Someone")} · ${esc(x.page)} · ${esc(x.time)}</div></td></tr>`,
+    )
+    .join("");
+  const custom = n.custom.length
+    ? `<p style="margin:8px 0 0;font:14px/1.5 Arial,sans-serif;color:${MUTED}"><a href="${href}" style="color:${MUTED};text-decoration:none"><strong>Custom items:</strong> ${esc(n.custom.map((c) => `${c.name} ×${c.count} (${money(c.total)})`).join(", "))}</a></p>`
+    : "";
+  return `${head}${list ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">${list}</table>` : ""}${custom}`;
+}
+
 export function dailyDigestSubject(d: DailyDigest) {
   const orders = d.day.orders.filter((o) => o.status === "completed" && !o.ownerTab).length;
   return `RCL ${d.label}: ${money(d.day.collected)} in, ${orders} order${orders === 1 ? "" : "s"}, ${d.day.ticketsSold} ticket${d.day.ticketsSold === 1 ? "" : "s"}`;
@@ -118,6 +139,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
       : "",
     d.good.length ? section("Good news", bullets(d.good)) : "",
     d.watch.length ? section("Worth a look", bullets(d.watch, INK)) : "",
+    d.devNotes ? section("Dev notes", devNotesSection(d.devNotes, `${new URL(reportUrl).origin}/admin/dev-notes`)) : "",
     d.ranOut?.length
       ? section(
           "Ran out today",

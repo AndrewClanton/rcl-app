@@ -10,6 +10,7 @@ import { exactEmail, sameEmail } from "@/lib/email-match";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { allowFromConnection, checkHuman, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import { closedDayError } from "@/lib/closed-days-server";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 export async function getAvailabilityForDate(date: string): Promise<BoothBusy[]> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
@@ -26,7 +27,7 @@ function todayCentral() {
 }
 
 // [start, end) bounds for the calendar month that `dateStr` (YYYY-MM-DD)
-// falls in -- used to cap Insiders+ free reservations at 2 per month, by
+// falls in -- used to cap Insiders+ free reservations at FREE_BOOTHS_PER_MONTH per month, by
 // the month the reservation is FOR (not the month it was booked in).
 function monthBounds(dateStr: string) {
   const [y, m] = dateStr.split("-").map(Number);
@@ -35,7 +36,7 @@ function monthBounds(dateStr: string) {
   return { start, end };
 }
 
-const FREE_RESERVATIONS_PER_MONTH = 2;
+
 
 export interface StartBoothCheckoutFields {
   boothId: string;
@@ -121,7 +122,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
   const member = perkMember ?? byEmail;
   const origin = await siteOrigin();
 
-  // Insiders+ perk: 2 free booth reservations per calendar month (counted
+  // Insiders+ perk: FREE_BOOTHS_PER_MONTH free booth reservations per calendar month (counted
   // by the month the reservation is FOR), same "skip Stripe, confirm
   // immediately" pattern as Insiders+ free screening entry.
   if (perkMember) {
@@ -136,7 +137,7 @@ export async function startBoothCheckout(fields: StartBoothCheckoutFields): Prom
       .lt("reservation_date", end);
     if (countErr) throw countErr;
 
-    if ((count ?? 0) < FREE_RESERVATIONS_PER_MONTH) {
+    if ((count ?? 0) < FREE_BOOTHS_PER_MONTH) {
       // No card in the way on this path, so it gets the bot check.
       const notHuman = checkHuman("booths", fields);
       if (notHuman) return { ok: false, error: notHuman };

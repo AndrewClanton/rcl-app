@@ -9,6 +9,7 @@ import { getSignedInMember } from "@/lib/member-auth";
 import { hasPlusPerks } from "@/lib/plus-checkout";
 import { issueFormToken } from "@/lib/public-form-guard";
 import { nextOpenDate } from "@/lib/closed-days";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 // Per request: today's open times, the checkout result and the visitor's own
 // details (and Insiders+ free reservations) are all on this page.
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata = pageMeta({
   title: "Reserve a Booth",
-  description: "Reserve one of our 8 lounge booths for a two-hour window and pay online to hold your spot. Insiders+ members get 2 free reservations a month.",
+  description: `Reserve one of our 8 lounge booths for a two-hour window and pay online to hold your spot. Insiders+ members get ${FREE_BOOTHS_PER_MONTH} free reservations a month.`,
   path: "/booths",
 });
 
@@ -71,11 +72,11 @@ export default async function BoothsPage({
           <>
             Pick a booth below to hold it for a two-hour window with a flat reservation fee. Food, drinks, and any movie tickets are ordered separately once you&apos;re seated.{" "}
             {me?.plus ? (
-              <strong className="text-[var(--foreground)]">Your Insiders+ includes 2 free reservations every month.</strong>
+              <strong className="text-[var(--foreground)]">Your Insiders+ includes {FREE_BOOTHS_PER_MONTH} free reservations every month.</strong>
             ) : (
               <>
                 <PlusLink next="/booths" className="font-bold text-[var(--accent)] hover:underline">
-                  Insiders+ members get 2 free reservations every month
+                  Insiders+ members get {FREE_BOOTHS_PER_MONTH} free reservations every month
                 </PlusLink>
                 .
               </>

@@ -31,6 +31,51 @@ export interface DailyDigest {
   ranOut: { what: string; time: string; by: string | null; status: string; bought: boolean }[];
   // Organization comps that day, by organization (lib/orgs.ts).
   orgComps?: { name: string; people: number; value: number }[];
+  // Dev notes left that business day (Back office → Dev notes). The
+  // register's auto-filed "Custom item rung up" notes are summed up by
+  // item name in `custom` instead of listed one by one.
+  devNotes?: DigestDevNotes;
+}
+
+export interface DigestDevNotes {
+  notes: { by: string | null; page: string; message: string; time: string }[];
+  open: number; // real notes still 'new' or 'approved', any day
+  custom: { name: string; count: number; total: number }[];
+}
+
+// The register's auto-note (pos/actions.ts): `Custom item rung up on order
+// #N: "X" $Y, "Z" (recipe) $W. Should the register have…`
+export const CUSTOM_ITEM_NOTE = /^Custom item rung up on order #/;
+export function customNoteItems(message: string): { name: string; total: number }[] {
+  const out: { name: string; total: number }[] = [];
+  for (const m of message.matchAll(/"([^"]+)"(?: \([^)]*\))? \$(\d+(?:\.\d+)?)/g)) out.push({ name: m[1].trim(), total: Number(m[2]) });
+  return out;
+}
+
+// Real notes listed; custom-item auto-notes summed per item name.
+export function summarizeDevNotes(
+  rows: { page_path: string; message: string; created_at: string; submitted_by: { name: string } | null }[],
+  openMessages: string[],
+): DigestDevNotes {
+  const custom = new Map<string, { name: string; count: number; total: number }>();
+  const notes: DigestDevNotes["notes"] = [];
+  for (const n of rows) {
+    if (CUSTOM_ITEM_NOTE.test(n.message)) {
+      for (const i of customNoteItems(n.message)) {
+        const c = custom.get(i.name.toLowerCase()) ?? { name: i.name, count: 0, total: 0 };
+        c.count += 1;
+        c.total += i.total;
+        custom.set(i.name.toLowerCase(), c);
+      }
+    } else {
+      notes.push({ by: n.submitted_by?.name?.split(" ")[0] ?? null, page: n.page_path, message: n.message, time: clock(n.created_at) });
+    }
+  }
+  return {
+    notes,
+    open: openMessages.filter((m) => !CUSTOM_ITEM_NOTE.test(m)).length,
+    custom: [...custom.values()].sort((a, b) => b.count - a.count || b.total - a.total),
+  };
 }
 
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -163,9 +208,17 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     if (low.length) watch.push(`Below par on the day's par count: ${low.slice(0, 8).map((x) => `${x.name} (${qtyLabel(x.l.qty)}/${qtyLabel(x.l.par)})`).join(", ")}${low.length > 8 ? ` and ${low.length - 8} more` : ""}. It's on the shopping list.`);
   });
 
-  await safely(undefined, async () => {
-    const { count } = await supabase.from("dev_notes").select("id", { count: "exact", head: true }).gte("created_at", start).lt("created_at", end);
-    if (count) watch.push(`${count} new dev note${count === 1 ? "" : "s"} to review in the back office.`);
+  // Business-day windows meet end to end, so each note lands in exactly one digest.
+  const devNotes = await safely(undefined as DigestDevNotes | undefined, async () => {
+    const [{ data, error }, { data: open, error: openError }] = await Promise.all([
+      supabase.from("dev_notes").select("page_path, message, created_at, submitted_by:employees(name)").gte("created_at", start).lt("created_at", end).order("created_at"),
+      supabase.from("dev_notes").select("message").in("status", ["new", "approved"]),
+    ]);
+    if (error || openError) return undefined;
+    return summarizeDevNotes(
+      (data ?? []) as unknown as Parameters<typeof summarizeDevNotes>[0],
+      (open ?? []).map((n) => n.message as string),
+    );
   });
 
   // ---------- ran out (the register's "Ran out" button) ----------
@@ -262,5 +315,6 @@ export async function buildDailyDigest(date: string): Promise<DailyDigest> {
     orgComps: await safely([] as { name: string; people: number; value: number }[], async () =>
       (await compsByOrg(date, date)).map((o) => ({ name: o.name, people: o.people, value: o.value })),
     ),
+    devNotes,
   };
 }
