@@ -13,6 +13,7 @@ import PlusLink from "@/components/PlusLink";
 import MembershipForm from "./MembershipForm";
 import { issueFormToken } from "@/lib/public-form-guard";
 import { PageMasthead, SpecFoot, Starburst } from "@/components/print";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 // Per request: the checkout result and the signed-in member's own plan are
 // on this page.
@@ -151,7 +152,7 @@ export default async function MembershipPage({
             <Perk>{DAILY_COFFEE_PERK}</Perk>
             <Perk>
               <Link href="/booths" className="underline decoration-2 underline-offset-2">
-                2 free booth reservations
+                {FREE_BOOTHS_PER_MONTH} free booth reservations
               </Link>{" "}
               every month
             </Perk>

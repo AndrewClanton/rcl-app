@@ -149,7 +149,7 @@ ${perkRows(
 ${eyebrow("Insiders+", C.gold)}
 <h2 class="h2" style="margin:0;padding-top:10px;font-family:${DISPLAY};font-size:29px;line-height:33px;font-weight:400;color:${C.cream};">Stop buying tickets. Walk in free, every time.</h2>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;">
-${["Free entry to every screening", "2 free booth reservations a month", "Concession &amp; merch discounts", "First access to special events"]
+${["Free entry to every screening", "4 free booth reservations a month", "Concession &amp; merch discounts", "First access to special events"]
   .map((t) => `<tr><td width="22" valign="top" style="width:22px;padding:5px 0;font-family:${BODY};font-size:16px;line-height:22px;color:${C.gold};font-weight:700;">&#10003;</td><td style="padding:5px 0;font-family:${BODY};font-size:16px;line-height:22px;color:${C.cream};">${t}</td></tr>`)
   .join("")}
 </table>

@@ -12,6 +12,7 @@ import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
 import type { DailyCoffeeState } from "@/lib/daily-perk";
 import { BoothStub, Empty, Panel, PurchaseRows, SectionHead, STACK, TAP, TicketStub } from "./ui";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 export default function OverviewView({
   member,
@@ -218,7 +219,7 @@ export default function OverviewView({
             <span className="ctag ctag-yellow">Insiders+</span>
             <p className="font-display mt-3 text-2xl text-[var(--gold)]">Walk in free, every time.</p>
             <p className="mt-1 max-w-[56ch] text-[15px] opacity-85">
-              Unlimited screenings, a free black coffee or hot tea every day, 2 free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or{" "}
+              Unlimited screenings, a free black coffee or hot tea every day, ${FREE_BOOTHS_PER_MONTH} free booth reservations a month, and member discounts, for ${RATE_PRICE[rate]}/month, or{" "}
               {dollars(ANNUAL_PRICE[rate])}/year (save 15%).
             </p>
           </div>

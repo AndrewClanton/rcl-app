@@ -17,6 +17,7 @@ import { pressPlay } from "./press-play";
 import { royaleIsHere } from "./royale-is-here";
 import type { DesignLinks, DesignOut, DesignRecipient } from "./shared";
 import type { ArtKind, DesignKey } from "./types";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 export { DESIGN_KEYS, isDesignKey, type DesignKey } from "./types";
 export type { DesignRecipient } from "./shared";
@@ -65,7 +66,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     kind: "offer",
     category: "offers",
     subject: "{first name}, your next night at Royale Cinema",
-    preheader: "Insiders+ is $15 a month: every movie free, 10% off, a free coffee or tea every day and 2 free booths.",
+    preheader: `Insiders+ is $15 a month: every movie free, 10% off, a free coffee or tea every day and ${FREE_BOOTHS_PER_MONTH} free booths.`,
     audience: { include: [{ r: "all" }], order: "engaged" },
     who: "Everyone with an email who gets offers and Insiders+ news from us (anyone who turned those off, or all email off, is left out).",
     outcome: { key: "signed_in", label: "Signed in", about: "Had no website login when it went, and have one now" },
