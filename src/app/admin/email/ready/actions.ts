@@ -18,6 +18,8 @@ import {
   NO_HOLD,
   oneWaveADay,
   recallCampaign,
+  releaseEveryone,
+  releaseEveryoneLater,
   replyTo,
   runCampaign,
   sendingGate,
@@ -35,7 +37,8 @@ import { listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "@/lib/em
 import { DESIGNS, isDesignKey } from "@/lib/email/designs";
 import { sealArtName } from "@/lib/email/designs/art-token";
 import { designCampaign, picturesReady } from "@/lib/email/designs/ready";
-import { getWaveMode, roomToday, saveSendPlan, saveWaveMode, saveWaveSize, waveCanGoToday } from "@/lib/email/send-plan";
+import { getSendPlan, getWaveMode, roomForEveryone, roomToday, saveSendPlan, saveWaveMode, saveWaveSize, waveCanGoToday } from "@/lib/email/send-plan";
+import { inSendWindow } from "@/lib/email/timing";
 import { designTestKey, recordTest } from "../_studio/tests-log";
 
 // Back office -> Email -> Ready to send. Managers and up (the screen is
@@ -139,9 +142,26 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
 // admin set waves to go by themselves, on the morning email runs. One
 // wave a day at most (campaign-send.ts nextWaveAfter). The wave a press
 // starts can be undone for a minute (/api/email/undo).
-export async function sendDesign(key: string, sendKey: string): Promise<Result<{ message: string }>> {
+export type SendHow = "waves" | "everyone";
+
+// "Send to everyone now" can go only while email goes out, and only while
+// the day's cap has room.
+async function everyoneRefusal(now: Date): Promise<string | null> {
+  if (!inSendWindow(now)) return "Email only goes out 9 AM to 7 PM, Monday to Saturday. Send to everyone then.";
+  if ((await roomForEveryone(now)) <= 0) return "Today's limit for member email has been reached (Email, Settings sets it). It can go tomorrow (not Sunday).";
+  return null;
+}
+
+// "Going to 2,000 people at 10:42 AM. You have a minute to undo it."
+function heldMessage(n: number, note: string | null): string {
+  const at = note?.match(/ at (\d{1,2}:\d{2} [AP]M)/)?.[1];
+  return `Going to ${n.toLocaleString("en-US")} people${at ? ` at ${at}` : " in about 2 minutes"}. You have a minute to undo it. Once it starts going out it can't be spread out (Pause stops what hasn't gone).`;
+}
+
+export async function sendDesign(key: string, sendKey: string, how: SendHow = "waves"): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
-  if (!isDesignKey(key) || !UUID.test(sendKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  if (!isDesignKey(key) || !UUID.test(sendKey ?? "") || (how !== "waves" && how !== "everyone")) return { ok: false, error: "Reload the page and try again." };
+  const everyone = how === "everyone";
   const notSender = await senderRefusal(staff);
   if (notSender) return { ok: false, error: notSender };
   const gate = await sendingGate();
@@ -161,6 +181,8 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
   // Sent again the same day as its last wave: that wave's results first.
   const next = c ? nextWaveAfter(await lastWave(c.id), new Date()) : null;
   if (next) return { ok: false, error: oneWaveADay(next) };
+  const notNow = everyone ? await everyoneRefusal(new Date()) : null;
+  if (notNow) return { ok: false, error: notNow };
 
   const fields = {
     kind: d.kind,
@@ -182,7 +204,7 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
   if (!c) {
     const { data, error } = await admin
       .from("email_campaigns")
-      .insert({ ...fields, content: { blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, firstWave: true } }, created_by: staff.employeeId })
+      .insert({ ...fields, content: { blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, firstWave: !everyone } }, created_by: staff.employeeId })
       .select("id")
       .single();
     if (error || !data) return { ok: false, error: "Couldn't start it. Try again." };
@@ -194,7 +216,7 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
     const brakeOk = ((c.content as { pace?: Pace }).pace ?? {}).brakeOk ?? null;
     const { data, error } = await admin
       .from("email_campaigns")
-      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, brakeOk, firstWave: true } } })
+      .update({ ...fields, content: { ...c.content, blocks: [{ t: "design", key }], design: key, pace: { go: now, goKey: sendKey, brakeOk, firstWave: !everyone } } })
       .eq("id", c.id)
       .in("status", ["sent", "failed"])
       .select("id");
@@ -208,10 +230,14 @@ export async function sendDesign(key: string, sendKey: string): Promise<Result<{
     revalidate();
     return { ok: false, error: lint ? `Something's wrong with the email: ${lint.errors[0]}` : "Couldn't check the email. Try again." };
   }
-  const r = await runCampaign(id, Date.now() + 240_000, new Date(), { press: { key: sendKey, before: undoSnapshot(c), first: true } });
+  const r = await runCampaign(id, Date.now() + 240_000, new Date(), { press: { key: sendKey, before: undoSnapshot(c), first: true, everyone } });
   revalidate();
   const undone = await undoneNote(id, sendKey);
   if (undone) return { ok: true, message: undone };
+  if (r.held) {
+    releaseEveryoneLater(id, sendKey);
+    return { ok: true, message: heldMessage(r.held, r.note) };
+  }
   if (r.status === "paused") return { ok: false, error: (await pausedWhy(id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody new to send it to: everyone it's for has had it." };
   if (!r.submitted) return { ok: true, message: (await paceNote(id)) ?? `Nothing handed over just now.${await restNote(r)}` };
@@ -262,9 +288,10 @@ async function restNote(r: { status: string; note: string | null }): Promise<str
 // Staff press "Send the next wave": one more wave, the next most engaged,
 // as many as today's share allows, one wave a day at most. `pageKey` is
 // fresh each page load, so a double click sends one wave.
-export async function sendNextWave(key: string, pageKey: string): Promise<Result<{ message: string }>> {
+export async function sendNextWave(key: string, pageKey: string, how: SendHow = "waves"): Promise<Result<{ message: string }>> {
   const staff = await assertManager();
-  if (!isDesignKey(key) || !UUID.test(pageKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  if (!isDesignKey(key) || !UUID.test(pageKey ?? "") || (how !== "waves" && how !== "everyone")) return { ok: false, error: "Reload the page and try again." };
+  const everyone = how === "everyone";
   const notSender = await senderRefusal(staff);
   if (notSender) return { ok: false, error: notSender };
   const gate = await sendingGate();
@@ -292,7 +319,8 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
   const { count: waiting } = await admin.from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", c.id).eq("status", "queued");
   if (waiting) return { ok: false, error: "The last wave is still going out. Try again in a few minutes." };
   if (!waveCanGoToday(now)) return { ok: false, error: "Email only goes out 9 AM to 7 PM, Monday to Saturday. Try again then." };
-  if ((await roomToday(now)) <= 0) return { ok: false, error: "Today's share of our email plan has gone. The next wave can go tomorrow (not Sunday)." };
+  const notNow = everyone ? await everyoneRefusal(now) : (await roomToday(now)) <= 0 ? "Today's share of our email plan has gone. The next wave can go tomorrow (not Sunday)." : null;
+  if (notNow) return { ok: false, error: notNow };
   const { data, error } = await admin
     .from("email_campaigns")
     .update({ content: { ...c.content, pace: { ...pace, go: now.toISOString(), goKey: pageKey } }, scheduled_for: now.toISOString(), updated_at: now.toISOString() })
@@ -301,10 +329,14 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
     .in("status", ["scheduled", "sending"])
     .select("id");
   if (error || !data?.length) return { ok: false, error: "Couldn't start the next wave. Reload the page and try again." };
-  const r = await runCampaign(c.id, Date.now() + 240_000, new Date(), { press: { key: pageKey, before: undoSnapshot(c), first: false } });
+  const r = await runCampaign(c.id, Date.now() + 240_000, new Date(), { press: { key: pageKey, before: undoSnapshot(c), first: false, everyone } });
   revalidate();
   const undone = await undoneNote(c.id, pageKey);
   if (undone) return { ok: true, message: undone };
+  if (r.held) {
+    releaseEveryoneLater(c.id, pageKey);
+    return { ok: true, message: heldMessage(r.held, r.note) };
+  }
   if (r.status === "paused") return { ok: false, error: (await pausedWhy(c.id)) ?? r.note ?? "It paused. Reload the page to see why." };
   if (!r.ran) return { ok: false, error: r.note ?? "Couldn't send it just now. Try again in a minute." };
   if (!r.submitted && r.status === "sent") return { ok: true, message: "Nobody left to send it to: everyone it's for has had it." };
@@ -313,6 +345,25 @@ export async function sendNextWave(key: string, pageKey: string): Promise<Result
 }
 
 const UNDO_UNDER_WAY = "Undo is calling back the last wave. Reload the page in a moment.";
+
+// ---------- send to everyone now: the hand-over ----------
+// The page asks for this when the minute to undo is over (the press's own
+// run does it too, in the background; whichever comes first sends, the
+// other finds nothing left). Also "Hand over the rest" when a run ran out of
+// time with some still queued.
+export async function finishEveryone(key: string, undoKey: string): Promise<Result<{ message: string }>> {
+  const staff = await assertManager();
+  if (!isDesignKey(key) || !UUID.test(undoKey ?? "")) return { ok: false, error: "Reload the page and try again." };
+  const notSender = await senderRefusal(staff);
+  if (notSender) return { ok: false, error: notSender };
+  const c = await designCampaign(key);
+  if (!c) return { ok: false, error: "Reload the page and try again." };
+  const r = await releaseEveryone(c.id, undoKey).catch((e) => ({ note: e instanceof Error ? e.message : "Something went wrong.", submitted: 0, status: "?" }));
+  revalidate();
+  if (!r) return { ok: true, message: "It's on its way." };
+  if (r.status === "paused") return { ok: false, error: (await pausedWhy(c.id)) ?? r.note ?? "It paused. Reload the page to see why." };
+  return { ok: true, message: r.submitted ? `${r.submitted.toLocaleString("en-US")} handed to Resend.` : (r.note ?? "It's on its way.") };
+}
 
 // ---------- pause and carry on ----------
 // Pause also calls back this email's sends already handed to Resend to
@@ -377,10 +428,10 @@ export async function resumeDesign(key: string, checked?: string): Promise<Resul
 }
 
 // ---------- the Resend plan (admins) ----------
-export async function saveResendPlan(daily: number, monthly: number, reserve: number): Promise<Result> {
+export async function saveResendPlan(daily: number, monthly: number, reserve: number, cap?: number): Promise<Result> {
   const staff = await assertAdmin();
   try {
-    await saveSendPlan({ daily, monthly, reserve }, staff.employeeId);
+    await saveSendPlan({ daily, monthly, reserve, ...(cap !== undefined ? { cap } : {}) }, staff.employeeId);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
   }
@@ -396,6 +447,20 @@ export async function saveWaveSizeAction(size: number): Promise<Result<{ size: n
     const plan = await saveWaveSize(size, staff.employeeId);
     revalidate();
     return { ok: true, size: Math.max(0, plan.daily - plan.reserve) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
+  }
+}
+
+// The most member email a day, every email together. Admins.
+export async function saveDailyCapAction(cap: number): Promise<Result<{ cap: number }>> {
+  const staff = await assertAdmin();
+  const want = Math.floor(Number(cap));
+  if (!Number.isFinite(want) || want < 1 || want > 100_000) return { ok: false, error: "A day's limit is 1 to 100,000." };
+  try {
+    const plan = await saveSendPlan({ ...(await getSendPlan()), cap: want }, staff.employeeId);
+    revalidate();
+    return { ok: true, cap: plan.cap };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't save it." };
   }

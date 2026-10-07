@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import ConfirmModal from "@/components/ConfirmModal";
 import type { CampaignRow } from "@/lib/email/campaign";
 import type { ComposerOptions } from "@/lib/email/render-data";
-import { BLOCK_CHOICES, newBlock, referencedIds, renderCampaign, type Block, type BlockType, type CampaignContent, type RenderData } from "@/lib/email/render";
-import { lintCampaign } from "@/lib/email/lint";
+import type { Block, BlockType, CampaignContent, RenderData, Rendered } from "@/lib/email/render";
+import type { LintResult } from "@/lib/email/lint";
 import { CONSENT_CHOICES, PRESETS, RULE_CHOICES, defaultRule, describeRule } from "@/lib/email/rules";
 import { CATEGORY_LABEL, CONSENT_LABEL, EXCLUSION_LABEL, PREF_CATEGORIES, type Audience, type Category, type ConsentSource, type Exclusion, type Rule, type RuleKey } from "@/lib/email/types";
 import { rangeLabel, whenLabel } from "@/lib/email/format";
@@ -19,11 +19,64 @@ import { countAudience, lintCampaignNow, previewData, saveCampaign, scheduleCamp
 // yourself, and scheduling. The preview renders in the browser with the
 // same code the server sends with, but the server always renders the
 // email again from the saved campaign: nothing is sent from this page's HTML.
+//
+// Kept light so typing never lags, on a phone too:
+// - the renderer (and the ready-made designs it carries) loads on its own
+//   after the page is up (./preview-engine), not in the page's first download;
+// - the preview and the checks redraw 300 ms after typing stops, and the
+//   preview frame only reloads when the email's HTML actually changed;
+// - each block and rule row only redraws when its own fields change;
+// - below 1280px wide it's one column with Edit / Preview tabs, and the
+//   preview isn't drawn at all while you're on Edit.
 
 type Msg = { ok: boolean; text: string } | null;
+type Engine = typeof import("./preview-engine");
+export type BlockChoice = { t: BlockType; label: string; blank: Block };
+type RuleList = "include" | "exclude";
 
-const input = "rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm";
+// 44px tall on a phone (and 16px type, so the phone doesn't zoom in on a
+// field), the compact size from a tablet up.
+const input = "min-h-11 rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-base md:min-h-0 md:text-sm";
+const tap = "inline-flex min-h-11 min-w-11 items-center justify-center md:min-h-0 md:min-w-0";
+const checkRow = "flex min-h-11 items-center gap-1 md:min-h-0";
 const DAY_CHOICES = [1, 2, 3, 4, 5, 6, 7, 10, 14];
+const PREVIEW_DELAY_MS = 300;
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+// rangeLabel throws on an empty or half-typed date; the page must never.
+const safeRange = (start: string, days: number) => (ISO_DAY.test(start) ? rangeLabel(start, days) : "the dates picked");
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+// One column below this width (the Edit / Preview tabs); side by side above.
+const WIDE = "(min-width: 1280px)";
+function subscribeWide(cb: () => void) {
+  const m = window.matchMedia(WIDE);
+  m.addEventListener("change", cb);
+  return () => m.removeEventListener("change", cb);
+}
+const useWide = () =>
+  useSyncExternalStore(
+    subscribeWide,
+    () => window.matchMedia(WIDE).matches,
+    () => false,
+  );
+
+// What the preview data depends on (the dates and the films, events and
+// menu items the blocks point at), as one string to compare.
+function dataKeyOf(content: CampaignContent): string {
+  const ids = content.blocks
+    .flatMap((b) => (b.t === "filmCard" ? [b.movieId] : b.t === "archiveSection" ? (b.movieIds ?? []) : b.t === "eventRow" ? [b.houseEventId] : b.t === "barNote" ? [b.menuItemId ?? ""] : []))
+    .filter(Boolean)
+    .sort();
+  return JSON.stringify({ l: content.lineup ? { s: content.lineup.start, d: content.lineup.days } : null, w: content.window ?? null, ids });
+}
 
 function Section({ title, children, aside }: { title: string; children: React.ReactNode; aside?: React.ReactNode }) {
   return (
@@ -38,7 +91,24 @@ function Section({ title, children, aside }: { title: string; children: React.Re
 }
 
 // ---------- one segment rule ----------
-function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onChange: (r: Rule) => void; onRemove: () => void; campaigns: { id: string; name: string }[] }) {
+// Memoized: only the row being edited redraws (the callbacks are stable,
+// and say which list and row they're for).
+const RuleEditor = memo(function RuleEditor({
+  rule,
+  list,
+  index,
+  onChange,
+  onRemove,
+  campaigns,
+}: {
+  rule: Rule;
+  list: RuleList;
+  index: number;
+  onChange: (list: RuleList, i: number, r: Rule) => void;
+  onRemove: (list: RuleList, i: number) => void;
+  campaigns: { id: string; name: string }[];
+}) {
+  const set = (r: Rule) => onChange(list, index, r);
   const num = (v: number, set: (n: number) => void, min = 1, max = 365) => (
     <input type="number" className={`${input} w-20`} min={min} max={max} value={v} onChange={(e) => set(Math.max(min, Math.min(max, Math.floor(Number(e.target.value)) || min)))} />
   );
@@ -46,7 +116,7 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
   switch (rule.r) {
     case "tier":
       params = (
-        <select className={input} value={rule.v} onChange={(e) => onChange({ ...rule, v: e.target.value as "Insiders" | "Insiders+" })}>
+        <select className={input} value={rule.v} onChange={(e) => set({ ...rule, v: e.target.value as "Insiders" | "Insiders+" })}>
           <option value="Insiders">Free Insiders</option>
           <option value="Insiders+">Insiders+</option>
         </select>
@@ -56,8 +126,8 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
       params = (
         <span className="flex flex-wrap gap-2">
           {CONSENT_CHOICES.map((s: ConsentSource) => (
-            <label key={s} className="flex items-center gap-1 text-xs">
-              <input type="checkbox" checked={rule.v.includes(s)} onChange={(e) => onChange({ ...rule, v: e.target.checked ? [...rule.v, s] : rule.v.filter((x) => x !== s) })} />
+            <label key={s} className={`${checkRow} text-xs`}>
+              <input type="checkbox" checked={rule.v.includes(s)} onChange={(e) => set({ ...rule, v: e.target.checked ? [...rule.v, s] : rule.v.filter((x) => x !== s) })} />
               {CONSENT_LABEL[s]}
             </label>
           ))}
@@ -69,41 +139,41 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
     case "lapsed":
     case "clicked_within":
     case "engaged":
-      params = <span className="flex items-center gap-1 text-xs">{num(rule.days, (n) => onChange({ ...rule, days: n }))} days</span>;
+      params = <span className="flex items-center gap-1 text-xs">{num(rule.days, (n) => set({ ...rule, days: n }))} days</span>;
       break;
     case "visit_days":
     case "archive_fans":
     case "paid_tickets":
       params = (
         <span className="flex items-center gap-1 text-xs">
-          at least {num(rule.min, (n) => onChange({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => onChange({ ...rule, within: n }))} days
+          at least {num(rule.min, (n) => set({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => set({ ...rule, within: n }))} days
         </span>
       );
       break;
     case "genre":
       params = (
         <span className="flex flex-wrap items-center gap-1 text-xs">
-          <input className={`${input} w-28`} value={rule.v} onChange={(e) => onChange({ ...rule, v: e.target.value.slice(0, 40) })} />
-          at least {num(rule.min, (n) => onChange({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => onChange({ ...rule, within: n }))} days
+          <input className={`${input} w-28`} value={rule.v} onChange={(e) => set({ ...rule, v: e.target.value.slice(0, 40) })} />
+          at least {num(rule.min, (n) => set({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => set({ ...rule, within: n }))} days
         </span>
       );
       break;
     case "bar":
       params = (
         <span className="flex flex-wrap items-center gap-1 text-xs">
-          <select className={input} value={rule.v} onChange={(e) => onChange({ ...rule, v: e.target.value as "alcohol" | "coffee" | "food" })}>
+          <select className={input} value={rule.v} onChange={(e) => set({ ...rule, v: e.target.value as "alcohol" | "coffee" | "food" })}>
             <option value="alcohol">Bar</option>
             <option value="coffee">Coffee bar</option>
             <option value="food">Kitchen</option>
           </select>
-          at least {num(rule.min, (n) => onChange({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => onChange({ ...rule, within: n }))} days
+          at least {num(rule.min, (n) => set({ ...rule, min: n }), 1, 50)} in {num(rule.within, (n) => set({ ...rule, within: n }))} days
         </span>
       );
       break;
     case "clicked_campaign":
     case "received_campaign":
       params = (
-        <select className={input} value={rule.id} onChange={(e) => onChange({ ...rule, id: e.target.value })}>
+        <select className={input} value={rule.id} onChange={(e) => set({ ...rule, id: e.target.value })}>
           <option value="">Pick an email…</option>
           {campaigns.map((c) => (
             <option key={c.id} value={c.id}>
@@ -116,7 +186,7 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
     case "has_login":
     case "old_site":
       params = (
-        <select className={input} value={rule.v ? "yes" : "no"} onChange={(e) => onChange({ ...rule, v: e.target.value === "yes" })}>
+        <select className={input} value={rule.v ? "yes" : "no"} onChange={(e) => set({ ...rule, v: e.target.value === "yes" })}>
           <option value="yes">Yes</option>
           <option value="no">No</option>
         </select>
@@ -127,7 +197,7 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
   }
   return (
     <li className="flex flex-wrap items-center gap-2 rounded border border-[var(--border)] p-2">
-      <select className={input} value={rule.r} onChange={(e) => onChange(defaultRule(e.target.value as RuleKey))}>
+      <select className={input} value={rule.r} onChange={(e) => set(defaultRule(e.target.value as RuleKey))}>
         {RULE_CHOICES.map((c) => (
           <option key={c.key} value={c.key}>
             {c.label}
@@ -135,14 +205,56 @@ function RuleEditor({ rule, onChange, onRemove, campaigns }: { rule: Rule; onCha
         ))}
       </select>
       {params}
-      <button type="button" className="ml-auto text-xs text-[var(--muted)] hover:text-[var(--danger-text)]" onClick={onRemove}>
+      <button type="button" className={`${tap} ml-auto px-2 text-xs text-[var(--muted)] hover:text-[var(--danger-text)]`} onClick={() => onRemove(list, index)}>
         Remove
       </button>
     </li>
   );
-}
+});
 
 // ---------- one content block ----------
+// A block's row: its name, move and remove, and its fields. Memoized, so
+// typing in one block redraws that block only.
+const BlockRow = memo(function BlockRow({
+  block,
+  index,
+  label,
+  options,
+  data,
+  onChange,
+  onMove,
+  onRemove,
+}: {
+  block: Block;
+  index: number;
+  label: string;
+  options: ComposerOptions;
+  data: RenderData;
+  onChange: (i: number, b: Block) => void;
+  onMove: (i: number, d: -1 | 1) => void;
+  onRemove: (i: number) => void;
+}) {
+  return (
+    <li className="rounded border border-[var(--border)] p-2">
+      <div className="mb-1 flex items-center gap-2 text-xs">
+        <strong>{label}</strong>
+        <span className="ml-auto flex gap-1 text-[var(--muted)] md:gap-2">
+          <button type="button" className={tap} onClick={() => onMove(index, -1)} aria-label="Move up">
+            ▲
+          </button>
+          <button type="button" className={tap} onClick={() => onMove(index, 1)} aria-label="Move down">
+            ▼
+          </button>
+          <button type="button" className={`${tap} px-2 hover:text-[var(--danger-text)]`} onClick={() => onRemove(index)}>
+            Remove
+          </button>
+        </span>
+      </div>
+      <BlockEditor block={block} options={options} data={data} onChange={(b) => onChange(index, b)} />
+    </li>
+  );
+});
+
 function BlockEditor({ block, onChange, options, data }: { block: Block; onChange: (b: Block) => void; options: ComposerOptions; data: RenderData }) {
   const text = (label: string, value: string, set: (v: string) => void, max = 300) => (
     <label className="block text-xs">
@@ -175,7 +287,7 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
         <div className="grid gap-2 sm:grid-cols-3">
           {text("Label", block.label, (v) => onChange({ ...block, label: v }), 40)}
           {text("Goes to (/showtimes, /membership#join, or https://…)", block.link, (v) => onChange({ ...block, link: v }), 300)}
-          <label className="flex items-center gap-2 text-xs">
+          <label className={`${checkRow} gap-2 text-xs`}>
             <input type="checkbox" checked={block.primary !== false} onChange={(e) => onChange({ ...block, primary: e.target.checked })} /> The main (red) button
           </label>
         </div>
@@ -200,7 +312,7 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
           <p className="mb-1 text-[var(--muted)]">Members only, with the &ldquo;please don&apos;t post these&rdquo; note. Leave all unticked to include every archive film in the dates.</p>
           <div className="flex flex-wrap gap-3">
             {archive.map((f) => (
-              <label key={f.id} className="flex items-center gap-1">
+              <label key={f.id} className={checkRow}>
                 <input
                   type="checkbox"
                   checked={(block.movieIds ?? []).includes(f.id)}
@@ -257,7 +369,7 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
     case "signoff":
       return text("Signed", block.from ?? "", (v) => onChange({ ...block, from: v }), 60);
     case "lineup":
-      return <p className="text-xs text-[var(--muted)]">Now showing, the film archive (members only) and Also at Royale Cinema, from {rangeLabel(data.range.start, data.range.days)}. Pick films and events above.</p>;
+      return <p className="text-xs text-[var(--muted)]">Now showing, the film archive (members only) and Also at Royale Cinema, from {safeRange(data.range.start, data.range.days)}. Pick films and events above.</p>;
     case "claim":
       return <p className="text-xs text-[var(--muted)]">Their personal &ldquo;Set my password&rdquo; link (good for 30 days), or &ldquo;Open my account&rdquo; if they already have a login.</p>;
     case "memberCard":
@@ -271,9 +383,25 @@ function BlockEditor({ block, onChange, options, data }: { block: Block; onChang
   }
 }
 
+// The preview frame. Memoized on the HTML itself, so the frame only
+// reloads its document when the email changed, never on other redraws.
+// Never wider than the screen (a 390px "Phone" view on a 375px phone).
+const PreviewFrame = memo(function PreviewFrame({ html, phone }: { html: string; phone: boolean }) {
+  return (
+    <iframe
+      title="Email preview"
+      srcDoc={html}
+      sandbox=""
+      className="mx-auto block h-[75dvh] max-w-full rounded-lg border border-[var(--border)] bg-white xl:h-[1100px]"
+      style={{ width: phone ? 390 : "100%" }}
+    />
+  );
+});
+
 export default function Composer({
   sendKey,
   campaign,
+  blockChoices,
   initialData,
   options,
   canSend,
@@ -287,6 +415,7 @@ export default function Composer({
 }: {
   sendKey: string;
   campaign: CampaignRow;
+  blockChoices: BlockChoice[]; // from the server, so the renderer isn't in this page's first download
   initialData: RenderData;
   options: ComposerOptions;
   canSend: boolean;
@@ -332,10 +461,39 @@ export default function Composer({
   const setAudienceD = edit(setAudience);
 
   // ---------- data for the preview ----------
-  const dataKey = JSON.stringify({ l: content.lineup ? { s: content.lineup.start, d: content.lineup.days } : null, w: content.window ?? null, ids: referencedIds(content) });
-  const firstKey = useRef(dataKey);
+  // Stable setters for the memoized block and rule rows.
+  const changeContent = useCallback((f: (x: CampaignContent) => CampaignContent) => {
+    setContent(f);
+    setDirty(true);
+  }, []);
+  const onBlockChange = useCallback((i: number, b: Block) => changeContent((x) => ({ ...x, blocks: x.blocks.map((y, j) => (j === i ? b : y)) })), [changeContent]);
+  const onBlockRemove = useCallback((i: number) => changeContent((x) => ({ ...x, blocks: x.blocks.filter((_, j) => j !== i) })), [changeContent]);
+  const onBlockMove = useCallback(
+    (i: number, d: -1 | 1) =>
+      changeContent((x) => {
+        const b = [...x.blocks];
+        const j = i + d;
+        if (j < 0 || j >= b.length) return x;
+        [b[i], b[j]] = [b[j], b[i]];
+        return { ...x, blocks: b };
+      }),
+    [changeContent],
+  );
+  const onRuleChange = useCallback((list: RuleList, i: number, r: Rule) => {
+    setAudience((a) => (list === "include" ? { ...a, include: a.include.map((x, j) => (j === i ? r : x)) } : { ...a, exclude: (a.exclude ?? []).map((x, j) => (j === i ? r : x)) }));
+    setDirty(true);
+  }, []);
+  const onRuleRemove = useCallback((list: RuleList, i: number) => {
+    setAudience((a) => (list === "include" ? { ...a, include: a.include.filter((_, j) => j !== i) } : { ...a, exclude: (a.exclude ?? []).filter((_, j) => j !== i) }));
+    setDirty(true);
+  }, []);
+  const otherCampaigns = useMemo(() => options.campaigns.filter((x) => x.id !== c.id), [options.campaigns, c.id]);
+  const blockLabel = useMemo(() => new Map(blockChoices.map((b) => [b.t, b.label])), [blockChoices]);
+
+  const dataKey = dataKeyOf(content);
+  const [firstKey] = useState(dataKey);
   useEffect(() => {
-    if (dataKey === firstKey.current) return;
+    if (dataKey === firstKey) return;
     const t = setTimeout(async () => {
       const r = await previewData(content).catch(() => null);
       if (r?.ok) setData(r.data);
@@ -364,28 +522,51 @@ export default function Composer({
 
   // ---------- the preview and the live lint ----------
   const draft: CampaignDraft = { name, subject, preheader, category, content, audience, holdoutPct: holdout };
-  const rendered = useMemo(
-    () =>
-      renderCampaign({ kind: c.kind, category, subject, preheader, content }, data, { firstName: sample.trim() || null, consentSource: "indy_yes", tier: "Insiders", hasLogin: false, email: myEmail || "sam@example.com", claimUrl: "https://example.com/account/claim", ticketSpend30: 24, paidTickets30: 3 }, {
-        preferencesUrl: "#preferences",
-        unsubscribeUrl: "#unsubscribe",
-        href: (u) => u,
-      }),
-    [c.kind, category, subject, preheader, content, data, sample, myEmail],
-  );
-  const lint = useMemo(
-    () =>
-      lintCampaign({
+  // The renderer arrives on its own after the page is up.
+  const [engine, setEngine] = useState<Engine | null>(null);
+  useEffect(() => {
+    let live = true;
+    import("./preview-engine").then((m) => live && setEngine(m)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  // Redrawn 300 ms after typing stops, not on every key.
+  const typed = useMemo(() => ({ category, subject, preheader, content, data, sample }), [category, subject, preheader, content, data, sample]);
+  const shown = useDebounced(typed, PREVIEW_DELAY_MS);
+  const preview = useMemo((): { rendered: Rendered; bytes: number; lint: LintResult } | { failed: true } | null => {
+    if (!engine) return null;
+    try {
+      const rendered = engine.renderCampaign(
+        { kind: c.kind, category: shown.category, subject: shown.subject, preheader: shown.preheader, content: shown.content },
+        shown.data,
+        { firstName: shown.sample.trim() || null, consentSource: "indy_yes", tier: "Insiders", hasLogin: false, email: myEmail || "sam@example.com", claimUrl: "https://example.com/account/claim", ticketSpend30: 24, paidTickets30: 3 },
+        { preferencesUrl: "#preferences", unsubscribeUrl: "#unsubscribe", href: (u) => u },
+      );
+      const bytes = new TextEncoder().encode(rendered.html).length;
+      const lint = engine.lintCampaign({
         subject: rendered.subject,
         preheader: rendered.preheader,
         bodyTexts: rendered.meta.bodyTexts,
         primaryButtons: rendered.meta.primaryButtons,
         plainFilmTitles: rendered.meta.plainFilms,
         restrictedTitles: options.restrictedTitles,
-        htmlBytes: new TextEncoder().encode(rendered.html).length,
-      }),
-    [rendered, options.restrictedTitles],
-  );
+        htmlBytes: bytes,
+      });
+      return { rendered, bytes, lint };
+    } catch {
+      // A half-typed date or similar: keep the editor up, say so in the preview.
+      return { failed: true };
+    }
+  }, [engine, shown, c.kind, myEmail, options.restrictedTitles]);
+  const ready = preview && "rendered" in preview ? preview : null;
+  const lint = ready?.lint ?? null;
+  const lintErrors = lint ? lint.errors.length : 0;
+  // Until the checks have run once, nothing that sends can be pressed.
+  const blocked = !lint || lintErrors > 0;
+  const wide = useWide();
+  const [pane, setPane] = useState<"edit" | "preview">("edit");
+  const showPreview = wide || pane === "preview";
 
   function run(label: string, fn: () => Promise<Msg>) {
     setMsg({ ok: true, text: `${label}…` });
@@ -410,21 +591,33 @@ export default function Composer({
   const inboxFrom = (sender.from ?? "Royale Cinema Lounge").replace(/\s*<.*>$/, "");
 
   function setRange(start: string, days: number) {
+    // A cleared or half-typed date (a phone's date picker can send "") is ignored.
+    if (!ISO_DAY.test(start)) return;
     if (lineup) setContentD({ ...content, lineup: { skipMovieIds: [], skipHappeningIds: [], featuredMovieId: null, ...content.lineup, start, days } });
     else setContentD({ ...content, window: { start, days } });
   }
 
-  function moveBlock(i: number, d: -1 | 1) {
-    const b = [...content.blocks];
-    const j = i + d;
-    if (j < 0 || j >= b.length) return;
-    [b[i], b[j]] = [b[j], b[i]];
-    setContentD({ ...content, blocks: b });
-  }
-
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <div className="space-y-5">
+    <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      {/* ---------- Edit / Preview, below 1280px ---------- */}
+      {!wide && (
+        <div role="tablist" aria-label="Edit or preview" className="sticky top-0 z-20 -mx-1 grid grid-cols-2 gap-1 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1 shadow-sm">
+          {(["edit", "preview"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="tab"
+              aria-selected={pane === p}
+              className={`min-h-11 rounded-lg text-sm font-bold ${pane === p ? "bg-[var(--foreground)] text-[var(--background)]" : "text-[var(--muted)]"}`}
+              onClick={() => setPane(p)}
+            >
+              {p === "edit" ? "Edit" : "Preview"}
+              {p === "preview" && lintErrors > 0 && <span className="ml-1 text-[var(--danger-text)]">({lintErrors} to fix)</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className={`min-w-0 space-y-5 ${!wide && pane !== "edit" ? "hidden" : ""}`}>
         {/* ---------- audience ---------- */}
         <Section
           title="Who gets it"
@@ -465,36 +658,24 @@ export default function Composer({
           <div className="text-xs text-[var(--muted)]">Everyone who matches all of these:</div>
           <ul className="mt-1 space-y-1.5">
             {audience.include.map((r, i) => (
-              <RuleEditor
-                key={i}
-                rule={r}
-                campaigns={options.campaigns.filter((x) => x.id !== c.id)}
-                onChange={(n) => setAudienceD({ ...audience, include: audience.include.map((x, j) => (j === i ? n : x)) })}
-                onRemove={() => setAudienceD({ ...audience, include: audience.include.filter((_, j) => j !== i) })}
-              />
+              <RuleEditor key={i} rule={r} list="include" index={i} campaigns={otherCampaigns} onChange={onRuleChange} onRemove={onRuleRemove} />
             ))}
           </ul>
-          <button type="button" className="mt-1 text-xs font-semibold text-[var(--accent)]" onClick={() => setAudienceD({ ...audience, include: [...audience.include, { r: "engaged", days: 60 }] })}>
+          <button type="button" className={`${tap} mt-1 text-xs font-semibold text-[var(--accent)]`} onClick={() => setAudienceD({ ...audience, include: [...audience.include, { r: "engaged", days: 60 }] })}>
             + Add a rule
           </button>
           <div className="mt-3 text-xs text-[var(--muted)]">…except anyone who matches any of these:</div>
           <ul className="mt-1 space-y-1.5">
             {(audience.exclude ?? []).map((r, i) => (
-              <RuleEditor
-                key={i}
-                rule={r}
-                campaigns={options.campaigns.filter((x) => x.id !== c.id)}
-                onChange={(n) => setAudienceD({ ...audience, exclude: (audience.exclude ?? []).map((x, j) => (j === i ? n : x)) })}
-                onRemove={() => setAudienceD({ ...audience, exclude: (audience.exclude ?? []).filter((_, j) => j !== i) })}
-              />
+              <RuleEditor key={i} rule={r} list="exclude" index={i} campaigns={otherCampaigns} onChange={onRuleChange} onRemove={onRuleRemove} />
             ))}
           </ul>
-          <button type="button" className="mt-1 text-xs font-semibold text-[var(--accent)]" onClick={() => setAudienceD({ ...audience, exclude: [...(audience.exclude ?? []), { r: "tier", v: "Insiders+" }] })}>
+          <button type="button" className={`${tap} mt-1 text-xs font-semibold text-[var(--accent)]`} onClick={() => setAudienceD({ ...audience, exclude: [...(audience.exclude ?? []), { r: "tier", v: "Insiders+" }] })}>
             + Leave some out
           </button>
 
           <div className="mt-3 flex flex-wrap items-center gap-4 text-sm">
-            <label className="flex items-center gap-2">
+            <label className={`${checkRow} gap-2`}>
               Hold back
               <select className={input} value={holdout} onChange={(e) => edit(setHoldout)(Number(e.target.value))}>
                 {[0, 5, 10, 20].map((n) => (
@@ -506,7 +687,7 @@ export default function Composer({
               <span className="text-xs text-[var(--muted)]">a random slice that doesn&apos;t get it, to measure the honest lift</span>
             </label>
             {!isAutomation && (
-              <label className="flex items-center gap-2">
+              <label className={`${checkRow} gap-2`}>
                 <input type="checkbox" checked={audience.order === "trust"} onChange={(e) => setAudienceD({ ...audience, order: e.target.checked ? "trust" : undefined })} />
                 Most trusted first (warm-up order)
               </label>
@@ -579,7 +760,7 @@ export default function Composer({
                   ))}
                 </select>
               </label>
-              <span className="pb-2 text-sm text-[var(--muted)]">{rangeLabel(data.range.start, data.range.days)}</span>
+              <span className="pb-2 text-sm text-[var(--muted)]">{safeRange(data.range.start, data.range.days)}</span>
             </div>
           )}
 
@@ -593,7 +774,7 @@ export default function Composer({
                     const skip = content.lineup?.skipMovieIds ?? [];
                     return (
                       <li key={f.movieId}>
-                        <label className="flex items-start gap-2 text-sm">
+                        <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-0 md:items-start">
                           <input
                             type="checkbox"
                             className="mt-0.5"
@@ -640,7 +821,7 @@ export default function Composer({
                     const skip = content.lineup?.skipHappeningIds ?? [];
                     return (
                       <li key={h.id}>
-                        <label className="flex items-start gap-2 text-sm">
+                        <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-0 md:items-start">
                           <input
                             type="checkbox"
                             className="mt-0.5"
@@ -668,35 +849,19 @@ export default function Composer({
             <div className="mb-2 text-xs text-[var(--muted)]">Blocks, top to bottom. The footer (address, why they get it, preferences and unsubscribe) is always added.</div>
             <ol className="space-y-2">
               {content.blocks.map((b, i) => (
-                <li key={i} className="rounded border border-[var(--border)] p-2">
-                  <div className="mb-1 flex items-center gap-2 text-xs">
-                    <strong>{BLOCK_CHOICES.find((x) => x.t === b.t)?.label ?? b.t}</strong>
-                    <span className="ml-auto flex gap-2 text-[var(--muted)]">
-                      <button type="button" onClick={() => moveBlock(i, -1)} aria-label="Move up">
-                        ▲
-                      </button>
-                      <button type="button" onClick={() => moveBlock(i, 1)} aria-label="Move down">
-                        ▼
-                      </button>
-                      <button type="button" className="hover:text-[var(--danger-text)]" onClick={() => setContentD({ ...content, blocks: content.blocks.filter((_, j) => j !== i) })}>
-                        Remove
-                      </button>
-                    </span>
-                  </div>
-                  <BlockEditor block={b} options={options} data={data} onChange={(n) => setContentD({ ...content, blocks: content.blocks.map((x, j) => (j === i ? n : x)) })} />
-                </li>
+                <BlockRow key={i} block={b} index={i} label={blockLabel.get(b.t) ?? b.t} options={options} data={data} onChange={onBlockChange} onMove={onBlockMove} onRemove={onBlockRemove} />
               ))}
             </ol>
             <select
-              className={`${input} mt-2`}
+              className={`${input} mt-2 w-full md:w-auto`}
               value=""
               onChange={(e) => {
-                if (!e.target.value) return;
-                setContentD({ ...content, blocks: [...content.blocks, newBlock(e.target.value as BlockType)] });
+                const pick = blockChoices.find((b) => b.t === e.target.value);
+                if (pick) changeContent((x) => ({ ...x, blocks: [...x.blocks, structuredClone(pick.blank)] }));
               }}
             >
               <option value="">+ Add a block…</option>
-              {BLOCK_CHOICES.map((b) => (
+              {blockChoices.map((b) => (
                 <option key={b.t} value={b.t}>
                   {b.label}
                 </option>
@@ -706,7 +871,7 @@ export default function Composer({
         </Section>
 
         {/* ---------- checks ---------- */}
-        {(lint.errors.length > 0 || lint.warnings.length > 0) && (
+        {lint && (lint.errors.length > 0 || lint.warnings.length > 0) && (
           <Section title="Before it can go">
             <ul className="space-y-1 text-sm">
               {lint.errors.map((e) => (
@@ -726,12 +891,12 @@ export default function Composer({
         {/* ---------- save, test, schedule ---------- */}
         <Section title={isAutomation ? "Save" : "Test and send"}>
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" className="btn-secondary !px-4 !py-2 text-sm" disabled={pending || !dirty} onClick={() => run("Saving", async () => (await save()) ?? { ok: true, text: "Saved." })}>
+            <button type="button" className="btn-secondary min-h-11 !px-4 !py-2 text-sm" disabled={pending || !dirty} onClick={() => run("Saving", async () => (await save()) ?? { ok: true, text: "Saved." })}>
               {dirty ? "Save" : "Saved"}
             </button>
             <button
               type="button"
-              className="btn-secondary !px-4 !py-2 text-sm"
+              className="btn-secondary min-h-11 !px-4 !py-2 text-sm"
               disabled={pending || !myEmail}
               onClick={() =>
                 run("Sending the test", async () => {
@@ -746,7 +911,7 @@ export default function Composer({
             </button>
             {!gate.ok && <span className="text-xs text-[var(--muted)]">Test copies still go to your own inbox, even with sending off.</span>}
             {seedCount > 0 && (
-              <label className="flex items-center gap-2 text-sm">
+              <label className={`${checkRow} gap-2 text-sm`}>
                 <input type="checkbox" checked={seeds} onChange={(e) => setSeeds(e.target.checked)} /> and the {seedCount} seed inboxes
               </label>
             )}
@@ -763,7 +928,7 @@ export default function Composer({
                     Scheduled for <strong>{c.scheduled_for ? whenLabel(c.scheduled_for) : "the next run"}</strong>.
                   </span>
                   {c.recipients === null && (
-                    <button type="button" className="btn-secondary !px-3 !py-1.5 text-sm" disabled={pending} onClick={() => run("Unscheduling", async () => {
+                    <button type="button" className="btn-secondary min-h-11 !px-3 !py-1.5 text-sm" disabled={pending} onClick={() => run("Unscheduling", async () => {
                       const r = await unscheduleCampaign(c.id);
                       return r.ok ? { ok: true, text: "Back to a draft." } : { ok: false, text: r.error };
                     })}>
@@ -774,24 +939,24 @@ export default function Composer({
               ) : (
                 <>
                   <div className="flex flex-wrap items-end gap-3 text-sm">
-                    <label className="flex items-center gap-2">
+                    <label className={`${checkRow} gap-2`}>
                       <input type="radio" checked={when === "at"} onChange={() => setWhen("at")} /> At
                     </label>
                     <input type="date" className={input} value={date} onChange={(e) => setDate(e.target.value)} disabled={when !== "at"} />
                     <input type="time" className={input} value={time} step={900} onChange={(e) => setTime(e.target.value)} disabled={when !== "at"} />
                     <span className="pb-2 text-xs text-[var(--muted)]">Central. Suggested: {suggested.label}</span>
-                    <label className="flex items-center gap-2">
+                    <label className={`${checkRow} gap-2`}>
                       <input type="radio" checked={when === "now"} onChange={() => setWhen("now")} /> Now
                     </label>
                   </div>
                   <p className="mt-1 text-xs text-[var(--muted)]">Only 9 AM to 7 PM, Monday to Saturday. Anything outside moves to the next 10:30 AM.</p>
                   {lineup && (
-                    <label className="mt-2 flex items-center gap-2 text-sm">
+                    <label className={`${checkRow} mt-2 gap-2 text-sm`}>
                       <input type="checkbox" checked={sendAgain} onChange={(e) => setSendAgain(e.target.checked)} /> Send it again anyway, if this week&apos;s lineup already went
                     </label>
                   )}
                   <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <button type="button" className="btn-primary !px-4 !py-2 text-sm" disabled={pending || lint.errors.length > 0} onClick={() => setConfirm("schedule")}>
+                    <button type="button" className="btn-primary min-h-11 !px-4 !py-2 text-sm" disabled={pending || blocked} onClick={() => setConfirm("schedule")}>
                       {when === "now" ? "Send now" : "Schedule it"}
                     </button>
                     {!gate.ok && <span className="text-xs text-[var(--warn-text)]">It can be scheduled, but won&apos;t go until: {gate.reason}</span>}
@@ -813,7 +978,7 @@ export default function Composer({
                     </option>
                   ))}
                 </select>
-                <button type="button" className="btn-secondary !px-4 !py-2 text-sm" disabled={pending || lint.errors.length > 0 || (!!lastWaveProblem && override.trim().length < 5)} onClick={() => setConfirm("wave")}>
+                <button type="button" className="btn-secondary min-h-11 !px-4 !py-2 text-sm" disabled={pending || blocked || (!!lastWaveProblem && override.trim().length < 5)} onClick={() => setConfirm("wave")}>
                   Send next wave
                 </button>
               </div>
@@ -831,47 +996,49 @@ export default function Composer({
       </div>
 
       {/* ---------- preview ---------- */}
-      <div className="space-y-3 xl:sticky xl:top-4 xl:self-start">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
-          <div className="text-xs text-[var(--muted)]">In the inbox</div>
-          <div className="mt-1 flex items-baseline gap-2 text-sm">
-            <strong className="shrink-0">{inboxFrom}</strong>
-            <span className="min-w-0 truncate">
-              <strong>{rendered.subject}</strong> <span className="text-[var(--muted)]">— {rendered.preheader || "(no preview text)"}</span>
-            </span>
+      {showPreview && (
+        <div className="min-w-0 space-y-3 xl:sticky xl:top-4 xl:self-start">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3">
+            <div className="text-xs text-[var(--muted)]">In the inbox</div>
+            <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-x-2 text-sm sm:flex-nowrap">
+              <strong className="shrink-0">{inboxFrom}</strong>
+              <span className="min-w-0 truncate">
+                <strong>{ready?.rendered.subject ?? subject}</strong> <span className="text-[var(--muted)]">— {(ready ? ready.rendered.preheader : preheader) || "(no preview text)"}</span>
+              </span>
+            </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {(["desktop", "phone", "text"] as const).map((w) => (
+              <button key={w} type="button" className={`chip min-h-11 !px-3 !py-1 !text-xs md:min-h-0 ${width === w ? "chip-selected" : ""}`} onClick={() => setWidth(w)}>
+                {w === "desktop" ? "Desktop" : w === "phone" ? "Phone" : "Plain text"}
+              </button>
+            ))}
+            <label className="ml-auto flex items-center gap-1 text-xs">
+              As
+              <input className={`${input} w-24`} value={sample} onChange={(e) => setSample(e.target.value)} />
+            </label>
+          </div>
+          {!preview ? (
+            <p className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 text-sm text-[var(--muted)]">Drawing the preview…</p>
+          ) : !ready ? (
+            <p className="notice notice-warn text-sm">The preview can&apos;t be drawn with these settings (check the dates). Your changes are still here.</p>
+          ) : width === "text" ? (
+            <pre className="max-h-[75dvh] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-white p-4 text-xs xl:max-h-[1100px]">{ready.rendered.text}</pre>
+          ) : (
+            <PreviewFrame html={ready.rendered.html} phone={width === "phone"} />
+          )}
+          {ready && (
+            <p className="text-xs text-[var(--muted)]">
+              {Math.round(ready.bytes / 1024)} KB (Gmail cuts off at 102 KB). Links in the real email are tracked through our own site.
+            </p>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {(["desktop", "phone", "text"] as const).map((w) => (
-            <button key={w} type="button" className={`chip !px-3 !py-1 !text-xs ${width === w ? "chip-selected" : ""}`} onClick={() => setWidth(w)}>
-              {w === "desktop" ? "Desktop" : w === "phone" ? "Phone" : "Plain text"}
-            </button>
-          ))}
-          <label className="ml-auto flex items-center gap-1 text-xs">
-            As
-            <input className={`${input} w-24`} value={sample} onChange={(e) => setSample(e.target.value)} />
-          </label>
-        </div>
-        {width === "text" ? (
-          <pre className="max-h-[1100px] overflow-auto whitespace-pre-wrap rounded-lg border border-[var(--border)] bg-white p-4 text-xs">{rendered.text}</pre>
-        ) : (
-          <iframe
-            title="Email preview"
-            srcDoc={rendered.html}
-            sandbox=""
-            className="mx-auto block h-[1100px] rounded-lg border border-[var(--border)] bg-white"
-            style={{ width: width === "phone" ? 390 : "100%" }}
-          />
-        )}
-        <p className="text-xs text-[var(--muted)]">
-          {Math.round(new TextEncoder().encode(rendered.html).length / 1024)} KB (Gmail cuts off at 102 KB). Links in the real email are tracked through our own site.
-        </p>
-      </div>
+      )}
 
       {confirm && (
         <ConfirmModal
           title={confirm === "wave" ? `Send a wave of ${waveSize}?` : when === "now" ? `Send to ${count?.willSend ?? "?"} members now?` : `Schedule for ${count?.willSend ?? "?"} members?`}
-          description={`"${rendered.subject}"${lint.warnings.length ? ` · ${lint.warnings.length} warning${lint.warnings.length === 1 ? "" : "s"} to check` : " · no warnings"}. ${
+          description={`"${ready?.rendered.subject ?? subject}"${lint?.warnings.length ? ` · ${lint.warnings.length} warning${lint.warnings.length === 1 ? "" : "s"} to check` : " · no warnings"}. ${
             confirm === "wave" || when === "now" ? "It goes out now and can't be taken back." : "Whoever qualifies at send time gets it; you can stop it until then."
           }`}
           confirmLabel={confirm === "wave" ? "Send the wave" : when === "now" ? "Send it" : "Schedule it"}

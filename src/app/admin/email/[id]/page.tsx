@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { designOf } from "@/lib/email/render";
+import { BLOCK_CHOICES, designOf, newBlock } from "@/lib/email/render";
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import { getCampaign, guardrailPause, sendingGate, seedList, senderStatus } from "@/lib/email/campaign-send";
@@ -64,6 +64,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
           // A fresh key each time the page loads: a double click on Send reuses it.
           sendKey={crypto.randomUUID()}
           campaign={c}
+          blockChoices={BLOCK_CHOICES.map((b) => ({ ...b, blank: newBlock(b.t) }))}
           initialData={data}
           options={options}
           canSend={sends}

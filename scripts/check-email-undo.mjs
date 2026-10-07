@@ -702,6 +702,98 @@ await section("put back fails", async () => {
   check("put back fails: pressing Undo again finishes it, and it can be sent again", r2.ok && !db.email_campaigns.some((x) => x.id === c.id) && (await ready.designCampaign(KEY)) === null, JSON.stringify(r2));
 });
 
+// ===================== 11b. send to everyone now =====================
+// "Send to everyone now": everyone it's for today (up to the day's cap),
+// nothing handed over for the minute (Undo takes the rows away), then in
+// chunks of 100 through the batch API, the brake checked between chunks.
+const setCap = (cap) => {
+  const row = setting("resend_plan");
+  row.value = { ...row.value, cap };
+};
+const sendIds = (items) => items.map((it) => it.tags?.find((t) => t.name === "send")?.value).filter(Boolean);
+await section("everyone now", async () => {
+  fresh(250, 6); // waves of 4
+  setCap(200);
+  setClock(ct("2026-11-03", "10:00")); // a Tuesday
+  const plan = await sendPlan.getSendPlan();
+  eq("everyone: the day's cap is a setting (2,000 unless set)", [plan.cap, sendPlan.FREE_PLAN.cap, sendPlan.DEFAULT_DAILY_CAP], [200, 2000, 2000]);
+  const batchesBefore = resend.batches;
+  const k1 = randomUUID();
+  const s = await actions.sendDesign(KEY, k1, "everyone");
+  const c = campaign();
+  const rows = rowsOf(c);
+  const u = paceOf(c).undo;
+  check("everyone: says how many, and that there's a minute to undo", s.ok && /^Going to 200 people at /.test(s.message) && /minute to undo/.test(s.message), JSON.stringify(s));
+  check("everyone: all 200 (the day's cap, not the wave of 4) are queued, and nothing is at Resend yet", rows.length === 200 && rows.every((r) => r.status === "queued") && resend.batches === batchesBefore, JSON.stringify([rows.length, resend.batches - batchesBefore]));
+  check("everyone: held here for the minute (not at Resend), starting about 2 minutes after the press", u?.everyone === true && u.n === 200 && RealDate.parse(u.arrives) - Date.now() > 100_000 && RealDate.parse(u.arrives) - Date.now() <= undoLib.EVERYONE_STARTS_AFTER_MS, JSON.stringify(u));
+  const run = await sender.runCampaign(c.id, Date.now() + 60_000);
+  check("everyone: a run in the minute (the morning cron, say) hands nothing over", run.held === 200 && resend.batches === batchesBefore && rowsOf(campaign()).every((r) => r.status === "queued"), JSON.stringify(run));
+  advance(20_000);
+  const r = await undoPress(KEY, c.id, k1);
+  check("everyone undo: all 200 taken back, nobody got it", r.ok && /^Undone: all 200 called back before anyone got it\./.test(r.message) && !db.email_sends.some((x) => x.campaign_id === c.id) && resend.batches === batchesBefore, JSON.stringify(r));
+  await flushAfter();
+  check("everyone undo: the hand-over waiting in the background sends nothing", resend.batches === batchesBefore && !campaign());
+
+  // Again, and this time it goes.
+  advance(5_000);
+  const k2 = randomUUID();
+  const s2 = await actions.sendDesign(KEY, k2, "everyone");
+  const c2 = campaign();
+  check("everyone again: 200 queued", s2.ok && rowsOf(c2).length === 200, JSON.stringify(s2));
+  advance(undoLib.EVERYONE_STARTS_AFTER_MS + 1_000);
+  const late = await undoPress(KEY, c2.id, k2);
+  check("everyone: after the minute, Undo is refused", !late.ok && /Too late to undo/.test(late.error), JSON.stringify(late));
+  await flushAfter();
+  const gone = rowsOf(campaign());
+  check("everyone: once the minute is over it all goes, in chunks of 100 through the batch API", gone.length === 200 && gone.every((x) => x.status === "submitted") && resend.batches - batchesBefore === 2, JSON.stringify([gone.filter((x) => x.status === "submitted").length, resend.batches - batchesBefore]));
+  check("everyone: none of it was held at Resend (it goes now)", sentTo(gone).every((e) => !e.scheduled_at));
+  const fin = await actions.finishEveryone(KEY, k2);
+  check("everyone: the page asking for the hand-over too is harmless (nobody twice)", fin.ok && resend.batches - batchesBefore === 2 && new Set(gone.map((x) => x.member_id)).size === 200, JSON.stringify(fin));
+  eq("everyone: today's count is 200, the 50 over the cap are still to go", [await usedToday(), (await willSend())], [200, 50]);
+  const again = await actions.sendNextWave(KEY, randomUUID(), "everyone");
+  check("everyone: the rest can't go the same day (one send a day, and the cap)", !again.ok, JSON.stringify(again));
+
+  // The brake, mid-send: 10 of the first 100 bounce.
+  fresh(300, 6);
+  setCap(2000);
+  setClock(ct("2026-11-04", "10:00"));
+  const b0 = resend.batches;
+  let first = true;
+  resend.onBatch = (items) => {
+    if (!first) return;
+    first = false;
+    const ids = sendIds(items).slice(0, 10);
+    for (const x of db.email_sends) if (ids.includes(x.id)) x.bounce_type = "Permanent";
+  };
+  const k3 = randomUUID();
+  const s3 = await actions.sendDesign(KEY, k3, "everyone");
+  check("brake: 300 queued", s3.ok && rowsOf(campaign()).length === 300, JSON.stringify(s3));
+  advance(undoLib.EVERYONE_STARTS_AFTER_MS + 1_000);
+  await flushAfter();
+  resend.onBatch = null;
+  const c3 = campaign();
+  const after3 = rowsOf(c3);
+  check(
+    "brake: 10 bounces in the first chunk stop the rest (paused, 200 still queued, never handed over)",
+    c3.status === "paused" && (c3.error ?? "").startsWith(sender.BRAKE_PREFIX) && resend.batches - b0 === 1 && after3.filter((x) => x.status === "queued").length === 200,
+    JSON.stringify([c3.status, c3.error, resend.batches - b0, after3.filter((x) => x.status === "queued").length]),
+  );
+
+  // Outside sending hours: refused, nothing queued.
+  fresh(10, 6);
+  setClock(ct("2026-11-04", "20:00"));
+  const night = await actions.sendDesign(KEY, randomUUID(), "everyone");
+  check("everyone: only 9 AM to 7 PM, Monday to Saturday", !night.ok && /9 AM to 7 PM/.test(night.error) && !campaign(), JSON.stringify(night));
+  // The switch: off, nothing goes.
+  setClock(ct("2026-11-05", "10:00"));
+  const sw = setting("sending_switch");
+  sw.value = { ...sw.value, on: false };
+  const off = await actions.sendDesign(KEY, randomUUID(), "everyone");
+  sw.value = { ...sw.value, on: true };
+  check("everyone: the Sending switch still stops it", !off.ok && !campaign(), JSON.stringify(off));
+  setCap(2000);
+});
+
 // ===================== 12. only the people picked send =====================
 // lib/email/senders.ts: sending to members is a tick on the person.
 {

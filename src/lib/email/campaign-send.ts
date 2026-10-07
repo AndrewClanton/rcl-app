@@ -15,16 +15,16 @@ import { sealArtName } from "./designs/art-token";
 import { sealFinishToken } from "@/lib/plus-finish-token";
 import { plusFinishUrl } from "@/lib/plus-finish-link";
 import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE, legacyNeedsSetup } from "@/lib/legacy-plus";
-import { addUndone, firstWaveSize, getSendPlan, getWaveMode, nextMorningWave, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
+import { addUndone, firstWaveSize, getSendPlan, getWaveMode, nextMorningWave, roomForEveryone, roomToday, utcDay, waveCanGoToday, nextWaveDay } from "./send-plan";
 import { loadRenderData, restrictedTitles, unknownHouseEventIds } from "./render-data";
 import { cancelEmail, deliver, deliverOne, getEmail, refusedSchedule, type OutgoingEmail, type ResendResult } from "./resend";
 import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rules";
 import { sendEmail } from "./send";
-import { nextSendSlot, sendByFor, type SendBy } from "./timing";
+import { inSendWindow, nextSendSlot, sendByFor, type SendBy } from "./timing";
 import { centralToIso, shiftDate } from "@/lib/ops/time";
 import { emailTokensReady, listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "./tokens";
 import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, type Category, type ConsentSource, type PrefCategory, type SendRecord, type SendStatus } from "./types";
-import { canUndoWave, undoHoldMs, undoNeedsMs, undoOpen, UNDO_LEASE_WAIT_MS, UNDO_RUN_MS, UNDO_SECONDS, UNDO_STOP_BEFORE_MS, type UndoBefore, type UndoDone, type WaveUndo } from "./undo";
+import { canUndoWave, EVERYONE_STARTS_AFTER_MS, undoHoldMs, undoNeedsMs, undoOpen, UNDO_LEASE_WAIT_MS, UNDO_RUN_MS, UNDO_SECONDS, UNDO_STOP_BEFORE_MS, type UndoBefore, type UndoDone, type WaveUndo } from "./undo";
 
 // Sending a campaign to its list, per person, through Resend's batch API.
 //
@@ -828,6 +828,21 @@ export async function undoWave(campaignId: string, key: string): Promise<UndoOut
   }
 
   let calledBack = 0;
+  // "Send to everyone now": none of it has left in its minute (it waits
+  // here, queued), so its rows simply go, all at once by the wave's range
+  // (thousands of ids wouldn't fit in one request).
+  if (wave.everyone) {
+    try {
+      let q = admin.from("email_sends").delete().eq("campaign_id", campaignId).eq("status", "queued").is("batch_key", null).lte("created_at", wave.to);
+      if (wave.after) q = q.gt("created_at", wave.after);
+      const { data: gone, error } = await q.select("id");
+      if (error) throw new Error("Couldn't take the send back.");
+      calledBack += gone?.length ?? 0;
+    } catch (e) {
+      await dropRecallLease(lease);
+      throw e;
+    }
+  }
   try {
     // Pass after pass until nothing of the wave is left to call back: a
     // batch still on its way to Resend (a run that hadn't seen the pause
@@ -1197,6 +1212,7 @@ export interface Pace {
   undo?: WaveUndo | null; // the last wave staff pressed for, while it can be undone (undo.ts)
   undone?: UndoDone | null; // what the last Undo called back
   firstWave?: boolean; // a Send started it afresh: the next wave is the small first one (send-plan.ts FIRST_WAVE)
+  everyone?: boolean; // the last wave was "Send to everyone now": its queue goes by the day's cap, not the wave size
 }
 
 // Ready-made emails stay at least this far apart for each person: someone
@@ -1240,6 +1256,7 @@ export interface UndoPress {
   key: string;
   before: UndoBefore | null;
   first: boolean;
+  everyone?: boolean; // "Send to everyone now": everyone it's for today, held here for the minute (undo.ts EVERYONE_STARTS_AFTER_MS)
 }
 
 // When a wave of `n` pressed for at `now` would arrive if it's held for
@@ -1333,10 +1350,12 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   }
 
   const plan = await getSendPlan();
-  const room = await roomToday(now, plan);
+  const everyone = !!press?.everyone;
+  const room = everyone ? await roomForEveryone(now, plan) : await roomToday(now, plan);
   const later = (why: string) => ({ more: true, note: why });
   let verdict: { more: boolean; note: string | null } | null = null;
-  if (!waveCanGoToday(now)) verdict = later(manual ? `${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)` : `The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
+  if (everyone && !inSendWindow(now)) verdict = later(`${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)`);
+  else if (!waveCanGoToday(now)) verdict = later(manual ? `${WAVE_WAITING} (Email only goes out 9 AM to 7 PM, Monday to Saturday.)` : `The next wave goes ${dayName(nextWaveDay(now))} (email only goes out 9 AM to 7 PM, Monday to Saturday).`);
   else if (room <= 0) verdict = later(manual ? `Today's share of Resend's daily limit is used up. ${WAVE_WAITING}` : DAILY_LIMIT);
   // One wave a day (nextWaveAfter): a wave chosen today, or arriving today.
   const last = verdict ? null : await lastWave(c.id);
@@ -1355,7 +1374,8 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   const spacing = key ? { others: otherDesigns(await designCampaignIds(), key), days: DESIGN_GAP_DAYS } : undefined;
   // The first wave of a Send is small (FIRST_WAVE, the most engaged); the
   // rest are as many as today's share allows.
-  const limit = pace.firstWave ? Math.min(room, firstWaveSize(plan)) : room;
+  // "Send to everyone now": everyone it's for, up to the day's cap.
+  const limit = pace.firstWave && !everyone ? Math.min(room, firstWaveSize(plan)) : room;
   const resolved = await resolveAudience({ ...shapeOf(c), audience: c.audience ?? { include: [{ r: "all" }] }, holdoutPct: c.holdout_pct }, { at, now, limit, spacing });
   const spaced = resolved.excluded.design_gap ?? 0;
   const left = (resolved.excluded.wave_limit ?? 0) + spaced;
@@ -1381,12 +1401,15 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   // back. Its rows are the ones this queueing makes: after the newest row
   // before it, up to the newest after it (the database's own times; this
   // run holds the email's lease, so nothing else queues for it meanwhile).
-  const holdAt = press && (await holdsWork()) ? undoHoldAt(resolved.send.length, new Date()) : null;
+  // "Send to everyone now" isn't held at Resend (too many to call back one
+  // by one): it waits here, queued, and nothing is handed over until the
+  // minute is over (runCampaign, releaseEveryone). Its Undo takes the rows away.
+  const holdAt = everyone ? null : press && (await holdsWork()) ? undoHoldAt(resolved.send.length, new Date()) : null;
   const deliverAt = holdAt && holdAt.getTime() > at.getTime() ? holdAt : at;
-  const after = holdAt ? await newestSend(c.id) : null;
+  const after = holdAt || everyone ? await newestSend(c.id) : null;
   const n = await queueSends(c.id, resolved, deliverAt);
   let undo: WaveUndo | undefined;
-  if (press && holdAt && n > 0) {
+  if (press && (holdAt || everyone) && n > 0) {
     const to = await newestSend(c.id);
     const t = Date.now();
     if (to && to !== after) {
@@ -1398,12 +1421,14 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
         // For now: the minute starts again once they're handed over
         // (startUndoMinute).
         until: new Date(t + UNDO_SECONDS * 1000).toISOString(),
-        arrives: deliverAt.toISOString(),
+        // Everyone now: the minute starts now (nothing is handed over in it).
+        arrives: everyone ? new Date(t + EVERYONE_STARTS_AFTER_MS).toISOString() : deliverAt.toISOString(),
         planned: at.toISOString(),
         after,
         to,
         first: press.first,
         before: press.before,
+        ...(everyone ? { everyone: true } : {}),
       };
     }
   }
@@ -1411,7 +1436,7 @@ export async function prepareWave(c: CampaignRow, data: RenderData, now = new Da
   const note = manual && left > 0 ? WAVE_WAITING : null;
   // A wave nobody can undo drops the last one's record (long over by now).
   // The first wave has gone (if anyone was queued): the next is a full one.
-  setPace({ remaining: left, note, go: null, undo, firstWave: n > 0 ? undefined : pace.firstWave });
+  setPace({ remaining: left, note, go: null, undo, firstWave: n > 0 ? undefined : pace.firstWave, everyone: n > 0 ? everyone || undefined : pace.everyone });
   patch.recipients = (c.recipients ?? 0) + resolved.willSend;
   patch.held_out = (c.held_out ?? 0) + resolved.heldOut;
   patch.excluded = resolved.excluded;
@@ -1649,6 +1674,9 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
   const needsClaim = (c.content?.blocks ?? []).some((b) => b.t === "claim") || !!needs?.claim;
   const paced = isPaced(c);
   const plan = paced ? await getSendPlan() : null;
+  // "Send to everyone now": the queue goes by the day's cap (not the wave
+  // size), and the brake is checked before every chunk of 100 after the first.
+  const everyone = paced && !!paceOf(c).everyone;
   // The latest a one-off may arrive (automations: the 2-day rule below).
   // Daily waves have none: each wave goes the day it's chosen.
   const sendBy = isAutomation(c) || paced ? null : sendByFor(c);
@@ -1714,6 +1742,15 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
   const unnumber = (ids: string[]) => admin.from("email_sends").update({ batch_no: null, batch_key: null, batch_at: null }).in("id", ids).eq("status", "queued");
 
   while (Date.now() < deadline) {
+    // Bounces and spam complaints from the chunks already gone (the webhook
+    // checks too, as each comes in): over the line, the rest wait.
+    if (everyone && result.batches > 0) {
+      const brake = await enforceWaveBrake({ ...c, status: "sending" }, { recall: "background" }).catch(() => null);
+      if (brake) {
+        result.stopped = `${BRAKE_PREFIX}${brake.reason}`;
+        break;
+      }
+    }
     const stop = await stopReason(c);
     if (stop) {
       result.stopped = stop;
@@ -1777,7 +1814,8 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       let room = BATCH_SIZE;
       if (paced) {
         try {
-          room = Math.min(BATCH_SIZE, await roomToday(now.getTime() > t.getTime() ? now : t, plan ?? undefined));
+          const day = now.getTime() > t.getTime() ? now : t;
+          room = Math.min(BATCH_SIZE, everyone ? await roomForEveryone(day, plan ?? undefined) : await roomToday(day, plan ?? undefined));
         } catch (e) {
           result.error = e instanceof Error ? e.message : "Couldn't count today's email.";
           break;
@@ -2169,6 +2207,60 @@ export interface RunResult {
   status: string;
   note: string | null;
   noHold?: boolean; // Resend wouldn't hold email for later: this wave can't be undone
+  held?: number; // "Send to everyone now": this many wait here for the minute to undo
+}
+
+// ---------- send to everyone now ----------
+// "Send to everyone now" (Ready to send): everyone it's for today, up to
+// the day's cap (send-plan.ts DEFAULT_DAILY_CAP), in one go instead of
+// daily waves. The press queues them all (prepareWave) and nothing leaves
+// for the first minute, so Undo just takes the rows away. Then it's handed
+// to Resend in chunks of 100 through the batch API (deliverQueued, kept to
+// RESEND_RPS requests a second), the brake checked before every chunk. The
+// same rules as a wave: opt-outs, the never-mail list, the 3 days between
+// ready-made emails, the Sending switch and Emergency stop.
+export function heldForEveryone(c: Pick<CampaignRow, "content">, nowMs = Date.now()): WaveUndo | null {
+  const u = paceOf(c).undo;
+  return u?.everyone && nowMs < Date.parse(u.arrives) ? u : null;
+}
+
+export function everyoneNote(u: WaveUndo): string {
+  const at = new Date(u.arrives).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  return `Going to ${u.n.toLocaleString("en-US")} people at ${at}, once the minute to undo is over.`;
+}
+
+// Hands an everyone-now send to Resend once its minute is over: waits for
+// it, then runs it until nothing is queued (or it stops: Undo, Pause, the
+// brake, the switch). Safe to call twice: the run's lease lets one through,
+// and each chunk keeps its key, so nobody gets it twice.
+export async function releaseEveryone(id: string, key: string, deadline = Date.now() + 250_000): Promise<RunResult | null> {
+  // Waits out the minute a few seconds at a time, and gives up at once if
+  // it's undone (or paused) meanwhile.
+  for (;;) {
+    const c = await getCampaign(id);
+    const u = c ? paceOf(c).undo : null;
+    if (!c || !u?.everyone || u.key !== key || u.started || !["scheduled", "sending"].includes(c.status)) return null;
+    const wait = Date.parse(u.arrives) - Date.now();
+    if (wait <= 0) break;
+    if (wait > deadline - Date.now() - 30_000) return null;
+    await sleep(Math.min(wait + 500, 3000));
+  }
+  let last: RunResult | null = null;
+  for (let i = 0; i < 10 && Date.now() < deadline - 10_000; i++) {
+    const fresh = await getCampaign(id);
+    if (!fresh || !["scheduled", "sending"].includes(fresh.status)) break;
+    const { count } = await createAdminClient().from("email_sends").select("id", { count: "exact", head: true }).eq("campaign_id", id).eq("status", "queued");
+    if (!count) break;
+    last = await runCampaign(id, deadline - 5_000);
+    if (!last.ran || !last.submitted) break;
+  }
+  return last;
+}
+
+// The press's run hands it over once the minute is over, after the answer
+// has gone back to the page (the page asks too, when its countdown ends).
+export function releaseEveryoneLater(id: string, key: string) {
+  inBackground("send to everyone", () => releaseEveryone(id, key));
 }
 
 function runNote(r: DeliverResult): string | null {
@@ -2220,6 +2312,15 @@ export async function runCampaign(id: string, deadline: number, now = new Date()
       c = w.c;
       wave = { more: w.more, note: w.note };
     } else c = await prepareCampaign(c, data, now);
+    // "Send to everyone now" in its minute to undo: nothing is handed over
+    // yet (releaseEveryone hands it over once the minute is over).
+    const held = heldForEveryone(c);
+    if (held) {
+      const note = everyoneNote(held);
+      await admin.from("email_campaigns").update({ status: "scheduled", locked_until: null, error: note, updated_at: new Date().toISOString() }).eq("id", id).eq("status", "sending");
+      await admin.from("email_campaigns").update({ locked_until: null }).eq("id", id);
+      return { id, name: c.name, ran: true, submitted: 0, cancelled: 0, status: (await getCampaign(id))?.status ?? "scheduled", note, held: held.n };
+    }
     const r = await deliverQueued(c, data, deadline, now);
     // The wave staff pressed for is with Resend: its minute to undo starts.
     if (opts.press) await startUndoMinute(id, opts.press.key).catch((e) => console.error("undo minute:", e instanceof Error ? e.message : e));

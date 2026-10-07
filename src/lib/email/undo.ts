@@ -55,6 +55,13 @@ export function undoHoldMs(n: number): number {
   return Math.ceil((UNDO_SECONDS * 1000 + undoNeedsMs(n) + MARGIN_MS) / 60_000) * 60_000;
 }
 
+// "Send to everyone now": nothing leaves for the first minute. The whole
+// send waits here (queued, never handed to Resend), so Undo only has to
+// take the rows away, however many there are. It's handed over in chunks
+// of 100 once the minute (and the grace, and the stop-before margin) is
+// over: about 2 minutes after the press.
+export const EVERYONE_STARTS_AFTER_MS = UNDO_SECONDS * 1000 + UNDO_GRACE_MS + UNDO_STOP_BEFORE_MS + 15_000;
+
 export function canUndoWave(n: number): boolean {
   return n > 0 && n <= UNDO_MAX_WAVE && Math.max(0, Math.ceil(n)) * cancelMsEach() + UNDO_LEASE_WAIT_MS <= UNDO_RUN_MS;
 }
@@ -88,6 +95,7 @@ export interface WaveUndo {
   first: boolean; // the first wave of a Send (not Send the next wave)
   before: UndoBefore | null; // null: the email didn't exist before Send
   started?: string | null; // an Undo was taken (in time) then; pressing again carries on
+  everyone?: boolean; // "Send to everyone now": held here (queued), not at Resend, until `arrives`
 }
 
 // What a finished Undo did (content.pace.undone), so a second press says

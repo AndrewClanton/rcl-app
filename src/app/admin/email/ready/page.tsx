@@ -25,7 +25,7 @@ import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
-import { finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
+import { everyoneLeft, finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
 import type { CampaignRow } from "@/lib/email/campaign";
 import { joinNames, senderCheck } from "@/lib/email/senders";
 import ReadyToSend, { type CardData, type UndoCard } from "./ReadyToSend";
@@ -97,7 +97,7 @@ export default async function ReadyToSendPage() {
         const handed = await undoWaveHanded(c.id, u).catch(() => 0);
         return [
           k,
-          { key: u.key, wave: u.wave, people: handed || u.n, until: Date.parse(u.until), arrives: Date.parse(u.arrives), arrivesLabel: arrivalLabel(u.arrives, now), first: u.first, started: !!u.started, undoing: c.error === UNDOING },
+          { key: u.key, wave: u.wave, people: handed || u.n, until: Date.parse(u.until), arrives: Date.parse(u.arrives), arrivesLabel: arrivalLabel(u.arrives, now), first: u.first, started: !!u.started, undoing: c.error === UNDOING, everyone: !!u.everyone },
         ];
       }),
     ),
@@ -160,7 +160,7 @@ export default async function ReadyToSendPage() {
         area="guests"
         back={{ href: "/admin/email", label: "Email" }}
         title="Ready to send"
-        purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. They go out in waves, the members most used to hearing from us first, so each wave can be checked before the next."
+        purpose="Three finished emails, ready to go to members: look, send yourself a test, then send. Send to everyone now, or in waves (the members most used to hearing from us first, so each wave can be checked before the next)."
         actions={pause ? <StatusChip label="Sending is stopped" tone="stopped" /> : gate.ok ? <StatusChip label="Sending is on" tone="sent" /> : <StatusChip label="Sending is off" tone="off" />}
       />
       <ReadyToSend
@@ -184,6 +184,8 @@ export default async function ReadyToSendPage() {
           // Automatic: the next morning run's wave. Manual: the next day a
           // wave can go once today's share has gone.
           nextWave: dayLabel(nextMorningWave(now, mode === "auto" && todayLeft > 0)),
+          cap: plan.cap,
+          everyoneToday: slot.getTime() === now.getTime() ? everyoneLeft(plan, usage) : 0,
           goesAt: slot.getTime() === now.getTime() ? "now" : `at ${slot.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })} ${dayLabel(slot)}`,
         }}
         isAdmin={hasAdminAccess(staff.role)}
