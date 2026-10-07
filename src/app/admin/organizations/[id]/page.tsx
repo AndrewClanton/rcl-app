@@ -8,6 +8,9 @@ import { orgBilling } from "@/lib/org-billing";
 import { siteOrigin } from "@/lib/site-origin";
 import { ORG_INVITES_PER_HOUR, recentOrgInvites } from "@/lib/org-invite-server";
 import { withArticle } from "@/lib/email/org-invite-email";
+import { invoiceLinesBetween } from "@/lib/data/org-invoices";
+import { coveredOf, KIND_LABEL, monthRange } from "@/lib/org-invoices";
+import { AddInvoiceLine } from "../InvoiceForms";
 import { AddPerson, AttachPerson, BillingButtons, EmailInvite, InviteLink, OrgEditor, PersonRow } from "../OrgForms";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +34,12 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
   const detail = await getOrganization(id);
   if (!detail) notFound();
   const { org, people, labelled, today, month } = detail;
-  const [billing, origin, invites] = await Promise.all([orgBilling(org), siteOrigin(), recentOrgInvites(org.id)]);
+  const [billing, origin, invites, lines] = await Promise.all([
+    orgBilling(org),
+    siteOrigin(),
+    recentOrgInvites(org.id),
+    invoiceLinesBetween(org.id, `${today.date.slice(0, 7)}-01`, monthRange(today.date.slice(0, 7)).to),
+  ]);
   const helpers = people.filter((p) => p.role === "helper");
   const guests = people.filter((p) => p.role === "supported");
   const thisMonth = today.date.slice(0, 7);
@@ -44,9 +52,14 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
         title={org.name}
         purpose={`${STATUS_LABEL[org.status]} · $${org.monthly_fee.toFixed(2)} a month · ${org.daily_comp_limit} comps a day`}
         actions={
-          <Link href={`/admin/organizations/${org.id}/statement?month=${thisMonth}`} className="btn-secondary">
-            Monthly statement
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link href={`/admin/organizations/${org.id}/invoice?month=${thisMonth}`} className="btn-primary">
+              Monthly invoice
+            </Link>
+            <Link href={`/admin/organizations/${org.id}/statement?month=${thisMonth}`} className="btn-secondary">
+              Monthly statement
+            </Link>
+          </div>
         }
       />
 
@@ -133,6 +146,39 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
         )}
       </section>
 
+      <section className="card space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-lg font-semibold">Discounted events, rentals and services</h2>
+          <Link href={`/admin/organizations/${org.id}/invoice?month=${thisMonth}`} className="text-sm underline">
+            This month&apos;s invoice →
+          </Link>
+        </div>
+        <p className="text-sm text-[var(--muted)]">
+          Each goes on the month&apos;s invoice with its full value, what {org.name} is charged, and what the Royale Cinema Project covers. The month&apos;s
+          comps go on it too, at menu value.
+        </p>
+        {lines.length > 0 && (
+          <ul className="divide-y divide-[var(--border)] text-sm">
+            {lines.map((l) => (
+              <li key={l.id} className="flex flex-wrap justify-between gap-x-3 py-1.5 tabular-nums">
+                <span className="min-w-0">
+                  {day(l.date)} · {KIND_LABEL[l.kind]}: {l.description}
+                </span>
+                <span>
+                  worth {money(l.fullValue)} · charged {money(l.charged)} · covered {money(coveredOf(l.fullValue, l.charged))}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <details>
+          <summary className="cursor-pointer font-semibold">Add one</summary>
+          <div className="mt-3">
+            <AddInvoiceLine orgId={org.id} defaultDate={today.date} />
+          </div>
+        </details>
+      </section>
+
       <section className="card space-y-2">
         <h2 className="text-lg font-semibold">Billing</h2>
         {billing.mode === "hand" ? (
@@ -180,6 +226,7 @@ export default async function OrganizationPage({ params }: { params: Promise<{ i
             dailyCompLimit: org.daily_comp_limit,
             status: org.status,
             notes: org.notes ?? "",
+            impactCategory: org.impact_category,
           }}
         />
       </section>

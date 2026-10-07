@@ -8,6 +8,7 @@ import { activatePlusFromCheckout } from "@/lib/plus-activate";
 import { notifyBoothConfirmed } from "@/lib/booth-notify";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
+import { invoicePaidFromCheckout } from "@/lib/org-invoice-server";
 import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
@@ -114,6 +115,9 @@ export async function POST(request: NextRequest) {
         if (!gift.ok) failed.push("gift membership");
         else after(() => recordGiftPayment(giftId));
       }
+
+      // An organization's invoice paid through its pay-by-card link.
+      if (session.payment_link && !(await invoicePaidFromCheckout(session))) failed.push("organization invoice");
     }
   }
 

@@ -88,6 +88,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       min: "admin",
     },
     {
+      href: "/admin/impact",
+      label: "Community impact",
+      about: "What the Royale Cinema Project gives: people served, visits, movies, comps and discounted events by organization and month, for grants and board reports.",
+      keywords: "nonprofit 501c3 royale cinema project grant board report impact underserved disabilities seniors assisted living students community activity free screening csv",
+      min: "admin",
+    },
+    {
       href: "/admin/members/former-unlimited",
       label: "Former unlimited members",
       about: "Paid for unlimited on the old website: who's set up on Insiders+ here, who came in without paying, who hasn't been in.",

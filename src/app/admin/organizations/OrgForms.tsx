@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ORG_ROLES, roleLabel, type OrgRole } from "@/lib/orgs";
+import { IMPACT_CATEGORIES } from "@/lib/org-invoices";
 import {
   createOrganization,
   emailInviteLink,
@@ -59,6 +60,16 @@ export function OrgEditor({ id, initial }: { id: string | null; initial: OrgFiel
             <option value="active">Active: comps and tax-included prices</option>
             <option value="paused">Paused: no comps for now</option>
             <option value="closed">Closed</option>
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="font-semibold">Serves (Community impact)</span>
+          <select className="input mt-1 w-full" value={f.impactCategory ?? "disabilities"} onChange={set("impactCategory")}>
+            {IMPACT_CATEGORIES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="block text-sm">

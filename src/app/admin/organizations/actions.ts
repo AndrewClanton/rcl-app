@@ -8,6 +8,7 @@ import { DEFAULT_DAILY_COMP_LIMIT, DEFAULT_MONTHLY_FEE, type OrgRole, type OrgSt
 import { startOrgSubscription, stopOrgSubscription } from "@/lib/org-billing";
 import { memberLabel } from "@/lib/member-name";
 import { sendOrgInvite } from "@/lib/org-invite-server";
+import { isCategory, type ImpactCategory } from "@/lib/org-invoices";
 
 // Back office → Organizations (lib/orgs.ts). Owners and admins.
 
@@ -24,6 +25,8 @@ export interface OrgFields {
   dailyCompLimit: string | number;
   status: OrgStatus;
   notes: string;
+  // Community impact category; left as it is when not given.
+  impactCategory?: ImpactCategory;
 }
 
 function clean(f: OrgFields): { ok: true; row: Partial<OrgRow> } | { ok: false; error: string } {
@@ -36,6 +39,7 @@ function clean(f: OrgFields): { ok: true; row: Partial<OrgRow> } | { ok: false; 
   const limit = Number(f.dailyCompLimit);
   if (!Number.isInteger(limit) || limit < 0 || limit > 500) return { ok: false, error: "The daily comp limit should be a whole number, like 20." };
   if (!STATUSES.includes(f.status)) return { ok: false, error: "Pick a status." };
+  if (f.impactCategory !== undefined && !isCategory(f.impactCategory)) return { ok: false, error: "Pick who the organization serves." };
   return {
     ok: true,
     row: {
@@ -46,6 +50,7 @@ function clean(f: OrgFields): { ok: true; row: Partial<OrgRow> } | { ok: false; 
       daily_comp_limit: limit,
       status: f.status,
       notes: String(f.notes ?? "").trim().slice(0, 2000) || null,
+      ...(f.impactCategory ? { impact_category: f.impactCategory } : {}),
     },
   };
 }
