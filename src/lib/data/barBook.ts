@@ -142,7 +142,7 @@ export async function getTargetPourCost(): Promise<number> {
 // Every recipe (menu, house and the starter list) and what the bar has.
 export async function getBarBookData(): Promise<BarBookData | null> {
   const supabase = createAdminClient();
-  const [rec, ing, outs, counts, target] = await Promise.all([
+  const [rec, ing, outs, counts, target, bar] = await Promise.all([
     supabase.from("recipes").select(BOOK_COLUMNS),
     supabase.from("ingredients").select("id, name, unit, kind, family, carried, active, par_item_id, unit_cost"),
     supabase.from("stock_outages").select("par_item_id, label").is("resolved_at", null).not("par_item_id", "is", null),
@@ -150,6 +150,8 @@ export async function getBarBookData(): Promise<BarBookData | null> {
     // thousand counts cover every ingredient anyone still counts.
     supabase.from("inventory_counts").select("ingredient_id, quantity_on_hand, counted_at").order("counted_at", { ascending: false }).limit(5000),
     getTargetPourCost(),
+    // Only drinks: recipes tied to food menu items (pizza, popcorn, hot dogs) stay out of the book.
+    supabase.from("menu_items").select("id").eq("is_alcohol", true),
   ]);
   if (schemaMissing(rec.error) || schemaMissing(ing.error)) return null;
   if (rec.error) throw rec.error;
@@ -171,7 +173,10 @@ export async function getBarBookData(): Promise<BarBookData | null> {
     family: (i.family as string | null) ?? null,
     kind: (i.kind as string | null) ?? null,
   }));
-  const recipes = ((rec.data ?? []) as unknown as RecipeRow[]).map(toRecipe).filter((r): r is BookRecipe => !!r);
+  const barItems = bar.error ? null : new Set((bar.data ?? []).map((m) => m.id as string));
+  const recipes = ((rec.data ?? []) as unknown as RecipeRow[])
+    .map(toRecipe)
+    .filter((r): r is BookRecipe => !!r && (!r.menuItemId || !barItems || barItems.has(r.menuItemId)));
   return { recipes, stock, target };
 }
 
