@@ -5,6 +5,7 @@ import { esc } from "../format";
 import { C, DEV, FB, FM, assetUrl, band, bleed, blk, button, footer, h1, h2, label, mono, pic, red, textLink, txt, type Dev } from "./kit";
 import { PIECES } from "./assets";
 import { claimButton, claimCard, claimState, signoff, siteLink, whyOldSite, type Ctx, type DesignOut } from "./shared";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 function hero(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
@@ -22,7 +23,7 @@ function insiders(ctx: Ctx, out: DesignOut): string {
   const d = DEV[dev];
   const m = dev === "m";
   const plus = siteLink(ctx, "/membership", "insiders-plus", "See Insiders+");
-  if (dev === "d") out.text.push(`INSIDERS+\nEvery movie, free. Four movies a month: $32 paying as you go, or $15 with Insiders+.\nPlus 10% off at the register, 2 free booths a month, and a free black coffee or hot tea every day.\n$15 a month. See Insiders+: ${plus}`);
+  if (dev === "d") out.text.push(`INSIDERS+\nEvery movie, free. Four movies a month: $32 paying as you go, or $15 with Insiders+.\nPlus 10% off at the register, ${FREE_BOOTHS_PER_MONTH} free booths a month, and a free black coffee or hot tea every day.\n$15 a month. See Insiders+: ${plus}`);
   const price = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:separate;"><tr><td style="border:2px solid ${C.gold};border-radius:6px;">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
 <td height="52" valign="middle" style="height:52px;padding:0 ${m ? 12 : 16}px;">${blk("$15", 28, 32, C.gold)}</td>

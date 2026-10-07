@@ -237,7 +237,7 @@ export const DESIGN_PIECES = {
       {
         name: "plus-perks",
         fmt: "png",
-        alt: "Insiders+ also gets you 10% off at the register, 2 free booths a month, and a free black coffee or hot tea every day.",
+        alt: "Insiders+ also gets you 10% off at the register, 4 free booths a month, and a free black coffee or hot tea every day.",
         rect: (R) => {
           const p = R.kids(R.sec("insiders"), 1);
           const a = R.box(p.children[3]);
@@ -338,7 +338,7 @@ export const DESIGN_PIECES = {
       {
         name: "perks",
         fmt: "png",
-        alt: "Insiders+: unlimited free movies, 10% off at the register, 2 free booths a month, and a free black coffee or hot tea every day.",
+        alt: "Insiders+: unlimited free movies, 10% off at the register, 4 free booths a month, and a free black coffee or hot tea every day.",
         rect: (R) => {
           const p = R.kids(R.sec("perks"), 0);
           const a = R.box(p.children[2]);

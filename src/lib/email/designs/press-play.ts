@@ -4,6 +4,7 @@
 import { esc } from "../format";
 import { C, DEV, band, blk, button, card, footer, h1, h2, icon, label, mono, pic, red, txt, type Dev } from "./kit";
 import { artPic, finishButton, signoff, type Ctx, type DesignOut } from "./shared";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 function hero(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
@@ -70,7 +71,7 @@ function perks(ctx: Ctx, out: DesignOut): string {
   const { dev } = ctx;
   const d = DEV[dev];
   const m = dev === "m";
-  if (dev === "d") out.text.push("INSIDERS+\nUnlimited, and then some: every movie free, 10% off at the register, 2 free booths a month, and a free black coffee or hot tea every day.");
+  if (dev === "d") out.text.push(`INSIDERS+\nUnlimited, and then some: every movie free, 10% off at the register, ${FREE_BOOTHS_PER_MONTH} free booths a month, and a free black coffee or hot tea every day.`);
   return band(C.paper, `${label("INSIDERS+", C.redD, dev)}${h2(m ? "Unlimited,<br>and then some." : "Unlimited, and then some.", C.ink, dev)}<div style="margin-top:${m ? 20 : 24}px;">${pic("press-play/perks", dev, { dark: false })}</div>`, `${d.pt}px ${d.G}px`);
 }
 

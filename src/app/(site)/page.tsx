@@ -13,6 +13,7 @@ import type { Screening } from "@/lib/types";
 import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { DIRECTIONS_URL, SITE_DESCRIPTION } from "@/lib/site";
 import { pageMeta } from "@/lib/seo/page-meta";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 // The same page for everyone, drawn per request: "Tonight", "Today" and
 // "Tomorrow" and which showings are listed (started? this year's release?)
@@ -254,7 +255,7 @@ export default async function HomePage() {
                 <strong>Free entry to every screening</strong>, unlimited
               </Perk>
               <Perk>{DAILY_COFFEE_PERK}</Perk>
-              <Perk>2 free booth reservations every month</Perk>
+              <Perk>{FREE_BOOTHS_PER_MONTH} free booth reservations every month</Perk>
               <Perk>Concession and merch discounts</Perk>
               <Perk>First access to weekly titles and member events</Perk>
             </ul>

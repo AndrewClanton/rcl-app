@@ -1,3 +1,5 @@
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
+
 // The help library: one short entry per topic, used two ways. The little
 // "i" bubbles (src/components/help/InfoTip.tsx) show one entry next to the
 // thing it explains, and /help lists them all as the staff FAQ. Depth goes
@@ -409,7 +411,7 @@ export const HELP_TOPICS = {
     title: "Insiders vs Insiders+",
     area: "Members and memberships",
     body:
-      "Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, a free black coffee or hot tea every day, 2 free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.",
+      `Insiders is free: members earn points on everything and get the weekly lineup. Insiders+ is the paid membership, $15 a month or $153 a year: free entry to every screening, a free black coffee or hot tea every day, ${FREE_BOOTHS_PER_MONTH} free booth reservations a month, and concession and merch discounts. Setting someone to Insiders+ by hand gives the perks but bills nothing, which is what the \"No card on file\" badge warns about. To bill them, use Billing → Open card page.`,
     links: [{ label: "Members", href: "/admin/members" }],
   },
   "points-history": {
@@ -517,7 +519,7 @@ export const HELP_TOPICS = {
     title: "Booth reservations",
     area: "Showtimes, events and booths",
     body:
-      "The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get 2 free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee. On the register, the Booths button in the order's bottom row (\"2 booths\") lists today's and tomorrow's: it's gold while a Reserved card still needs printing, with a red dot for a booking made in the last day.",
+      `The 8 lounge booths are booked online, two hours at a time, from tomorrow on, and never for a Sunday, since we're closed. A booking shows Pending payment while the customer pays, and the booth frees up again if they don't finish within 30 minutes. Insiders+ members get ${FREE_BOOTHS_PER_MONTH} free reservations a month when they book signed in as themselves. Cancel & refund needs a manager PIN and returns the fee. On the register, the Booths button in the order's bottom row (\"2 booths\") lists today's and tomorrow's: it's gold while a Reserved card still needs printing, with a red dot for a booking made in the last day.`,
   },
 
   // ---------- reports and money ----------
