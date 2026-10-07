@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AudienceCount, DesignResults, WaveResult } from "@/lib/email/designs/ready";
 import type { DesignKey } from "@/lib/email/designs/types";
 import { UNDO_STOP_BEFORE_MS } from "@/lib/email/undo";
 import { StatusChip, type ChipTone } from "../_studio/ui";
-import { pauseDesign, resumeDesign, sendDesign, sendDesignTest, sendNextWave } from "./actions";
+import { finishEveryone, pauseDesign, resumeDesign, sendDesign, sendDesignTest, sendNextWave } from "./actions";
 
 // The Ready to send screen: the three ready-made emails as cards, each in
 // four steps (Royale Email Studio): Look it over, Try it on your phone,
-// Start small, Watch, then carry on. The rail shows where the email really
+// Send, Watch, then carry on. The rail shows where the email really
 // is, and opens each step; what matters whatever the step (the brake, the
 // Undo bar, Pause and Carry on, how far it's got) stays above them. Each
 // card has its preview (phone, computer, plain text), who it would go to
@@ -65,6 +65,7 @@ export interface UndoCard {
   first: boolean;
   started: boolean; // Undo was pressed and hasn't finished (pressing again carries on)
   undoing: boolean; // ...and is calling back right now
+  everyone: boolean; // "Send to everyone now": nothing has left yet; it starts going out at `arrives`
 }
 
 export interface PlanData {
@@ -81,6 +82,8 @@ export interface PlanData {
   nextWave: string; // "Sat, Oct 3": automatic, the next morning run's wave; manual, the next day one can go once today's share has gone
   auto: boolean; // later waves go by themselves (an admin setting); otherwise staff press for each
   goesAt: string; // "now", or "at 10:30 AM Sat, Oct 3" outside sending hours
+  cap: number; // the most member email in one day (Email, Settings)
+  everyoneToday: number; // how many "Send to everyone now" could reach right now (0 outside sending hours)
 }
 
 const n = (x: number) => x.toLocaleString("en-US");
@@ -129,11 +132,21 @@ function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; statu
     if (!onItsWay || now >= undo.arrives) return null;
     return (
       <p className="rounded-xl bg-[var(--foreground)] px-4 py-3 text-sm text-[var(--background)]" role="status">
-        <strong>Wave {undo.wave} is on its way.</strong> Arrives about {undo.arrivesLabel}.
+        {undo.everyone ? (
+          <>
+            <strong>Going to {people(undo.people)} at {undo.arrivesLabel}.</strong> The minute to undo is over; Pause still stops what hasn&apos;t gone.
+          </>
+        ) : (
+          <>
+            <strong>Wave {undo.wave} is on its way.</strong> Arrives about {undo.arrivesLabel}.
+          </>
+        )}
       </p>
     );
   }
-  const what = undo.undoing
+  const what = undo.everyone && !undo.undoing && !undo.started && status !== "paused"
+    ? `Going to everyone: ${people(undo.people)} at ${undo.arrivesLabel}.`
+    : undo.undoing
     ? `Calling back wave ${undo.wave}…`
     : undo.started
       ? `Wave ${undo.wave} isn't all called back yet.`
@@ -145,7 +158,11 @@ function UndoBar({ undo, status, busy, offset, onUndo }: { undo: UndoCard; statu
       <p className="min-w-0 flex-1 basis-56" role="status">
         <strong>{what}</strong>{" "}
         <span className="text-[#d9d2bf]">
-          {undo.started ? `Press Undo to finish calling it back before ${undo.arrivesLabel}.` : `It arrives about ${undo.arrivesLabel}. Undo calls back every one of them.`}
+          {undo.started
+            ? `Press Undo to finish calling it back before ${undo.arrivesLabel}.`
+            : undo.everyone
+              ? "Nothing has left yet. Undo stops all of it."
+              : `It arrives about ${undo.arrivesLabel}. Undo calls back every one of them.`}
         </span>
       </p>
       <button
@@ -275,7 +292,7 @@ function Preview({ card }: { card: CardData }) {
 // ---------- the steps ----------
 type StepState = "done" | "current" | "attention" | "todo" | "tip";
 const STATE_WORD: Record<StepState, string> = { done: "done", current: "you're here", attention: "needs a look", todo: "not yet", tip: "suggested" };
-const STEP_TITLES = ["Look it over", "Try it on your phone", "Start small", "Watch, then carry on"] as const;
+const STEP_TITLES = ["Look it over", "Try it on your phone", "Send", "Watch, then carry on"] as const;
 
 function Mark({ state, i }: { state: StepState; i: number }) {
   const cls =
@@ -336,7 +353,7 @@ function Card({
   // Undo has its own, so nothing else running on the card holds it up.
   const [undoing, startUndo] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [confirm, setConfirm] = useState<"first" | "next" | null>(null);
+  const [confirm, setConfirm] = useState<"first" | "next" | "everyone" | null>(null);
   const [checked, setChecked] = useState("");
   // The "On my phone" ticks: a checklist for whoever's testing, not saved.
   const [ticks, setTicks] = useState<Record<string, boolean>>({});
@@ -372,6 +389,24 @@ function Card({
       : !plan.auto && plan.todayLeft <= 0
         ? `Today's share has gone. The first wave can go ${plan.nextWave}.`
         : allSpaced;
+  // "Send to everyone now": everyone left except those kept apart, up to
+  // what today's limit has room for.
+  const allWant = Math.max(0, count - spacedTotal);
+  const allN = Math.min(allWant, plan.everyoneToday);
+  const allLater = allWant - allN;
+  const everyoneWhy = !canSend
+    ? blockedWhy
+    : card.nextWaveOn
+      ? `It went out today. It can go again ${card.nextWaveOn}, once you've seen how it did.`
+      : waiting > 0
+        ? "The last wave is still going out."
+        : plan.goesAt !== "now"
+          ? "Email only goes out 9 AM to 7 PM, Monday to Saturday."
+          : plan.everyoneToday <= 0
+            ? `Today's limit of ${n(plan.cap)} member emails has been reached. It can go tomorrow (not Sunday).`
+            : allN === 0
+              ? (allSpaced ?? "Everyone it's for has had it.")
+              : null;
   const run = (what: string, fn: () => Promise<{ ok: boolean; text: string }>) =>
     start(async () => {
       setMsg({ ok: true, text: `${what}…` });
@@ -405,6 +440,21 @@ function Card({
       router.refresh();
     });
   };
+  // "Send to everyone now": when its minute is over, ask for the hand-over
+  // (the press's own run does it too; whichever comes first sends it).
+  const everyoneKey = card.undo?.everyone && !card.undo.started ? card.undo.key : null;
+  const everyoneAt = card.undo?.arrives ?? 0;
+  useEffect(() => {
+    if (!everyoneKey) return;
+    const wait = Math.max(0, everyoneAt - (Date.now() + offset)) + 1500;
+    const t = setTimeout(() => {
+      void finishEveryone(card.key, everyoneKey)
+        .then((out) => setMsg(out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error }))
+        .catch(() => null)
+        .finally(() => router.refresh());
+    }, wait);
+    return () => clearTimeout(t);
+  }, [everyoneKey, everyoneAt, offset, card.key, router]);
   const firstLabel = count === 0 ? "Nobody to send it to" : plan.auto || count <= next.n ? `Send to ${people(count)}` : `Send the first ${n(next.n)} (of ${n(count)})`;
   const nextLabel = `Send the next ${n(Math.min(next.n, count) || plan.perDay)}`;
   const waveLine = paused
@@ -431,7 +481,7 @@ function Card({
   const raw: { sub: string; state: "done" | "attention" | "tip" | "open" }[] = [
     picturesReady ? { sub: "Checked for you", state: "done" } : { sub: "The pictures aren't up yet", state: "attention" },
     card.lastTest ? { sub: `${card.lastTest.who}, ${card.lastTest.when}`, state: "done" } : started ? { sub: "No test on record", state: "tip" } : { sub: "A test to your inbox", state: "open" },
-    started && firstWave ? { sub: `Wave 1: ${n(firstWave.sent)} on ${waveDay(firstWave.day)}`, state: "done" } : { sub: `${n(Math.min(next.n || plan.firstWave, count || plan.firstWave))} regulars first`, state: "open" },
+    started && firstWave ? { sub: `Wave 1: ${n(firstWave.sent)} on ${waveDay(firstWave.day)}`, state: "done" } : { sub: "Everyone now, or in waves", state: "open" },
     paused && card.brake
       ? { sub: "The brake stopped it", state: "attention" }
       : going || paused
@@ -735,17 +785,23 @@ function Card({
                     </button>
                   </div>
                 ) : (
-                  <div className="flex flex-col items-start gap-2.5">
-                    <button type="button" className="btn-send !min-h-[56px] !px-7 !text-lg" disabled={pending || !!firstWhy || count === 0} title={firstWhy ?? undefined} onClick={() => setConfirm("first")}>
-                      {firstLabel}
-                    </button>
-                    {firstWhy ? (
-                      <span className="text-sm text-[var(--muted)]">{firstWhy}</span>
-                    ) : count > 0 ? (
+                  <div className="grid gap-3 sm:grid-cols-2" role="group" aria-label="How to send it">
+                    <div className="flex flex-col gap-2 rounded-xl border-2 border-[var(--border)] p-3">
+                      <button type="button" className="btn-send !min-h-[56px] w-full !px-5 !text-lg" disabled={pending || !!everyoneWhy} title={everyoneWhy ?? undefined} onClick={() => setConfirm("everyone")}>
+                        Send to everyone now ({people(allN)})
+                      </button>
                       <span className="text-sm text-[var(--muted)]">
-                        {card.hold ? "You'll have a minute to undo. After that, Pause still stops the rest." : "Pause stops the rest at any time."} It asks you to confirm first.
+                        {everyoneWhy ?? `All at once, after a minute to undo.${allLater > 0 ? ` ${n(allLater)} more go another day (today's limit is ${n(plan.cap)}).` : ""}`}
                       </span>
-                    ) : null}
+                    </div>
+                    <div className="flex flex-col gap-2 rounded-xl border-2 border-[var(--border)] p-3">
+                      <button type="button" className="btn-secondary !min-h-[56px] w-full !px-5 !text-lg" disabled={pending || !!firstWhy || count === 0} title={firstWhy ?? undefined} onClick={() => setConfirm("first")}>
+                        Send in waves
+                      </button>
+                      <span className="text-sm text-[var(--muted)]">
+                        {firstWhy ?? (count > 0 ? `${firstLabel}, then ${n(plan.perDay)} at a time. ${card.hold ? "A minute to undo each wave." : "Pause stops the rest at any time."}` : "Nobody to send it to.")}
+                      </span>
+                    </div>
                   </div>
                 )}
               </>
@@ -753,14 +809,19 @@ function Card({
 
             {shown === 3 && (
               <>
-                {going && !plan.auto && (
-                  <div className="space-y-2">
-                    <button type="button" className="btn-send !min-h-[52px] !px-6 !text-base" disabled={pending || !!nextWhy} title={nextWhy ?? undefined} onClick={() => setConfirm("next")}>
-                      {nextLabel}
+                {going && (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+                    {!plan.auto && (
+                      <button type="button" className="btn-send !min-h-[52px] !px-6 !text-base" disabled={pending || !!nextWhy} title={nextWhy ?? undefined} onClick={() => setConfirm("next")}>
+                        {nextLabel}
+                      </button>
+                    )}
+                    <button type="button" className="btn-secondary !min-h-[52px] !px-6 !text-base" disabled={pending || !!everyoneWhy} title={everyoneWhy ?? undefined} onClick={() => setConfirm("everyone")}>
+                      Send the rest now ({people(allN)})
                     </button>
-                    {nextWhy && <p className="text-xs text-[var(--muted)]">{nextWhy}</p>}
                   </div>
                 )}
+                {going && (nextWhy || everyoneWhy) && <p className="text-xs text-[var(--muted)]">{plan.auto ? everyoneWhy : (nextWhy ?? everyoneWhy)}</p>}
                 {r && r.sent > 0 ? (
                   <div className="space-y-3">
                     <h4 className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">How it did</h4>
@@ -794,7 +855,70 @@ function Card({
         <Preview card={card} />
       </div>
 
-      {confirm && (
+      {confirm === "everyone" && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby={`confirm-${card.key}`}>
+          <div className="card max-h-[90dvh] w-full max-w-md overflow-y-auto shadow-2xl">
+            <h3 id={`confirm-${card.key}`} className="text-lg font-semibold">
+              {going ? `Send the rest of “${card.title}” now?` : `Send “${card.title}” to everyone now?`}
+            </h3>
+            <p className="mt-2 text-3xl font-bold tabular-nums">{people(allN)}</p>
+            <dl className="mt-3 space-y-2 text-sm">
+              {allLater > 0 && (
+                <div>
+                  <dt className="text-xs text-[var(--muted)]">Not today</dt>
+                  <dd>
+                    {n(allLater)} more go another day: today&apos;s limit is {n(plan.cap)} member emails.
+                  </dd>
+                </div>
+              )}
+              {spaced.length > 0 && (
+                <div>
+                  <dt className="text-xs text-[var(--muted)]">Kept apart (at least {SPACED_DAYS} days between these emails)</dt>
+                  <dd className="space-y-0.5">
+                    {spaced.map((s) => (
+                      <p key={s.title}>
+                        {n(s.n)} got <em>{s.title}</em> in the last {SPACED_DAYS} days. They&apos;ll get this one later.
+                      </p>
+                    ))}
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-xs text-[var(--muted)]">When</dt>
+                <dd>Starts in about 2 minutes, then goes out in a few minutes, 100 at a time.</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-[var(--muted)]">Subject</dt>
+                <dd>{card.subject}</dd>
+              </div>
+            </dl>
+            <p className="mt-3 rounded-lg bg-[var(--gold)]/15 p-3 text-sm">
+              <strong>This can&apos;t be spread out once started. Undo works for 1 minute.</strong> If too many bounce or anyone marks it as spam, the rest stop by
+              themselves.
+            </p>
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" className="btn-secondary min-h-12" onClick={() => setConfirm(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-send min-h-12"
+                onClick={() => {
+                  setConfirm(null);
+                  run("Sending to everyone", async () => {
+                    const out = going ? await sendNextWave(card.key, card.sendKey, "everyone") : await sendDesign(card.key, card.sendKey, "everyone");
+                    return out.ok ? { ok: true, text: out.message } : { ok: false, text: out.error };
+                  });
+                }}
+              >
+                Send to {people(allN)} now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirm && confirm !== "everyone" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" aria-labelledby={`confirm-${card.key}`}>
           <div className="card max-h-[90vh] w-full max-w-md overflow-y-auto shadow-2xl">
             <h3 id={`confirm-${card.key}`} className="text-lg font-semibold">
@@ -1064,6 +1188,8 @@ export default function ReadyToSend({
             {plan.auto
               ? "After the first wave, one goes each morning (Monday to Saturday) until everyone has it. You can pause it any time."
               : "After the first wave, nothing more goes until someone presses Send the next wave (at most one wave a day). You can pause it any time."}{" "}
+            Or press <strong>Send to everyone now</strong>: everyone it&apos;s for (up to {n(plan.cap)} a day) in one go, after a minute to undo. The brake still
+            stops the rest if too many bounce.{" "}
             {noHolds ? (
               <>
                 There&apos;s no Undo just now: Resend wouldn&apos;t hold email to send later, so each wave goes as soon as it&apos;s pressed for. Pause still stops the rest.

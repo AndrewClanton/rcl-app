@@ -38,6 +38,11 @@ export function NewEmailButtons() {
           </button>
         ))}
       </div>
+      {pending && (
+        <p className="mt-2 text-sm text-[var(--muted)]" role="status">
+          Starting the draft and opening it…
+        </p>
+      )}
       {error && <p className="mt-2 text-sm text-[var(--danger-text)]">{error}</p>}
     </div>
   );

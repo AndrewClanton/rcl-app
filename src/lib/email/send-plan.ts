@@ -4,24 +4,30 @@ import { inSendWindow, nextSendSlot } from "./timing";
 
 // Resend's sending limits, and how much of today's is left for list email.
 //
-// The account is on Resend's free plan: 100 emails a day and 3,000 a month,
-// for everything it sends (receipts, tickets, the daily report and these
-// lists alike). Resend counts the day by the UTC calendar (it resets at
-// midnight UTC). So a list that's bigger than a day's share goes out in
-// daily waves: the morning email run (8 AM Central) sends the next wave,
-// until everyone has it. Part of each day is kept back for the everyday
-// mail, so a big send can never stop a receipt.
+// Resend's plan allows 50,000 emails a month for everything it sends
+// (receipts, tickets, the daily report and these lists alike); it counts
+// the day by the UTC calendar. A list email goes out either in daily waves
+// (the wave size: `daily` less what's kept back) or all at once with "Send
+// to everyone now", never more than the day's cap (`cap`, 2,000 unless set)
+// nor the month's limit less what's kept back for the everyday mail, so a
+// big send can never stop a receipt.
 //
-// The numbers live in email_settings ('resend_plan'), so when the plan is
-// upgraded an admin changes them on Back office -> Email -> Ready to send.
+// The numbers live in email_settings ('resend_plan'); an admin changes them
+// on Back office -> Email -> Settings.
 
 export interface SendPlan {
-  daily: number; // Resend's daily limit
+  daily: number; // a wave's share a day plus what's kept back (wave size = daily - reserve)
   monthly: number; // Resend's monthly limit
   reserve: number; // kept back each day for receipts, tickets and the daily report
+  cap: number; // the most list email in one day, every email together ("Send to everyone now" included)
 }
 
-export const FREE_PLAN: SendPlan = { daily: 100, monthly: 3000, reserve: 20 };
+// The most list email a day unless an admin sets another (Email, Settings).
+// Resend's paid plan (50,000 a month) has no daily limit of its own; this
+// keeps one bad day from using up the month. (Andrew, 10/7: "100 a day
+// won't work, we have 2000+ subscribers".)
+export const DEFAULT_DAILY_CAP = 2000;
+export const FREE_PLAN: SendPlan = { daily: 100, monthly: 3000, reserve: 20, cap: DEFAULT_DAILY_CAP };
 const KEY = "resend_plan";
 
 function clean(v: Partial<SendPlan> | null | undefined): SendPlan {
@@ -29,7 +35,8 @@ function clean(v: Partial<SendPlan> | null | undefined): SendPlan {
   const daily = n(v?.daily, FREE_PLAN.daily, 1_000_000) || FREE_PLAN.daily;
   const monthly = n(v?.monthly, FREE_PLAN.monthly, 50_000_000) || FREE_PLAN.monthly;
   const reserve = Math.min(n(v?.reserve, FREE_PLAN.reserve, 1_000_000), Math.max(0, daily - 1));
-  return { daily, monthly, reserve };
+  const cap = n(v?.cap, DEFAULT_DAILY_CAP, 1_000_000) || DEFAULT_DAILY_CAP;
+  return { daily, monthly, reserve, cap };
 }
 
 export async function getSendPlan(): Promise<SendPlan> {
@@ -110,11 +117,19 @@ export async function listUsage(now = new Date()): Promise<{ today: number; mont
   return { today: today + earlier + (undone[day] ?? 0), month: thisMonth + undoneMonth };
 }
 
-// How many more list emails can go today.
+// How many more list emails can go today in a wave.
 export async function roomToday(now = new Date(), plan?: SendPlan): Promise<number> {
   const p = plan ?? (await getSendPlan());
   const used = await listUsage(now);
-  return Math.max(0, Math.min(perDay(p) - used.today, perMonth(p) - used.month));
+  return Math.max(0, Math.min(perDay(p) - used.today, p.cap - used.today, perMonth(p) - used.month));
+}
+
+// How many more can go today all at once ("Send to everyone now"): the
+// day's cap and the month's limit, not the wave size.
+export const everyoneLeft = (p: SendPlan, used: { today: number; month: number }) => Math.max(0, Math.min(p.cap - used.today, perMonth(p) - used.month));
+export async function roomForEveryone(now = new Date(), plan?: SendPlan): Promise<number> {
+  const p = plan ?? (await getSendPlan());
+  return everyoneLeft(p, await listUsage(now));
 }
 
 // Whether a wave can still go out today: the send window (9 AM to 7 PM

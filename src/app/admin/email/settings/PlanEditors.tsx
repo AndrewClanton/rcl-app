@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { saveResendPlan, saveWaveModeAction, saveWaveSizeAction } from "../ready/actions";
+import { saveDailyCapAction, saveResendPlan, saveWaveModeAction, saveWaveSizeAction } from "../ready/actions";
 
 // Admins: how waves go and our email plan's numbers. Moved here from
 // Ready to send as they were; each action checks for an admin itself.
@@ -11,6 +11,7 @@ export interface PlanNumbers {
   daily: number;
   monthly: number;
   reserve: number;
+  cap: number;
   perDay: number;
   auto: boolean;
 }
@@ -38,6 +39,38 @@ function WaveSize({ plan }: { plan: PlanNumbers }) {
           start(async () => {
             const out = await saveWaveSizeAction(Number(size)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
             setMsg(out.ok ? `Saved: waves of ${n(out.size)} from the next wave.` : out.error);
+            router.refresh();
+          })
+        }
+      >
+        Save
+      </button>
+      {msg && <span className="text-sm">{msg}</span>}
+    </div>
+  );
+}
+
+// The most member email in one day, every email together (Send to
+// everyone now included). 2,000 unless an admin sets another.
+function DailyCap({ plan }: { plan: PlanNumbers }) {
+  const router = useRouter();
+  const [cap, setCap] = useState(String(plan.cap));
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="text-sm">
+        Most member emails a day
+        <input className="input mt-1 min-h-11 !w-28" inputMode="numeric" value={cap} onChange={(e) => setCap(e.target.value)} />
+      </label>
+      <button
+        type="button"
+        className="btn-secondary min-h-11 !px-4 !py-2 text-sm"
+        disabled={pending || Number(cap) === plan.cap}
+        onClick={() =>
+          start(async () => {
+            const out = await saveDailyCapAction(Number(cap)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+            setMsg(out.ok ? `Saved: at most ${n(out.cap)} a day.` : out.error);
             router.refresh();
           })
         }
@@ -109,7 +142,7 @@ function PlanEditor({ plan }: { plan: PlanNumbers }) {
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const out = await saveResendPlan(Number(daily), Number(monthly), Number(reserve)).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
+              const out = await saveResendPlan(Number(daily), Number(monthly), Number(reserve), plan.cap).catch(() => ({ ok: false as const, error: "Couldn't reach the server." }));
               setMsg(out.ok ? "Saved." : out.error);
               router.refresh();
             })
@@ -128,6 +161,7 @@ export default function PlanEditors({ plan }: { plan: PlanNumbers }) {
     <div className="space-y-4">
       <WaveMode plan={plan} />
       <WaveSize plan={plan} />
+      <DailyCap plan={plan} />
       <PlanEditor plan={plan} />
     </div>
   );

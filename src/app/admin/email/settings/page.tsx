@@ -68,12 +68,13 @@ export default async function EmailSettingsPage() {
               After the first, each wave goes <strong>only when someone presses Send the next wave</strong>; nothing goes out by itself.
             </>
           )}{" "}
-          Never more than {n(daily)} a day in all. Resend (our email service) is set to {n(plan.daily)} a day and {n(plan.monthly)} a month; {n(plan.reserve)} a day are
-          kept for receipts, tickets and the daily report.
+          Or, on Ready to send, <strong>Send to everyone now</strong>: everyone it&apos;s for in one go, after a minute to undo. Never more than {n(plan.cap)} member
+          emails a day in all, and {n(perMonth(plan))} a month (Resend, our email service, allows {n(plan.monthly)}; {n(plan.reserve)} a day are kept for receipts,
+          tickets and the daily report).
         </p>
         {usage && (
           <p className="text-[var(--muted)]">
-            Today: {n(usage.today)} of {n(daily)} used. This month: {n(usage.month)} of {n(perMonth(plan))}. Emails called back with Undo still count, in case Resend counts
+            Today: {n(usage.today)} of {n(plan.cap)} used. This month: {n(usage.month)} of {n(perMonth(plan))}. Emails called back with Undo still count, in case Resend counts
             them.
           </p>
         )}
@@ -85,7 +86,7 @@ export default async function EmailSettingsPage() {
         )}
         {admin ? (
           <div className="border-t border-[var(--border)] pt-3">
-            <PlanEditors plan={{ daily: plan.daily, monthly: plan.monthly, reserve: plan.reserve, perDay: daily, auto: mode === "auto" }} />
+            <PlanEditors plan={{ daily: plan.daily, monthly: plan.monthly, reserve: plan.reserve, cap: plan.cap, perDay: daily, auto: mode === "auto" }} />
           </div>
         ) : (
           <p className="text-xs text-[var(--muted)]">An admin can change these.</p>
