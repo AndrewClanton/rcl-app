@@ -8,6 +8,7 @@ import BoothPhotoGrid from "./BoothPhotoGrid";
 import PlusLink from "@/components/PlusLink";
 import Honeypot from "@/components/Honeypot";
 import { CLOSED_DAYS_NOTE, isClosedDate } from "@/lib/closed-days";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 const RESERVATION_HOURS = 2;
 
@@ -275,7 +276,7 @@ function BoothDetailModal({
 
             <div className="rounded-[4px] border-2 border-[var(--foreground)] bg-[var(--gold)] px-3 py-3 text-sm">
               <span className="ctag ctag-red mr-2 !px-2 !py-0.5 !text-[10.5px]">Insiders+ perk</span>
-              <strong>2 free booth reservations every month.</strong>{" "}
+              <strong>{FREE_BOOTHS_PER_MONTH} free booth reservations every month.</strong>{" "}
               {me?.plus ? (
                 editing ? (
                   "Free reservations cover booths booked under your own name and email."

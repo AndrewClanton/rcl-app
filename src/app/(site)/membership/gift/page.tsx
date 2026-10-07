@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { PageMasthead, SpecFoot } from "@/components/print";
 import { DAILY_COFFEE_PERK } from "@/lib/daily-perk";
+import { FREE_BOOTHS_PER_MONTH } from "@/lib/booth-perk";
 
 export const dynamic = "force-dynamic";
 // A buyer's own receipt page: kept out of search results.
@@ -73,7 +74,7 @@ export default async function GiftDonePage({ searchParams }: { searchParams: Pro
         <ul className="mt-4 space-y-2 text-[15px]">
           <li>Free entry to every screening, unlimited</li>
           <li>{DAILY_COFFEE_PERK}</li>
-          <li>2 free booth reservations every month</li>
+          <li>{FREE_BOOTHS_PER_MONTH} free booth reservations every month</li>
           <li>Concession and merch discounts</li>
           <li>First access to weekly titles and member events</li>
         </ul>
