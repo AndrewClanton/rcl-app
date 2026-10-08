@@ -9,6 +9,7 @@ import type { StaffView } from "./staff-store";
 import { CountBadge } from "./ui";
 import MyHours from "./MyHours";
 import InfoTip from "@/components/help/InfoTip";
+import { SeatOrderingSwitch } from "../SeatOrders";
 
 // The Staff sheet: everything about working a shift, behind the register's
 // one Staff button (StaffButton.tsx), so none of it takes room from the
@@ -232,6 +233,8 @@ export default function StaffSheet({
                   </div>
                 </section>
               )}
+
+              <SeatOrderingSwitch />
 
               <section aria-label="Stock">
                 <div className="eyebrow mb-2">Stock</div>

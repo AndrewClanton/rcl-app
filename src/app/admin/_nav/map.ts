@@ -183,6 +183,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       keywords: "86 out of stock restock back in stock shopping par alerts email buyers purchasing",
       min: "manager",
     },
+    {
+      href: "/admin/seat-ordering",
+      label: "Seat ordering",
+      about: "Guests order and pay from their phone at a booth, in the cinema or outside. The switch, the spots and their QR cards.",
+      keywords: "qr code phone mobile order from your seat booth cinema patio table delivery switch pause print cards",
+      min: "manager",
+    },
   ],
   team: [
     { href: "/admin/team", label: "Schedule", about: "Who's working when, week by week.", keywords: "shifts roster week staff schedule", min: "manager" },

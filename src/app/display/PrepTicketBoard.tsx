@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
-import { reprintOrderTicket, setItemReady } from "./actions";
+import { reprintOrderTicket, setItemReady, setSeatOrderStatus } from "./actions";
+import { boardLabel, seatTicketOf, type SeatOrderCols, type SeatStatus } from "@/lib/seat-ordering";
+import { playSeatChime, unlockChime } from "./seat-chime";
 import DrinkIcon from "@/components/bar/DrinkIcon";
 import { FAMILY_COLOR } from "@/lib/bar/icons";
 import { boardEntryForTicket, type BoardEntry, type BoardMaps } from "@/lib/bar/book";
@@ -46,6 +48,23 @@ export default function PrepTicketBoard({
   // "Reprint ticket" on a card: which order is printing, and how it went.
   const [reprinting, setReprinting] = useState<number | null>(null);
   const [reprinted, setReprinted] = useState<{ orderNumber: number; ok: boolean; text: string } | null>(null);
+
+  // Seat orders already rung for (the ones on screen at load don't ring).
+  const rang = useRef<Set<string>>(new Set(initialTickets.map((t) => t.order_id)));
+  useEffect(() => {
+    window.addEventListener("pointerdown", unlockChime);
+    return () => window.removeEventListener("pointerdown", unlockChime);
+  }, []);
+
+  function setSeat(orderId: string, status: SeatStatus) {
+    const before = tickets.find((t) => t.order_id === orderId)?.seat ?? null;
+    const apply = (seat: typeof before) => setTickets((prev) => prev.map((t) => (t.order_id === orderId && seat ? { ...t, seat } : t)));
+    if (before) apply({ ...before, status });
+    setSeatOrderStatus(orderId, status).then(
+      (ok) => !ok && apply(before),
+      () => apply(before),
+    );
+  }
 
   async function reprint(orderNumber: number, orderId: string) {
     setReprinting(orderNumber);
@@ -90,7 +109,11 @@ export default function PrepTicketBoard({
             };
             if (row.is_event) return;
             const [{ data: order }, categoryKey] = await Promise.all([
-              supabase.from("orders").select("order_number, order_name, status").eq("id", row.order_id).single(),
+              supabase
+                .from("orders")
+                .select("order_number, order_name, status, source, spot_name, seat_status, id_check, seat_note")
+                .eq("id", row.order_id)
+                .single<{ order_number: number; order_name: string | null; status: string } & SeatOrderCols>(),
               row.menu_item_id
                 ? supabase
                     .from("menu_items")
@@ -101,17 +124,25 @@ export default function PrepTicketBoard({
                 : Promise.resolve(null),
             ]);
             if (!order || order.status !== "completed") return;
+            const seat = seatTicketOf(order);
 
             const rowStation: Station | null = categoryKey
               ? KITCHEN_CATEGORIES.has(categoryKey)
                 ? "kitchen"
                 : BAR_CATEGORIES.has(categoryKey)
                   ? "bar"
-                  : null
+                  : seat
+                    ? "bar" // candy from a seat still gets carried out
+                    : null
               : row.is_alcohol
                 ? "bar"
                 : "kitchen";
             if (!rowStation || (station !== "all" && rowStation !== station)) return;
+            // A new seat order rings once (its items arrive one by one).
+            if (seat && !rang.current.has(row.order_id)) {
+              rang.current.add(row.order_id);
+              playSeatChime();
+            }
 
             setTickets((prev) =>
               [
@@ -130,6 +161,8 @@ export default function PrepTicketBoard({
                   menu_item_id: row.menu_item_id ?? null,
                   recipe_id: row.recipe_id ?? null,
                   custom_recipe: row.custom_recipe ?? null,
+                  is_alcohol: row.is_alcohol,
+                  seat,
                 },
                 ...prev,
               ].slice(0, 60)
@@ -142,6 +175,17 @@ export default function PrepTicketBoard({
           (payload) => {
             const row = payload.new as { id: string; ready: boolean; ready_at: string | null };
             setTickets((prev) => prev.map((t) => (t.id === row.id ? { ...t, ready: row.ready, ready_at: row.ready_at } : t)));
+          }
+        )
+        // A seat order's Making / Delivered, tapped here, on another board
+        // or on the register.
+        .on(
+          "postgres_changes",
+          { event: "UPDATE", schema: "public", table: "orders", filter: "source=eq.mobile" },
+          (payload) => {
+            const o = payload.new as { id: string } & SeatOrderCols;
+            const seat = seatTicketOf(o);
+            if (seat) setTickets((prev) => prev.map((t) => (t.order_id === o.id ? { ...t, seat } : t)));
           }
         )
         .subscribe((status) => setConnected(status === "SUBSCRIBED"));
@@ -189,8 +233,42 @@ export default function PrepTicketBoard({
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {[...grouped.entries()].map(([orderNumber, items]) => {
             const allReady = items.every((i) => i.ready);
+            const seat = items.find((i) => i.seat)?.seat ?? null;
+            const dim = seat ? seat.status === "delivered" : allReady;
+            const firstAlcohol = seat?.idCheck ? items.find((i) => i.is_alcohol)?.id : undefined;
             return (
-              <div key={orderNumber} className="card" style={allReady ? { opacity: 0.55 } : undefined}>
+              <div key={orderNumber} className="card" style={{ ...(dim ? { opacity: 0.55 } : {}), ...(seat ? { borderWidth: 3, borderColor: "var(--accent)" } : {}) }}>
+                {seat && (
+                  <div className="-mx-5 -mt-5 mb-3 rounded-t-lg px-4 py-3" style={{ background: "var(--accent)", color: "var(--accent-foreground)" }}>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.16em] opacity-90">Seat order · bring it to</div>
+                    <div className="font-display text-3xl leading-tight">{boardLabel(seat.spot)}</div>
+                    {seat.note && <div className="mt-1 text-base font-bold">{seat.note}</div>}
+                  </div>
+                )}
+                {seat?.idCheck && (
+                  <div className="mb-2 rounded px-2 py-1 text-center text-base font-black tracking-wider" style={{ background: "var(--foreground)", color: "var(--background)" }}>
+                    ID CHECK ON DELIVERY
+                  </div>
+                )}
+                {seat && (
+                  <div className="mb-3 grid grid-cols-2 gap-2">
+                    {(["making", "delivered"] as const).map((s) => {
+                      const on = seat.status === s;
+                      return (
+                        <button
+                          key={s}
+                          className="min-h-12 rounded-lg border-2 text-base font-bold"
+                          style={on ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" } : { borderColor: "var(--foreground)" }}
+                          aria-pressed={on}
+                          onClick={() => setSeat(items[0].order_id, on ? (s === "delivered" ? "making" : "new") : s)}
+                        >
+                          {on ? "✓ " : ""}
+                          {s === "making" ? "Making" : "Delivered"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="mb-2 flex items-baseline justify-between">
                   <span className="font-display text-lg">#{orderNumber}</span>
                   <span className="text-xs" style={{ color: "var(--muted)" }}>
@@ -234,6 +312,11 @@ export default function PrepTicketBoard({
                           {item.quantity > 1 ? `${item.quantity}× ` : ""}
                           {item.name}
                         </span>
+                        {item.id === firstAlcohol && (
+                          <span className="ml-1.5 rounded px-1 py-px align-middle text-[10px] font-black tracking-wide" style={{ background: "var(--accent)", color: "var(--accent-foreground)" }}>
+                            ID
+                          </span>
+                        )}
                         {/* A double (twice the spirit) can't be missed. */}
                         {item.station === "bar" && isDouble(item.modifiers) && (
                           <div className="mt-0.5">

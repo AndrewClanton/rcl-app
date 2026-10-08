@@ -22,6 +22,7 @@ export type HelpArea =
   | "Menu and inventory"
   | "Showtimes, events and booths"
   | "Reports and money"
+  | "Seat ordering"
   | "Team and staff";
 
 // The order areas are listed in on /help.
@@ -35,6 +36,7 @@ export const HELP_AREAS: HelpArea[] = [
   "Menu and inventory",
   "Showtimes, events and booths",
   "Reports and money",
+  "Seat ordering",
   "Team and staff",
 ];
 
@@ -570,6 +572,44 @@ export const HELP_TOPICS = {
     area: "Team and staff",
     body:
       "Cashiers run the register and see members' emails and phones shortened. Managers also change the menu, run the schedule, training and printers, and their PIN approves refunds and cancelled tabs. Admins get everything in the back office except the Staff page, where only the owner changes roles. A Display screen login can only open the signage screens, so a TV left signed in can't reach anything else.",
+  },
+  // ---------- seat ordering ----------
+  "seat-ordering": {
+    title: "Seat ordering: how it works",
+    area: "Seat ordering",
+    body:
+      "Each booth, cinema row, the patio and each table has a QR card. A guest scans it, orders from the menu on their phone and pays there by card, Apple Pay or Google Pay, so there's never an unpaid order. It lands on the bar and kitchen screens with a chime and where to bring it in big letters, and on the register as a New seat order badge. It's a normal order: Reports, tax, points and stock all count it.",
+    steps: [
+      "Tap Making when you start on it. The guest's phone says “We're making it”.",
+      "Tap Delivered when it's on its way. Their phone says “On its way”.",
+      "Tapped by mistake? Tap it again to go back a step.",
+    ],
+    links: [{ label: "Seat ordering", href: "/admin/seat-ordering" }],
+  },
+  "seat-ordering-switch": {
+    title: "Turning seat ordering off",
+    area: "Seat ordering",
+    body:
+      "On a short-handed night, switch it off: register → Staff → Seat ordering (shown while it's on), or Back office → Seat ordering. Switching it on is in Back office. Phones then say it's paused and to order at the box office. It's also off by itself outside the hours set in Back office and all day Sunday, when we're closed. Orders already paid still need delivering.",
+  },
+  "seat-ordering-cards": {
+    title: "QR cards and new codes",
+    area: "Seat ordering",
+    body:
+      "Print the cards from Back office → Seat ordering, four to a letter page, and stand each one at its spot: a card only works for the spot printed on it, so the board knows where to go. If a card goes missing or someone copies it, press New code: the old card stops working right away, then print the new one. Add a spot for extra tables on busy nights, and untick On to stop one taking orders.",
+    links: [{ label: "Print cards", href: "/admin/seat-ordering/cards" }],
+  },
+  "seat-ordering-id": {
+    title: "Seat orders with alcohol",
+    area: "Seat ordering",
+    body:
+      "A seat order with alcohol says ID CHECK ON DELIVERY, with an ID tag on its first drink. Check ID when you hand it over, the same as at the bar. If they can't show one, keep the drink and get a manager to refund it in Reports.",
+  },
+  "seat-ordering-refunds": {
+    title: "Refunding a seat order",
+    area: "Seat ordering",
+    body:
+      "A seat order was paid on the guest's phone, so it's refunded like a website order: Back office → Reports → the day → the order → Refund, with a manager PIN. The money goes back to their card, and any points come off. Their phone shows Refunded.",
   },
   training: {
     title: "Trainings and sign-offs",

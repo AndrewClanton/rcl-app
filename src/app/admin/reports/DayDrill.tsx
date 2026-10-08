@@ -457,7 +457,7 @@ export function OrderList({ orders, of, orderHref }: { orders: DayOrder[]; of: (
             <div className="min-w-0 flex-1">
               <div className="text-xs text-[var(--muted)]">
                 {time(o.at)}
-                {o.cashier ? ` · ${o.cashier}` : o.source === "pos" ? "" : " · website"}
+                {o.cashier ? ` · ${o.cashier}` : o.source === "pos" ? "" : o.source === "mobile" ? " · seat order" : " · website"}
                 {o.method ? ` · ${o.method}` : ""}
                 {off ? ` · ${o.status}` : ""}
                 {o.tip > 0 ? ` · tip ${money(o.tip)}` : ""}
