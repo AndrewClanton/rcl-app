@@ -523,9 +523,9 @@ export const HELP_TOPICS = {
     title: "Syncing showtimes from the calendar",
     area: "Showtimes, events and booths",
     body:
-      "The staff calendar (RCL Calendar 2026.xlsx in Google Drive) is the source of truth for showtimes. When it changes, a manager uploads it on Showtimes → Sync from calendar and the schedule follows it from today on: room, time, who sees it and price, even if someone changed a showing here. Outdoor titles are Members only and free, Wednesday 8 PM Midweek Movies is Members only at $5, \"Private\" or \"do not include on website\" lines are Private, and everything else is Public at $8. A showing the calendar doesn't have is removed, but one with tickets sold is never removed or moved: it's flagged for you to handle. Trivia, comedy, CLOSED and other non-movie lines are skipped and listed.",
+      "The staff calendar (RCL Calendar 2026.xlsx in Google Drive) is the source of truth for showtimes. When it changes, a manager pulls it from Google Drive (or uploads it) on Showtimes → Sync from calendar and the schedule follows it from today on: room, time, who sees it and price, even if someone changed a showing here. Outdoor titles are Members only and free, Wednesday 8 PM Midweek Movies is Members only at $5, \"Private\" or \"do not include on website\" lines are Private, and everything else is Public at $8. A showing the calendar doesn't have is removed, but one with tickets sold is never removed or moved: it's flagged for you to handle. Trivia, comedy, CLOSED and other non-movie lines are skipped and listed.",
     steps: [
-      "Download or open the calendar on your phone or computer, then on Showtimes tap Sync from calendar and pick the .xlsx file (Google Drive works from the phone's file picker).",
+      "On Showtimes tap Sync from calendar, then Pull latest from Google Drive. (First time: paste the sheet's link under Google Drive link, and share the sheet as Anyone with the link → Viewer.) Or upload the .xlsx file instead.",
       "Read the preview, day by day: to add, to change, to remove.",
       "Under Needs a look, pick the right film for any title with several matches (like \"Legend\") or no match, or choose Skip.",
       "Tap Apply. It all saves at once, and the page shows who synced last and when.",
