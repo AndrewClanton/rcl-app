@@ -4,6 +4,7 @@ import { schemaMissing } from "@/lib/schema-missing";
 import PageHeader from "@/components/admin/PageHeader";
 import InfoTip from "@/components/help/InfoTip";
 import CalendarSync from "./CalendarSync";
+import { calendarDriveSource } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +31,10 @@ export default async function CalendarSyncPage() {
         title="Sync from calendar"
         titleAside={<InfoTip topic="calendar-sync" />}
         back={{ href: "/admin/screenings", label: "Showtimes" }}
-        purpose="Upload the staff calendar (.xlsx) and the showtimes follow it from today on. You see every change before anything is saved."
+        purpose="Pull the staff calendar from Google Drive (or upload the .xlsx) and the showtimes follow it from today on. You see every change before anything is saved."
       />
       <p className="mb-4 text-sm text-[var(--muted)]">{last ?? "Not synced from the calendar here yet."}</p>
-      <CalendarSync />
+      <CalendarSync driveSource={await calendarDriveSource()} />
     </>
   );
 }

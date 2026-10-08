@@ -6,6 +6,8 @@
 //   node scripts/sync-calendar.mjs "RCL Calendar 2026.xlsx"                 (dry run)
 //   node scripts/sync-calendar.mjs calendar.xlsx --out report.txt
 //   node scripts/sync-calendar.mjs calendar.xlsx --apply                    (writes)
+//   node scripts/sync-calendar.mjs --drive [--apply]     (pulls it from Google Drive:
+//     the link saved on the Back office page, else CALENDAR_SHEET_URL)
 //
 // Titles that need a pick (several films called "Legend", or a film that
 // isn't in the library yet) are listed and left alone here: pick them on the
@@ -28,18 +30,37 @@ register(
 );
 const sync = await import("../src/lib/calendar-sync.ts");
 
+const drive = await import("../src/lib/calendar-drive.ts");
+
 const args = process.argv.slice(2);
-const file = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out");
+const fromDrive = args.includes("--drive");
+const file = fromDrive ? "Google Drive" : args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out");
 const outIdx = args.indexOf("--out");
 const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
 const apply = args.includes("--apply");
 if (!file) {
-  console.error('Usage: node scripts/sync-calendar.mjs "RCL Calendar 2026.xlsx" [--out report.txt] [--apply]');
+  console.error('Usage: node scripts/sync-calendar.mjs ("RCL Calendar 2026.xlsx" | --drive) [--out report.txt] [--apply]');
   process.exit(1);
 }
 
 const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-const cal = sync.parseCalendar(await sync.readCalendarFile(file));
+let input = file;
+if (fromDrive) {
+  // The link saved on the Back office page, else CALENDAR_SHEET_URL.
+  const { data } = await db.from("settings").select("value").eq("key", drive.CALENDAR_SHEET_SETTING).maybeSingle();
+  const link = (typeof data?.value === "string" && data.value.trim()) || (process.env.CALENDAR_SHEET_URL ?? "").trim();
+  if (!link) {
+    console.error("No Google Drive link: save one on Back office > Showtimes > Sync from calendar, or set CALENDAR_SHEET_URL.");
+    process.exit(1);
+  }
+  const got = await drive.fetchCalendarFromDrive(link);
+  if (!got.ok) {
+    console.error(got.error);
+    process.exit(1);
+  }
+  input = got.bytes;
+}
+const cal = sync.parseCalendar(await sync.readCalendarFile(input));
 const state = await sync.loadSyncState(db);
 const plan = sync.buildPlan(cal, state);
 

@@ -7,11 +7,13 @@ import { hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { schemaMissing } from "@/lib/schema-missing";
 import { PUBLIC_SCREENINGS_TAG } from "@/lib/data/screenings";
 import { applyPlan, buildPlan, loadSyncState, parseCalendar, readCalendarFile, type Candidate, type ParsedCalendar, type Picks, type SyncPlan } from "@/lib/calendar-sync";
+import { CALENDAR_SHEET_SETTING, fetchCalendarFromDrive, parseSheetLink } from "@/lib/calendar-drive";
 import { importMovie } from "../actions";
 
 // Back office > Showtimes > Sync from calendar. Both actions take the
-// uploaded .xlsx again (it's small), so Apply reads the calendar and the
-// schedule fresh rather than trusting what the browser kept. Managers and up.
+// uploaded .xlsx again (it's small), or pull it from Google Drive again
+// (source=drive), so Apply reads the calendar and the schedule fresh rather
+// than trusting what the browser kept. Managers and up.
 
 type Fail = { ok: false; error: string };
 export type PreviewResult = { ok: true; plan: SyncPlan; fileName: string } | Fail;
@@ -26,10 +28,42 @@ async function manager() {
   return { staff, no: null };
 }
 
+// The Google Drive link: the one saved here, else CALENDAR_SHEET_URL.
+// Server-only: never returned to the browser.
+async function sheetLink(): Promise<{ link: string; from: "app" | "env" } | null> {
+  const { data, error } = await createAdminClient().from("settings").select("value").eq("key", CALENDAR_SHEET_SETTING).maybeSingle();
+  if (error && !schemaMissing(error)) throw error;
+  const saved = typeof data?.value === "string" ? data.value.trim() : "";
+  if (saved) return { link: saved, from: "app" };
+  const env = (process.env.CALENDAR_SHEET_URL ?? "").trim();
+  return env ? { link: env, from: "env" } : null;
+}
+
+// Where the Drive link comes from, for the page (never the link itself).
+export async function calendarDriveSource(): Promise<"app" | "env" | null> {
+  const { no } = await manager();
+  if (no) return null;
+  return (await sheetLink())?.from ?? null;
+}
+
 async function readUpload(form: FormData): Promise<{ cal: ParsedCalendar; fileName: string; picks: Picks } | Fail> {
-  const file = form.get("file");
-  if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pick the calendar file (.xlsx) first." };
-  if (file.size > MOST_BYTES) return { ok: false, error: "That file is too big to be the calendar. Pick the .xlsx file." };
+  const drive = form.get("source") === "drive";
+  let bytes: Buffer;
+  let fileName: string;
+  if (drive) {
+    const src = await sheetLink();
+    if (!src) return { ok: false, error: "No Google Drive link is saved yet. Save the calendar's link below first." };
+    const got = await fetchCalendarFromDrive(src.link);
+    if (!got.ok) return got;
+    bytes = got.bytes;
+    fileName = "Google Drive";
+  } else {
+    const file = form.get("file");
+    if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pick the calendar file (.xlsx) first." };
+    if (file.size > MOST_BYTES) return { ok: false, error: "That file is too big to be the calendar. Pick the .xlsx file." };
+    bytes = Buffer.from(await file.arrayBuffer());
+    fileName = file.name;
+  }
   let picks: Picks = {};
   try {
     const raw = JSON.parse(String(form.get("picks") ?? "{}"));
@@ -38,12 +72,14 @@ async function readUpload(form: FormData): Promise<{ cal: ParsedCalendar; fileNa
     // no picks
   }
   try {
-    const tabs = await readCalendarFile(Buffer.from(await file.arrayBuffer()));
+    const tabs = await readCalendarFile(bytes);
     const cal = parseCalendar(tabs);
-    if (!cal.tabs.length) return { ok: false, error: "No month tabs (OCT, NOV, DEC...) with dates from today on were found in that file. Is it the right calendar?" };
-    return { cal, fileName: file.name, picks };
+    if (!cal.tabs.length) return { ok: false, error: `No month tabs (OCT, NOV, DEC...) with dates from today on were found in ${drive ? "the Google Drive sheet" : "that file"}. Is it the right calendar?` };
+    return { cal, fileName, picks };
   } catch {
-    return { ok: false, error: "That file couldn't be read as an Excel spreadsheet. In Google Drive, download the calendar as .xlsx (Microsoft Excel) and pick that." };
+    return drive
+      ? { ok: false, error: "The Google Drive sheet couldn't be read as a spreadsheet. Check the saved link points at the calendar." }
+      : { ok: false, error: "That file couldn't be read as an Excel spreadsheet. In Google Drive, download the calendar as .xlsx (Microsoft Excel) and pick that." };
   }
 }
 
@@ -113,4 +149,20 @@ export async function applyCalendarSync(form: FormData): Promise<ApplyResult> {
     console.error(e);
     return { ok: false, error: "Couldn't save the sync. Nothing was changed. Try again." };
   }
+}
+
+// Save (or clear, when blank) the calendar's Google Drive link. The link
+// is never sent back to the browser; the page only says one is saved.
+export async function saveCalendarSheetLink(raw: string): Promise<{ ok: true; source: "app" | "env" | null } | Fail> {
+  const { staff, no } = await manager();
+  if (no) return no;
+  const link = String(raw ?? "").trim();
+  if (link && (link.length > 2000 || !parseSheetLink(link))) return { ok: false, error: "That doesn't look like a Google Sheets or Google Drive link. In the sheet, tap Share → Copy link, and paste that." };
+  const db = createAdminClient();
+  const { error } = link
+    ? await db.from("settings").upsert({ key: CALENDAR_SHEET_SETTING, value: link, updated_at: new Date().toISOString(), updated_by: staff.employeeId }, { onConflict: "key" })
+    : await db.from("settings").delete().eq("key", CALENDAR_SHEET_SETTING);
+  if (error) return { ok: false, error: "Couldn't save the link. Try again." };
+  revalidatePath("/admin/screenings/sync");
+  return { ok: true, source: (await sheetLink())?.from ?? null };
 }

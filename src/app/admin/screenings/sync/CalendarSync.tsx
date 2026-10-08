@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import type { Line, Picks, SyncPlan } from "@/lib/calendar-sync";
-import { applyCalendarSync, previewCalendarSync, type ApplyResult } from "./actions";
+import { applyCalendarSync, previewCalendarSync, saveCalendarSheetLink, type ApplyResult } from "./actions";
 
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const dayHead = (d: string) => `${DAY[new Date(`${d}T12:00:00Z`).getUTCDay()]} ${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
@@ -38,23 +38,56 @@ function SmallList({ items, empty }: { items: Line[]; empty?: string }) {
   );
 }
 
-export default function CalendarSync() {
-  const [file, setFile] = useState<File | null>(null);
+// Where the calendar comes from: Google Drive (pulled fresh on the server
+// each time) or an uploaded file.
+type Source = File | "drive";
+
+export default function CalendarSync({ driveSource }: { driveSource: "app" | "env" | null }) {
+  const [file, setFile] = useState<Source | null>(null);
   const [picks, setPicks] = useState<Picks>({});
   const [plan, setPlan] = useState<SyncPlan | null>(null);
-  const [busy, setBusy] = useState<"" | "preview" | "apply">("");
+  const [busy, setBusy] = useState<"" | "preview" | "apply" | "link">("");
   const [error, setError] = useState("");
   const [done, setDone] = useState<Extract<ApplyResult, { ok: true }> | null>(null);
   const [sure, setSure] = useState(false);
+  const [drive, setDrive] = useState(driveSource);
+  const [link, setLink] = useState("");
+  const [linkMsg, setLinkMsg] = useState("");
 
-  function form(f: File, p: Picks) {
+  function form(f: Source, p: Picks) {
     const fd = new FormData();
-    fd.set("file", f);
+    if (f === "drive") fd.set("source", "drive");
+    else fd.set("file", f);
     fd.set("picks", JSON.stringify(p));
     return fd;
   }
 
-  async function preview(f: File, p: Picks) {
+  function pullDrive() {
+    setFile("drive");
+    setPicks({});
+    setPlan(null);
+    setSure(false);
+    void preview("drive", {});
+  }
+
+  async function saveLink(value: string) {
+    setBusy("link");
+    setLinkMsg("");
+    try {
+      const r = await saveCalendarSheetLink(value);
+      if (r.ok) {
+        setDrive(r.source);
+        setLink("");
+        setLinkMsg(value.trim() ? "Saved." : r.source === "env" ? "Cleared. The server's own link is used now." : "Cleared.");
+      } else setLinkMsg(r.error);
+    } catch {
+      setLinkMsg("Couldn't reach the server. Try again.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function preview(f: Source, p: Picks) {
     setBusy("preview");
     setError("");
     setDone(null);
@@ -120,6 +153,18 @@ export default function CalendarSync() {
   return (
     <div className="space-y-6">
       <section className="card space-y-3">
+        {drive ? (
+          <>
+            <button type="button" className="btn-primary min-h-11 w-full text-base sm:w-auto" disabled={!!busy} onClick={pullDrive}>
+              {busy === "preview" && file === "drive" ? "Pulling from Google Drive…" : "Pull latest from Google Drive"}
+            </button>
+            <p className="text-sm text-[var(--muted)]">Reads the calendar straight from Google Drive and shows what would change. Nothing changes until you tap Apply.</p>
+          </>
+        ) : (
+          <p className="text-sm text-[var(--muted)]">Save the calendar&rsquo;s Google Drive link below to pull it with one tap. Until then, upload the file.</p>
+        )}
+        <details open={!drive}>
+          <summary className="min-h-11 cursor-pointer py-2 font-medium">{drive ? "Or upload the file instead" : "Upload the file"}</summary>
         <label className="block">
           <span className="mb-1 block font-medium">The calendar file (.xlsx)</span>
           <input
@@ -140,6 +185,7 @@ export default function CalendarSync() {
         <p className="text-sm text-[var(--muted)]">
           On a phone, tap the box and choose Google Drive (or Files), then the calendar. Nothing changes until you tap Apply.
         </p>
+        </details>
         {busy === "preview" && <p className="text-sm">Reading the calendar…</p>}
       </section>
 
@@ -293,6 +339,45 @@ export default function CalendarSync() {
           )}
         </>
       )}
+
+      <section className="card space-y-3">
+        <h2 className="text-lg font-semibold">Google Drive link</h2>
+        <p className="text-sm text-[var(--muted)]">
+          {drive === "app"
+            ? "A link to the calendar is saved here."
+            : drive === "env"
+              ? "The server has a link to the calendar. Saving one here replaces it."
+              : "No link saved yet."}{" "}
+          In the sheet, tap Share → General access: Anyone with the link → Viewer, then Copy link and paste it here.
+        </p>
+        <form
+          className="flex flex-col gap-2 sm:flex-row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (link.trim()) void saveLink(link);
+          }}
+        >
+          <input
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            className="input min-h-11 w-full text-base"
+            placeholder="https://docs.google.com/spreadsheets/d/…"
+            value={link}
+            disabled={!!busy}
+            onChange={(e) => setLink(e.target.value)}
+          />
+          <button type="submit" className="btn-secondary min-h-11 shrink-0 text-base" disabled={!!busy || !link.trim()}>
+            {busy === "link" ? "Saving…" : drive === "app" ? "Replace link" : "Save link"}
+          </button>
+        </form>
+        {drive === "app" && (
+          <button type="button" className="min-h-11 text-sm underline" disabled={!!busy} onClick={() => void saveLink("")}>
+            Remove the saved link
+          </button>
+        )}
+        {linkMsg && <p className="text-sm">{linkMsg}</p>}
+      </section>
     </div>
   );
 }
