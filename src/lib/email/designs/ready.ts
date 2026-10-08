@@ -6,7 +6,7 @@ import { CAMPAIGN_COLUMNS, type CampaignRow } from "../campaign";
 import { loadFacts, orderExtras, resolveAudience } from "../audience";
 import { ENGAGEMENT_GROUPS, engagementGroup } from "../rules";
 import { renderCampaign, type Recipient } from "../render";
-import { EXCLUSION_LABEL, type Exclusion } from "../types";
+import { EXCLUSION_LABEL, type Exclusion, type MemberFacts } from "../types";
 import { sealArtName } from "./art-token";
 import { DESIGNS, type DesignKey } from "./index";
 import { DESIGN_GAP_DAYS, designCampaignIds, otherDesigns } from "../campaign-send";
@@ -58,13 +58,23 @@ function topExclusions(ex: Partial<Record<Exclusion, number>>): { why: string; n
 // the next wave of `waveSize` would be (one size for all, or each its own:
 // a Send that starts afresh has the small first wave). One read of the
 // member list (and of the engagement extras) for all three.
-export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow | null>>, now = new Date(), waveSize: number | Partial<Record<DesignKey, number>> = 100): Promise<Record<DesignKey, AudienceCount>> {
-  const [facts, extras, designIds] = await Promise.all([loadFacts(), orderExtras(), designCampaignIds()]);
+// For the pages only: it reads the member list the quick way (loadFacts
+// forDisplay). The rows and wave sizes may still be on their way, so that
+// read starts at once; `facts`: one already started (the overview counts
+// the list from the same one). The three are worked out at once.
+type MaybeLater<T> = T | PromiseLike<T>;
+export async function countAudiences(
+  rowsIn: MaybeLater<Partial<Record<DesignKey, CampaignRow | null>>>,
+  now = new Date(),
+  waveSizeIn: MaybeLater<number | Partial<Record<DesignKey, number>>> = 100,
+  pre: { facts?: Promise<MemberFacts[]> } = {},
+): Promise<Record<DesignKey, AudienceCount>> {
+  const [facts, extras, designIds, rows, waveSize] = await Promise.all([pre.facts ?? loadFacts({ forDisplay: true }), orderExtras(), designCampaignIds(), rowsIn, waveSizeIn]);
   const out = {} as Record<DesignKey, AudienceCount>;
   // The next wave would arrive at the next send slot (the 3-day gap is
   // measured from then, as the wave itself does).
   const at = nextSendSlot(now);
-  for (const key of DESIGN_KEYS) {
+  await Promise.all(DESIGN_KEYS.map(async (key) => {
     const d = DESIGNS[key];
     const c = rows[key];
     const shape = { id: c?.id ?? UUID_ZERO, kind: d.kind, category: d.category, automation: null, alert: null };
@@ -79,8 +89,9 @@ export async function countAudiences(rows: Partial<Record<DesignKey, CampaignRow
       next: { n: r.willSend, mix: ENGAGEMENT_GROUPS.map((label, i) => ({ label, n: groups[i] })).filter((g) => g.n > 0) },
       spaced: [...(r.spaced ?? new Map<string, number>())].map(([title, n]) => ({ title, n })).sort((a, b) => b.n - a.n),
     };
-  }
-  return out;
+  }));
+  // In the usual order, whichever finished first.
+  return Object.fromEntries(DESIGN_KEYS.map((k) => [k, out[k]])) as Record<DesignKey, AudienceCount>;
 }
 
 // ---------- results ----------

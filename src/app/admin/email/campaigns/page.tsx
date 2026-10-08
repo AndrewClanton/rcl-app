@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import { summarize, type CampaignSummary } from "@/lib/email/reports";
 import { firstWaveSize, getSendPlan, getWaveMode } from "@/lib/email/send-plan";
@@ -5,7 +6,7 @@ import EmailHeader from "../_studio/EmailHeader";
 import { StatusLine } from "../_studio/Sending";
 import { CardGrid } from "../_studio/Cards";
 import { NewEmailButtons } from "../OverviewControls";
-import { campaignCard, designCard, designStates, sendingState, writtenCampaigns } from "../_studio/data";
+import { campaignCard, designCard, designStates, sendingState, writtenCampaigns, type DesignState } from "../_studio/data";
 import { testLog } from "../_studio/tests-log";
 
 export const dynamic = "force-dynamic";
@@ -15,15 +16,42 @@ export const dynamic = "force-dynamic";
 // here, newest first: drafts (the Monday lineup draft among them),
 // scheduled, going, paused and sent. Each card opens its own screen.
 
+// The ready-made cards count who each would go to (the whole member list,
+// a second or two), so they come in on their own; everything else shows
+// straight away.
+async function ReadyMade({ designs, auto, now }: { designs: Promise<DesignState[]>; auto: Promise<boolean>; now: Date }) {
+  const [ds, a] = await Promise.all([designs, auto]);
+  return <CardGrid cards={ds.map((d) => designCard(d, { auto: a, now }))} />;
+}
+
+function ReadyMadeWaiting() {
+  const block = "animate-pulse rounded-2xl border border-[var(--border)] bg-[var(--surface)] h-24 sm:h-56";
+  return (
+    <div aria-busy="true" aria-label="Counting who each would go to" className="grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(250px,1fr))] sm:gap-4">
+      <div className={block} />
+      <div className={block} />
+      <div className={block} />
+    </div>
+  );
+}
+
 export default async function CampaignsPage() {
   const staff = await requireManager();
   const now = new Date();
-  const [plan, mode, tests, written, state] = await Promise.all([getSendPlan(), getWaveMode(), testLog(), writtenCampaigns(80).catch(() => []), sendingState()]);
-  const auto = mode === "auto";
-  const designs = await designStates({ now, firstWave: firstWaveSize(plan), tests, me: staff.employeeId });
-  // How the latest ones that went out did (one line each).
-  const gone = written.filter((c) => c.status === "sent").slice(0, 12);
-  const summaries = new Map<string, CampaignSummary>((await Promise.all(gone.map((c) => summarize(c).catch(() => null)))).filter((s): s is CampaignSummary => !!s).map((s) => [s.campaign.id, s]));
+  const planP = getSendPlan();
+  const modeP = getWaveMode();
+  const testsP = testLog();
+  const designsP = designStates({ now, firstWave: planP.then(firstWaveSize), tests: testsP, me: staff.employeeId });
+  designsP.catch(() => null); // shown (or its error) by ReadyMade below
+  const writtenP = writtenCampaigns(80).catch(() => []);
+  // How the latest ones that went out did (one line each), as soon as the
+  // list is in.
+  const summariesP = writtenP.then(async (written) => {
+    const gone = written.filter((c) => c.status === "sent").slice(0, 12);
+    const got = await Promise.all(gone.map((c) => summarize(c).catch(() => null)));
+    return new Map<string, CampaignSummary>(got.filter((s): s is CampaignSummary => !!s).map((s) => [s.campaign.id, s]));
+  });
+  const [written, state, summaries] = await Promise.all([writtenP, sendingState(), summariesP, planP, modeP]);
   const needs = written.filter((c) => ["draft", "scheduled", "sending", "paused"].includes(c.status));
   const done = written.filter((c) => !["draft", "scheduled", "sending", "paused"].includes(c.status));
 
@@ -39,7 +67,9 @@ export default async function CampaignsPage() {
           </h2>
           <span className="text-sm text-[var(--muted)]">Finished emails: look, test, then send a few at a time</span>
         </div>
-        <CardGrid cards={designs.map((d) => designCard(d, { auto, now }))} />
+        <Suspense fallback={<ReadyMadeWaiting />}>
+          <ReadyMade designs={designsP} auto={modeP.then((m) => m === "auto")} now={now} />
+        </Suspense>
       </section>
 
       <section aria-labelledby="open-h" className="space-y-3.5">

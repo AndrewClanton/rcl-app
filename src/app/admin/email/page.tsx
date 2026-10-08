@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { hasAdminAccess, requireManager } from "@/lib/auth";
 import { getOverview, type CampaignSummary } from "@/lib/email/reports";
+import { loadFacts } from "@/lib/email/audience";
 import { CONSENT_LABEL, KIND_LABEL, type ConsentSource } from "@/lib/email/types";
 import { whenLabel } from "@/lib/email/format";
 import { holdsWork } from "@/lib/email/campaign-send";
@@ -73,21 +74,28 @@ export default async function EmailPage() {
   const staff = await requireManager();
   const admin = hasAdminAccess(staff.role);
   const now = new Date();
-  const [o, sender, plan, mode, tests, pictures, holds, automations, written] = await Promise.all([
-    getOverview(),
+  // Everything at once. The member list (the slow read) is read once, for
+  // the list's numbers and for who each ready-made email would go to.
+  const facts = loadFacts({ forDisplay: true });
+  facts.catch(() => null); // each reader below handles a failure itself
+  const planP = getSendPlan();
+  const testsP = testLog();
+  const [o, sender, plan, mode, tests, pictures, holds, automations, written, designs, usage] = await Promise.all([
+    getOverview({ facts }),
     senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: null })),
-    getSendPlan(),
+    planP,
     getWaveMode(),
-    testLog(),
+    testsP,
     picturesReady(),
     holdsWork().catch(() => true),
     automationsOn().catch(() => 0),
     writtenCampaigns(40).catch(() => []),
+    designStates({ now, firstWave: planP.then(firstWaveSize), tests: testsP, me: staff.employeeId, facts }),
+    listUsage(now).catch(() => null),
   ]);
   const first = firstWaveSize(plan);
   const daily = perDay(plan);
   const auto = mode === "auto";
-  const [designs, usage] = await Promise.all([designStates({ now, firstWave: first, tests, me: staff.employeeId }), listUsage(now).catch(() => null)]);
   const next = await upNext({ designs, campaigns: written, drafts: o.drafts, firstWave: first, perDay: daily, picturesReady: pictures, auto, tests, me: staff.employeeId, now });
 
   const state = { gate: o.gate, pause: o.paused_by_guardrail, waitingAtResend: o.waitingAtResend, recallRunning: o.recallRunning, pausedEmails: o.pausedEmails };

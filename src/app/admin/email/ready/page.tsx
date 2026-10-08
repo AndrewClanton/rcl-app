@@ -23,6 +23,7 @@ import {
 import { arrivalLabel } from "@/lib/email/undo";
 import { nextSendSlot } from "@/lib/email/timing";
 import { DESIGNS } from "@/lib/email/designs";
+import { loadFacts } from "@/lib/email/audience";
 import { countAudiences, designCampaign, designResults, picturesReady, previewHtml, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
 import { everyoneLeft, finishDate, firstWaveSize, getSendPlan, getWaveMode, listUsage, nextMorningWave, perDay, perMonth, sendingDays, waveCanGoToday } from "@/lib/email/send-plan";
@@ -44,30 +45,42 @@ const dayLabel = (d: Date) => d.toLocaleDateString("en-US", { weekday: "short", 
 
 export default async function ReadyToSendPage() {
   const staff = await requireManager();
-  const sender = await senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: "Couldn't check who can send. Reload the page." }));
   const now = new Date();
-  const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
-  const [plan, usage, pause, pictures, mode, tests] = await Promise.all([
+  // The member list (who each would go to) is the slow read: it starts
+  // first and runs beside everything else.
+  const facts = loadFacts({ forDisplay: true });
+  facts.catch(() => null); // countAudiences below handles a failure
+  const [sender, rows] = await Promise.all([
+    senderCheck(staff).catch(() => ({ ok: false, names: [] as string[], why: "Couldn't check who can send. Reload the page." })),
+    Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const)).then((x) => Object.fromEntries(x) as Record<DesignKey, CampaignRow | null>),
+  ]);
+  // How each did, and what's waiting at Resend (Pause calls these back),
+  // don't wait on the rest.
+  const resultsP = Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
+    (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
+  );
+  const atResendP = Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await waitingAtResend((rows[k] as CampaignRow).id).catch(() => 0) : 0] as const)).then(
+    (x) => Object.fromEntries(x) as Record<DesignKey, number>,
+  );
+  // One wave a day: an email whose wave went (or arrives) today can have
+  // its next one the next sending day. Whether Resend holds email for later
+  // (for Undo) is asked once.
+  const [plan, usage, pause, pictures, mode, tests, gate, waveNext, holdsOk] = await Promise.all([
     getSendPlan(),
     listUsage(now).catch(() => ({ today: 0, month: 0 })),
     guardrailPause().catch(() => null),
     picturesReady(),
     getWaveMode(),
     testLog(),
-  ]);
-  const gate = await sendingGate();
-  const daily = perDay(plan);
-  const monthLeft = Math.max(0, perMonth(plan) - usage.month);
-  const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
-  // One wave a day: an email whose wave went (or arrives) today can have
-  // its next one the next sending day. Whether Resend holds email for later
-  // (for Undo) is asked once.
-  const [waveNext, holdsOk] = await Promise.all([
+    sendingGate(),
     Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? nextWaveAfter(await lastWave((rows[k] as CampaignRow).id).catch(() => null), now) : null] as const)).then(
       (x) => Object.fromEntries(x) as Record<DesignKey, Date | null>,
     ),
     holdsWork().catch(() => true),
   ]);
+  const daily = perDay(plan);
+  const monthLeft = Math.max(0, perMonth(plan) - usage.month);
+  const todayLeft = waveCanGoToday(now) ? Math.max(0, Math.min(daily - usage.today, monthLeft)) : 0;
   // The next wave is as many as today's share allows (a full wave once
   // today's has gone, or tomorrow's after today's wave); a Send that starts
   // afresh has the small first wave.
@@ -75,16 +88,7 @@ export default async function ReadyToSendPage() {
   const startsAfresh = (c: CampaignRow | null) => !c || c.status === "sent" || c.status === "failed" || !!((c.content as { pace?: Pace }).pace ?? {}).firstWave;
   const leftToday = (k: DesignKey) => (waveNext[k] ? 0 : todayLeft);
   const sizes = Object.fromEntries(DESIGN_KEYS.map((k) => [k, Math.min(startsAfresh(rows[k]) ? first : daily, leftToday(k) > 0 ? leftToday(k) : daily)])) as Record<DesignKey, number>;
-  const [counts, results, atResend] = await Promise.all([
-    countAudiences(rows, now, sizes).catch(() => null),
-    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await designResults(rows[k] as CampaignRow, k).catch(() => null) : null] as const)).then(
-      (x) => Object.fromEntries(x) as Record<DesignKey, DesignResults | null>,
-    ),
-    // Handed to Resend to arrive later (Pause calls these back).
-    Promise.all(DESIGN_KEYS.map(async (k) => [k, rows[k] ? await waitingAtResend((rows[k] as CampaignRow).id).catch(() => 0) : 0] as const)).then(
-      (x) => Object.fromEntries(x) as Record<DesignKey, number>,
-    ),
-  ]);
+  const [counts, results, atResend] = await Promise.all([countAudiences(rows, now, sizes, { facts }).catch(() => null), resultsP, atResendP]);
   const slot = nextSendSlot(now);
   // The wave just pressed for, while it can be undone or is still on its
   // way: from what's saved, so a reload shows the same minute.
