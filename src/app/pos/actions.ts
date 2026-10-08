@@ -27,7 +27,7 @@ import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
 import { logOrderComps, openOverLimit, orgSaleTerms, termsOrg, type OrgSaleTerms } from "@/lib/orgs-server";
 import { isUuid } from "@/lib/rewards";
-import { redeemOrderRewards } from "@/lib/rewards-server";
+import { redeemOrderPoints, type RedeemShort } from "@/lib/rewards-server";
 import type { OrgGroupInput } from "@/lib/orgs";
 
 export interface CheckoutLine {
@@ -148,6 +148,15 @@ function bookRecipeOf(l: CheckoutLine, book: BookRecipes): string | null {
 
 // A Spend points reward a line carries: only a $0 line with no menu item
 // or showing, and only a well-formed id (the catalog is checked when it's paid).
+// One reward a sale couldn't take, in a manager's words.
+function shortText(s: RedeemShort): string {
+  const what = s.name ?? "a reward";
+  if (s.why === "limit") return `${what} (${s.problem ?? "past its limit"})`;
+  if (s.why === "stock") return `${what} (none left in stock)`;
+  if (s.why === "not_found") return "a reward that's no longer in the catalog";
+  return `${what} (not enough points${typeof s.balance === "number" ? `: ${Math.floor(s.balance)} of ${s.points}` : ""})`;
+}
+
 function rewardIdOf(l: CheckoutLine): string | null {
   return l.reward_id && isUuid(l.reward_id) && !l.menu_item_id && !l.screening_id && Number(l.unit_price) === 0 ? l.reward_id : null;
 }
@@ -743,38 +752,35 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   });
 
   // (None at the owner rate: it earns no points.)
-  // 1 point per $1 of the order after discounts, and 100 back out when a
-  // reward was used. Each change lands in the member's points history, tied
-  // to this order.
-  let discountPoints = 0;
+  // 1 point per $1 of the order after discounts. Each change lands in the
+  // member's points history, tied to this order.
   if (memberId && !ownerSale) {
-    if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
-      // The register checked the balance before payment; this catches a
-      // reward used meanwhile (or a register that skipped the check). The
-      // customer has paid by now, so the sale stands, but the balance never
-      // goes below zero: the points aren't taken, and a manager is told.
-      const balance = balanceBefore;
-      if (balance === undefined || (balance ?? 0) >= POINTS_PER_REWARD) {
-        const r = await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
-        if (r.ok) discountPoints = POINTS_PER_REWARD;
-      } else {
-        after(() => flagSale("points_short", { ...saved, details: { memberId, points: balance, reward: params.totals.redemption_discount } }));
-      }
-    }
     const earned = pointsEarned(params.totals);
     if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
-  // Rewards picked on the customer screen (Spend points): their points come
-  // off now, at the catalog's price, after this sale's own points are in.
-  // One they can't cover still stands (they have it), and a manager is told.
+  // What the sale spends: the $5 off's 100 points and the rewards picked on
+  // the customer screen (Spend points), at the catalog's price. All in one
+  // step with the member locked (redeem_order_points, code review M9, N12):
+  // each is taken only if their points cover it (the $5 off against the
+  // balance before this sale's own points) and a good only within its
+  // limits and stock, so two registers can't spend the same points and the
+  // balance never goes below zero. The customer has paid by now, so the
+  // sale stands; anything not taken is flagged for a manager. (The register
+  // re-checks all of it before payment and asks for a manager PIN when
+  // something's short.)
+  const discountWanted = memberId && !ownerSale && params.pointsRedeemed && params.totals.redemption_discount > 0 ? POINTS_PER_REWARD : 0;
   const rewardItems = params.lines.flatMap((l) => {
     const id = rewardIdOf(l);
     return id ? [{ rewardId: id, qty: Math.max(1, Math.round(Number(l.quantity) || 1)) }] : [];
   });
-  if (memberId && !ownerSale && (rewardItems.length || discountPoints)) {
-    const redeemed = await redeemOrderRewards({ memberId, orderId, items: rewardItems, discountPoints, by: params.employeeId || null });
-    const short = redeemed?.short ?? [];
-    if (short.length) after(() => flagSale("points_short", { ...saved, details: { memberId, rewards: short, summary: `Not enough points for ${short.map((s) => s.name ?? "a reward").join(", ")}; it was handed over anyway.` } }));
+  if (memberId && !ownerSale && (rewardItems.length || discountWanted)) {
+    const redeemed = await redeemOrderPoints({ memberId, orderId, items: rewardItems, discountPoints: discountWanted, by: params.employeeId || null });
+    if (!redeemed) {
+      after(() => flagSale("points_short", { ...saved, details: { memberId, summary: "The points for this sale's $5 off or rewards couldn't be taken (the database didn't answer). Take them off by hand in Back office." } }));
+    } else if (redeemed.short.length) {
+      const short = redeemed.short;
+      after(() => flagSale("points_short", { ...saved, details: { memberId, points: balanceBefore, rewards: short, summary: `Not taken: ${short.map(shortText).join("; ")}. It was handed over anyway.` } }));
+    }
   } else if (rewardItems.length && !memberId) {
     after(() => flagSale("points_short", { ...saved, details: { summary: "Reward lines were rung with no member on the order, so no points were taken for them." } }));
   }
