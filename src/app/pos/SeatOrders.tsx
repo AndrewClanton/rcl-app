@@ -5,9 +5,10 @@ import { CountBadge, Dialog } from "./shift/ui";
 import { getRegisterSeatOrders, setRegisterSeatStatus, setSeatOrderingOn, type RegisterSeatOrders } from "./seat-order-actions";
 import { boardLabel, type SeatStatus } from "@/lib/seat-ordering";
 import type { OpenSeatOrder } from "@/lib/seat-ordering-server";
+import { playSeatChime, unlockChime } from "../display/seat-chime";
 
-// Orders from guests' phones, on the register (lib/seat-ordering.ts): a
-// "New seat order" badge beside Staff and the list behind it, with Making
+// Orders from guests' phones, on the register (lib/seat-ordering.ts): an
+// "Order up" button and banner beside Staff and the list behind it, with Making
 // and Delivered (the boards have the same buttons). Self-contained: it asks
 // the server every 15 seconds while seat ordering is on (or something's
 // waiting), once a minute while it's off, and draws nothing while it's off
@@ -42,21 +43,72 @@ function useSeatOrders() {
   return { data, load, setData };
 }
 
-function ago(iso: string) {
+function waitingFor(iso: string) {
   const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
-  return m < 1 ? "just now" : `${m} min ago`;
+  return m < 1 ? "just in" : `waiting ${m} min`;
 }
 
+// How often the chime repeats until someone taps "Order up".
+const CHIME_REPEAT_MS = 20_000;
+
+// "Order up": the button beside Staff, plus, when a new paid order comes in
+// while seat ordering is on, a banner at the top of the register and a
+// chime that repeats every 20 seconds until someone taps the banner or the
+// button (either opens the list). The banner is small and sits over the
+// header, so ringing up a sale carries on underneath it. iPad Safari keeps
+// sound off until the page is tapped, so the first tap anywhere on the
+// register unlocks it.
 export function SeatOrdersButton() {
   const { data, load, setData } = useSeatOrders();
   const [open, setOpen] = useState(false);
+  const [acked, setAcked] = useState<Set<string>>(() => new Set());
+  const [failed, setFailed] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    const unlock = () => unlockChime();
+    document.addEventListener("pointerdown", unlock, { capture: true, passive: true });
+    document.addEventListener("keydown", unlock, { capture: true });
+    return () => {
+      document.removeEventListener("pointerdown", unlock, { capture: true });
+      document.removeEventListener("keydown", unlock, { capture: true });
+    };
+  }, []);
+
+  const freshIds = (data?.orders ?? []).filter((o) => o.status === "new").map((o) => o.orderId);
+  const unacked = data?.enabled ? freshIds.filter((id) => !acked.has(id)) : [];
+  const alertKey = unacked.join(",");
+
+  useEffect(() => {
+    if (!alertKey) return;
+    playSeatChime();
+    const t = setInterval(playSeatChime, CHIME_REPEAT_MS);
+    return () => clearInterval(t);
+  }, [alertKey]);
+
+  function openList() {
+    if (freshIds.length) setAcked((a) => new Set([...a, ...freshIds]));
+    setOpen(true);
+  }
+
   if (!data || (!data.enabled && data.orders.length === 0)) return null;
-  const fresh = data.orders.filter((o) => o.status === "new").length;
+  const fresh = freshIds.length;
   const waiting = data.orders.filter((o) => o.status !== "delivered").length;
+  const firstNew = data.orders.find((o) => o.orderId === unacked[0]);
 
   async function step(o: OpenSeatOrder, status: SeatStatus) {
+    const before = o.status;
+    setFailed((f) => {
+      const n = new Set(f);
+      n.delete(o.orderId);
+      return n;
+    });
     setData((d) => (d ? { ...d, orders: d.orders.map((x) => (x.orderId === o.orderId ? { ...x, status } : x)) } : d));
-    await setRegisterSeatStatus(o.orderId, status).catch(() => false);
+    const ok = await setRegisterSeatStatus(o.orderId, status).catch(() => false);
+    if (!ok) {
+      setData((d) => (d ? { ...d, orders: d.orders.map((x) => (x.orderId === o.orderId ? { ...x, status: before } : x)) } : d));
+      setFailed((f) => new Set(f).add(o.orderId));
+      return;
+    }
     await load();
   }
 
@@ -65,16 +117,36 @@ export function SeatOrdersButton() {
       <button
         className={`chip relative min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 !text-sm font-bold ${fresh ? "motion-safe:animate-checkin-pulse" : ""}`}
         style={fresh ? { borderColor: "var(--accent)", background: "var(--accent)", color: "var(--accent-foreground)" } : { borderColor: "var(--foreground)" }}
-        onClick={() => setOpen(true)}
-        aria-label={fresh ? `${fresh} new seat order${fresh === 1 ? "" : "s"}` : `Seat orders: ${waiting} waiting`}
+        onClick={openList}
+        aria-label={fresh ? `Order up: ${fresh} new phone order${fresh === 1 ? "" : "s"}` : `Phone orders: ${waiting} waiting`}
       >
-        {fresh ? "New seat order" : "Seats"}
+        {fresh ? "Order up" : "Phone orders"}
         <CountBadge n={fresh || waiting} className="absolute -right-2 -top-2" />
       </button>
+      {unacked.length > 0 && !open && (
+        <button
+          className="fixed left-1/2 top-2 z-40 flex min-h-14 max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full border-2 px-5 py-2 text-left font-bold shadow-2xl"
+          style={{ borderColor: "var(--foreground)", background: "var(--accent)", color: "var(--accent-foreground)" }}
+          onClick={openList}
+          role="alert"
+        >
+          <span className="shrink-0 font-display text-xl">Order up!</span>
+          <span className="min-w-0 truncate text-sm">
+            {unacked.length > 1
+              ? `${unacked.length} new phone orders`
+              : firstNew
+                ? [boardLabel(firstNew.spotName), firstNew.guestName].filter(Boolean).join(" · ")
+                : "New phone order"}
+          </span>
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-xs" style={{ background: "rgba(0,0,0,0.22)" }}>
+            Tap to see
+          </span>
+        </button>
+      )}
       {open && (
-        <Dialog title="Seat orders" onClose={() => setOpen(false)}>
+        <Dialog title="Order up" onClose={() => setOpen(false)}>
           <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
-            Seat ordering: {data.label}. Switch it in Staff.
+            Orders from guests&apos; phones. Seat ordering: {data.label}. Switch it in Staff.
           </p>
           {data.orders.length === 0 ? (
             <p className="text-sm">Nothing waiting.</p>
@@ -83,9 +155,9 @@ export function SeatOrdersButton() {
               {data.orders.map((o) => (
                 <li key={o.orderId} className="rounded-lg border-2 p-3" style={{ borderColor: o.status === "new" ? "var(--accent)" : "var(--border)", opacity: o.status === "delivered" ? 0.55 : 1 }}>
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-display text-xl">{boardLabel(o.spotName)}</span>
-                    <span className="text-xs" style={{ color: "var(--muted)" }}>
-                      #{o.orderNumber} · {ago(o.createdAt)}
+                    <span className="min-w-0 break-words font-display text-xl">{boardLabel(o.spotName)}</span>
+                    <span className="shrink-0 text-xs font-semibold" style={{ color: o.status === "delivered" ? "var(--muted)" : "var(--foreground)" }}>
+                      #{o.orderNumber} · {o.status === "delivered" ? "delivered" : waitingFor(o.createdAt)}
                     </span>
                   </div>
                   {(o.guestName || o.note) && <div className="text-sm font-semibold" style={{ color: "var(--accent)" }}>{[o.guestName, o.note].filter(Boolean).join(" · ")}</div>}
@@ -116,6 +188,11 @@ export function SeatOrdersButton() {
                       );
                     })}
                   </div>
+                  {failed.has(o.orderId) && (
+                    <p className="mt-2 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
+                      Didn&apos;t save — tap again
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>

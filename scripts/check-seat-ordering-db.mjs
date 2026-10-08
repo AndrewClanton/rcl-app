@@ -84,7 +84,7 @@ const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
   check("off when switched off", S.seatOrderingOpen({ ...on, enabled: false }, new Date("2026-10-08T00:00:00Z")).reason === "off");
   check("board label", S.boardLabel("Cinema · Row C") === "CINEMA · ROW C");
   check("spot codes are 10 safe characters", S.isSpotCode(S.newSpotCode()));
-  check("paused message", S.PAUSED_MESSAGE === "Ordering from your seat is paused, please order at the box office.");
+  check("paused message", S.PAUSED_MESSAGE === "Ordering from your seat is paused. Please order at the counter.");
 }
 
 const db = createAdminClient();

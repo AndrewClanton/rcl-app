@@ -24,7 +24,7 @@ export async function startSeatOrder(input: { code: string; lines: CartLineInput
     });
   } catch (e) {
     console.error("seat order: start failed", e);
-    return { ok: false, error: "Something went wrong. Try again, or order at the box office." };
+    return { ok: false, error: "Something went wrong. Try again, or order at the counter." };
   }
 }
 
@@ -33,7 +33,7 @@ export async function finishSeatOrder(checkoutId: string): Promise<FinishResult>
     return await finishSeatCheckout(String(checkoutId ?? ""));
   } catch (e) {
     console.error("seat order: finish failed", checkoutId, e);
-    return { ok: false, pending: true, error: "Your payment went through. We're still sending the order to the bar." };
+    return { ok: false, pending: true, error: "Your payment went through. We're still sending your order through." };
   }
 }
 

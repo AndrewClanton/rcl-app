@@ -604,10 +604,10 @@ export const HELP_TOPICS = {
     title: "Seat ordering: how it works",
     area: "Seat ordering",
     body:
-      "Each booth, cinema row, the patio and each table has a QR card. A guest scans it, orders from the menu on their phone and pays there by card, Apple Pay or Google Pay, so there's never an unpaid order. It lands on the bar and kitchen screens with a chime and where to bring it in big letters, and on the register as a New seat order badge. It's a normal order: Reports, tax, points and stock all count it.",
+      "Each booth, cinema row, the patio and each table has a QR card. A guest scans it, orders from the menu on their phone and pays there by card, Apple Pay or Google Pay, so there's never an unpaid order. It lands on the bar and kitchen screens with a chime and where to bring it in big letters, and on the register as an Order up banner with a chime that repeats until someone taps it. The banner opens the list with Making and Delivered. It's a normal order: Reports, tax, points and stock all count it.",
     steps: [
       "Tap Making when you start on it. The guest's phone says “We're making it”.",
-      "Tap Delivered when it's on its way. Their phone says “On its way”.",
+      "Tap Delivered when it's on its way. Their phone says “Delivered — enjoy”.",
       "Tapped by mistake? Tap it again to go back a step.",
     ],
     links: [{ label: "Seat ordering", href: "/admin/seat-ordering" }],
