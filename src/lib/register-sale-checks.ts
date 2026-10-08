@@ -488,7 +488,10 @@ export type SaleFlagKind =
   | "sale_abandoned"
   | "items_not_saved"
   | "below_cost"
-  | "org_over_limit";
+  | "org_over_limit"
+  | "stripe_refund" // refunded in Stripe's dashboard, not the app (lib/stripe-refunds.ts)
+  | "card_disputed" // a card payment disputed (lib/stripe-refunds.ts)
+  | "daily_perk_twice"; // a seat order kept a daily coffee already used that day
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

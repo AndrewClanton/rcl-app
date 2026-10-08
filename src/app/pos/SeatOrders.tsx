@@ -5,7 +5,8 @@ import { CountBadge, Dialog } from "./shift/ui";
 import { setRegisterSeatStatus, setSeatOrderingOn } from "./seat-order-actions";
 import { boardLabel, type SeatStatus } from "@/lib/seat-ordering";
 import type { OpenSeatOrder, RegisterSeatOrders } from "@/lib/seat-ordering-server";
-import { chimeReady, listenForChimeUnlock, playSeatChime } from "../display/seat-chime";
+import ManagerPinModal from "@/components/ManagerPinModal";
+import { chimeReady, listenForChimeUnlock, playRegisterChime } from "../display/seat-chime";
 
 // Orders from guests' phones, on the register (lib/seat-ordering.ts): an
 // "Order up" button and alert strip beside Staff and the list behind it,
@@ -76,6 +77,8 @@ function waitingFor(iso: string) {
 
 // How often the chime repeats while an order is waiting to be seen.
 const CHIME_REPEAT_MS = 20_000;
+// How long Undo stays on an order after Making or Delivered.
+const UNDO_MS = 6_000;
 // Seen, but still "new" (nobody tapped Making) this long after: it alerts
 // again.
 const REALERT_MS = 3 * 60_000;
@@ -120,6 +123,16 @@ export function SeatOrdersButton() {
   // nothing here, so reading storage on the first render is safe.)
   const [seen, setSeen] = useState<Map<string, number>>(() => (typeof window === "undefined" ? new Map() : readSeen()));
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
+  // The last Making/Delivered change, undoable for a few seconds (a lit
+  // button does nothing, so a stray tap can't step an order back).
+  const [undo, setUndo] = useState<{ orderId: string; before: SeatStatus } | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+  }, []);
+  // A register screen (payment, a dialog) is covering the page: the alert
+  // shows as a slim strip above it too (code review M13).
+  const [covered, setCovered] = useState(false);
 
   useEffect(() => listenForChimeUnlock(), []);
 
@@ -141,8 +154,14 @@ export function SeatOrdersButton() {
 
   useEffect(() => {
     if (!alertKey) return;
-    playSeatChime();
-    const t = setInterval(playSeatChime, CHIME_REPEAT_MS);
+    const t = setInterval(() => setCovered(!!document.querySelector(".fixed.inset-0.z-50")), 700);
+    return () => clearInterval(t);
+  }, [alertKey]);
+
+  useEffect(() => {
+    if (!alertKey) return;
+    playRegisterChime();
+    const t = setInterval(playRegisterChime, CHIME_REPEAT_MS);
     return () => clearInterval(t);
   }, [alertKey]);
 
@@ -175,8 +194,11 @@ export function SeatOrdersButton() {
   const first = alerting[0];
   const soundOff = alerting.length > 0 && !chimeReady();
 
-  async function step(o: OpenSeatOrder, status: SeatStatus) {
+  async function step(o: OpenSeatOrder, status: SeatStatus, offerUndo = true) {
     const before = o.status;
+    if (before === status) return;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndo(null);
     setFailed((f) => {
       const n = new Set(f);
       n.delete(o.orderId);
@@ -189,8 +211,78 @@ export function SeatOrdersButton() {
       setFailed((f) => new Set(f).add(o.orderId));
       return;
     }
+    if (offerUndo) {
+      setUndo({ orderId: o.orderId, before });
+      undoTimer.current = setTimeout(() => setUndo(null), UNDO_MS);
+    }
     await load();
   }
+
+  // New first (oldest first), then Making; Delivered folded underneath.
+  const rank = (st: SeatStatus) => (st === "new" ? 0 : st === "making" ? 1 : 2);
+  const sorted = [...data.orders].sort((a, b) => rank(a.status) - rank(b.status) || a.createdAt.localeCompare(b.createdAt));
+  const active = sorted.filter((o) => o.status !== "delivered");
+  const done = sorted.filter((o) => o.status === "delivered");
+
+  const card = (o: OpenSeatOrder) => (
+    <li key={o.orderId} className="rounded-lg border-2 p-3" style={{ borderColor: o.status === "new" ? "var(--accent)" : "var(--border)" }}>
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="min-w-0 break-words font-display text-xl">{boardLabel(o.spotName)}</span>
+        <span className="shrink-0 text-xs font-semibold" style={{ color: "var(--foreground)" }}>
+          #{o.orderNumber} · {o.status === "delivered" ? "delivered" : waitingFor(o.createdAt)}
+        </span>
+      </div>
+      {(o.guestName || o.note) && <div className="text-sm font-semibold" style={{ color: "var(--accent)" }}>{[o.guestName, o.note].filter(Boolean).join(" · ")}</div>}
+      {o.idCheck && <div className="mt-1 inline-block rounded px-1.5 py-0.5 text-xs font-black" style={{ background: "var(--foreground)", color: "var(--background)" }}>ID CHECK ON DELIVERY</div>}
+      <ul className="mt-1 text-sm">
+        {o.items.map((i, n) => (
+          <li key={n}>
+            {i.quantity > 1 ? `${i.quantity}× ` : ""}
+            {i.name}
+            {i.modifiers.length > 0 && <span style={{ color: "var(--muted)" }}> · {i.modifiers.join(", ")}</span>}
+          </li>
+        ))}
+      </ul>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {(["making", "delivered"] as const).map((s) => {
+          const on = o.status === s || (s === "making" && o.status === "delivered");
+          return (
+            <button
+              key={s}
+              className="min-h-11 rounded-lg border-2 text-sm font-bold"
+              style={on ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" } : { borderColor: "var(--foreground)" }}
+              aria-pressed={on}
+              onClick={() => {
+                if (!on) void step(o, s);
+              }}
+            >
+              {on ? "✓ " : ""}
+              {s === "making" ? "Making" : "Delivered"}
+            </button>
+          );
+        })}
+      </div>
+      {undo?.orderId === o.orderId && (
+        <button
+          className="mt-2 min-h-11 w-full rounded-lg border-2 text-sm font-bold"
+          style={{ borderColor: "var(--border)" }}
+          onClick={() => {
+            const back = undo.before;
+            if (undoTimer.current) clearTimeout(undoTimer.current);
+            setUndo(null);
+            void step(o, back, false);
+          }}
+        >
+          Undo ({o.status === "delivered" ? "Delivered" : "Making"})
+        </button>
+      )}
+      {failed.has(o.orderId) && (
+        <p className="mt-2 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
+          Didn&apos;t save — tap again
+        </p>
+      )}
+    </li>
+  );
 
   return (
     <>
@@ -219,10 +311,29 @@ export function SeatOrdersButton() {
           </span>
         </button>
       )}
+      {alerting.length > 0 && !open && covered && (
+        // Above a payment or other register screen: a slim strip. A tap
+        // stops the sound for now (seen); the list opens from Order up once
+        // the sale is done.
+        <button
+          className="fixed inset-x-0 top-0 z-[55] flex min-h-11 items-center gap-3 border-b-2 px-4 py-1.5 text-left font-bold shadow-lg"
+          style={{ borderColor: "var(--foreground)", background: "var(--accent)", color: "var(--accent-foreground)" }}
+          onClick={() => markSeen(alerting.map((o) => o.orderId))}
+          role="alert"
+        >
+          <span className="shrink-0 font-display text-lg">Order up!</span>
+          <span className="min-w-0 flex-1 truncate text-sm">
+            {alerting.length > 1 ? `${alerting.length} new phone orders` : first ? boardLabel(first.spotName) : "New phone order"} · open Order up after this
+          </span>
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-xs" style={{ background: "rgba(0,0,0,0.22)" }}>
+            {soundOff ? "Tap for sound" : "Got it"}
+          </span>
+        </button>
+      )}
       {open && (
         <Dialog title="Order up" onClose={() => setOpen(false)}>
           <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
-            Orders from guests&apos; phones. Seat ordering: {data.label}. Switch it in Staff.
+            Orders from guests&apos; phones. Seat ordering: {data.label} · turn it on or off in Staff.
           </p>
           {loadFailed && (
             <p className="mb-3 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
@@ -232,51 +343,15 @@ export function SeatOrdersButton() {
           {data.orders.length === 0 ? (
             <p className="text-sm">Nothing waiting.</p>
           ) : (
-            <ul className="space-y-3">
-              {data.orders.map((o) => (
-                <li key={o.orderId} className="rounded-lg border-2 p-3" style={{ borderColor: o.status === "new" ? "var(--accent)" : "var(--border)", opacity: o.status === "delivered" ? 0.55 : 1 }}>
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="min-w-0 break-words font-display text-xl">{boardLabel(o.spotName)}</span>
-                    <span className="shrink-0 text-xs font-semibold" style={{ color: o.status === "delivered" ? "var(--muted)" : "var(--foreground)" }}>
-                      #{o.orderNumber} · {o.status === "delivered" ? "delivered" : waitingFor(o.createdAt)}
-                    </span>
-                  </div>
-                  {(o.guestName || o.note) && <div className="text-sm font-semibold" style={{ color: "var(--accent)" }}>{[o.guestName, o.note].filter(Boolean).join(" · ")}</div>}
-                  {o.idCheck && <div className="mt-1 inline-block rounded px-1.5 py-0.5 text-xs font-black" style={{ background: "var(--foreground)", color: "var(--background)" }}>ID CHECK ON DELIVERY</div>}
-                  <ul className="mt-1 text-sm">
-                    {o.items.map((i, n) => (
-                      <li key={n}>
-                        {i.quantity > 1 ? `${i.quantity}× ` : ""}
-                        {i.name}
-                        {i.modifiers.length > 0 && <span style={{ color: "var(--muted)" }}> · {i.modifiers.join(", ")}</span>}
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    {(["making", "delivered"] as const).map((s) => {
-                      const on = o.status === s;
-                      return (
-                        <button
-                          key={s}
-                          className="min-h-11 rounded-lg border-2 text-sm font-bold"
-                          style={on ? { background: "var(--foreground)", color: "var(--background)", borderColor: "var(--foreground)" } : { borderColor: "var(--foreground)" }}
-                          aria-pressed={on}
-                          onClick={() => void step(o, on ? (s === "delivered" ? "making" : "new") : s)}
-                        >
-                          {on ? "✓ " : ""}
-                          {s === "making" ? "Making" : "Delivered"}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {failed.has(o.orderId) && (
-                    <p className="mt-2 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
-                      Didn&apos;t save — tap again
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <>
+              {active.length === 0 ? <p className="text-sm">Nothing waiting.</p> : <ul className="space-y-3">{active.map(card)}</ul>}
+              {done.length > 0 && (
+                <details className="mt-4">
+                  <summary className="min-h-11 cursor-pointer py-2 text-sm font-bold">Delivered ({done.length})</summary>
+                  <ul className="mt-2 space-y-3">{done.map(card)}</ul>
+                </details>
+              )}
+            </>
           )}
         </Dialog>
       )}
@@ -291,15 +366,22 @@ export function SeatOrderingSwitch() {
   const { data, load, setData } = useSeatOrders();
   const [busy, setBusy] = useState(false);
   const [shown, setShown] = useState(false);
+  // Turning it on takes a manager (code review N22): a manager PIN unless a
+  // manager is signed in. Off needs nobody.
+  const [askPin, setAskPin] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   // Stays up once seen on, so switching it off doesn't hide the switch.
   if (data?.enabled && !shown) setShown(true);
   if (!data || !shown) return null;
   async function flip() {
     if (!data) return;
     setBusy(true);
+    setProblem(null);
     const next = !data.enabled;
-    setData({ ...data, enabled: next });
-    await setSeatOrderingOn(next).catch(() => null);
+    const r = await setSeatOrderingOn(next).catch(() => null);
+    if (r?.needPin) setAskPin(true);
+    else if (!r?.ok) setProblem(r?.error ?? "Didn't save. Try again.");
+    else setData({ ...data, enabled: next });
     await load();
     setBusy(false);
   }
@@ -317,13 +399,31 @@ export function SeatOrderingSwitch() {
         <span className="min-w-0">
           <span className="block font-bold">Seat ordering: {data.enabled ? "on" : "off"}</span>
           <span className="block text-xs" style={{ color: "var(--muted)" }}>
-            {data.enabled ? `${data.label}. Turn it off on a short-handed night.` : "Guests see “paused, please order at the box office”."}
+            {data.enabled ? `${data.label}. Turn it off on a short-handed night.` : "Guests see “paused, please order at the counter”. Turning it on takes a manager."}
           </span>
         </span>
         <span className="relative h-7 w-12 shrink-0 rounded-full transition-colors" style={{ background: data.enabled ? "var(--success-text)" : "var(--border)" }} aria-hidden>
           <span className="absolute top-1 h-5 w-5 rounded-full bg-white transition-all" style={{ left: data.enabled ? 26 : 4 }} />
         </span>
       </button>
+      {problem && (
+        <p className="mt-2 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
+          {problem}
+        </p>
+      )}
+      {askPin && (
+        <ManagerPinModal
+          title="Manager PIN"
+          description="Turn seat ordering on? Guests can order from their seats until it's turned off."
+          onCancel={() => setAskPin(false)}
+          onSubmit={async (pin) => {
+            const r = await setSeatOrderingOn(true, pin);
+            if (!r.ok) throw new Error(r.error ?? "That didn't work. Try again.");
+            setAskPin(false);
+            await load();
+          }}
+        />
+      )}
     </section>
   );
 }

@@ -9,6 +9,7 @@ import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { pictureOf, textIconShown, type TextIcon } from "@/lib/menu-pictures/shared";
 import type { IconSpec } from "@/lib/bar/icons";
 import type { MemberTier } from "@/lib/types";
+import { flagSale } from "@/lib/register-sale-checks";
 import {
   MAX_LINES,
   MAX_QTY,
@@ -189,7 +190,7 @@ export interface PricedLine {
   is_alcohol: boolean;
 }
 
-export type SeatMember = { id: string; tier: MemberTier; points: number } | null;
+export type SeatMember = { id: string; tier: MemberTier; points: number; firstName: string | null } | null;
 
 export type Priced =
   | { ok: true; lines: PricedLine[]; totals: SeatTotals; idCheck: boolean; dailyPerkDate: string | null }
@@ -265,11 +266,20 @@ export async function priceCart(input: CartLineInput[], member: SeatMember, tipP
   return { ok: true, lines: priced, totals, idCheck: priced.some((l) => l.is_alcohol), dailyPerkDate };
 }
 
+// The name on a phone order (the register, the boards, the kitchen
+// printer): a first name only, letters (with ' and -), up to 20 (code review
+// M24). null when nothing usable is left.
+export function firstNameOnly(v: unknown): string | null {
+  const word = String(v ?? "").normalize("NFC").trim().split(/\s+/)[0] ?? "";
+  const name = word.replace(/[^\p{L}'’-]/gu, "").slice(0, 20);
+  return /\p{L}/u.test(name) ? name : null;
+}
+
 export async function seatMember(memberId: string | null): Promise<SeatMember> {
   if (!memberId) return null;
-  const { data } = await db().from("members").select("id, tier, points, erased_at").eq("id", memberId).maybeSingle();
+  const { data } = await db().from("members").select("id, tier, points, name, erased_at").eq("id", memberId).maybeSingle();
   if (!data || data.erased_at) return null;
-  return { id: data.id as string, tier: data.tier as MemberTier, points: Number(data.points) };
+  return { id: data.id as string, tier: data.tier as MemberTier, points: Number(data.points), firstName: firstNameOnly(data.name) };
 }
 
 // ---------- paying ----------
@@ -285,9 +295,103 @@ const clean = (v: unknown, max: number) => {
   return s || null;
 };
 
+// Card testing: a payment declined this many times is called off, and the
+// phone is sent to the counter (code review N11).
+export const MAX_DECLINES = 3;
+export const TOO_MANY_DECLINES = "That card was declined a few times, so this payment is closed. Please order at the counter.";
+
+// JSON with its keys sorted (jsonb hands keys back in its own order), so a
+// saved cart can be compared with a newly priced one.
+function stable(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  if (v && typeof v === "object")
+    return `{${Object.keys(v as Record<string, unknown>)
+      .filter((k) => (v as Record<string, unknown>)[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${stable((v as Record<string, unknown>)[k])}`)
+      .join(",")}}`;
+  return JSON.stringify(v ?? null);
+}
+
+// How many times a payment's card was declined (its failed charges).
+export async function declinesOf(piId: string): Promise<number> {
+  const charges = await getStripe().charges.list({ payment_intent: piId, limit: 20 });
+  return charges.data.filter((c) => c.status === "failed").length;
+}
+
+// A payment the phone can still pay: not paid, not going through, not
+// called off.
+const PAYABLE = new Set(["requires_payment_method", "requires_confirmation", "requires_action"]);
+
+// Calls off a phone payment once its card has been declined MAX_DECLINES
+// times (from the phone after a decline, and from the webhook's
+// payment_intent.payment_failed). Says whether it's closed now. Never calls
+// off one that's paid or going through.
+export async function closeIfDeclined(piId: string): Promise<boolean> {
+  const stripe = getStripe();
+  const pi = await stripe.paymentIntents.retrieve(piId);
+  if (pi.metadata?.kind !== "seat_order") return false;
+  if (pi.status === "canceled") return true;
+  if (!PAYABLE.has(pi.status)) return false;
+  if ((await declinesOf(piId)) < MAX_DECLINES) return false;
+  const canceled = await stripe.paymentIntents.cancel(piId).catch((e) => {
+    console.error("seat checkout: declined payment not called off", piId, e);
+    return null;
+  });
+  return canceled?.status === "canceled";
+}
+
+// The phone pressed Pay again for a checkout it already started (went back
+// to the cart, then Pay): when the cart, tip, name and note are the same and
+// its payment can still be paid, that one is handed back instead of a new
+// payment. Otherwise its payment is called off (when it can be) and null
+// says to start a new one.
+async function reuseCheckout(
+  reuseId: string,
+  want: { spot_id: string; member_id: string | null; guest_name: string | null; note: string | null; lines: unknown; totals: unknown },
+): Promise<{ checkoutId: string; clientSecret: string } | null> {
+  if (!isUuid(reuseId)) return null;
+  const supabase = db();
+  const { data } = await supabase.from("seat_checkouts").select("id, spot_id, member_id, guest_name, note, lines, totals, status, stripe_payment_intent_id").eq("id", reuseId).maybeSingle();
+  if (!data || data.status !== "pending" || !data.stripe_payment_intent_id) return null;
+  const piId = data.stripe_payment_intent_id as string;
+  try {
+    const stripe = getStripe();
+    const pi = await stripe.paymentIntents.retrieve(piId);
+    const same =
+      data.spot_id === want.spot_id &&
+      (data.member_id ?? null) === want.member_id &&
+      (data.guest_name ?? null) === want.guest_name &&
+      (data.note ?? null) === want.note &&
+      stable(data.lines) === stable(want.lines) &&
+      stable(data.totals) === stable(want.totals);
+    if (same && PAYABLE.has(pi.status) && pi.client_secret && (await declinesOf(piId)) < MAX_DECLINES) {
+      return { checkoutId: data.id as string, clientSecret: pi.client_secret };
+    }
+    // Changed (or closed): the old payment is called off so it can't be
+    // paid as well. One paid or going through is left alone.
+    if (PAYABLE.has(pi.status)) await stripe.paymentIntents.cancel(piId).catch(() => {});
+  } catch (e) {
+    console.error("seat checkout: earlier payment not checked", reuseId, e);
+  }
+  return null;
+}
+
 // A phone pressing Pay: the cart priced, kept as a checkout, and a Stripe
 // payment for exactly that. Nothing reaches the staff until it's paid.
-export async function startSeatCheckout(args: { code: string; lines: CartLineInput[]; tip: TipChoice; name?: string | null; note?: string | null; memberId: string | null }): Promise<StartResult> {
+// reuseId: the checkout this phone started last (see reuseCheckout).
+// mayCreate: asked only when a new Stripe payment is needed (the hourly
+// caps); false refuses with busy.
+export async function startSeatCheckout(args: {
+  code: string;
+  lines: CartLineInput[];
+  tip: TipChoice;
+  name?: string | null;
+  note?: string | null;
+  memberId: string | null;
+  reuseId?: string | null;
+  mayCreate?: () => Promise<boolean>;
+}): Promise<StartResult> {
   const spot = await spotByCode(args.code);
   if (!spot) return { ok: false, error: "This QR code isn't working anymore. Order at the counter, and let us know." };
   if (!(await seatOrderingIsOpen())) return { ok: false, paused: true, error: "Ordering from your seat is paused. Please order at the counter." };
@@ -298,19 +402,22 @@ export async function startSeatCheckout(args: { code: string; lines: CartLineInp
   if (amount < 50) return { ok: false, error: "Orders under $0.50 can't be paid by phone. Add something, or order at the counter." };
 
   const supabase = db();
-  const { data: row, error } = await supabase
-    .from("seat_checkouts")
-    .insert({
-      spot_id: spot.id,
-      spot_name: spot.name,
-      member_id: member?.id ?? null,
-      guest_name: clean(args.name, 40),
-      note: clean(args.note, 200),
-      lines: priced.lines,
-      totals: { ...priced.totals, idCheck: priced.idCheck, dailyPerkDate: priced.dailyPerkDate },
-    })
-    .select("id")
-    .single();
+  const fields = {
+    spot_id: spot.id,
+    spot_name: spot.name,
+    member_id: member?.id ?? null,
+    guest_name: firstNameOnly(member?.firstName) ?? firstNameOnly(args.name) ?? "Guest",
+    note: clean(args.note, 200),
+    lines: priced.lines,
+    totals: { ...priced.totals, idCheck: priced.idCheck, dailyPerkDate: priced.dailyPerkDate },
+  };
+  if (args.reuseId) {
+    const again = await reuseCheckout(args.reuseId, fields);
+    if (again) return { ok: true, ...again, totals: priced.totals };
+  }
+  if (args.mayCreate && !(await args.mayCreate())) return { ok: false, error: "Ordering from your seat is busy right now. Please order at the counter." };
+
+  const { data: row, error } = await supabase.from("seat_checkouts").insert(fields).select("id").single();
   if (error || !row) return { ok: false, error: "Couldn't start the payment. Try again." };
 
   try {
@@ -343,6 +450,18 @@ export async function startSeatCheckout(args: { code: string; lines: CartLineInp
     await supabase.from("seat_checkouts").delete().eq("id", row.id);
     return { ok: false, error: "Couldn't reach the card processor. Try again in a moment." };
   }
+}
+
+// Just before the phone pays: false when the checkout's free daily coffee
+// was used since it was priced (at the register, or another order), so the
+// phone goes back and re-prices (code review N25). True for anything else.
+export async function checkoutStillPriced(checkoutId: string): Promise<boolean> {
+  if (!isUuid(checkoutId)) return true;
+  const { data } = await db().from("seat_checkouts").select("member_id, totals, status").eq("id", checkoutId).maybeSingle();
+  const t = data?.totals as (SeatTotals & { dailyPerkDate?: string | null }) | undefined;
+  if (!data || data.status !== "pending" || !data.member_id || !t || !(Number(t.dailyPerk) > 0) || !t.dailyPerkDate) return true;
+  // undefined: couldn't be read, so the payment isn't held up.
+  return !(await dailyCoffeeUse(data.member_id as string, t.dailyPerkDate));
 }
 
 // ---------- paid, but the phone never came back ----------
@@ -390,6 +509,26 @@ export async function sweepSeatCheckouts(opts: { recentMs: number; cleanup?: boo
       else console.error("seat sweep: paid checkout not finished", c.id, r.error);
     } catch (e) {
       console.error("seat sweep: checkout not checked", c.id, e);
+    }
+  }
+
+  // Made, but its points or kitchen ticket never done (the server stopped
+  // between the two): finishSeatCheckout does the rest, once.
+  const { data: unfulfilled, error: unErr } = await supabase
+    .from("seat_checkouts")
+    .select("id")
+    .eq("status", "paid")
+    .is("fulfilled_at", null)
+    .gte("created_at", new Date(now - opts.recentMs).toISOString())
+    .lt("paid_at", new Date(now - FULFIL_CLAIM_MS).toISOString())
+    .limit(max);
+  if (unErr) console.error("seat sweep: unfulfilled checkouts not read", unErr.message);
+  for (const c of unfulfilled ?? []) {
+    try {
+      const r = await finishSeatCheckout(c.id as string);
+      if (!r.ok) console.error("seat sweep: unfulfilled checkout not finished", c.id, r.error);
+    } catch (e) {
+      console.error("seat sweep: unfulfilled checkout not checked", c.id, e);
     }
   }
 
@@ -461,10 +600,17 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   const { data, error } = await supabase.from("seat_checkouts").select("*").eq("id", checkoutId).maybeSingle();
   if (error || !data) return { ok: false, error: "That order wasn't found." };
   const c = data as CheckoutRow;
-  if (c.status === "paid" && c.order_id) return { ok: true, orderId: c.order_id, orderNumber: await orderNumberOf(c.order_id) };
+  if (c.status === "paid" && c.order_id) {
+    // Made already; its points or kitchen ticket may not be (a crash
+    // between the two): done now, once.
+    await fulfilSeatOrder(c, c.order_id).catch((e) => console.error("seat checkout: not fulfilled", c.id, e));
+    return { ok: true, orderId: c.order_id, orderNumber: await orderNumberOf(c.order_id) };
+  }
   if (!c.stripe_payment_intent_id) return { ok: false, error: "That order was never paid." };
 
-  const pi = await getStripe().paymentIntents.retrieve(c.stripe_payment_intent_id);
+  const pi = await getStripe().paymentIntents.retrieve(c.stripe_payment_intent_id, { expand: ["latest_charge"] });
+  const charge = pi.latest_charge && typeof pi.latest_charge === "object" ? pi.latest_charge : null;
+  const paidAt = charge?.created ? new Date(charge.created * 1000) : new Date();
   const expected = Math.round(Number(c.totals.total) * 100);
   if (pi.metadata?.seat_checkout_id !== c.id || pi.amount !== expected || pi.currency !== "usd") {
     console.error("seat checkout: payment doesn't match", c.id, pi.id);
@@ -472,99 +618,96 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   }
   if (pi.status !== "succeeded") return { ok: false, pending: pi.status === "processing", error: pi.status === "processing" ? "Your payment is still going through." : "The payment didn't go through." };
 
-  const link = async (orderId: string) => {
-    await supabase.from("seat_checkouts").update({ status: "paid", order_id: orderId, paid_at: new Date().toISOString() }).eq("id", c.id);
-    return { ok: true as const, orderId, orderNumber: await orderNumberOf(orderId) };
-  };
-  const existing = async () => {
-    const { data: o } = await supabase.from("orders").select("id").eq("stripe_payment_intent_id", pi.id).neq("status", "voided").limit(1);
-    return (o?.[0]?.id as string | undefined) ?? null;
-  };
-  const already = await existing();
-  if (already) return link(already);
-
+  // The order and all its items in one transaction, with the checkout
+  // linked (finish_seat_order, 20261008020000_seat_order_finish.sql). One
+  // order per payment, a voided one included; a payment that already has
+  // its order gets that one back. The daily coffee counts as today's only
+  // while it's unused (they've paid either way).
   const t = c.totals;
-  const lines = c.lines;
-  const memberId = c.member_id;
-  // The daily coffee counts as today's only if it's still unused (another
-  // order may have used it since the cart was priced). They've paid either way.
-  let perkDate: string | null = null;
-  if (memberId && Number(t.dailyPerk) > 0 && t.dailyPerkDate) {
-    perkDate = (await dailyCoffeeUse(memberId, t.dailyPerkDate)) === null ? t.dailyPerkDate : null;
+  const { data: rows, error: rpcErr } = await supabase.rpc("finish_seat_order", {
+    p_checkout: c.id,
+    p_order: {
+      member_id: c.member_id,
+      order_name: c.guest_name,
+      subtotal: t.subtotal,
+      tier_discount: t.memberDiscount,
+      tax: t.tax,
+      tip: t.tip,
+      total: t.total,
+      stripe_payment_intent_id: pi.id,
+      // When it was paid (Stripe's time), not when this ran.
+      completed_at: paidAt.toISOString(),
+      spot_id: c.spot_id,
+      spot_name: c.spot_name,
+      seat_note: c.note,
+      id_check: !!t.idCheck,
+      daily_perk_discount: Number(t.dailyPerk) > 0 ? t.dailyPerk : 0,
+      daily_perk_date: c.member_id && Number(t.dailyPerk) > 0 && t.dailyPerkDate ? t.dailyPerkDate : null,
+    },
+    p_items: c.lines.map((l) => ({ menu_item_id: l.menu_item_id, name: l.name, unit_price: l.unit_price, quantity: l.quantity, modifiers: l.modifiers, is_alcohol: l.is_alcohol })),
+  });
+  const made = (rows as { order_id: string; order_number: number; created: boolean }[] | null)?.[0];
+  if (rpcErr || !made) {
+    console.error("seat checkout: order not saved", c.id, rpcErr);
+    throw rpcErr ?? new Error("order not saved");
   }
-  const { data: num, error: numErr } = await supabase.rpc("next_order_number");
-  if (numErr) throw numErr;
-  const orderNumber = Number(num);
-  const fields = {
-    order_number: orderNumber,
-    source: "mobile",
-    status: "completed",
-    employee_id: null,
-    member_id: memberId,
-    order_name: c.guest_name,
-    subtotal: t.subtotal,
-    tier_discount: t.memberDiscount,
-    monthly_discount: 0,
-    redemption_discount: 0,
-    tax_free: false,
-    monthly_member: false,
-    tax: t.tax,
-    tip: t.tip,
-    total: t.total,
-    payment_method: "card",
-    payment_cash_amount: 0,
-    payment_voucher_amount: 0,
-    payment_card_amount: t.total,
-    stripe_payment_intent_id: pi.id,
-    points_redeemed: false,
-    age_verified: false,
-    completed_at: new Date().toISOString(),
-    spot_id: c.spot_id,
-    spot_name: c.spot_name,
-    seat_note: c.note,
-    id_check: !!t.idCheck,
-    seat_status: "new",
-    ...(Number(t.dailyPerk) > 0 ? { daily_perk_discount: t.dailyPerk, daily_perk_date: perkDate } : {}),
-  };
-  const insert = (f: typeof fields) => supabase.from("orders").insert(f).select("id").single();
-  let { data: order, error: orderErr } = await insert(fields);
-  if (orderErr?.code === "23505" && (orderErr.message ?? "").includes("orders_daily_perk_once")) {
-    ({ data: order, error: orderErr } = await insert({ ...fields, daily_perk_date: null }));
+  // The daily coffee was used elsewhere between pricing and paying (the
+  // phone re-checks just before Pay, so this is a narrow race): the guest
+  // paid the coffee-free price, so the order keeps it, flagged for a
+  // manager (code review N25).
+  if (made.created && c.member_id && Number(t.dailyPerk) > 0) {
+    const { data: o } = await supabase.from("orders").select("daily_perk_date").eq("id", made.order_id).maybeSingle();
+    if (o && !o.daily_perk_date) {
+      await flagSale("daily_perk_twice", {
+        orderId: made.order_id,
+        orderNumber: Number(made.order_number),
+        paymentIntentId: pi.id,
+        details: { amount: Number(t.dailyPerk), summary: `Seat order #${made.order_number} got the free daily coffee (${t.dailyPerk.toFixed(2)} off), but the member had already used today's. Nothing to do unless it keeps happening.` },
+      });
+    }
   }
-  if (orderErr || !order) {
-    // Lost a race with the other caller (one order per payment): use theirs.
-    const theirs = orderErr?.code === "23505" ? await existing() : null;
-    if (theirs) return link(theirs);
-    console.error("seat checkout: order not saved", c.id, orderErr);
-    throw orderErr ?? new Error("order not saved");
-  }
-  const orderId = order.id as string;
+  await fulfilSeatOrder(c, made.order_id).catch((e) => console.error("seat checkout: not fulfilled", c.id, e));
+  return { ok: true, orderId: made.order_id, orderNumber: Number(made.order_number) };
+}
 
-  const { error: itemsErr } = await supabase.from("order_items").insert(
-    lines.map((l) => ({
-      order_id: orderId,
-      menu_item_id: l.menu_item_id,
-      name: l.name,
-      unit_price: l.unit_price,
-      quantity: l.quantity,
-      modifiers: l.modifiers,
-      is_alcohol: l.is_alcohol,
-      is_event: false,
-    })),
-  );
-  if (itemsErr) console.error("seat checkout: items not saved", orderId, itemsErr);
+const FULFIL_CLAIM_MS = 2 * 60_000;
 
-  if (memberId) {
-    const earned = pointsEarned({ subtotal: t.subtotal, tier_discount: t.memberDiscount, monthly_discount: 0, redemption_discount: 0, daily_perk_discount: t.dailyPerk });
-    if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber} (seat order)` });
+// A made seat order's points and kitchen ticket, once (seat_checkouts.
+// fulfilled_at). One caller at a time claims it; a claim older than 2
+// minutes (its caller died) can be taken over. Points are safe twice anyway
+// (one purchase row per order). A voided or refunded order gets neither.
+async function fulfilSeatOrder(c: CheckoutRow, orderId: string): Promise<void> {
+  const supabase = db();
+  const now = new Date();
+  const { data: claimed, error } = await supabase
+    .from("seat_checkouts")
+    .update({ fulfil_claimed_at: now.toISOString() })
+    .eq("id", c.id)
+    .is("fulfilled_at", null)
+    .or(`fulfil_claimed_at.is.null,fulfil_claimed_at.lt.${new Date(now.getTime() - FULFIL_CLAIM_MS).toISOString()}`)
+    .select("id");
+  if (error) throw error;
+  if (!claimed?.length) return;
+
+  const { data: o, error: oErr } = await supabase.from("orders").select("order_number, status, member_id, subtotal, tier_discount, daily_perk_discount").eq("id", orderId).maybeSingle();
+  if (oErr || !o) throw oErr ?? new Error("order not found");
+  const orderNumber = Number(o.order_number);
+  if (o.status === "completed") {
+    const memberId = (o.member_id as string | null) ?? null;
+    if (memberId) {
+      const earned = pointsEarned({ subtotal: Number(o.subtotal), tier_discount: Number(o.tier_discount), monthly_discount: 0, redemption_discount: 0, daily_perk_discount: Number(o.daily_perk_discount ?? 0) });
+      if (earned > 0) {
+        const r = await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber} (seat order)` });
+        // Not saved (and not already there): left unfulfilled for a retry.
+        if (!r.ok && !r.duplicate) throw new Error("points not saved");
+      }
+    }
+    // The kitchen printer's ticket, headed with the spot (plain ASCII: the
+    // printer drops anything else).
+    const head = [boardLabel(c.spot_name).replace(/·/g, "-"), c.guest_name, c.totals.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
+    await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, lines: c.lines }, "now");
   }
-  const result = await link(orderId);
-
-  // The kitchen printer's ticket, headed with the spot (plain ASCII: the
-  // printer drops anything else).
-  const head = [boardLabel(c.spot_name).replace(/·/g, "-"), c.guest_name, t.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
-  await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, lines }, "now");
-  return result;
+  await supabase.from("seat_checkouts").update({ fulfilled_at: new Date().toISOString() }).eq("id", c.id);
 }
 
 // ---------- after it's paid ----------

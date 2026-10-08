@@ -7,7 +7,7 @@ import { SALES_TAX_PERCENT } from "@/lib/sales-tax";
 import { GUEST_STATUS, PAUSED_MESSAGE, TIP_CHOICES, type SeatStatus, type SeatTotals, type TipChoice } from "@/lib/seat-ordering";
 import type { SeatItem, SeatSection, CheckoutStatus } from "@/lib/seat-ordering-server";
 import type { MemberTier } from "@/lib/types";
-import { finishSeatOrder, seatOrderStatus, startSeatOrder } from "./actions";
+import { finishSeatOrder, seatCheckoutCurrent, seatOrderStatus, seatPaymentDeclined, startSeatOrder } from "./actions";
 import s from "./order.module.css";
 
 // The phone menu a spot's QR card opens: pick, pay, then watch it come.
@@ -44,6 +44,7 @@ export default function SeatOrderApp({
   code,
   spotName,
   dark,
+  dim = dark,
   open: openAtLoad,
   menu,
   guest,
@@ -53,6 +54,9 @@ export default function SeatOrderApp({
   code: string;
   spotName: string;
   dark: boolean;
+  // The dim palette (code review M15): cinema seats and booths, both lit
+  // low. A phone in dark mode gets it anyway (order.module.css).
+  dim?: boolean;
   open: boolean;
   menu: SeatSection[];
   guest: SeatGuest | null;
@@ -71,6 +75,16 @@ export default function SeatOrderApp({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<string | null>(null);
+  // How many of each item are in the cart, for the row's "✓ 2" (code
+  // review M16).
+  const inCart = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of cart) m.set(l.itemId, (m.get(l.itemId) ?? 0) + l.qty);
+    return m;
+  }, [cart]);
+  // The checkout this phone started last: pressing Pay again with the same
+  // cart reuses its payment instead of making a new one.
+  const lastCheckout = useRef<string | null>(null);
 
   // The cart survives signing in (a trip to the login page) and a reload.
   useEffect(() => {
@@ -131,18 +145,20 @@ export default function SeatOrderApp({
   async function startPay() {
     setBusy(true);
     setError(null);
-    const r = await startSeatOrder({ code, lines: cart.map((l) => ({ itemId: l.itemId, optionIds: l.optionIds, qty: l.qty })), tip, name, quietly: dark && quietly }).catch(() => null);
+    const r = await startSeatOrder({ code, lines: cart.map((l) => ({ itemId: l.itemId, optionIds: l.optionIds, qty: l.qty })), tip, name, quietly: dark && quietly, reuse: lastCheckout.current }).catch(() => null);
     setBusy(false);
     if (!r) return setError("Couldn't reach us. Check your connection and try again.");
     if (!r.ok) {
       if (r.paused) setOpen(false);
       return setError(r.error);
     }
+    lastCheckout.current = r.checkoutId;
     setPay(r);
     setView("pay");
   }
 
   function paid(id: string) {
+    lastCheckout.current = null;
     setCheckoutId(id);
     setCart([]);
     setPay(null);
@@ -155,6 +171,7 @@ export default function SeatOrderApp({
   }
 
   function orderMore() {
+    lastCheckout.current = null;
     setCheckoutId(null);
     setView("menu");
     setError(null);
@@ -171,8 +188,8 @@ export default function SeatOrderApp({
   }, [view]);
 
   return (
-    <div className={`${s.root} ${dark ? s.dark : ""}`}>
-      {dark && <style>{`html,body{background:#0b0a08}`}</style>}
+    <div className={`${s.root} ${dim ? s.dark : ""}`}>
+      <style>{dim ? `html,body{background:#0b0a08}` : `@media (prefers-color-scheme: dark){html,body{background:#0b0a08}}`}</style>
       <header className={s.header}>
         <div className={s.headerInner}>
           <div className="min-w-0">
@@ -197,7 +214,7 @@ export default function SeatOrderApp({
         ) : view === "pay" && pay ? (
           <PayView
             pay={pay}
-            dark={dark}
+            dark={dim}
             code={code}
             publishableKey={publishableKey}
             onBack={() => {
@@ -226,7 +243,7 @@ export default function SeatOrderApp({
             onPay={startPay}
           />
         ) : (
-          <MenuView menu={menu} onTap={tapItem} dark={dark} />
+          <MenuView menu={menu} onTap={tapItem} dark={dark} inCart={inCart} />
         )}
       </main>
 
@@ -277,7 +294,7 @@ function MemberChip({ guest, code }: { guest: SeatGuest | null; code: string }) 
   );
 }
 
-function MenuView({ menu, onTap, dark }: { menu: SeatSection[]; onTap: (i: SeatItem) => void; dark: boolean }) {
+function MenuView({ menu, onTap, dark, inCart }: { menu: SeatSection[]; onTap: (i: SeatItem) => void; dark: boolean; inCart: Map<string, number> }) {
   if (!menu.length) {
     return (
       <div className={`${s.sheet} ${s.paused} ${s.enter}`}>
@@ -308,27 +325,36 @@ function MenuView({ menu, onTap, dark }: { menu: SeatSection[]; onTap: (i: SeatI
               {sec.items.length} item{sec.items.length === 1 ? "" : "s"}
             </small>
           </h2>
+          {sec.items.some((i) => i.isAlcohol) && (
+            <p className={`${s.mono} ${s.sectionNote}`}>
+              <span className={s.age}>21+</span> We check ID when we bring it
+            </p>
+          )}
           <ul className={s.items}>
-            {sec.items.map((item) => (
+            {sec.items.map((item) => {
+              const n = inCart.get(item.id) ?? 0;
+              return (
               <li key={item.id}>
-                <button className={s.item} onClick={() => onTap(item)} aria-label={`${item.name}, ${money(item.price)}${item.groups.length ? ", choose options" : ", add to order"}`}>
+                <button className={s.item} onClick={() => onTap(item)} aria-label={`${item.name}, ${money(item.price)}${item.isAlcohol ? ", 21+" : ""}${n ? `, ${n} in your order` : ""}${item.groups.length ? ", choose options" : ", add to order"}`}>
                   <span className={s.itemText}>
                     <span className={s.itemName}>{item.name}</span>
                     {item.description && <span className={s.itemNote}>{item.description}</span>}
                     {(item.isAlcohol || item.groups.length > 0) && (
                       <span className={`${s.itemNote} ${s.mono}`}>
                         {item.isAlcohol && <span className={s.age}>21+</span>}
-                        {item.isAlcohol ? "ID checked when we bring it" : "Choices"}
+                        {item.isAlcohol && item.groups.length > 0 ? " " : ""}
+                        {item.groups.length > 0 ? "Choices" : ""}
                       </span>
                     )}
                   </span>
                   <span className={s.price}>{money(item.price)}</span>
-                  <span className={s.plus} aria-hidden>
-                    +
+                  <span key={n} className={`${s.plus} ${n ? s.plusIn : ""}`} aria-hidden>
+                    {n ? `✓${n > 1 ? n : ""}` : "+"}
                   </span>
                 </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </section>
       ))}
@@ -533,12 +559,18 @@ function CartView(p: {
         )}
       </div>
 
-      <label className={s.field} htmlFor="seat-name">
-        <span className={s.label}>
-          Name for the order <em>· optional</em>
-        </span>
-        <input id="seat-name" className={s.input} value={p.name} maxLength={40} autoComplete="given-name" onChange={(e) => p.setName(e.target.value)} placeholder="So we know who's who" />
-      </label>
+      {p.guest && p.guest.firstName !== "there" ? (
+        <p className={s.field}>
+          <span className={s.label}>The order goes under {p.guest.firstName}</span>
+        </p>
+      ) : (
+        <label className={s.field} htmlFor="seat-name">
+          <span className={s.label}>
+            First name <em>· optional</em>
+          </span>
+          <input id="seat-name" className={s.input} value={p.name} maxLength={20} autoComplete="given-name" onChange={(e) => p.setName(e.target.value)} placeholder="So we know who's who" />
+        </label>
+      )}
 
       {p.dark && (
         <label className={s.check}>
@@ -617,6 +649,8 @@ function PayView({
   // The card form didn't load (Stripe's error, or nothing after 10 seconds).
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Declined too many times: the payment is closed (card testing guard).
+  const [closed, setClosed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -636,7 +670,7 @@ function PayView({
       const elements = stripe.elements({
         clientSecret: pay.clientSecret,
         appearance: {
-          theme: dark ? "night" : "stripe",
+          theme: dark || window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "night" : "stripe",
           variables: { colorPrimary: v("--red"), colorBackground: v("--card"), colorText: v("--text"), colorDanger: v("--red-text"), borderRadius: "4px", fontSizeBase: "16px" },
         },
       });
@@ -677,14 +711,26 @@ function PayView({
     if (!stripe || !elements) return;
     setBusy(true);
     setError(null);
+    // The free daily coffee in this price may have just been used at the
+    // counter: then go back and see the new total first.
+    if (pay.totals.dailyPerk > 0 && !(await seatCheckoutCurrent(pay.checkoutId).catch(() => true))) {
+      setBusy(false);
+      setError("Today's free coffee was just used on another order, so the price changed. Tap “Change the order” to see the new total.");
+      return;
+    }
     const { error: err } = await stripe.confirmPayment({
       elements,
       confirmParams: { return_url: `${window.location.origin}/order/${code}?o=${pay.checkoutId}` },
       redirect: "if_required",
     });
     if (err) {
+      const message = err.message ?? "The payment didn't go through.";
+      const check = err.type === "validation_error" ? null : await seatPaymentDeclined(pay.checkoutId).catch(() => null);
       setBusy(false);
-      setError(err.message ?? "The payment didn't go through.");
+      if (check?.closed) {
+        setClosed(true);
+        setError(check.error ?? message);
+      } else setError(message);
       return;
     }
     onPaid(pay.checkoutId);
@@ -731,7 +777,7 @@ function PayView({
           {error}
         </p>
       )}
-      {!failed && (
+      {!failed && !closed && (
         <button className={`${s.btn} ${s.wide} mt-5`} disabled={!ready || busy} onClick={confirm}>
           {busy ? "Paying…" : `Pay ${money(t.total)}`}
         </button>
@@ -742,6 +788,11 @@ function PayView({
 
 const STEPS: SeatStatus[] = ["new", "making", "delivered"];
 const OFFLINE_AFTER = 3; // failed checks in a row before we say so
+// The phone stops asking the server to send a paid order through after this
+// many tries (the register's sweep and the webhook still do), and stops
+// watching the order after WATCH_MS (Refresh still works).
+const MAX_FINISH_TRIES = 10;
+const WATCH_MS = 2 * 3_600_000;
 
 function StatusView({ checkoutId, onMore }: { checkoutId: string; onMore: (() => void) | null }) {
   const [st, setSt] = useState<CheckoutStatus | null>(null);
@@ -765,8 +816,10 @@ function StatusView({ checkoutId, onMore }: { checkoutId: string; onMore: (() =>
     let stop = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let fails = 0;
+    let finishTries = 0;
+    const startedAt = Date.now();
     const tick = async (tries: number) => {
-      if (stop) return;
+      if (stop || Date.now() - startedAt > WATCH_MS) return;
       const cur = await seatOrderStatus(checkoutId).catch(() => undefined);
       if (stop) return;
       if (cur === null) {
@@ -780,7 +833,10 @@ function StatusView({ checkoutId, onMore }: { checkoutId: string; onMore: (() =>
         fails = 0;
         setMisses(0);
       }
-      if (cur && !cur.paid) {
+      if (cur && !cur.paid && finishTries >= MAX_FINISH_TRIES) {
+        setNote("Your payment is safe. If this doesn't change in a minute or two, show this screen at the counter.");
+      } else if (cur && !cur.paid) {
+        finishTries += 1;
         const f = await finishSeatOrder(checkoutId).catch(() => null);
         if (stop) return;
         if (f && !f.ok) {
@@ -794,7 +850,8 @@ function StatusView({ checkoutId, onMore }: { checkoutId: string; onMore: (() =>
       } else setNote(null);
       if (cur) setSt(cur);
       if (cur?.status === "delivered" || cur?.refunded) return;
-      timer = setTimeout(() => void tick(tries + 1), fails ? 5000 : tries < 3 ? 2500 : 6000);
+      const slow = finishTries >= MAX_FINISH_TRIES && !cur?.paid;
+      timer = setTimeout(() => void tick(tries + 1), fails ? Math.min(30_000, 5000 * fails) : slow ? 15_000 : tries < 3 ? 2500 : 6000);
     };
     void tick(0);
     return () => {

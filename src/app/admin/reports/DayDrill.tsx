@@ -507,7 +507,8 @@ function TaxView({ r, hrefFor, orderHref }: { r: DayReport; hrefFor: (p: Partial
             ...(completed.some((o) => o.ownerTab)
               ? [{ key: "owner", label: "Owner tabs (owed, paid with the monthly statement)", value: money(sumTax(completed.filter((o) => o.ownerTab))), href: hrefFor({ show: "orders", pay: "owner" }) }]
               : []),
-            ...(completed.some((o) => o.source !== "pos") ? [{ key: "web", label: "Website orders", value: money(sumTax(completed.filter((o) => o.source !== "pos"))) }] : []),
+            ...(completed.some((o) => o.source === "mobile") ? [{ key: "seat", label: "Seat orders (phones)", value: money(sumTax(completed.filter((o) => o.source === "mobile"))) }] : []),
+            ...(completed.some((o) => o.source !== "pos" && o.source !== "mobile") ? [{ key: "web", label: "Website orders", value: money(sumTax(completed.filter((o) => o.source !== "pos" && o.source !== "mobile"))) }] : []),
             ...(onlineTickets.length ? [{ key: "tix", label: "Online tickets", value: money(onlineTickets.reduce((s, t) => s + t.tax, 0)), href: hrefFor({ show: "tickets" }) }] : []),
             ...(r.boothLines.length ? [{ key: "booth", label: "Booths", value: money(r.boothLines.reduce((s, b) => s + b.tax, 0)) }] : []),
             ...(r.membershipLines.length ? [{ key: "members", label: MEMBERSHIPS_LABEL, value: money(r.memberships.tax), href: hrefFor({ show: "memberships" }) }] : []),

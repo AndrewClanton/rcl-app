@@ -56,6 +56,43 @@ export function chimeReady(): boolean {
   return !!ctx && ctx.state === "running";
 }
 
+// The register's Order up (code review M13): louder and different from the
+// boards' bells, to carry over a busy front door on an iPad speaker. Two
+// pulses of a bright two-tone (triangle plus a square an octave up, which
+// small speakers carry better than a sine).
+export function playRegisterChime() {
+  const c = context();
+  if (!c) return;
+  if (c.state !== "running") {
+    void c.resume().catch(() => {});
+    return;
+  }
+  const start = c.currentTime + 0.02;
+  for (let pulse = 0; pulse < 2; pulse++) {
+    [
+      { freq: 1047, at: 0 },
+      { freq: 1568, at: 0.14 },
+    ].forEach(({ freq, at }) => {
+      const t = start + pulse * 0.55 + at;
+      for (const [type, mult, peak] of [
+        ["triangle", 1, 0.6],
+        ["square", 2, 0.08],
+      ] as const) {
+        const osc = c.createOscillator();
+        const gain = c.createGain();
+        osc.type = type;
+        osc.frequency.value = freq * mult;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.38);
+        osc.connect(gain).connect(c.destination);
+        osc.start(t);
+        osc.stop(t + 0.4);
+      }
+    });
+  }
+}
+
 export function playSeatChime() {
   const c = context();
   if (!c) return;

@@ -38,6 +38,9 @@ const KIND_LABELS: Record<string, string> = {
   items_not_saved: "Items not saved",
   below_cost: "Bar Book drink below cost",
   org_over_limit: "Organization comp past the limit",
+  stripe_refund: "Refunded in Stripe",
+  card_disputed: "Card disputed",
+  daily_perk_twice: "Second daily coffee",
 };
 
 export function flagLabel(kind: string) {
@@ -152,7 +155,8 @@ function cardLabel(charge: Stripe.Charge | null): string | null {
 }
 
 // Succeeded register card payments (the reader's metadata.source "pos", a
-// tab's card on file "pos-tab") made during one business day, 4 a.m. to 4
+// tab's card on file "pos-tab") and phone seat-order payments
+// (metadata.kind "seat_order") made during one business day, 4 a.m. to 4
 // a.m. Central, that no order points to. Stripe's search runs a minute or so
 // behind, so a payment from the last minute may not show yet.
 export async function getCardPaymentsWithNoSale(date: string): Promise<OrphansResult> {
@@ -165,16 +169,16 @@ export async function getCardPaymentsWithNoSale(date: string): Promise<OrphansRe
   try {
     const stripe = getStripe();
     // Stripe's search can't mix AND with OR, so one search per source.
-    const search = (source: string) =>
+    const search = (field: "source" | "kind", value: string) =>
       stripe.paymentIntents
         // A few seconds at most per page: a slow Stripe shows an error on
         // this card instead of holding up the whole report (the library's
         // own default waits over a minute, with retries).
-        .search({ query: `status:'succeeded' AND metadata['source']:'${source}' AND created>=${from} AND created<${to}`, limit: 100, expand: ["data.latest_charge"] }, { timeout: 8000, maxNetworkRetries: 1 })
+        .search({ query: `status:'succeeded' AND metadata['${field}']:'${value}' AND created>=${from} AND created<${to}`, limit: 100, expand: ["data.latest_charge"] }, { timeout: 8000, maxNetworkRetries: 1 })
         .autoPagingToArray({ limit: MAX_PAYMENTS });
-    const [reader, onFile] = await Promise.all([search("pos"), search("pos-tab")]);
-    intents = [...reader, ...onFile];
-    more = reader.length >= MAX_PAYMENTS || onFile.length >= MAX_PAYMENTS;
+    const [reader, onFile, seat] = await Promise.all([search("source", "pos"), search("source", "pos-tab"), search("kind", "seat_order")]);
+    intents = [...reader, ...onFile, ...seat];
+    more = reader.length >= MAX_PAYMENTS || onFile.length >= MAX_PAYMENTS || seat.length >= MAX_PAYMENTS;
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Couldn't reach Stripe." };
   }
