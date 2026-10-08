@@ -41,6 +41,11 @@ export interface RegisterCartSnapshot {
     coffee?: "ready" | "on-order" | "used" | null;
     discountPct?: number;
     profile?: TabletProfile | null;
+    // Points this order already spends (its reward lines and any $5 off),
+    // taken when the sale is saved: Spend points counts them as gone.
+    rewardPoints?: number;
+    // Those reward lines, by reward, so the screen counts them against the limits.
+    rewards?: { id: string; qty: number }[];
   } | null;
   pointsToEarn?: number;
   // The register's payment screen is open: the customer screen plays its
@@ -117,7 +122,21 @@ export interface TabletProfile {
   // What's still to do on their account's Profile tab ("Make it yours").
   // A line staff hid isn't asked for again.
   todo: { photo: boolean; line: boolean; flair: boolean };
+  // "Spend points" (display/customer/SpendPoints.tsx): a sealed reference
+  // to their account (lib/tablet-wallet.ts) the screen's reward actions
+  // open, never the member id. Missing from an older register.
+  wallet?: string;
+  // What they show, of the perks they've unlocked (lib/rewards.ts): keys
+  // into the screen's own lists.
+  look?: { frame: string | null; nameColor: string | null; title: string | null; sound: string | null };
+  // Every point they've ever earned: spending never lowers it.
+  earned?: number;
 }
+
+// "reward-add" (tablet -> register) and "reward-added" (back): see
+// lib/rewards.ts RewardAdd. "rewards-changed" (tablet -> register,
+// { firstName }): a perk was unlocked, so the register looks their points
+// and card up again.
 
 export const EMPTY_CART_SNAPSHOT: RegisterCartSnapshot = { orderName: "", items: [], subtotal: 0, tax: 0, total: 0 };
 

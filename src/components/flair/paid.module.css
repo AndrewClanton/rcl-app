@@ -1,0 +1,303 @@
+/* The entrances bought with points (PaidEntrance.tsx). Inside FlairEffect's
+   layer, which is a size container, so cqw/cqh fit the customer screen or
+   the account page's little stage alike. --c is the member's color, --c2 a
+   lighter version, --ms how long it runs. Reduced motion: the still frame
+   fades in and out. */
+
+.stage {
+  position: absolute;
+  inset: 0;
+  animation: stage var(--ms) ease-out both;
+}
+@keyframes stage {
+  0% {
+    opacity: 0;
+  }
+  6%,
+  86% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.soft {
+  opacity: 0.75;
+}
+
+/* ---------- neon ---------- */
+.neonWrap {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(10, 8, 6, 0.72), rgba(10, 8, 6, 0.25) 70%, transparent);
+}
+.neonSign {
+  display: grid;
+  justify-items: center;
+  gap: 1.5cqh;
+  padding: 3cqh 5cqw;
+  border: 0.6cqw solid var(--c2);
+  border-radius: 3cqw;
+  box-shadow:
+    0 0 1.2cqw var(--c),
+    0 0 4cqw var(--c),
+    inset 0 0 2cqw var(--c);
+  animation: buzz 1.4s steps(1) both;
+}
+.neonSmall {
+  font-family: var(--font-display, system-ui), system-ui, sans-serif;
+  font-size: 3.2cqw;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow:
+    0 0 0.6cqw #fff,
+    0 0 2cqw var(--c);
+}
+.neonBig {
+  font-family: var(--font-display, system-ui), system-ui, sans-serif;
+  font-weight: 900;
+  font-size: 10cqw;
+  line-height: 1;
+  color: #fff;
+  text-shadow:
+    0 0 0.5cqw #fff,
+    0 0 1.5cqw var(--c2),
+    0 0 4cqw var(--c),
+    0 0 8cqw var(--c);
+}
+@keyframes buzz {
+  0%,
+  8%,
+  14%,
+  30% {
+    opacity: 0.12;
+  }
+  5%,
+  11%,
+  20%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---------- vhs ---------- */
+.static {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  mix-blend-mode: screen;
+}
+.tracking {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 9cqh;
+  top: -10cqh;
+  background: linear-gradient(transparent, rgba(255, 255, 255, 0.55) 40%, rgba(255, 255, 255, 0.15) 60%, transparent);
+  filter: blur(0.3cqh);
+  animation: track 1.1s linear 2 both;
+}
+@keyframes track {
+  to {
+    top: 105cqh;
+  }
+}
+.vcr {
+  position: absolute;
+  left: 5cqw;
+  top: 6cqh;
+  display: grid;
+  gap: 1cqh;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-weight: 700;
+  font-size: 6cqw;
+  color: #fff;
+  text-shadow:
+    0.3cqw 0 0 #ff2a6d,
+    -0.3cqw 0 0 #05d9e8;
+  animation: vcr var(--ms) steps(1) both;
+}
+.vcrTime {
+  font-size: 3cqw;
+}
+@keyframes vcr {
+  0%,
+  44% {
+    opacity: 0;
+  }
+  45%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---------- film reel ---------- */
+.leader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at center, rgba(40, 34, 26, 0.85), rgba(10, 8, 6, 0.7) 70%);
+}
+.leaderDial {
+  position: absolute;
+  width: min(70cqh, 70cqw);
+  height: min(70cqh, 70cqw);
+}
+.sweep {
+  transform-origin: 100px 100px;
+  animation: sweep 0.9s linear 3 both;
+}
+@keyframes sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.count {
+  position: absolute;
+  font-family: var(--font-display, system-ui), system-ui, sans-serif;
+  font-weight: 900;
+  font-size: min(40cqh, 40cqw);
+  line-height: 1;
+  color: #f3ecd9;
+  opacity: 0;
+}
+.c3 {
+  animation: count 0.9s steps(1) 0s both;
+}
+.c2 {
+  animation: count 0.9s steps(1) 0.9s both;
+}
+.c1 {
+  animation: count 0.9s steps(1) 1.8s both;
+}
+@keyframes count {
+  0%,
+  99% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.scratch {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 22%, rgba(243, 236, 217, 0.35) 22.2%, transparent 22.5%),
+    linear-gradient(90deg, transparent 71%, rgba(243, 236, 217, 0.25) 71.1%, transparent 71.3%);
+  animation: jitter 0.12s steps(2) infinite;
+}
+@keyframes jitter {
+  50% {
+    transform: translateX(1.5cqw);
+  }
+}
+
+/* ---------- arcade ---------- */
+.scanlines {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.35) 0 2px, transparent 2px 5px);
+}
+.pixel {
+  position: absolute;
+  top: -5cqh;
+  left: calc(var(--x) * 1cqw);
+  width: calc(var(--sz) * 1cqw);
+  aspect-ratio: 1;
+  background: var(--c);
+  box-shadow: 0 0 1cqw var(--c);
+  animation: drop var(--dur) steps(12) var(--d) both;
+}
+.pixelAlt {
+  background: #ffc72c;
+  box-shadow: 0 0 1cqw #ffc72c;
+}
+@keyframes drop {
+  to {
+    transform: translateY(110cqh);
+  }
+}
+.arcadeText {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 2cqh;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.arcadeSmall {
+  font-size: 3cqw;
+  color: #ffc72c;
+  animation: blink 0.5s steps(1) infinite;
+}
+.arcadeBig {
+  font-size: 8cqw;
+  color: var(--c2);
+  text-shadow:
+    0.5cqw 0.5cqw 0 #14110c,
+    0 0 2cqw var(--c);
+  animation: blink 0.7s steps(1) 4 both;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ---------- popcorn ---------- */
+.kernel {
+  position: absolute;
+  top: -10cqh;
+  left: calc(var(--x) * 1cqw);
+  width: calc(var(--sz) * 1cqw);
+  aspect-ratio: 1;
+  animation: rain var(--dur) cubic-bezier(0.45, 0, 0.9, 0.6) var(--d) both;
+}
+.kernel svg {
+  width: 100%;
+  height: 100%;
+}
+@keyframes rain {
+  0% {
+    transform: translateY(0) rotate(0deg);
+  }
+  85% {
+    transform: translateY(calc(var(--land) * 1cqh)) rotate(var(--spin));
+  }
+  92% {
+    transform: translateY(calc((var(--land) - 3) * 1cqh)) rotate(var(--spin));
+  }
+  100% {
+    transform: translateY(calc(var(--land) * 1cqh)) rotate(var(--spin));
+  }
+}
+
+@media (max-width: 700px) {
+  .extra {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage *,
+  .stage {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .stage {
+    animation: stage var(--ms) ease-out both !important;
+  }
+}

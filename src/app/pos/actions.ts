@@ -26,6 +26,8 @@ import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, isBelowCost, money as barMoney } from "@/lib/bar/pricing";
 import { cleanCustomRecipe, customIsAlcohol, customRecipeText, type CustomRecipeLine } from "@/lib/bar/match";
 import { logOrderComps, openOverLimit, orgSaleTerms, termsOrg, type OrgSaleTerms } from "@/lib/orgs-server";
+import { isUuid } from "@/lib/rewards";
+import { redeemOrderRewards } from "@/lib/rewards-server";
 import type { OrgGroupInput } from "@/lib/orgs";
 
 export interface CheckoutLine {
@@ -51,6 +53,10 @@ export interface CheckoutLine {
   // one-off line with no Bar Book recipe, checks every ingredient, and
   // writes the names itself (cleanCustomRecipe); anything else is dropped.
   custom_recipe?: CustomRecipeLine[] | null;
+  // A reward picked on the customer screen (Spend points): a $0 line with
+  // no menu item. Its points come off when the sale is saved
+  // (redeem_order_rewards), at the catalog's price, not the line's name.
+  reward_id?: string | null;
 }
 
 export interface CheckoutTotals {
@@ -140,6 +146,12 @@ function bookRecipeOf(l: CheckoutLine, book: BookRecipes): string | null {
   return bookRecipeIdOf(l, book);
 }
 
+// A Spend points reward a line carries: only a $0 line with no menu item
+// or showing, and only a well-formed id (the catalog is checked when it's paid).
+function rewardIdOf(l: CheckoutLine): string | null {
+  return l.reward_id && isUuid(l.reward_id) && !l.menu_item_id && !l.screening_id && Number(l.unit_price) === 0 ? l.reward_id : null;
+}
+
 // The ingredient list a custom drink may keep (cleanCustomRecipe).
 function customRecipeOf(l: CheckoutLine, extras: LineExtras): CustomRecipeLine[] | null {
   return cleanCustomRecipe(l, extras.ingredients);
@@ -179,6 +191,8 @@ async function replaceOrderItems(
       is_event: !!l.screening_id,
       // Only on an owner-rate line, so every other sale saves exactly as before.
       ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
+      // Only on a $0 line with no menu item: a reward from Spend points.
+      ...(rewardIdOf(l) ? { reward_id: rewardIdOf(l) } : {}),
     }));
     type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
     const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
@@ -732,6 +746,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // 1 point per $1 of the order after discounts, and 100 back out when a
   // reward was used. Each change lands in the member's points history, tied
   // to this order.
+  let discountPoints = 0;
   if (memberId && !ownerSale) {
     if (params.pointsRedeemed && params.totals.redemption_discount > 0) {
       // The register checked the balance before payment; this catches a
@@ -740,13 +755,28 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
       // goes below zero: the points aren't taken, and a manager is told.
       const balance = balanceBefore;
       if (balance === undefined || (balance ?? 0) >= POINTS_PER_REWARD) {
-        await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+        const r = await applyPoints({ memberId, delta: -POINTS_PER_REWARD, reason: "redeem", orderId, note: `${params.totals.redemption_discount.toFixed(2)} off order #${orderNumber}`, by: params.employeeId || null });
+        if (r.ok) discountPoints = POINTS_PER_REWARD;
       } else {
         after(() => flagSale("points_short", { ...saved, details: { memberId, points: balance, reward: params.totals.redemption_discount } }));
       }
     }
     const earned = pointsEarned(params.totals);
     if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
+  }
+  // Rewards picked on the customer screen (Spend points): their points come
+  // off now, at the catalog's price, after this sale's own points are in.
+  // One they can't cover still stands (they have it), and a manager is told.
+  const rewardItems = params.lines.flatMap((l) => {
+    const id = rewardIdOf(l);
+    return id ? [{ rewardId: id, qty: Math.max(1, Math.round(Number(l.quantity) || 1)) }] : [];
+  });
+  if (memberId && !ownerSale && (rewardItems.length || discountPoints)) {
+    const redeemed = await redeemOrderRewards({ memberId, orderId, items: rewardItems, discountPoints, by: params.employeeId || null });
+    const short = redeemed?.short ?? [];
+    if (short.length) after(() => flagSale("points_short", { ...saved, details: { memberId, rewards: short, summary: `Not enough points for ${short.map((s) => s.name ?? "a reward").join(", ")}; it was handed over anyway.` } }));
+  } else if (rewardItems.length && !memberId) {
+    after(() => flagSale("points_short", { ...saved, details: { summary: "Reward lines were rung with no member on the order, so no points were taken for them." } }));
   }
 
   await syncTicketBookings(supabase, { id: orderId, memberId, name: params.orderName || null }, params.lines);
@@ -999,11 +1029,13 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const ORDER_COLUMNS = "id, order_name, member_id, tax_free, monthly_member, points_redeemed";
   const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
   // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
-  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`);
+  // reward_id: a reward line (Spend points), once migration 20261007020000 is in.
+  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id)`);
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS})`));
   if (error || !order) throw new Error("That order was already closed on another register.");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null; reward_id?: string | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -1023,6 +1055,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       screening_id: i.screening_id,
       ...(i.recipe_id ? { recipe_id: i.recipe_id } : {}),
       ...(Array.isArray(i.custom_recipe) && i.custom_recipe.length ? { custom_recipe: i.custom_recipe } : {}),
+      ...(i.reward_id ? { reward_id: i.reward_id } : {}),
     })),
   };
 }

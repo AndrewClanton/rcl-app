@@ -81,6 +81,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       keywords: "insiders plus loyalty points customers guests add a member community programs free comped gift billing",
     },
     {
+      href: "/admin/points",
+      label: "Points",
+      about: "What points buy (the rewards catalog), earning and redeeming limits, the watch list for unusual points, and the points economy.",
+      keywords: "rewards catalog spend points redeem popcorn perks sounds entrances card frames limits cap watch list gaming fraud liability economy top earners",
+      min: "admin",
+    },
+    {
       href: "/admin/organizations",
       label: "Organizations",
       about: "Groups like Easter Seals: monthly fee, daily comps, helpers and supported guests, statements and the helper sign-up link.",
