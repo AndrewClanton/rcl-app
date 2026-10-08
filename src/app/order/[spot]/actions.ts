@@ -7,6 +7,7 @@ import { allowAttempt } from "@/lib/rate-limit";
 import { connectionKey, TOO_MANY_FROM_CONNECTION } from "@/lib/public-form-guard";
 import {
   TOO_MANY_DECLINES,
+  checkoutStillPriced,
   closeIfDeclined,
   finishSeatCheckout,
   isUuid,
@@ -102,6 +103,20 @@ export async function seatOrderStatus(checkoutId: string): Promise<CheckoutStatu
     return await seatCheckoutStatus(id);
   } catch {
     return null;
+  }
+}
+
+// Just before Pay: false when the free daily coffee in the price was used
+// since (the phone goes back to re-price). Never holds a payment up on an
+// error.
+export async function seatCheckoutCurrent(checkoutId: string): Promise<boolean> {
+  const id = String(checkoutId ?? "");
+  if (!isUuid(id)) return true;
+  if (!(await allowAttempt(`seat-current:${id}`, 20, 60))) return true;
+  try {
+    return await checkoutStillPriced(id);
+  } catch {
+    return true;
   }
 }
 

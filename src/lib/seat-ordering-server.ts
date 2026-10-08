@@ -9,6 +9,7 @@ import { sendKitchenTicket } from "@/lib/print/kitchen";
 import { pictureOf, textIconShown, type TextIcon } from "@/lib/menu-pictures/shared";
 import type { IconSpec } from "@/lib/bar/icons";
 import type { MemberTier } from "@/lib/types";
+import { flagSale } from "@/lib/register-sale-checks";
 import {
   MAX_LINES,
   MAX_QTY,
@@ -189,7 +190,7 @@ export interface PricedLine {
   is_alcohol: boolean;
 }
 
-export type SeatMember = { id: string; tier: MemberTier; points: number } | null;
+export type SeatMember = { id: string; tier: MemberTier; points: number; firstName: string | null } | null;
 
 export type Priced =
   | { ok: true; lines: PricedLine[]; totals: SeatTotals; idCheck: boolean; dailyPerkDate: string | null }
@@ -265,11 +266,20 @@ export async function priceCart(input: CartLineInput[], member: SeatMember, tipP
   return { ok: true, lines: priced, totals, idCheck: priced.some((l) => l.is_alcohol), dailyPerkDate };
 }
 
+// The name on a phone order (the register, the boards, the kitchen
+// printer): a first name only, letters (with ' and -), up to 20 (code review
+// M24). null when nothing usable is left.
+export function firstNameOnly(v: unknown): string | null {
+  const word = String(v ?? "").normalize("NFC").trim().split(/\s+/)[0] ?? "";
+  const name = word.replace(/[^\p{L}'’-]/gu, "").slice(0, 20);
+  return /\p{L}/u.test(name) ? name : null;
+}
+
 export async function seatMember(memberId: string | null): Promise<SeatMember> {
   if (!memberId) return null;
-  const { data } = await db().from("members").select("id, tier, points, erased_at").eq("id", memberId).maybeSingle();
+  const { data } = await db().from("members").select("id, tier, points, name, erased_at").eq("id", memberId).maybeSingle();
   if (!data || data.erased_at) return null;
-  return { id: data.id as string, tier: data.tier as MemberTier, points: Number(data.points) };
+  return { id: data.id as string, tier: data.tier as MemberTier, points: Number(data.points), firstName: firstNameOnly(data.name) };
 }
 
 // ---------- paying ----------
@@ -396,7 +406,7 @@ export async function startSeatCheckout(args: {
     spot_id: spot.id,
     spot_name: spot.name,
     member_id: member?.id ?? null,
-    guest_name: clean(args.name, 40),
+    guest_name: firstNameOnly(member?.firstName) ?? firstNameOnly(args.name) ?? "Guest",
     note: clean(args.note, 200),
     lines: priced.lines,
     totals: { ...priced.totals, idCheck: priced.idCheck, dailyPerkDate: priced.dailyPerkDate },
@@ -440,6 +450,18 @@ export async function startSeatCheckout(args: {
     await supabase.from("seat_checkouts").delete().eq("id", row.id);
     return { ok: false, error: "Couldn't reach the card processor. Try again in a moment." };
   }
+}
+
+// Just before the phone pays: false when the checkout's free daily coffee
+// was used since it was priced (at the register, or another order), so the
+// phone goes back and re-prices (code review N25). True for anything else.
+export async function checkoutStillPriced(checkoutId: string): Promise<boolean> {
+  if (!isUuid(checkoutId)) return true;
+  const { data } = await db().from("seat_checkouts").select("member_id, totals, status").eq("id", checkoutId).maybeSingle();
+  const t = data?.totals as (SeatTotals & { dailyPerkDate?: string | null }) | undefined;
+  if (!data || data.status !== "pending" || !data.member_id || !t || !(Number(t.dailyPerk) > 0) || !t.dailyPerkDate) return true;
+  // undefined: couldn't be read, so the payment isn't held up.
+  return !(await dailyCoffeeUse(data.member_id as string, t.dailyPerkDate));
 }
 
 // ---------- paid, but the phone never came back ----------
@@ -628,6 +650,21 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   if (rpcErr || !made) {
     console.error("seat checkout: order not saved", c.id, rpcErr);
     throw rpcErr ?? new Error("order not saved");
+  }
+  // The daily coffee was used elsewhere between pricing and paying (the
+  // phone re-checks just before Pay, so this is a narrow race): the guest
+  // paid the coffee-free price, so the order keeps it, flagged for a
+  // manager (code review N25).
+  if (made.created && c.member_id && Number(t.dailyPerk) > 0) {
+    const { data: o } = await supabase.from("orders").select("daily_perk_date").eq("id", made.order_id).maybeSingle();
+    if (o && !o.daily_perk_date) {
+      await flagSale("daily_perk_twice", {
+        orderId: made.order_id,
+        orderNumber: Number(made.order_number),
+        paymentIntentId: pi.id,
+        details: { amount: Number(t.dailyPerk), summary: `Seat order #${made.order_number} got the free daily coffee (${t.dailyPerk.toFixed(2)} off), but the member had already used today's. Nothing to do unless it keeps happening.` },
+      });
+    }
   }
   await fulfilSeatOrder(c, made.order_id).catch((e) => console.error("seat checkout: not fulfilled", c.id, e));
   return { ok: true, orderId: made.order_id, orderNumber: Number(made.order_number) };

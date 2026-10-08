@@ -66,6 +66,35 @@
   --dots: rgba(201, 162, 39, 0.05);
 }
 
+/* A phone set to dark mode gets the dim palette on every spot (code review
+   M15): the same tokens as .dark. */
+@media (prefers-color-scheme: dark) {
+  .root {
+    --paper: #0b0a08;
+    --card: #15120e;
+    --card-2: #1f1b15;
+    --line: #2c271f;
+    --rule: #4a3f2f;
+    --shadow: #5c4914;
+    --text: #c9c0aa;
+    --dim: #9a917e;
+    --red: #a8282d;
+    --red-text: #f0646a;
+    --on-red: #efe7d6;
+    --gold: #c9a227;
+    --on-gold: #0b0a08;
+    --band: #15120e;
+    --band-text: #c9c0aa;
+    --band-gold: #c9a227;
+    --ok: #8fc7a0;
+    --ok-bg: #13231a;
+    --warn-bg: #241d0d;
+    --warn-line: #5a4718;
+    --warn-text: #d9b96a;
+    --dots: rgba(201, 162, 39, 0.05);
+  }
+}
+
 /* ---------- header ---------- */
 .header {
   position: sticky;
@@ -193,7 +222,7 @@
 }
 .mono {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -329,6 +358,32 @@
   box-shadow: 2px 2px 0 var(--shadow);
   transition: transform 0.08s, box-shadow 0.08s;
 }
+/* In the cart already: "✓" (or "✓2"), gold, popping in when it changes. */
+.plusIn {
+  background: var(--gold);
+  color: var(--on-gold);
+  font-size: 1rem;
+  animation: pop 260ms ease-out both;
+}
+@keyframes pop {
+  0% {
+    transform: scale(0.7);
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plusIn {
+    animation: none;
+  }
+}
+.sectionNote {
+  margin: 0.35rem 0 0.25rem;
+}
 .item:active .plus {
   transform: translate(2px, 2px);
   box-shadow: 0 0 0 var(--shadow);
@@ -336,7 +391,7 @@
 .age {
   display: inline-block;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -443,7 +498,7 @@
   margin: 0 0 0.5rem;
   text-align: center;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;

@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 
 export async function generateViewport({ params }: PageProps<"/order/[spot]">): Promise<Viewport> {
   const spot = await spotByCode((await params).spot).catch(() => null);
-  return { themeColor: spot?.dark ? "#0b0a08" : "#f8f5ec", width: "device-width", initialScale: 1 };
+  return { themeColor: spot?.dark || spot?.kind === "booth" ? "#0b0a08" : "#f8f5ec", width: "device-width", initialScale: 1 };
 }
 
 // /order/<code>: the phone menu a spot's QR card opens (Back office → Seat
@@ -44,5 +44,5 @@ export default async function SeatOrderPage({ params, searchParams }: PageProps<
     guest = { firstName: (member.name ?? "").trim().split(/\s+/)[0] || "there", tier: member.tier, points: Number(member.points), coffeeReady: plus && coffee === null };
   }
   const checkout = typeof sp.o === "string" && /^[0-9a-f-]{36}$/i.test(sp.o) ? sp.o : null;
-  return <SeatOrderApp code={spot.code} spotName={spot.name} dark={spot.dark} open={state.open} menu={menu} guest={guest} initialCheckout={checkout} publishableKey={process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ""} />;
+  return <SeatOrderApp code={spot.code} spotName={spot.name} dark={spot.dark} dim={spot.dark || spot.kind === "booth"} open={state.open} menu={menu} guest={guest} initialCheckout={checkout} publishableKey={process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ""} />;
 }
