@@ -415,7 +415,7 @@ interface Draft {
 function blankDraft(rooms: Room[]): Draft {
   const room = rooms.find((r) => r.is_screening_room);
   return {
-    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? ""), visibility: "public" },
+    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? ""), visibility: isOutdoorRoom(room) ? "members" : "public" },
     repeat: null,
     note: null,
   };
@@ -499,7 +499,7 @@ function ScreeningFieldsForm({
           value={value.roomId}
           onChange={(e) => {
             const r = screeningRooms.find((r) => r.id === e.target.value);
-            set({ roomId: e.target.value, ...(r ? { capacity: String(r.capacity) } : {}), ...(isOutdoorRoom(r) ? { price: "0" } : {}) });
+            set({ roomId: e.target.value, ...(r ? { capacity: String(r.capacity) } : {}), ...(isOutdoorRoom(r) ? { price: "0", ...(value.visibility === "public" ? { visibility: "members" as const } : {}) } : {}) });
           }}
         >
           {screeningRooms.map((r) => (
@@ -541,13 +541,13 @@ function ScreeningFieldsForm({
       <fieldset className="basis-full">
         <legend className={LABEL}>Who sees it</legend>
         <div className="flex flex-wrap gap-2">
-          {SHOWING_VISIBILITIES.map((v) => (
+          {SHOWING_VISIBILITIES.filter((v) => !(outdoor && v === "public")).map((v) => (
             <button key={v} type="button" className={`${CHIP} ${value.visibility === v ? "chip-selected" : ""}`} aria-pressed={value.visibility === v} onClick={() => set({ visibility: v })}>
               {VISIBILITY_LABEL[v]}
             </button>
           ))}
         </div>
-        <div className="mt-1 max-w-xl text-xs text-[var(--muted)]">{VISIBILITY_HELP[value.visibility]}</div>
+        <div className="mt-1 max-w-xl text-xs text-[var(--muted)]">{outdoor && value.visibility === "public" ? "The outdoor screen is never public. Pick Members only or Private." : VISIBILITY_HELP[value.visibility]}</div>
       </fieldset>
     </>
   );

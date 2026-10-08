@@ -15,6 +15,7 @@ import {
   SEAT_CATEGORY_KEYS,
   boardLabel,
   isSpotCode,
+  openStateLabel,
   seatOrderingOpen,
   type CartLineInput,
   type OrderSpot,
@@ -85,6 +86,12 @@ export interface SeatItem {
   photo: string | null;
   textIcon: TextIcon | null;
   icon: IconSpec | null; // a drink's Bar Book icon
+  // Its one-line description from the Bar Book recipe, when it has one
+  // (nothing is made up for the rest).
+  description: string | null;
+  // The section, when another section has an item of the same name (the
+  // two "Americano"s), so the cart can tell them apart.
+  kicker: string | null;
   category: string;
   groups: SeatGroup[];
 }
@@ -127,7 +134,7 @@ export async function getSeatMenu(): Promise<SeatSection[]> {
 
   const catRows = (cats.data ?? []) as { id: string; key: string; label: string; parent_id: string | null; sort_order: number }[];
   const catById = new Map(catRows.map((c) => [c.id, c]));
-  const boardItems = (board.items ?? {}) as Record<string, { spec: IconSpec }>;
+  const boardItems = (board.items ?? {}) as Record<string, { spec: IconSpec; card?: { description?: string | null } | null }>;
   const byCat = new Map<string, SeatItem[]>();
   for (const i of (items.data ?? []) as Row[]) {
     if (i.out_since || i.is_event_item) continue;
@@ -144,6 +151,8 @@ export async function getSeatMenu(): Promise<SeatSection[]> {
       photo: pic.image_url,
       textIcon: textIconShown(pic),
       icon: i.is_alcohol ? (boardItems[i.id as string]?.spec ?? null) : null,
+      description: boardItems[i.id as string]?.card?.description?.trim().slice(0, 160) || null,
+      kicker: null,
       category: cat.key,
       groups: groupsByItem.get(i.id as string) ?? [],
     });
@@ -161,6 +170,11 @@ export async function getSeatMenu(): Promise<SeatSection[]> {
       if (list?.length) sections.push({ key: c.key, label: c.label, items: list });
     }
   }
+  // A name in two sections: each one carries its section.
+  const nameKey = (n: string) => n.trim().toLowerCase();
+  const sectionsOf = new Map<string, Set<string>>();
+  for (const sec of sections) for (const it of sec.items) sectionsOf.set(nameKey(it.name), (sectionsOf.get(nameKey(it.name)) ?? new Set<string>()).add(sec.key));
+  for (const sec of sections) for (const it of sec.items) if ((sectionsOf.get(nameKey(it.name))?.size ?? 0) > 1) it.kicker = sec.label;
   return sections;
 }
 
@@ -313,21 +327,108 @@ export async function startSeatCheckout(args: { code: string; lines: CartLineInp
       },
       { idempotencyKey: `seat-checkout-${row.id}` },
     );
-    await supabase.from("seat_checkouts").update({ stripe_payment_intent_id: pi.id }).eq("id", row.id);
-    if (!pi.client_secret) throw new Error("no client secret");
-    // Old carts that were never paid, tidied while we're here.
-    void supabase
-      .from("seat_checkouts")
-      .delete()
-      .eq("status", "pending")
-      .lt("created_at", new Date(Date.now() - 3 * 86_400_000).toISOString())
-      .then(() => {}, () => {});
+    // The checkout must know its payment before the phone can pay it (the
+    // sweep below finds a paid one by it). If that can't be saved, the
+    // payment is called off and nothing is charged.
+    const { error: linkErr } = await supabase.from("seat_checkouts").update({ stripe_payment_intent_id: pi.id }).eq("id", row.id);
+    if (linkErr || !pi.client_secret) {
+      await getStripe()
+        .paymentIntents.cancel(pi.id)
+        .catch(() => {});
+      throw linkErr ?? new Error("no client secret");
+    }
     return { ok: true, checkoutId: row.id as string, clientSecret: pi.client_secret, totals: priced.totals };
   } catch (e) {
     console.error("seat checkout: Stripe payment not made", row.id, e);
     await supabase.from("seat_checkouts").delete().eq("id", row.id);
     return { ok: false, error: "Couldn't reach the card processor. Try again in a moment." };
   }
+}
+
+// ---------- paid, but the phone never came back ----------
+
+const OLD_CHECKOUT_MS = 3 * 86_400_000;
+
+export interface SweepResult {
+  finished: number; // paid checkouts turned into their orders
+  removed: number; // old unpaid ones taken away (their payments called off)
+}
+
+// A guest who pays and then locks the phone (or closes the tab) never runs
+// the phone's finish, and the webhook may not come. This finds checkouts
+// still pending whose Stripe payment succeeded and finishes each through
+// finishSeatCheckout (safe to run twice: one order per payment).
+//   recentMs: pending checkouts made in this window (and over a minute ago,
+//     so a phone that's paying right now finishes it itself) are asked of
+//     Stripe.
+//   cleanup: also tidies pending checkouts older than 3 days. One that was
+//     paid is finished, never removed; one still processing is left; an
+//     unpaid one has its payment called off first, then is removed.
+// Never throws; each checkout is on its own.
+export async function sweepSeatCheckouts(opts: { recentMs: number; cleanup?: boolean; max?: number }): Promise<SweepResult> {
+  const supabase = db();
+  const max = Math.max(1, Math.min(opts.max ?? 10, 50));
+  const result: SweepResult = { finished: 0, removed: 0 };
+  const now = Date.now();
+
+  const { data: recent, error } = await supabase
+    .from("seat_checkouts")
+    .select("id, stripe_payment_intent_id")
+    .eq("status", "pending")
+    .not("stripe_payment_intent_id", "is", null)
+    .gte("created_at", new Date(now - opts.recentMs).toISOString())
+    .lt("created_at", new Date(now - 60_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(max);
+  if (error) console.error("seat sweep: checkouts not read", error.message);
+  for (const c of recent ?? []) {
+    try {
+      const pi = await getStripe().paymentIntents.retrieve(c.stripe_payment_intent_id as string);
+      if (pi.status !== "succeeded") continue;
+      const r = await finishSeatCheckout(c.id as string);
+      if (r.ok) result.finished++;
+      else console.error("seat sweep: paid checkout not finished", c.id, r.error);
+    } catch (e) {
+      console.error("seat sweep: checkout not checked", c.id, e);
+    }
+  }
+
+  if (!opts.cleanup) return result;
+  const { data: old, error: oldErr } = await supabase
+    .from("seat_checkouts")
+    .select("id, stripe_payment_intent_id")
+    .eq("status", "pending")
+    .lt("created_at", new Date(now - OLD_CHECKOUT_MS).toISOString())
+    .order("created_at")
+    .limit(max);
+  if (oldErr) console.error("seat sweep: old checkouts not read", oldErr.message);
+  for (const c of old ?? []) {
+    try {
+      const piId = c.stripe_payment_intent_id as string | null;
+      if (piId) {
+        const pi = await getStripe().paymentIntents.retrieve(piId);
+        if (pi.status === "succeeded") {
+          const r = await finishSeatCheckout(c.id as string);
+          if (r.ok) result.finished++;
+          else console.error("seat sweep: old paid checkout not finished", c.id, r.error);
+          continue;
+        }
+        // Still going through, or anything we don't know: leave it be.
+        if (pi.status === "processing") continue;
+        if (pi.status !== "canceled") {
+          const canceled = await getStripe().paymentIntents.cancel(piId);
+          if (canceled.status !== "canceled") continue;
+        }
+      }
+      // Unpaid (no payment, or it's called off): only then removed, and
+      // only while it's still pending.
+      const { error: delErr } = await supabase.from("seat_checkouts").delete().eq("id", c.id).eq("status", "pending");
+      if (!delErr) result.removed++;
+    } catch (e) {
+      console.error("seat sweep: old checkout not tidied", c.id, e);
+    }
+  }
+  return result;
 }
 
 type CheckoutRow = {
@@ -522,22 +623,40 @@ export interface OpenSeatOrder {
   items: { name: string; quantity: number; modifiers: string[] }[];
 }
 
+// What the register's Order up shows (pos/SeatOrders.tsx, through
+// api/pos/seat-orders): the switch, whether it's open now, and the list.
+// Throws when the list can't be read, so the register can say so instead of
+// "Nothing waiting".
+export interface RegisterSeatOrders {
+  enabled: boolean;
+  open: boolean;
+  label: string;
+  orders: OpenSeatOrder[];
+}
+
+export async function registerSeatOrders(): Promise<RegisterSeatOrders> {
+  const [settings, orders] = await Promise.all([getSeatSettings(), openSeatOrders()]);
+  const state = seatOrderingOpen(settings);
+  return { enabled: settings.enabled, open: state.open, label: openStateLabel(settings, state), orders };
+}
+
 // Seat orders not delivered yet, oldest first (the register's list), plus
-// those delivered in the last 20 minutes.
+// those delivered in the last 20 minutes. The waiting ones are read newest
+// first with a big cap, so a pile of orders nobody tapped Delivered on can
+// never push a new paid one off the list; then put oldest first.
 export async function openSeatOrders(): Promise<OpenSeatOrder[]> {
   const since = new Date(Date.now() - 12 * 3_600_000).toISOString();
   const recent = new Date(Date.now() - 20 * 60_000).toISOString();
-  const { data, error } = await db()
-    .from("orders")
-    .select("id, order_number, spot_name, order_name, seat_note, id_check, seat_status, created_at, total, seat_delivered_at, items:order_items(name, quantity, modifiers)")
-    .eq("source", "mobile")
-    .eq("status", "completed")
-    .gte("created_at", since)
-    .or(`seat_status.in.(new,making),seat_delivered_at.gte.${recent}`)
-    .order("created_at", { ascending: true })
-    .limit(40);
-  if (error) throw error;
-  return (data ?? []).map((o) => ({
+  const columns = "id, order_number, spot_name, order_name, seat_note, id_check, seat_status, created_at, total, seat_delivered_at, items:order_items(name, quantity, modifiers)";
+  const base = () => db().from("orders").select(columns).eq("source", "mobile").eq("status", "completed").gte("created_at", since);
+  const [waiting, delivered] = await Promise.all([
+    base().in("seat_status", ["new", "making"]).order("created_at", { ascending: false }).limit(200),
+    base().eq("seat_status", "delivered").gte("seat_delivered_at", recent).order("created_at", { ascending: false }).limit(30),
+  ]);
+  if (waiting.error) throw waiting.error;
+  if (delivered.error) throw delivered.error;
+  const data = [...(waiting.data ?? []), ...(delivered.data ?? [])].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+  return data.map((o) => ({
     orderId: o.id as string,
     orderNumber: Number(o.order_number),
     spotName: (o.spot_name as string | null) ?? "Seat",

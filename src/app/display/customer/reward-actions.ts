@@ -1,7 +1,7 @@
 "use server";
 
 import { assertDisplayScreen } from "@/lib/auth";
-import { openWallet } from "@/lib/tablet-wallet";
+import { openWallet, walletShutByEmail } from "@/lib/tablet-wallet";
 import { setLook, unlockPerk, walletFor, type UnlockResult } from "@/lib/rewards-server";
 import { currentMemberId } from "@/lib/member-forward";
 import { allowAttempt, TOO_MANY_TRIES } from "@/lib/rate-limit";
@@ -20,7 +20,10 @@ const GONE = "Ask at the bar to put you on the order again.";
 async function memberFrom(ref: unknown): Promise<string | null> {
   const id = openWallet(ref);
   if (!id) return null;
-  return (await currentMemberId(id)) ?? id;
+  const memberId = (await currentMemberId(id)) ?? id;
+  // Checked in by a typed email since the register sent this: shut until
+  // they check in by phone (lib/tablet-wallet.ts).
+  return (await walletShutByEmail(memberId)) ? null : memberId;
 }
 
 export interface TabletWallet {

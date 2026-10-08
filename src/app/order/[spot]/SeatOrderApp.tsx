@@ -35,6 +35,9 @@ interface CartLine {
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;
+// In the cart, an item whose name is in two sections says which ("Americano
+// · Cocktails"). Only for showing: the server prices each line by its id.
+const cartName = (item: SeatItem) => (item.kicker ? `${item.name} · ${item.kicker}` : item.name);
 const cartKey = (code: string) => `rcl.seat.cart.${code}`;
 
 export default function SeatOrderApp({
@@ -118,7 +121,7 @@ export default function SeatOrderApp({
 
   function tapItem(item: SeatItem) {
     if (item.groups.length) setPicking(item);
-    else add({ itemId: item.id, optionIds: [], qty: 1, name: item.name, unit: item.price, mods: [], isAlcohol: item.isAlcohol, perkBase: item.dailyPerk ? item.price : null });
+    else add({ itemId: item.id, optionIds: [], qty: 1, name: cartName(item), unit: item.price, mods: [], isAlcohol: item.isAlcohol, perkBase: item.dailyPerk ? item.price : null });
   }
 
   function setQty(key: string, qty: number) {
@@ -311,6 +314,7 @@ function MenuView({ menu, onTap, dark }: { menu: SeatSection[]; onTap: (i: SeatI
                 <button className={s.item} onClick={() => onTap(item)} aria-label={`${item.name}, ${money(item.price)}${item.groups.length ? ", choose options" : ", add to order"}`}>
                   <span className={s.itemText}>
                     <span className={s.itemName}>{item.name}</span>
+                    {item.description && <span className={s.itemNote}>{item.description}</span>}
                     {(item.isAlcohol || item.groups.length > 0) && (
                       <span className={`${s.itemNote} ${s.mono}`}>
                         {item.isAlcohol && <span className={s.age}>21+</span>}
@@ -435,7 +439,7 @@ function ItemSheet({ item, onClose, onAdd }: { item: SeatItem; onClose: () => vo
                   itemId: item.id,
                   optionIds: item.groups.flatMap((g) => sel[g.id] ?? []),
                   qty,
-                  name: item.name,
+                  name: cartName(item),
                   unit,
                   mods: chosen.map((o) => o.name),
                   isAlcohol: item.isAlcohol,

@@ -1,46 +1,72 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CountBadge, Dialog } from "./shift/ui";
-import { getRegisterSeatOrders, setRegisterSeatStatus, setSeatOrderingOn, type RegisterSeatOrders } from "./seat-order-actions";
+import { setRegisterSeatStatus, setSeatOrderingOn } from "./seat-order-actions";
 import { boardLabel, type SeatStatus } from "@/lib/seat-ordering";
-import type { OpenSeatOrder } from "@/lib/seat-ordering-server";
-import { playSeatChime, unlockChime } from "../display/seat-chime";
+import type { OpenSeatOrder, RegisterSeatOrders } from "@/lib/seat-ordering-server";
+import { chimeReady, listenForChimeUnlock, playSeatChime } from "../display/seat-chime";
 
 // Orders from guests' phones, on the register (lib/seat-ordering.ts): an
-// "Order up" button and banner beside Staff and the list behind it, with Making
-// and Delivered (the boards have the same buttons). Self-contained: it asks
-// the server every 15 seconds while seat ordering is on (or something's
-// waiting), once a minute while it's off, and draws nothing while it's off
-// and nothing's waiting, so the register looks the same as without it.
+// "Order up" button and alert strip beside Staff and the list behind it,
+// with Making and Delivered (the boards have the same buttons).
+// Self-contained: it asks the server every 15 seconds while seat ordering is
+// on (or something's waiting), once a minute while it's off, and draws
+// nothing while it's off and nothing's waiting, so the register looks the
+// same as without it. It asks through a plain GET (api/pos/seat-orders), not
+// a Server Action, so a poll never makes the cashier's Charge wait.
 
 const POLL_MS = 15_000;
 const IDLE_POLL_MS = 60_000;
 
 function useSeatOrders() {
   const [data, setData] = useState<RegisterSeatOrders | null>(null);
-  const load = useCallback(async () => {
-    const r = await getRegisterSeatOrders().catch(() => null);
-    if (r) setData(r);
-    return r;
+  // The last check failed: the last list stays up, with a note.
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const load = useCallback(async (): Promise<RegisterSeatOrders | null> => {
+    try {
+      const res = await fetch("/api/pos/seat-orders", { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const r = (await res.json()) as RegisterSeatOrders;
+      setData(r);
+      setLoadFailed(false);
+      setNow(Date.now());
+      return r;
+    } catch {
+      setLoadFailed(true);
+      setNow(Date.now());
+      return null;
+    }
   }, []);
   useEffect(() => {
     let stop = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let wasActive = false;
     const tick = async () => {
       if (stop) return;
-      const r = document.visibilityState === "visible" ? await load() : null;
+      if (timer) clearTimeout(timer);
+      const visible = document.visibilityState === "visible";
+      const r = visible ? await load() : null;
       if (stop) return;
-      const active = !!r && (r.enabled || r.orders.length > 0);
-      timer = setTimeout(() => void tick(), active ? POLL_MS : IDLE_POLL_MS);
+      // A failed check keeps the fast pace if orders were coming in.
+      if (r) wasActive = r.enabled || r.orders.length > 0;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void tick(), visible && wasActive ? POLL_MS : IDLE_POLL_MS);
+    };
+    // An iPad waking up checks right away, not up to a minute later.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void tick();
     };
     void tick();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       stop = true;
       if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load]);
-  return { data, load, setData };
+  return { data, load, setData, loadFailed, now };
 }
 
 function waitingFor(iso: string) {
@@ -48,35 +74,70 @@ function waitingFor(iso: string) {
   return m < 1 ? "just in" : `waiting ${m} min`;
 }
 
-// How often the chime repeats until someone taps "Order up".
+// How often the chime repeats while an order is waiting to be seen.
 const CHIME_REPEAT_MS = 20_000;
+// Seen, but still "new" (nobody tapped Making) this long after: it alerts
+// again.
+const REALERT_MS = 3 * 60_000;
+// A "new" order older than this is left to the list (no strip or chime): one
+// nobody tapped through last night doesn't ring all of today.
+const ALERT_FOR_MS = 2 * 3_600_000;
 
-// "Order up": the button beside Staff, plus, when a new paid order comes in
-// while seat ordering is on, a banner at the top of the register and a
-// chime that repeats every 20 seconds until someone taps the banner or the
-// button (either opens the list). The banner is small and sits over the
-// header, so ringing up a sale carries on underneath it. iPad Safari keeps
-// sound off until the page is tapped, so the first tap anywhere on the
-// register unlocks it.
+// When each order was last seen on this register (opening the list), kept
+// through a reload so a reload doesn't ring again for orders already seen.
+const SEEN_KEY = "rcl-seat-orders-seen";
+function readSeen(): Map<string, number> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}") as Record<string, unknown>;
+    return new Map(Object.entries(raw).filter((e): e is [string, number] => typeof e[1] === "number"));
+  } catch {
+    return new Map();
+  }
+}
+function writeSeen(seen: Map<string, number>) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(Object.fromEntries(seen)));
+  } catch {
+    // Storage blocked: it holds until the page reloads.
+  }
+}
+
+// "Order up": the button beside Staff, plus, while a new paid order is
+// waiting to be seen, a strip in the register's top rows and a chime that
+// repeats every 20 seconds until someone taps the strip or the button
+// (either opens the list). Each order is seen on its own: one that comes in
+// later rings again, and one still "new" 3 minutes after it was seen rings
+// again. Nothing rings while the list is open (what comes in then counts as
+// seen). The strip takes its own row in the cart's header, never over the
+// menu or the total, and names only the spot (the register faces the line).
+// iPad Safari keeps sound off until the page is tapped, so any tap on the
+// register wakes it (display/seat-chime.ts); until then the strip says
+// "Tap for sound".
 export function SeatOrdersButton() {
-  const { data, load, setData } = useSeatOrders();
+  const { data, load, setData, loadFailed, now } = useSeatOrders();
   const [open, setOpen] = useState(false);
-  const [acked, setAcked] = useState<Set<string>>(() => new Set());
+  // What this register had seen, kept through a reload. (The server draws
+  // nothing here, so reading storage on the first render is safe.)
+  const [seen, setSeen] = useState<Map<string, number>>(() => (typeof window === "undefined" ? new Map() : readSeen()));
   const [failed, setFailed] = useState<Set<string>>(() => new Set());
 
-  useEffect(() => {
-    const unlock = () => unlockChime();
-    document.addEventListener("pointerdown", unlock, { capture: true, passive: true });
-    document.addEventListener("keydown", unlock, { capture: true });
-    return () => {
-      document.removeEventListener("pointerdown", unlock, { capture: true });
-      document.removeEventListener("keydown", unlock, { capture: true });
-    };
-  }, []);
+  useEffect(() => listenForChimeUnlock(), []);
 
-  const freshIds = (data?.orders ?? []).filter((o) => o.status === "new").map((o) => o.orderId);
-  const unacked = data?.enabled ? freshIds.filter((id) => !acked.has(id)) : [];
-  const alertKey = unacked.join(",");
+  const orders = data?.orders ?? [];
+  const listKey = orders.map((o) => o.orderId).join(",");
+  const onList = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    onList.current = new Set(listKey ? listKey.split(",") : []);
+  }, [listKey]);
+  const freshIds = orders.filter((o) => o.status === "new").map((o) => o.orderId);
+  // Alerts for any new paid order, whether or not seat ordering is still on
+  // (one paid just after it was switched off still needs making).
+  const alerting = orders.filter((o) => {
+    if (o.status !== "new" || now - new Date(o.createdAt).getTime() > ALERT_FOR_MS) return false;
+    const at = seen.get(o.orderId);
+    return at === undefined || now - at >= REALERT_MS;
+  });
+  const alertKey = open ? "" : alerting.map((o) => o.orderId).join(",");
 
   useEffect(() => {
     if (!alertKey) return;
@@ -85,15 +146,34 @@ export function SeatOrdersButton() {
     return () => clearInterval(t);
   }, [alertKey]);
 
+  const markSeen = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    setSeen((prev) => {
+      const at = Date.now();
+      const next = new Map(prev);
+      ids.forEach((id) => next.set(id, at));
+      // Only what's still on the list is kept.
+      for (const id of [...next.keys()]) if (!ids.includes(id) && !onList.current.has(id)) next.delete(id);
+      writeSeen(next);
+      return next;
+    });
+  }, []);
+  // What comes in while the list is open is seen as it arrives.
+  const openFreshKey = open ? freshIds.join(",") : "";
+  useEffect(() => {
+    if (openFreshKey) markSeen(openFreshKey.split(","));
+  }, [openFreshKey, markSeen]);
+
   function openList() {
-    if (freshIds.length) setAcked((a) => new Set([...a, ...freshIds]));
+    markSeen(freshIds);
     setOpen(true);
   }
 
   if (!data || (!data.enabled && data.orders.length === 0)) return null;
   const fresh = freshIds.length;
   const waiting = data.orders.filter((o) => o.status !== "delivered").length;
-  const firstNew = data.orders.find((o) => o.orderId === unacked[0]);
+  const first = alerting[0];
+  const soundOff = alerting.length > 0 && !chimeReady();
 
   async function step(o: OpenSeatOrder, status: SeatStatus) {
     const before = o.status;
@@ -123,23 +203,19 @@ export function SeatOrdersButton() {
         {fresh ? "Order up" : "Phone orders"}
         <CountBadge n={fresh || waiting} className="absolute -right-2 -top-2" />
       </button>
-      {unacked.length > 0 && !open && (
+      {alerting.length > 0 && !open && (
         <button
-          className="fixed left-1/2 top-2 z-40 flex min-h-14 max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-full border-2 px-5 py-2 text-left font-bold shadow-2xl"
+          className="order-last flex min-h-11 basis-full items-center gap-3 rounded-lg border-2 px-3 py-1.5 text-left font-bold"
           style={{ borderColor: "var(--foreground)", background: "var(--accent)", color: "var(--accent-foreground)" }}
           onClick={openList}
           role="alert"
         >
-          <span className="shrink-0 font-display text-xl">Order up!</span>
-          <span className="min-w-0 truncate text-sm">
-            {unacked.length > 1
-              ? `${unacked.length} new phone orders`
-              : firstNew
-                ? [boardLabel(firstNew.spotName), firstNew.guestName].filter(Boolean).join(" · ")
-                : "New phone order"}
+          <span className="shrink-0 font-display text-lg">Order up!</span>
+          <span className="min-w-0 flex-1 truncate text-sm">
+            {alerting.length > 1 ? `${alerting.length} new phone orders` : first ? boardLabel(first.spotName) : "New phone order"}
           </span>
           <span className="shrink-0 rounded-full px-2 py-0.5 text-xs" style={{ background: "rgba(0,0,0,0.22)" }}>
-            Tap to see
+            {soundOff ? "Tap for sound" : "Tap to see"}
           </span>
         </button>
       )}
@@ -148,6 +224,11 @@ export function SeatOrdersButton() {
           <p className="mb-3 text-sm" style={{ color: "var(--muted)" }}>
             Orders from guests&apos; phones. Seat ordering: {data.label}. Switch it in Staff.
           </p>
+          {loadFailed && (
+            <p className="mb-3 text-sm font-bold" role="alert" style={{ color: "var(--danger-text)" }}>
+              Can&apos;t check for phone orders right now. This list may be out of date; it keeps trying.
+            </p>
+          )}
           {data.orders.length === 0 ? (
             <p className="text-sm">Nothing waiting.</p>
           ) : (

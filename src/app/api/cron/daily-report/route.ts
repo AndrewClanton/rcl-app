@@ -3,6 +3,7 @@ import { businessDay, shiftDate } from "@/lib/ops/time";
 import { sendDailyReport } from "@/lib/daily-report";
 import { runGiftMaintenance } from "@/lib/gift-membership";
 import { syncMemberPayments, type SyncResult } from "@/lib/membership-payments/sync";
+import { sweepSeatCheckouts } from "@/lib/seat-ordering-server";
 
 // Vercel calls this every morning (vercel.json) to email the admins the
 // business day that just ended. With CRON_SECRET set in Vercel, only
@@ -47,5 +48,12 @@ export async function GET(req: NextRequest) {
     });
   }
   const result = await sendDailyReport(date, origin);
+  // Seat orders paid on a phone that never came back (and no webhook): made
+  // into their orders; old unpaid checkouts tidied (paid ones never are).
+  // After the answer, so it never holds up the report.
+  after(async () => {
+    const r = await sweepSeatCheckouts({ recentMs: 3 * 86_400_000, cleanup: true, max: 50 }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
+    console.log("daily report: seat checkout sweep", r);
+  });
   return NextResponse.json({ date, gifts, payments: payments ?? { ok: false, skipped: `still reading Stripe after ${SYNC_WAIT_MS / 1000} s; the email went with what was read before, and the read finishes after this` }, ...result });
 }

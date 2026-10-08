@@ -1,5 +1,6 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // "Spend points" on the customer screen acts for the member on the order,
 // but the screen never learns their member id (it works like a password at
@@ -41,4 +42,26 @@ export function openWallet(ref: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+// A check-in from an email typed at the customer screen is recorded with
+// this device prefix (display/customer/actions.ts). Anyone can type anyone's
+// email, so it doesn't prove who's standing there.
+export const EMAIL_DEVICE = "screen-email:";
+
+// True when the member's latest check-in today (the last 12 hours) was by a
+// typed email at the screen: Spend points on the screen stays shut for them
+// until they check in by phone (or at the door). Staff can still redeem for
+// them on the register, where they see who it is. True when it can't tell.
+export async function walletShutByEmail(memberId: string): Promise<boolean> {
+  const { data, error } = await createAdminClient()
+    .from("checkin_attempts")
+    .select("device")
+    .eq("member_id", memberId)
+    .gte("at", new Date(Date.now() - 12 * 3_600_000).toISOString())
+    .order("at", { ascending: false })
+    .limit(1);
+  if (error) return true;
+  const device = (data?.[0]?.device as string | undefined) ?? "";
+  return device.startsWith(EMAIL_DEVICE);
 }
