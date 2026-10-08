@@ -106,14 +106,14 @@ export function artPic(kind: ArtKind, ctx: Ctx, alt: string, bg: string): string
 export const nameOr = (r: DesignRecipient, withName: string, without: string) => applyFirstName(r.firstName ? withName : without, r.firstName);
 
 // ---------- 02 · the account card (both invites) ----------
-// "Sam, it's already set up." Three steps, the red "Set my password", 30 sec.
+// "Sam, your account is ready." The steps, the red "Set my password", 30 sec.
 export function claimCard(ctx: Ctx, out: DesignOut): string {
   const { dev, r } = ctx;
   const d = DEV[dev];
   const s = claimState(r);
   const b = claimButton(ctx, "top");
-  const headD = r.firstName ? `${esc(r.firstName)}, it's already set up.` : "It's already set up.";
-  const headM = r.firstName ? `${esc(r.firstName)}, it's<br>already set up.` : "It's already set up.";
+  const headD = r.firstName ? `${esc(r.firstName)}, your account is ready.` : "Your account is ready.";
+  const headM = r.firstName ? `${esc(r.firstName)}, your<br>account is ready.` : "Your account is ready.";
   const steps = s === "claim" ? `<div style="margin-top:${dev === "m" ? 18 : 20}px;">${pic("common/claim-steps", dev, { dark: false })}</div>` : "";
   const chip = s === "account" ? "" : pic("common/claim-30sec", dev, { dark: false });
   const chipW = picWidth("common/claim-30sec", dev);
@@ -123,9 +123,9 @@ export function claimCard(ctx: Ctx, out: DesignOut): string {
       ? `<div style="margin-top:20px;">${button(b.href, b.label, dev, d.CW - 40)}</div>${chip ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:12px auto 0;"><tr><td width="${chipW}" style="width:${chipW}px;">${chip}</td></tr></table>` : ""}`
       : `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:24px;"><tr><td valign="middle">${button(b.href, b.label, dev, 300)}</td>${chip ? `<td valign="middle" style="padding-left:20px;width:${chipW}px;">${chip}</td>` : ""}</tr></table>`;
   if (dev === "d") {
-    out.bodyTexts.push(nameOr(r, "{first name}, it's already set up.", "It's already set up."), b.label);
+    out.bodyTexts.push(nameOr(r, "{first name}, your account is ready.", "Your account is ready."), b.label);
     out.primaryButtons++;
-    out.text.push(`YOUR ACCOUNT\n${nameOr(r, "{first name}, it's already set up.", "It's already set up.")}\n${s === "claim" ? "Pick a password or use Google, and you're in. About 30 seconds.\n" : ""}${b.label}: ${b.href}`);
+    out.text.push(`YOUR ACCOUNT\n${nameOr(r, "{first name}, your account is ready.", "Your account is ready.")}\n${s === "claim" ? "Set a password or sign in with Google. It takes about 30 seconds.\n" : ""}${b.label}: ${b.href}`);
   }
   const inner = `${label("YOUR ACCOUNT", C.redD, dev)}
 ${blk(dev === "m" ? headM : headD, dev === "m" ? 24 : 28, dev === "m" ? 30 : 34, C.ink, "margin-top:10px;")}
@@ -140,6 +140,12 @@ ${note}`;
 export function signoff(line: string, dev: Dev): string {
   return `${txt(esc(line), 17, 26, C.ink, `margin-top:${dev === "m" ? 36 : 40}px;`)}
 ${blk("The RCL crew", 20, 24, C.ink, "margin-top:4px;")}`;
+}
+
+// The sign-off on its own, under the account card (and in the plain text).
+export function signoffBand(line: string, dev: Dev, out: DesignOut): string {
+  if (dev === "d") out.text.push(`${line}\nThe RCL crew`);
+  return band(C.paper, signoff(line, dev).replace(/margin-top:\d+px;/, "margin-top:0;"), `0 ${DEV[dev].G}px ${dev === "m" ? 36 : 44}px`);
 }
 
 // The footer's "why you're getting this".

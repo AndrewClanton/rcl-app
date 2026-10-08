@@ -49,24 +49,24 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     kind: "invite",
     category: "account",
     subject: "{first name}, the new Royale Cinema website is here",
-    preheader: "Your account, points and badges are already set up. It takes about 30 seconds.",
+    preheader: "Your account and points are already set up. Setting a password takes about 30 seconds.",
     // Everyone with no login: "Set my password" links no longer need a
     // phone on file (lib/member-claim.ts, Andrew 10/1).
     audience: { include: [{ r: "has_login", v: false }], order: "engaged" },
     who: "Members with an email who haven't set up a website login yet.",
     outcome: { key: "signed_in", label: "Signed in", about: "Set up their website login since the email" },
-    needs: { claim: true, finish: false, art: ["door", "profile"] },
+    needs: { claim: true, finish: false, art: [] },
     draw: royaleIsHere,
   },
   "come-in": {
     key: "come-in",
     title: "Come in",
-    about: "Reasons to visit: Insiders+, the bar and kitchen, bring someone. One button: Set my password (or their account).",
+    about: "Reasons to visit: Insiders+ for $15 a month. One button: Set my password (or their account).",
     name: "Ready to send: Come in",
     kind: "offer",
     category: "offers",
     subject: "{first name}, your next night at Royale Cinema",
-    preheader: `Insiders+ is $15 a month: every movie free, 10% off, a free coffee or tea every day and ${FREE_BOOTHS_PER_MONTH} free booths.`,
+    preheader: `Insiders+ is $15 a month: unlimited movies, 10% off, a free coffee or tea every day and ${FREE_BOOTHS_PER_MONTH} free booth reservations.`,
     audience: { include: [{ r: "all" }], order: "engaged" },
     who: "Everyone with an email who gets offers and Insiders+ news from us (anyone who turned those off, or all email off, is left out).",
     outcome: { key: "signed_in", label: "Signed in", about: "Had no website login when it went, and have one now" },
@@ -76,7 +76,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
   "press-play": {
     key: "press-play",
     title: "Press play",
-    about: "For former unlimited members: their unlimited is on pause, nothing's owed, restart today. One button: Restart my unlimited.",
+    about: "For former unlimited members: their unlimited is on pause, nothing is owed, restart as Insiders+. One button: Restart my unlimited.",
     name: "Ready to send: Press play",
     // About their own membership: an account email like the invite (no
     // caps), still only to people who want email from us, with an
@@ -87,7 +87,7 @@ export const DESIGNS: Record<DesignKey, DesignMeta> = {
     // Not "you were never charged": a few on the list were, some months
     // (the old system's recurring billing). The ones it still charged in
     // September are left out (legacy_billing_payers).
-    preheader: "Our old system isn't charging you. Nothing's owed. Restart online or at the register.",
+    preheader: "Our old system isn't charging you, so you don't owe anything. Restart online or at the register.",
     audience: { include: [{ r: "legacy_needs_setup" }], order: "engaged" },
     who: "Former unlimited members (they paid for unlimited on the old website) with nothing paying for their Insiders+ now, here or on the old system.",
     outcome: { key: "plus", label: "Set up Insiders+", about: "Paying for Insiders+ now" },
