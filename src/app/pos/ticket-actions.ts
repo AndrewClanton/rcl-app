@@ -2,12 +2,8 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
-<<<<<<< HEAD
-import { businessDay } from "@/lib/ops/time";
-import { visibilityOf, type ShowingVisibility } from "@/lib/showing-visibility";
-=======
 import { businessDay, shiftDate } from "@/lib/ops/time";
->>>>>>> 140332e (Ops: the business day rolls over at 4 AM on the wall clock, DST nights too)
+import { visibilityOf, type ShowingVisibility } from "@/lib/showing-visibility";
 
 // Movie tickets at the register: the showings staff can sell (today's and
 // tomorrow's business days, including a show that started a few minutes
