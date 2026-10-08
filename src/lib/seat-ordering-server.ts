@@ -490,6 +490,26 @@ export async function sweepSeatCheckouts(opts: { recentMs: number; cleanup?: boo
     }
   }
 
+  // Made, but its points or kitchen ticket never done (the server stopped
+  // between the two): finishSeatCheckout does the rest, once.
+  const { data: unfulfilled, error: unErr } = await supabase
+    .from("seat_checkouts")
+    .select("id")
+    .eq("status", "paid")
+    .is("fulfilled_at", null)
+    .gte("created_at", new Date(now - opts.recentMs).toISOString())
+    .lt("paid_at", new Date(now - FULFIL_CLAIM_MS).toISOString())
+    .limit(max);
+  if (unErr) console.error("seat sweep: unfulfilled checkouts not read", unErr.message);
+  for (const c of unfulfilled ?? []) {
+    try {
+      const r = await finishSeatCheckout(c.id as string);
+      if (!r.ok) console.error("seat sweep: unfulfilled checkout not finished", c.id, r.error);
+    } catch (e) {
+      console.error("seat sweep: unfulfilled checkout not checked", c.id, e);
+    }
+  }
+
   if (!opts.cleanup) return result;
   const { data: old, error: oldErr } = await supabase
     .from("seat_checkouts")
@@ -558,10 +578,17 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   const { data, error } = await supabase.from("seat_checkouts").select("*").eq("id", checkoutId).maybeSingle();
   if (error || !data) return { ok: false, error: "That order wasn't found." };
   const c = data as CheckoutRow;
-  if (c.status === "paid" && c.order_id) return { ok: true, orderId: c.order_id, orderNumber: await orderNumberOf(c.order_id) };
+  if (c.status === "paid" && c.order_id) {
+    // Made already; its points or kitchen ticket may not be (a crash
+    // between the two): done now, once.
+    await fulfilSeatOrder(c, c.order_id).catch((e) => console.error("seat checkout: not fulfilled", c.id, e));
+    return { ok: true, orderId: c.order_id, orderNumber: await orderNumberOf(c.order_id) };
+  }
   if (!c.stripe_payment_intent_id) return { ok: false, error: "That order was never paid." };
 
-  const pi = await getStripe().paymentIntents.retrieve(c.stripe_payment_intent_id);
+  const pi = await getStripe().paymentIntents.retrieve(c.stripe_payment_intent_id, { expand: ["latest_charge"] });
+  const charge = pi.latest_charge && typeof pi.latest_charge === "object" ? pi.latest_charge : null;
+  const paidAt = charge?.created ? new Date(charge.created * 1000) : new Date();
   const expected = Math.round(Number(c.totals.total) * 100);
   if (pi.metadata?.seat_checkout_id !== c.id || pi.amount !== expected || pi.currency !== "usd") {
     console.error("seat checkout: payment doesn't match", c.id, pi.id);
@@ -569,99 +596,81 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   }
   if (pi.status !== "succeeded") return { ok: false, pending: pi.status === "processing", error: pi.status === "processing" ? "Your payment is still going through." : "The payment didn't go through." };
 
-  const link = async (orderId: string) => {
-    await supabase.from("seat_checkouts").update({ status: "paid", order_id: orderId, paid_at: new Date().toISOString() }).eq("id", c.id);
-    return { ok: true as const, orderId, orderNumber: await orderNumberOf(orderId) };
-  };
-  const existing = async () => {
-    const { data: o } = await supabase.from("orders").select("id").eq("stripe_payment_intent_id", pi.id).neq("status", "voided").limit(1);
-    return (o?.[0]?.id as string | undefined) ?? null;
-  };
-  const already = await existing();
-  if (already) return link(already);
-
+  // The order and all its items in one transaction, with the checkout
+  // linked (finish_seat_order, 20261008020000_seat_order_finish.sql). One
+  // order per payment, a voided one included; a payment that already has
+  // its order gets that one back. The daily coffee counts as today's only
+  // while it's unused (they've paid either way).
   const t = c.totals;
-  const lines = c.lines;
-  const memberId = c.member_id;
-  // The daily coffee counts as today's only if it's still unused (another
-  // order may have used it since the cart was priced). They've paid either way.
-  let perkDate: string | null = null;
-  if (memberId && Number(t.dailyPerk) > 0 && t.dailyPerkDate) {
-    perkDate = (await dailyCoffeeUse(memberId, t.dailyPerkDate)) === null ? t.dailyPerkDate : null;
+  const { data: rows, error: rpcErr } = await supabase.rpc("finish_seat_order", {
+    p_checkout: c.id,
+    p_order: {
+      member_id: c.member_id,
+      order_name: c.guest_name,
+      subtotal: t.subtotal,
+      tier_discount: t.memberDiscount,
+      tax: t.tax,
+      tip: t.tip,
+      total: t.total,
+      stripe_payment_intent_id: pi.id,
+      // When it was paid (Stripe's time), not when this ran.
+      completed_at: paidAt.toISOString(),
+      spot_id: c.spot_id,
+      spot_name: c.spot_name,
+      seat_note: c.note,
+      id_check: !!t.idCheck,
+      daily_perk_discount: Number(t.dailyPerk) > 0 ? t.dailyPerk : 0,
+      daily_perk_date: c.member_id && Number(t.dailyPerk) > 0 && t.dailyPerkDate ? t.dailyPerkDate : null,
+    },
+    p_items: c.lines.map((l) => ({ menu_item_id: l.menu_item_id, name: l.name, unit_price: l.unit_price, quantity: l.quantity, modifiers: l.modifiers, is_alcohol: l.is_alcohol })),
+  });
+  const made = (rows as { order_id: string; order_number: number; created: boolean }[] | null)?.[0];
+  if (rpcErr || !made) {
+    console.error("seat checkout: order not saved", c.id, rpcErr);
+    throw rpcErr ?? new Error("order not saved");
   }
-  const { data: num, error: numErr } = await supabase.rpc("next_order_number");
-  if (numErr) throw numErr;
-  const orderNumber = Number(num);
-  const fields = {
-    order_number: orderNumber,
-    source: "mobile",
-    status: "completed",
-    employee_id: null,
-    member_id: memberId,
-    order_name: c.guest_name,
-    subtotal: t.subtotal,
-    tier_discount: t.memberDiscount,
-    monthly_discount: 0,
-    redemption_discount: 0,
-    tax_free: false,
-    monthly_member: false,
-    tax: t.tax,
-    tip: t.tip,
-    total: t.total,
-    payment_method: "card",
-    payment_cash_amount: 0,
-    payment_voucher_amount: 0,
-    payment_card_amount: t.total,
-    stripe_payment_intent_id: pi.id,
-    points_redeemed: false,
-    age_verified: false,
-    completed_at: new Date().toISOString(),
-    spot_id: c.spot_id,
-    spot_name: c.spot_name,
-    seat_note: c.note,
-    id_check: !!t.idCheck,
-    seat_status: "new",
-    ...(Number(t.dailyPerk) > 0 ? { daily_perk_discount: t.dailyPerk, daily_perk_date: perkDate } : {}),
-  };
-  const insert = (f: typeof fields) => supabase.from("orders").insert(f).select("id").single();
-  let { data: order, error: orderErr } = await insert(fields);
-  if (orderErr?.code === "23505" && (orderErr.message ?? "").includes("orders_daily_perk_once")) {
-    ({ data: order, error: orderErr } = await insert({ ...fields, daily_perk_date: null }));
-  }
-  if (orderErr || !order) {
-    // Lost a race with the other caller (one order per payment): use theirs.
-    const theirs = orderErr?.code === "23505" ? await existing() : null;
-    if (theirs) return link(theirs);
-    console.error("seat checkout: order not saved", c.id, orderErr);
-    throw orderErr ?? new Error("order not saved");
-  }
-  const orderId = order.id as string;
+  await fulfilSeatOrder(c, made.order_id).catch((e) => console.error("seat checkout: not fulfilled", c.id, e));
+  return { ok: true, orderId: made.order_id, orderNumber: Number(made.order_number) };
+}
 
-  const { error: itemsErr } = await supabase.from("order_items").insert(
-    lines.map((l) => ({
-      order_id: orderId,
-      menu_item_id: l.menu_item_id,
-      name: l.name,
-      unit_price: l.unit_price,
-      quantity: l.quantity,
-      modifiers: l.modifiers,
-      is_alcohol: l.is_alcohol,
-      is_event: false,
-    })),
-  );
-  if (itemsErr) console.error("seat checkout: items not saved", orderId, itemsErr);
+const FULFIL_CLAIM_MS = 2 * 60_000;
 
-  if (memberId) {
-    const earned = pointsEarned({ subtotal: t.subtotal, tier_discount: t.memberDiscount, monthly_discount: 0, redemption_discount: 0, daily_perk_discount: t.dailyPerk });
-    if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber} (seat order)` });
+// A made seat order's points and kitchen ticket, once (seat_checkouts.
+// fulfilled_at). One caller at a time claims it; a claim older than 2
+// minutes (its caller died) can be taken over. Points are safe twice anyway
+// (one purchase row per order). A voided or refunded order gets neither.
+async function fulfilSeatOrder(c: CheckoutRow, orderId: string): Promise<void> {
+  const supabase = db();
+  const now = new Date();
+  const { data: claimed, error } = await supabase
+    .from("seat_checkouts")
+    .update({ fulfil_claimed_at: now.toISOString() })
+    .eq("id", c.id)
+    .is("fulfilled_at", null)
+    .or(`fulfil_claimed_at.is.null,fulfil_claimed_at.lt.${new Date(now.getTime() - FULFIL_CLAIM_MS).toISOString()}`)
+    .select("id");
+  if (error) throw error;
+  if (!claimed?.length) return;
+
+  const { data: o, error: oErr } = await supabase.from("orders").select("order_number, status, member_id, subtotal, tier_discount, daily_perk_discount").eq("id", orderId).maybeSingle();
+  if (oErr || !o) throw oErr ?? new Error("order not found");
+  const orderNumber = Number(o.order_number);
+  if (o.status === "completed") {
+    const memberId = (o.member_id as string | null) ?? null;
+    if (memberId) {
+      const earned = pointsEarned({ subtotal: Number(o.subtotal), tier_discount: Number(o.tier_discount), monthly_discount: 0, redemption_discount: 0, daily_perk_discount: Number(o.daily_perk_discount ?? 0) });
+      if (earned > 0) {
+        const r = await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber} (seat order)` });
+        // Not saved (and not already there): left unfulfilled for a retry.
+        if (!r.ok && !r.duplicate) throw new Error("points not saved");
+      }
+    }
+    // The kitchen printer's ticket, headed with the spot (plain ASCII: the
+    // printer drops anything else).
+    const head = [boardLabel(c.spot_name).replace(/·/g, "-"), c.guest_name, c.totals.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
+    await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, lines: c.lines }, "now");
   }
-  const result = await link(orderId);
-
-  // The kitchen printer's ticket, headed with the spot (plain ASCII: the
-  // printer drops anything else).
-  const head = [boardLabel(c.spot_name).replace(/·/g, "-"), c.guest_name, t.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
-  await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, lines }, "now");
-  return result;
+  await supabase.from("seat_checkouts").update({ fulfilled_at: new Date().toISOString() }).eq("id", c.id);
 }
 
 // ---------- after it's paid ----------
