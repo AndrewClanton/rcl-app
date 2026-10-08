@@ -4,6 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStaff } from "@/lib/auth";
 import { allowAttempt } from "@/lib/rate-limit";
 import { reprintKitchenTicket, type ReprintResult } from "@/lib/print/kitchen";
+import { setSeatStatus } from "@/lib/seat-ordering-server";
+import type { SeatStatus } from "@/lib/seat-ordering";
 
 // Shared by the kitchen and bar prep-ticket displays. The pages are gated
 // by requireStaff(), so those screens carry a staff session -- the action
@@ -16,6 +18,14 @@ export async function setItemReady(itemId: string, ready: boolean) {
     .update({ ready, ready_at: ready ? new Date().toISOString() : null })
     .eq("id", itemId);
   if (error) throw error;
+}
+
+// A seat order's Making / Delivered on a board card (lib/seat-ordering-server.ts).
+// The guest's phone shows the same step.
+export async function setSeatOrderStatus(orderId: string, status: SeatStatus): Promise<boolean> {
+  await assertStaff();
+  if (status !== "new" && status !== "making" && status !== "delivered") return false;
+  return setSeatStatus(orderId, status);
 }
 
 // "Reprint ticket" on a board card: that order's whole ticket again, on the

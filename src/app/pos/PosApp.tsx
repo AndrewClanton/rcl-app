@@ -84,6 +84,7 @@ import DevicesPanel from "./devices/DevicesPanel";
 import { useReaderMonitor } from "./devices/reader-monitor";
 import { READER_OFFLINE_MESSAGE, readerNeedsLook } from "@/lib/terminal/reader-status";
 import { BoothsButton, StaffButton } from "./shift/StaffButton";
+import { SeatOrdersButton } from "./SeatOrders";
 import { useDeviceSettings } from "./devices/settings";
 import UnsavedSaleBanner, {
   clearPendingReaderSale,
@@ -1869,6 +1870,8 @@ export default function PosApp({
                 needs a look (shift/StaffButton.tsx). It replaced the shift
                 bar that took a whole row above the register. */}
             <StaffButton />
+            {/* Orders from guests' phones (SeatOrders.tsx). */}
+            <SeatOrdersButton />
             <button className={`chip min-h-11 shrink-0 whitespace-nowrap !px-3 !py-1.5 text-sm ${heldListOpen ? "chip-selected" : ""}`} onClick={() => setHeldListOpen((v) => !v)}>
               Held {heldOrders.length}
             </button>

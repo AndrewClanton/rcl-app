@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { schemaMissing } from "@/lib/schema-missing";
+import { seatTicketOf, type SeatOrderCols, type SeatTicket } from "@/lib/seat-ordering";
 
 export interface PrepTicket {
   id: string;
@@ -22,6 +23,11 @@ export interface PrepTicket {
   // A custom drink from "What's in it?": its ingredient list (null
   // otherwise, and before migration 20261005010000).
   custom_recipe: unknown;
+  // An order from a guest's phone (lib/seat-ordering.ts): where it goes,
+  // where it's at, the "ID check" flag and the guest's note. Null for a
+  // register order.
+  seat: SeatTicket | null;
+  is_alcohol?: boolean;
 }
 
 export type Station = "kitchen" | "bar";
@@ -38,11 +44,13 @@ export type Board = Station | "all";
 const KITCHEN_CATEGORIES = new Set(["grub"]);
 const BAR_CATEGORIES = new Set(["beer", "wine", "cocktails", "shots", "spirits", "caffe", "rad"]);
 
-function stationFor(categoryKey: string | null, isAlcohol: boolean): Station | null {
+// A seat order's item that needs no making (candy) still has to be carried
+// out, so it goes to the bar's board.
+function stationFor(categoryKey: string | null, isAlcohol: boolean, seatOrder = false): Station | null {
   if (categoryKey) {
     if (KITCHEN_CATEGORIES.has(categoryKey)) return "kitchen";
     if (BAR_CATEGORIES.has(categoryKey)) return "bar";
-    return null;
+    return seatOrder ? "bar" : null;
   }
   return isAlcohol ? "bar" : "kitchen";
 }
@@ -52,11 +60,11 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
   const supabase = createAdminClient();
   const since = new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString();
 
-  const read = (extra: string) =>
+  const read = (extra: string, seat = SEAT_COLS) =>
     supabase
       .from("order_items")
       .select(
-        `id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item_id${extra}, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at)`
+        `id, order_id, name, quantity, modifiers, ready, ready_at, created_at, is_event, is_alcohol, menu_item_id${extra}, menu_item:menu_items(category:menu_categories(key)), order:orders!inner(order_number, order_name, status, created_at${seat})`
       )
       .eq("is_event", false)
       .eq("order.status", "completed")
@@ -64,8 +72,10 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       .order("created_at", { ascending: false })
       .limit(120);
   let { data, error } = await read(", recipe_id, custom_recipe");
-  if (error && schemaMissing(error)) ({ data, error } = await read(", recipe_id"));
-  if (error && schemaMissing(error)) ({ data, error } = await read(""));
+  // Before migration 20261007020000_seat_ordering.sql: no seat orders yet.
+  if (error && schemaMissing(error)) ({ data, error } = await read(", recipe_id, custom_recipe", ""));
+  if (error && schemaMissing(error)) ({ data, error } = await read(", recipe_id", ""));
+  if (error && schemaMissing(error)) ({ data, error } = await read("", ""));
   if (error) throw error;
 
   const rows = (data ?? []) as unknown as {
@@ -82,11 +92,11 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
     recipe_id?: string | null;
     custom_recipe?: unknown;
     menu_item: { category: { key: string } | null } | null;
-    order: { order_number: number; order_name: string | null };
+    order: { order_number: number; order_name: string | null } & SeatOrderCols;
   }[];
 
   return rows
-    .map((row) => ({ row, station: stationFor(row.menu_item?.category?.key ?? null, row.is_alcohol) }))
+    .map((row) => ({ row, station: stationFor(row.menu_item?.category?.key ?? null, row.is_alcohol, row.order.source === "mobile") }))
     .filter(({ station }) => station !== null && (board === "all" || station === board))
     .slice(0, 60)
     .map(({ row, station }) => ({
@@ -104,8 +114,12 @@ async function getRecentTickets(board: Board): Promise<PrepTicket[]> {
       menu_item_id: row.menu_item_id ?? null,
       recipe_id: row.recipe_id ?? null,
       custom_recipe: row.custom_recipe ?? null,
+      is_alcohol: !!row.is_alcohol,
+      seat: seatTicketOf(row.order),
     }));
 }
+
+const SEAT_COLS = ", source, spot_name, seat_status, id_check, seat_note";
 
 export function getKitchenTickets() {
   return getRecentTickets("kitchen");

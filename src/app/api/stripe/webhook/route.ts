@@ -10,6 +10,7 @@ import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
 import { invoicePaidFromCheckout } from "@/lib/org-invoice-server";
 import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
+import { finishSeatCheckout } from "@/lib/seat-ordering-server";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -40,6 +41,22 @@ export async function POST(request: NextRequest) {
   const check = (what: string) => ({ error }: { error: unknown }) => {
     if (error) failed.push(what);
   };
+
+  // A seat order paid on a phone (lib/seat-ordering-server.ts): the phone
+  // usually saves it itself; this catches one whose phone never got back.
+  // Needs payment_intent.succeeded on the webhook's events.
+  if (event.type === "payment_intent.succeeded") {
+    const pi = event.data.object as Stripe.PaymentIntent;
+    if (pi.metadata?.kind === "seat_order" && pi.metadata.seat_checkout_id) {
+      try {
+        const r = await finishSeatCheckout(pi.metadata.seat_checkout_id);
+        if (!r.ok && !r.pending) console.error("seat order webhook:", pi.id, r.error);
+      } catch (e) {
+        console.error("seat order webhook failed", pi.id, e);
+        failed.push("seat order");
+      }
+    }
+  }
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;

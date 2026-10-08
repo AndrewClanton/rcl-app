@@ -317,7 +317,7 @@ export default function TipsDrill({
                     <td className="whitespace-nowrap py-1.5 pr-2">{time(o.at)}</td>
                     <td className="py-1.5 pr-2 text-right font-semibold">{money(o.tip)}</td>
                     <td className="py-1.5 pr-2">
-                      {o.cashierId ? nameOf(o.cashierId) : o.source === "pos" ? "No cashier" : "Website"}
+                      {o.cashierId ? nameOf(o.cashierId) : o.source === "pos" ? "No cashier" : o.source === "mobile" ? "Seat order" : "Website"}
                       {shared(o.cashierId) && <span className="block text-xs text-[var(--muted)]">shared login</span>}
                       <span className="block text-xs capitalize text-[var(--muted)] sm:hidden">{tipKind(o) === "cash" ? "cash" : (o.method ?? "card")}</span>
                     </td>

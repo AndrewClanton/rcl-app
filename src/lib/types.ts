@@ -2,7 +2,7 @@ import type { PictureCredit, PictureSource } from "./menu-pictures/shared";
 
 export type ModifierType = "single" | "multi";
 export type EventPriceMode = "deposit" | "full";
-export type OrderSource = "pos" | "web";
+export type OrderSource = "pos" | "web" | "mobile"; // mobile: ordered from a seat on a phone (lib/seat-ordering.ts)
 export type OrderStatus = "draft" | "held" | "tab" | "completed" | "refunded" | "voided";
 export type PaymentMethod = "cash" | "card" | "split";
 // 'display' = an unattended signage login (e.g. the ramp TV), not a person.
