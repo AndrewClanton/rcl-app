@@ -6,6 +6,7 @@ import { checkManagerPin, checkOtherOwnerPin, recordApprover } from "@/lib/manag
 import type { Approval, ApprovalResult } from "@/lib/pin-rules";
 import { getStripe } from "@/lib/stripe";
 import { applyPoints, reversePurchasePoints } from "@/lib/points";
+import { reverseOrderPoints } from "@/lib/order-refund-points";
 import { assertStaff } from "@/lib/auth";
 import { planPartialRefund } from "@/lib/data/refund-plan";
 
@@ -39,30 +40,6 @@ function money(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-// Takes back the points a refunded order earned (and returns any it
-// redeemed). reverse_purchase_points does that in one go, but only once per
-// order: after a partial refund has already taken some back, it would do
-// nothing. So once an order has a partial refund (or a card match on it was
-// undone, or its points were given to another member after that: see
-// lib/member-cards.ts), what each member still holds from it is worked out
-// here from the order's points history instead, and taken back.
-async function reverseOrderPoints(orderId: string, by: string) {
-  const { data: rows, error } = await createAdminClient().from("points_ledger").select("member_id, delta, reason").eq("order_id", orderId);
-  if (error || !(rows ?? []).some((r) => r.reason === "refund" || r.reason === "adjustment")) return reversePurchasePoints({ orderId }, by);
-  const held = new Map<string, { net: number; refundedBefore: boolean }>();
-  for (const r of rows ?? []) {
-    if (!["purchase", "redeem", "refund", "adjustment"].includes(r.reason)) continue;
-    const cur = held.get(r.member_id) ?? { net: 0, refundedBefore: false };
-    cur.net += Number(r.delta);
-    if (r.reason === "refund") cur.refundedBefore = true;
-    held.set(r.member_id, cur);
-  }
-  for (const [memberId, h] of held) {
-    const rest = round2(-h.net);
-    if (rest !== 0) await applyPoints({ memberId, delta: rest, reason: "refund", orderId, note: h.refundedBefore ? "Rest of the purchase refunded" : "Purchase refunded", by });
-  }
-}
-
 // reason: why, for an order on an owner's tab (required there; see
 // takeOffOwnerTab).
 export async function refundOrder(orderId: string, pin: string, reason?: string): Promise<ApprovalResult> {
@@ -80,7 +57,9 @@ export async function refundOrder(orderId: string, pin: string, reason?: string)
     try {
       // No amount: Stripe refunds whatever is left on the payment, so an
       // earlier partial refund isn't refunded twice.
-      await getStripe().refunds.create({ payment_intent: order.stripe_payment_intent_id });
+      // Tagged as the app's, so the webhook's charge.refunded leaves it to
+      // this (lib/stripe-refunds.ts).
+      await getStripe().refunds.create({ payment_intent: order.stripe_payment_intent_id, metadata: { source: "rcl-app", order_id: orderId, kind: "full" } });
     } catch (e) {
       return { ok: false, error: stripeProblem(e) };
     }

@@ -38,6 +38,8 @@ const KIND_LABELS: Record<string, string> = {
   items_not_saved: "Items not saved",
   below_cost: "Bar Book drink below cost",
   org_over_limit: "Organization comp past the limit",
+  stripe_refund: "Refunded in Stripe",
+  card_disputed: "Card disputed",
 };
 
 export function flagLabel(kind: string) {

@@ -11,6 +11,7 @@ import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
 import { invoicePaidFromCheckout } from "@/lib/org-invoice-server";
 import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
 import { closeIfDeclined, finishSeatCheckout } from "@/lib/seat-ordering-server";
+import { flagStripeDispute, syncStripeRefunds } from "@/lib/stripe-refunds";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -65,6 +66,28 @@ export async function POST(request: NextRequest) {
   if (event.type === "payment_intent.payment_failed") {
     const pi = event.data.object as Stripe.PaymentIntent;
     if (pi.metadata?.kind === "seat_order") await closeIfDeclined(pi.id).catch((e) => console.error("seat order webhook: decline not checked", pi.id, e));
+  }
+
+  // A refund or dispute made in Stripe's dashboard on a seat order or a
+  // register card sale (lib/stripe-refunds.ts): the order marked refunded
+  // (or the part saved) and its points taken back, or a dispute flagged for
+  // a manager. Refunds made in the app are left to the app. Needs
+  // charge.refunded and charge.dispute.created on the webhook's events.
+  if (event.type === "charge.refunded") {
+    try {
+      await syncStripeRefunds(event.data.object as Stripe.Charge);
+    } catch (e) {
+      console.error("refund webhook failed", (event.data.object as Stripe.Charge).id, e);
+      failed.push("refund");
+    }
+  }
+  if (event.type === "charge.dispute.created") {
+    try {
+      await flagStripeDispute(event.data.object as Stripe.Dispute);
+    } catch (e) {
+      console.error("dispute webhook failed", (event.data.object as Stripe.Dispute).id, e);
+      failed.push("dispute");
+    }
   }
 
   if (event.type === "checkout.session.completed") {
