@@ -7,8 +7,8 @@ import PrintCardsButton from "./PrintCardsButton";
 
 export const dynamic = "force-dynamic";
 
-// The QR cards for the spots: four to a letter page (each a quarter page,
-// 4¼ × 5½ in, to cut and stand in a card holder). ?id= prints one spot's.
+// The QR cards for the spots: four to a letter page (each about a quarter page,
+// 4 × 5.2 in printed, centered inside a printer-safe margin, to cut and stand in a card holder). ?id= prints one spot's.
 // The QR always points at the live site, wherever this is printed from.
 export default async function SeatCardsPage({ searchParams }: { searchParams: Promise<{ id?: string | string[] }> }) {
   await requireManager();
@@ -36,7 +36,7 @@ export default async function SeatCardsPage({ searchParams }: { searchParams: Pr
       {cards.length === 0 ? (
         <p>No spots to print.</p>
       ) : (
-        <div className="seat-cards">
+        <div className={cards.length === 1 ? "seat-cards seat-cards-one" : "seat-cards"}>
           {cards.map(({ spot, url, qr }) => (
             <article key={spot.id} className="seat-card">
               <div className="seat-card-eyebrow">Royale Cinema</div>
@@ -61,13 +61,21 @@ export default async function SeatCardsPage({ searchParams }: { searchParams: Pr
         }
         .seat-card-eyebrow { font-family: var(--font-space-mono), monospace; font-weight: 700; font-size: 11pt; letter-spacing: 0.2em; text-transform: uppercase; color: #ed1c24; }
         .seat-card-title { font-family: var(--font-archivo-black), "Arial Black", sans-serif; font-size: 25pt; line-height: 1.05; margin-top: 4pt; }
-        .seat-card-qr { width: 2.3in; height: 2.3in; margin-top: 12pt; padding: 8pt; background: #fff; border: 3px solid #14110c; box-shadow: 5px 5px 0 #14110c; image-rendering: pixelated; }
+        .seat-card-qr { width: 2in; height: 2in; margin-top: 10pt; padding: 8pt; background: #fff; border: 3px solid #14110c; box-shadow: 5px 5px 0 #14110c; image-rendering: pixelated; }
         .seat-card-spot { margin-top: 16pt; padding: 4pt 14pt; background: #ffc72c; border: 3px solid #14110c; font-family: var(--font-archivo-black), "Arial Black", sans-serif; font-size: 20pt; line-height: 1.15; }
         .seat-card-how { margin-top: auto; font-size: 10.5pt; font-weight: 700; line-height: 1.3; }
         .seat-card-fine { margin-top: 4pt; font-family: var(--font-space-mono), monospace; font-size: 7pt; color: #6b6455; }
         @media print {
-          @page { size: letter; margin: 0; }
-          .seat-cards { grid-template-columns: 4.25in 4.25in; gap: 0; }
+          /* A quarter-inch margin keeps every border inside what a printer can reach,
+             and the cards sit centered in what's left (8 x 10.5 in). One card prints
+             in the middle of the page. */
+          @page { size: letter; margin: 0.25in; }
+          .seat-cards { width: 8in; grid-template-columns: 4in 4in; justify-content: center; gap: 0; }
+          .seat-cards-one { height: 10.4in; grid-template-columns: 4in; align-content: center; }
+          .seat-card { width: 4in; height: 5.2in; padding: 0.28in 0.25in 0.22in; }
+          .seat-card-title { font-size: 22pt; }
+          .seat-card-qr { width: 1.85in; height: 1.85in; margin-top: 8pt; }
+          .seat-card-spot { margin-top: 14pt; font-size: 18pt; }
         }
       `}</style>
     </div>
