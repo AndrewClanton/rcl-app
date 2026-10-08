@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Board, PrepTicket, Station } from "@/lib/data/prepTickets";
 import { reprintOrderTicket, setItemReady, setSeatOrderStatus } from "./actions";
 import { boardLabel, seatTicketOf, type SeatOrderCols, type SeatStatus } from "@/lib/seat-ordering";
-import { playSeatChime, unlockChime } from "./seat-chime";
+import { listenForChimeUnlock, playSeatChime } from "./seat-chime";
 import DrinkIcon from "@/components/bar/DrinkIcon";
 import { FAMILY_COLOR } from "@/lib/bar/icons";
 import { boardEntryForTicket, type BoardEntry, type BoardMaps } from "@/lib/bar/book";
@@ -51,10 +51,7 @@ export default function PrepTicketBoard({
 
   // Seat orders already rung for (the ones on screen at load don't ring).
   const rang = useRef<Set<string>>(new Set(initialTickets.map((t) => t.order_id)));
-  useEffect(() => {
-    window.addEventListener("pointerdown", unlockChime);
-    return () => window.removeEventListener("pointerdown", unlockChime);
-  }, []);
+  useEffect(() => listenForChimeUnlock(), []);
 
   function setSeat(orderId: string, status: SeatStatus) {
     const before = tickets.find((t) => t.order_id === orderId)?.seat ?? null;

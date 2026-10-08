@@ -3,7 +3,7 @@
 import { after } from "next/server";
 import { assertDisplayScreen } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cleanEmail, cleanFirstName, firstNameOf, formatPhone, isFullPhone, last10, phoneDigits, type CheckinRequest, type TabletCheckin } from "@/lib/checkin";
+import { cleanEmail, cleanFirstName, firstNameOf, formatPhone, isFullPhone, phoneDigits, type CheckinRequest, type TabletCheckin } from "@/lib/checkin";
 import {
   memberIdsWithPhone,
   memberWithEmail,
@@ -14,6 +14,7 @@ import {
   type EmailMatch,
 } from "@/lib/checkin-server";
 import { recordVisit } from "@/lib/visits-server";
+import { EMAIL_DEVICE } from "@/lib/tablet-wallet";
 import { lookOf, sweepPerks } from "@/lib/rewards-server";
 import { currentMemberId } from "@/lib/member-forward";
 import { entranceFor, flairKeys, parseFlair } from "@/lib/flair";
@@ -70,11 +71,11 @@ export type CheckinStart =
 export type CheckinChoice = { name: string; ref: string };
 export type CheckinPick = { ok: true; status: "pick"; choices: CheckinChoice[] };
 
-// Found by email. name: "Sarah M.". withPhone: the same check-in, also
-// adding the number they typed earlier (their account has none, and no
-// other account has it); phone is that number, formatted, for the offer.
-// With the offer it isn't checked in yet: checkInNow does that with
-// whichever they chose. Without it, checkedIn: it's done.
+// Found by email: checked in already, and nothing about the account comes
+// back (name is empty; no checkedIn, so the screen shows a plain "Thanks!").
+// withPhone and phone are no longer sent (the "Add this phone?" offer is
+// gone: a phone typed at the screen never goes onto an account found by
+// email); kept in the type for screens that haven't reloaded.
 export type CheckinFound = {
   ok: true;
   status: "found";
@@ -116,10 +117,12 @@ const NOT_SAVED = "We couldn't check you in just now. Try again, or ask a staff 
 async function checkInHere(
   details: { memberId: string; phone?: string; addPhone?: string; addName?: string; fresh?: boolean },
   isNew = false,
+  // "email": found by an email typed at the screen (foundByEmail).
+  by: "phone" | "email" = "phone",
 ): Promise<{ request: CheckinRequest; checkedIn: TabletCheckin } | null> {
   const memberId = (await currentMemberId(details.memberId)) ?? details.memberId;
   const screen = await assertDisplayScreen();
-  const visit = await recordVisit(memberId, null, new Date(), `screen:${screen.employeeId}`);
+  const visit = await recordVisit(memberId, null, new Date(), `${by === "email" ? EMAIL_DEVICE : "screen:"}${screen.employeeId}`);
   if (!visit) return null;
   const request = sealCheckin({ kind: "known", ...details, memberId, done: true, paid: !visit.alreadyToday });
   await Promise.all([savePhoneFromCheckin(request.ref, memberId), saveNameFromCheckin(request.ref, memberId)]);
@@ -192,7 +195,9 @@ export async function checkInNow(
     if (c.done) return { ok: true, request: { id: c.id, ref, kind: "known", done: true } };
     const [unlimited, done] = await Promise.all([
       unlimitedWithoutCard([c.memberId]),
-      checkInHere({ memberId: c.memberId, phone: c.phone, addPhone: c.addPhone, addName: c.addName, fresh: c.fresh }),
+      // Never a phone typed here onto an account found by email (an older
+      // request may still carry one): only the name, for a phone account.
+      checkInHere({ memberId: c.memberId, phone: c.phone, addName: c.addName, fresh: c.fresh }, false, c.phone ? "phone" : "email"),
     ]);
     return done ? { ok: true, ...done, ...(unlimited ? { unlimited: true as const } : {}) } : { ok: false, error: NOT_SAVED };
   }
@@ -266,7 +271,8 @@ export async function nameCheckin(fields: {
 }
 
 // The email they typed. `phone`: a number they tried first that we didn't
-// find, for the "add this phone" offer.
+// find; no longer used (a phone typed at the screen is never added to an
+// account found by email), still accepted from older screens.
 export async function startEmailCheckin(fields: { email: string; phone?: string | null }): Promise<EmailStart> {
   const screen = await assertDisplayScreen();
   const email = cleanEmail(String(fields.email ?? ""));
@@ -276,32 +282,20 @@ export async function startEmailCheckin(fields: { email: string; phone?: string 
   const found = await memberWithEmail(email);
   if (!found.ok) return { ok: false, error: LOOKUP_FAILED };
   if (!found.member) return { ok: true, status: "new" };
-  return foundByEmail(found.member, typedPhone(fields.phone));
+  return foundByEmail(found.member);
 }
 
-function typedPhone(raw: string | null | undefined): string | null {
-  const d = phoneDigits(String(raw ?? ""));
-  return isFullPhone(d) ? d : null;
-}
-
-// "Welcome back, Sarah M.!", checked in, or first the offer to add the
-// number they typed when their account has no usable phone and nobody
-// else's has that number (checkInNow, once they've answered).
-async function foundByEmail(m: EmailMatch, digits: string | null): Promise<CheckinFound | { ok: false; error: string }> {
-  let addPhone: string | null = null;
-  if (digits && !isFullPhone(last10(m.phone))) {
-    const taken = await memberIdsWithPhone(digits);
-    if (taken.ok && taken.ids.length === 0) addPhone = digits;
-  }
-  if (addPhone) {
-    const request = sealCheckin({ kind: "known", memberId: m.id });
-    const withPhone = sealCheckin({ kind: "known", memberId: m.id, addPhone });
-    const flags = (await unlimitedWithoutCard([m.id])) ? { unlimited: true as const } : {};
-    return { ok: true, status: "found", name: shortName(m.name), request, withPhone, phone: formatPhone(addPhone), ...flags };
-  }
-  const [unlimited, done] = await Promise.all([unlimitedWithoutCard([m.id]), checkInHere({ memberId: m.id })]);
+// Found by a typed email: checked in, with a plain "Thanks!" on the screen.
+// Anyone can type anyone's email, so nothing about the account comes back
+// to the screen (no name, points, flair or membership), a phone typed here
+// is never added to it, and the check-in is marked as by email
+// ("screen-email:"), which keeps Spend points on the screen shut for them
+// today until they check in by phone (lib/tablet-wallet.ts). Staff see who
+// it is on the register, as with any check-in.
+async function foundByEmail(m: EmailMatch): Promise<CheckinFound | { ok: false; error: string }> {
+  const done = await checkInHere({ memberId: m.id }, false, "email");
   if (!done) return { ok: false, error: NOT_SAVED };
-  return { ok: true, status: "found", name: shortName(m.name), request: done.request, checkedIn: done.checkedIn, ...(unlimited ? { unlimited: true as const } : {}) };
+  return { ok: true, status: "found", name: "", request: done.request };
 }
 
 // Every account here paid for unlimited on the old site and has nothing
@@ -352,7 +346,7 @@ export async function createKioskMember(fields: { firstName: string; lastName: s
 
   const byEmail = await memberWithEmail(email);
   if (!byEmail.ok) return { ok: false, error: LOOKUP_FAILED };
-  if (byEmail.member) return foundByEmail(byEmail.member, digits);
+  if (byEmail.member) return foundByEmail(byEmail.member);
   if (digits) {
     const byPhone = await memberIdsWithPhone(digits);
     if (!byPhone.ok) return { ok: false, error: LOOKUP_FAILED };
@@ -371,7 +365,7 @@ export async function createKioskMember(fields: { firstName: string; lastName: s
   if (error?.code === "23505") {
     // Their email went on an account a moment ago (the other screen, say).
     const again = await memberWithEmail(email);
-    if (again.ok && again.member) return foundByEmail(again.member, digits);
+    if (again.ok && again.member) return foundByEmail(again.member);
   }
   if (error || !data) return { ok: false, error: "We couldn't set that up just now. Ask the box office to add you." };
   const memberId = data.id as string;

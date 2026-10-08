@@ -10,7 +10,7 @@ import { getTmdbMovie, hasTmdbKey, searchTmdbMovies } from "@/lib/tmdb";
 import { getPosterOptions as tmdbPosterOptions, type PosterOption } from "@/lib/tmdb-posters";
 import { highResPosterUrl, isAllowedPosterSource } from "@/lib/posters";
 import { centralToIso } from "@/lib/ops/time";
-import { SHOWING_VISIBILITIES, type ShowingVisibility } from "@/lib/showing-visibility";
+import { SHOWING_VISIBILITIES, isOutdoorRoom, type ShowingVisibility } from "@/lib/showing-visibility";
 import { PUBLIC_SCREENINGS_TAG, getScreeningTickets, getTicketCount, type ScreeningTicket } from "@/lib/data/screenings";
 
 function revalidate() {
@@ -276,6 +276,19 @@ function checkFields(f: ScreeningFields) {
   if (!(Number.isInteger(f.capacity) && f.capacity > 0)) throw new UserFacingError("Capacity has to be at least 1 seat.");
 }
 
+// The outdoor screen's showings are never public (the films shown out there
+// aren't licensed to advertise): members only or private. Refused here, so
+// nothing saves one as public, whatever the form sent.
+const OUTDOOR_PUBLIC = "Showings on the outdoor screen can't be public. Pick Members only or Private.";
+
+async function outdoorRoomIds(roomIds: string[]): Promise<Set<string>> {
+  const ids = [...new Set(roomIds.filter(Boolean))];
+  if (!ids.length) return new Set();
+  const { data, error } = await createAdminClient().from("rooms").select("id, key, name").in("id", ids);
+  if (error) throw error;
+  return new Set((data ?? []).filter((r) => isOutdoorRoom(r as { key: string | null; name: string | null })).map((r) => r.id as string));
+}
+
 // "Fri, Oct 3 at 7:00 PM", from the Central date and time as typed, to name
 // one showing of several in a message.
 function showingLabel(f: ScreeningFields) {
@@ -314,6 +327,10 @@ async function insertScreenings(list: ScreeningFields[]): Promise<number> {
       visibility: f.visibility ?? "public",
     };
   });
+
+  const outdoor = await outdoorRoomIds(rows.map((r) => r.room_id));
+  const publicOutdoor = rows.findIndex((r) => outdoor.has(r.room_id) && r.visibility === "public");
+  if (publicOutdoor >= 0) throw new UserFacingError(list.length > 1 ? `${showingLabel(list[publicOutdoor])}: ${OUTDOOR_PUBLIC} Nothing was added.` : OUTDOOR_PUBLIC);
 
   const key = (roomId: string, iso: string) => `${roomId} ${Date.parse(iso)}`;
   const inList = new Set<string>();
@@ -381,9 +398,11 @@ export async function updateScreening(
   const result = await attempt(async () => {
     checkFields(fields);
     const supabase = createAdminClient();
-    const { data: current, error: readErr } = await supabase.from("screenings").select("starts_at, movie_id").eq("id", id).maybeSingle();
+    const { data: current, error: readErr } = await supabase.from("screenings").select("starts_at, movie_id, visibility").eq("id", id).maybeSingle();
     if (readErr) throw readErr;
     if (!current) throw new UserFacingError("That screening isn't there anymore. It may have been removed.");
+    const visibilityAfter = fields.visibility ?? ((current.visibility as string | null) || "public");
+    if (visibilityAfter === "public" && (await outdoorRoomIds([fields.room_id])).has(fields.room_id)) throw new UserFacingError(OUTDOOR_PUBLIC);
 
     const startsAt = centralToIso(fields.date, fields.time);
     const count = await getTicketCount(id);

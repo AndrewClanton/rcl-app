@@ -43,15 +43,23 @@ export default async function CampaignsPage() {
   const testsP = testLog();
   const designsP = designStates({ now, firstWave: planP.then(firstWaveSize), tests: testsP, me: staff.employeeId });
   designsP.catch(() => null); // shown (or its error) by ReadyMade below
-  const writtenP = writtenCampaigns(80).catch(() => []);
+  // A failed load says so (never an empty list that looks like "no emails").
+  const writtenP = writtenCampaigns(80).then(
+    (list) => ({ ok: true as const, list }),
+    (e: unknown) => {
+      console.error("email campaigns: list not loaded", e);
+      return { ok: false as const, list: [] as Awaited<ReturnType<typeof writtenCampaigns>> };
+    },
+  );
   // How the latest ones that went out did (one line each), as soon as the
   // list is in.
-  const summariesP = writtenP.then(async (written) => {
+  const summariesP = writtenP.then(async ({ list: written }) => {
     const gone = written.filter((c) => c.status === "sent").slice(0, 12);
     const got = await Promise.all(gone.map((c) => summarize(c).catch(() => null)));
     return new Map<string, CampaignSummary>(got.filter((s): s is CampaignSummary => !!s).map((s) => [s.campaign.id, s]));
   });
-  const [written, state, summaries] = await Promise.all([writtenP, sendingState(), summariesP, planP, modeP]);
+  const [{ ok: loaded, list: written }, state, summaries] = await Promise.all([writtenP, sendingState(), summariesP, planP, modeP]);
+  const notLoaded = <p className="text-sm font-semibold text-[var(--danger-text)]" role="alert">Couldn&apos;t load your emails. Refresh the page to try again.</p>;
   const needs = written.filter((c) => ["draft", "scheduled", "sending", "paused"].includes(c.status));
   const done = written.filter((c) => !["draft", "scheduled", "sending", "paused"].includes(c.status));
 
@@ -78,7 +86,7 @@ export default async function CampaignsPage() {
             Drafts and on the way
           </h2>
         </div>
-        {needs.length ? <CardGrid cards={needs.map((c) => campaignCard(c, null))} /> : <p className="text-sm text-[var(--muted)]">No drafts, and nothing scheduled.</p>}
+        {!loaded ? notLoaded : needs.length ? <CardGrid cards={needs.map((c) => campaignCard(c, null))} /> : <p className="text-sm text-[var(--muted)]">No drafts, and nothing scheduled.</p>}
       </section>
 
       <section aria-labelledby="sent-h" className="space-y-3.5">
@@ -87,7 +95,7 @@ export default async function CampaignsPage() {
             Sent
           </h2>
         </div>
-        {done.length ? <CardGrid cards={done.map((c) => campaignCard(c, summaries.get(c.id) ?? null))} /> : <p className="text-sm text-[var(--muted)]">Nothing sent from here yet.</p>}
+        {!loaded ? notLoaded : done.length ? <CardGrid cards={done.map((c) => campaignCard(c, summaries.get(c.id) ?? null))} /> : <p className="text-sm text-[var(--muted)]">Nothing sent from here yet.</p>}
       </section>
 
       <section aria-labelledby="start-h" className="space-y-3.5">

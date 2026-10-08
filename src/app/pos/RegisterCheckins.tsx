@@ -266,7 +266,7 @@ export function useRegisterCheckins({
     const auto = fresh(card) && !!autoRef.current?.(m);
     setRecent((rs) => [{ id, ref, at: clock(), member: m, card, auto, working: false }, ...rs.filter((x) => x.id !== id)].slice(0, 12));
     arrive(arrivalFor(id, m, card));
-    followUp(id, m);
+    followUp(id, m, card.byEmail === true);
     const bits = [card.fresh ? `New regular ${m.name} checked in on the screen.` : `${m.name} checked in on the screen.`, visitLine(m, card) + "."];
     if (auto) bits.push("They're on the order.");
     setNotice(bits.join(" "));
@@ -285,13 +285,15 @@ export function useRegisterCheckins({
   // a possible second account for an older member, and the card to set up
   // an unlimited membership with no payment on file. Each its own message,
   // so nothing waits on another.
-  function followUp(id: string, m: PosMember) {
+  // byEmail: checked in by a typed email, so nothing about them goes back to
+  // the screen (anyone can type anyone's email); staff still see it all.
+  function followUp(id: string, m: PosMember, byEmail = false) {
     void getMemberTicketsToday(m.id)
       .then((t) => {
         if (!t.ok || t.tickets.length === 0) return;
         setTonight({ member: m, tickets: t.tickets });
         const shown: CheckinTickets = { id, firstName: firstNameOf(m.name), tickets: tabletTickets(t.tickets) };
-        send("checkin-tickets", shown);
+        if (!byEmail) send("checkin-tickets", shown);
       })
       .catch(() => {});
     // Possibly a second account for an older member (made at the tablet,

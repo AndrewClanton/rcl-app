@@ -3,27 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getSeatSettings, openSeatOrders, setSeatStatus, type OpenSeatOrder } from "@/lib/seat-ordering-server";
-import { openStateLabel, seatOrderingOpen, type SeatStatus } from "@/lib/seat-ordering";
+import { setSeatStatus } from "@/lib/seat-ordering-server";
+import type { SeatStatus } from "@/lib/seat-ordering";
 
-// The register's seat orders (SeatOrders.tsx): the list and badge, Making
-// and Delivered, and the Staff panel's on/off switch. Any staff member can
-// switch it off on a night the floor is short-handed.
-
-export interface RegisterSeatOrders {
-  enabled: boolean;
-  open: boolean;
-  label: string;
-  orders: OpenSeatOrder[];
-}
-
-export async function getRegisterSeatOrders(): Promise<RegisterSeatOrders> {
-  await assertStaff();
-  const settings = await getSeatSettings();
-  const state = seatOrderingOpen(settings);
-  const orders = await openSeatOrders().catch(() => []);
-  return { enabled: settings.enabled, open: state.open, label: openStateLabel(settings, state), orders };
-}
+// The register's seat orders (SeatOrders.tsx): Making and Delivered, and the
+// Staff panel's on/off switch. Any staff member can switch it off on a night
+// the floor is short-handed. The list itself is read through
+// api/pos/seat-orders (a GET, so the poll never queues ahead of a sale).
 
 export async function setRegisterSeatStatus(orderId: string, status: SeatStatus): Promise<boolean> {
   await assertStaff();

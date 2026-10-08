@@ -83,17 +83,57 @@ export default async function ScreeningDetailPage({
   const isPublic = isWithinPublicWindow(screening.starts_at);
   const checkoutReturn = (checkout === "success" && !!session_id) || (checkout === "free" && !!booking_id);
   if (!isPublic && !checkoutReturn) notFound();
-  // A private group's showing has no page: it's never listed or sold online.
-  // (A checkout return still gets through, for a ticket bought before it was
-  // made private; the payment is checked below.)
   const visibility = visibilityOf(screening);
-  if (visibility === "private" && !checkoutReturn) notFound();
+
+  // Never trust the ?checkout= URL params on their own: a checkout return
+  // counts only once Stripe says the session paid for this very showing, or
+  // the free booking is a confirmed one for it. Until then the page follows
+  // the normal rules (a made-up ?checkout=success&session_id=x opens
+  // nothing). The webhook is what actually flips the booking to 'confirmed'
+  // in the DB; this is about what the customer coming back here sees.
+  let paymentConfirmed = false;
+  let paidForThisShow = false;
+  let paidBookingId: string | null = null;
+  if (checkout === "success" && session_id && /^cs_(live|test)_[A-Za-z0-9]{10,200}$/.test(session_id)) {
+    try {
+      const session = await getStripe().checkout.sessions.retrieve(session_id);
+      paymentConfirmed = session.payment_status === "paid";
+      paidForThisShow = paymentConfirmed && session.metadata?.screening_id === id;
+      // The booking it paid for, for its ticket code below (only if the
+      // session was for this showing).
+      if (paidForThisShow) paidBookingId = session.metadata?.booking_id ?? null;
+    } catch {
+      paymentConfirmed = false;
+    }
+  }
+
+  // Insiders+ free-entry bookings skip Stripe entirely, so confirm those by
+  // checking the booking's own DB status (already written server-side by
+  // startCheckout) rather than a URL param.
+  let freeEntryConfirmed = false;
+  if (checkout === "free" && booking_id && /^[0-9a-f-]{36}$/i.test(booking_id)) {
+    const { data: booking } = await createAdminClient()
+      .from("bookings")
+      .select("status")
+      .eq("id", booking_id)
+      .eq("screening_id", id)
+      .maybeSingle();
+    freeEntryConfirmed = booking?.status === "confirmed";
+  }
+  const boughtThisShow = paidForThisShow || freeEntryConfirmed;
+  // Past the start time, only a payment or booking for this very showing
+  // opens the page (a paid session for some other show doesn't).
+  if (!isPublic && !boughtThisShow) notFound();
+  // A private group's showing has no page: it's never listed or sold online.
+  // (A verified checkout return still gets through, for a ticket bought
+  // before it was made private.)
+  if (visibility === "private" && !boughtThisShow) notFound();
 
   const seatsLeft = Math.max(0, screening.capacity - screening.booked_quantity);
   const member = await getSignedInMember();
   // A members-only showing opened by a guest (a forwarded email link): ask
   // them to sign in, without naming the film or the time.
-  if (visibility === "members" && !member && !checkoutReturn) {
+  if (visibility === "members" && !member && !boughtThisShow) {
     return (
       <div className="mx-auto max-w-xl">
         <div className="sheet p-6">
@@ -114,44 +154,6 @@ export default async function ScreeningDetailPage({
   const me = member?.email ? { name: member.name, email: member.email, plus, freeSeat } : null;
   // Only a public showtime is described to search engines.
   const eventJsonLd = isPublic ? screeningEventJsonLd(screening, seatsLeft) : null;
-
-  // Never trust the ?checkout=success URL param on its own -- verify the
-  // session actually shows as paid with Stripe before showing a
-  // confirmation. The webhook is what actually flips the booking to
-  // 'confirmed' in the DB; this is purely about what message to show the
-  // customer who just got redirected back here.
-  let paymentConfirmed = false;
-  let paidForThisShow = false;
-  let paidBookingId: string | null = null;
-  if (checkout === "success" && session_id) {
-    try {
-      const session = await getStripe().checkout.sessions.retrieve(session_id);
-      paymentConfirmed = session.payment_status === "paid";
-      paidForThisShow = paymentConfirmed && session.metadata?.screening_id === id;
-      // The booking it paid for, for its ticket code below (only if the
-      // session was for this showing).
-      if (paidForThisShow) paidBookingId = session.metadata?.booking_id ?? null;
-    } catch {
-      paymentConfirmed = false;
-    }
-  }
-
-  // Insiders+ free-entry bookings skip Stripe entirely, so confirm those by
-  // checking the booking's own DB status (already written server-side by
-  // startCheckout) rather than a URL param.
-  let freeEntryConfirmed = false;
-  if (checkout === "free" && booking_id) {
-    const { data: booking } = await createAdminClient()
-      .from("bookings")
-      .select("status")
-      .eq("id", booking_id)
-      .eq("screening_id", id)
-      .maybeSingle();
-    freeEntryConfirmed = booking?.status === "confirmed";
-  }
-  // Past the start time, only a payment or booking for this very showing
-  // opens the page (a paid session for some other show doesn't).
-  if (!isPublic && !paidForThisShow && !freeEntryConfirmed) notFound();
 
   // The tickets they just got, with the QR code for the door. A paid
   // booking can still read "pending" for a moment until Stripe's webhook

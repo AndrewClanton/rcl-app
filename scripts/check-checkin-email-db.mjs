@@ -119,24 +119,22 @@ try {
   console.log("-- the tablet: email lookup");
   const r1 = await tablet.startEmailCheckin({ email: `  ${mail("a").toUpperCase()} ` });
   check("found by email, any case and spaces", r1.ok && r1.status === "found");
-  check("shows a first name and last initial only", r1.ok && r1.name === `Checkcheck E.`);
-  check("nothing else about them comes back", r1.ok && keysOk(r1) && !JSON.stringify(r1).includes(mail("a")));
-  check("no phone offer without a number typed first", r1.ok && !r1.withPhone && !r1.phone);
+  // Anyone can type anyone's email: nothing about the account comes back.
+  check("shows no name", r1.ok && r1.name === "");
+  check("nothing else about them comes back", r1.ok && keysOk(r1) && !r1.checkedIn && !JSON.stringify(r1).includes(mail("a")));
+  check("no phone offer", r1.ok && !r1.withPhone && !r1.phone);
   // Typing it is the check-in (Andrew, 10/2).
-  check(
-    "checked in at once: the visit's points, and the request marked done",
-    r1.ok && r1.checkedIn?.visit?.earned > 0 && r1.checkedIn.visit.alreadyToday === false && server.openCheckin(r1.request.ref)?.done === true,
-    r1.ok ? `+${r1.checkedIn?.visit?.earned}` : "",
-  );
+  check("checked in at once: the request marked done", r1.ok && server.openCheckin(r1.request.ref)?.done === true);
   const r2 = await tablet.startEmailCheckin({ email: mail("a"), phone: phoneP });
-  check("a number they tried first is offered for an account with no phone", r2.ok && r2.status === "found" && !!r2.withPhone && r2.phone === formatPhone(phoneP));
-  const sealedWith = r2.withPhone ? server.openCheckin(r2.withPhone.ref) : null;
-  const sealedPlain = r2.ok ? server.openCheckin(r2.request.ref) : null;
+  check("a number they tried first is never offered or added", r2.ok && r2.status === "found" && !r2.withPhone && !r2.phone && (await row(a)).phone === null);
+  // The register side of an older screen's "add this phone" request.
+  const offer = { withPhone: server.sealCheckin({ kind: "known", memberId: a, addPhone: phoneP }), request: server.sealCheckin({ kind: "known", memberId: a }) };
+  const sealedWith = server.openCheckin(offer.withPhone.ref);
+  const sealedPlain = server.openCheckin(offer.request.ref);
   check("the offer's request carries the number, sealed", sealedWith?.kind === "known" && sealedWith.memberId === a && sealedWith.addPhone === phoneP);
   check("Skip's request doesn't", sealedPlain?.memberId === a && !sealedPlain.addPhone);
-  check("with the offer up, nothing's checked in yet", r2.ok && !r2.checkedIn && !sealedPlain?.done);
-  const skip = await tablet.checkInNow(r2.request.ref);
-  check("Skip checks them in (once a day: already today)", skip.ok && skip.checkedIn?.visit?.alreadyToday === true && server.openCheckin(skip.request.ref)?.paid === false);
+  const skip = await tablet.checkInNow(offer.withPhone.ref);
+  check("an older screen's offer checks them in without adding the phone", skip.ok && (await row(a)).phone === null);
   const r3 = await tablet.startEmailCheckin({ email: mail("a"), phone: phoneB });
   check("no offer for a number that's on another account", r3.ok && r3.status === "found" && !r3.withPhone);
   const r4 = await tablet.startEmailCheckin({ email: mail("nobody") });
@@ -147,26 +145,26 @@ try {
   check("the phone lookup still says 'new' for an unknown number (no account made)", r6.ok && r6.status === "new");
 
   console.log("-- the register: the card and the phone on confirm");
-  const card = await register.resolveCheckin(r2.withPhone.ref);
+  const card = await register.resolveCheckin(offer.withPhone.ref);
   check(
     "the card is that account, by email, saying 'will add phone'",
     card.ok && card.card.kind === "known" && card.card.matches[0]?.id === a && card.card.byEmail === true && card.card.phoneLast4 === "" && card.card.addPhone === formatPhone(phoneP),
   );
-  const plainCard = await register.resolveCheckin(r2.request.ref);
+  const plainCard = await register.resolveCheckin(offer.request.ref);
   check("Skip's card adds nothing", plainCard.ok && plainCard.card.kind === "known" && !plainCard.card.addPhone);
-  check("not added to some other account", (await server.savePhoneFromCheckin(r2.withPhone.ref, b)) === null && (await row(a)).phone === null);
-  check("Skip adds nothing", (await server.savePhoneFromCheckin(r2.request.ref, a)) === null && (await row(a)).phone === null);
-  const note = await server.savePhoneFromCheckin(r2.withPhone.ref, a);
+  check("not added to some other account", (await server.savePhoneFromCheckin(offer.withPhone.ref, b)) === null && (await row(a)).phone === null);
+  check("Skip adds nothing", (await server.savePhoneFromCheckin(offer.request.ref, a)) === null && (await row(a)).phone === null);
+  const note = await server.savePhoneFromCheckin(offer.withPhone.ref, a);
   check("confirming saves the number", note === `Added ${formatPhone(phoneP)} to their account.` && (await row(a)).phone === formatPhone(phoneP));
   const byPhone = await server.memberIdsWithPhone(phoneP);
   check("...and the phone keypad finds them next time", byPhone.ok && byPhone.ids.length === 1 && byPhone.ids[0] === a);
-  check("confirming twice changes nothing", (await server.savePhoneFromCheckin(r2.withPhone.ref, a)) === null);
-  const later = await register.resolveCheckin(r2.withPhone.ref);
+  check("confirming twice changes nothing", (await server.savePhoneFromCheckin(offer.withPhone.ref, a)) === null);
+  const later = await register.resolveCheckin(offer.withPhone.ref);
   check("once they have a phone, the card stops saying 'will add phone'", later.ok && later.card.kind === "known" && !later.card.addPhone);
   const taken = server.sealCheckin({ kind: "known", memberId: a2, addPhone: phoneB });
   const takenNote = await server.savePhoneFromCheckin(taken.ref, a2);
   check("a number another account got meanwhile isn't added", /is on another account/.test(takenNote ?? "") && (await row(a2)).phone === null);
-  check("a tampered request adds nothing", (await server.savePhoneFromCheckin(`${r2.withPhone.ref.slice(0, -2)}xx`, a)) === null);
+  check("a tampered request adds nothing", (await server.savePhoneFromCheckin(`${offer.withPhone.ref.slice(0, -2)}xx`, a)) === null);
 
   console.log("-- the tablet: someone new");
   const n1 = await tablet.createKioskMember({ firstName: "Checkcheck", lastName: "Again", email: mail("a").toUpperCase(), phone: "" });
