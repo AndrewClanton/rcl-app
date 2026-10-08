@@ -315,7 +315,7 @@ function PrinterForm({
           </label>
           <div className="flex items-center">
             <label className="flex items-center gap-2 text-sm">
-              <input type="radio" name="printer-kind" checked={f.kind === "relay"} onChange={() => set({ kind: "relay", receiptStation: f.receiptStation ?? "bar" })} />
+              <input type="radio" name="printer-kind" checked={f.kind === "relay"} onChange={() => set({ kind: "relay" })} />
               The old TM-m30 at the bar, through the Raspberry Pi relay
             </label>
             <InfoTip topic="printers-pi-relay" />
