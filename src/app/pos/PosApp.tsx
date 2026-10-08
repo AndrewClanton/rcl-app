@@ -224,6 +224,7 @@ export default function PosApp({
   canNote,
   ownerMembers,
   barPrices,
+  dayPass,
 }: {
   categories: MenuCategory[];
   employees: Employee[];
@@ -236,6 +237,7 @@ export default function PosApp({
   canNote: boolean; // an admin is signed in: Dev note
   ownerMembers: string[]; // the owners' own member accounts that get the owner rate (Back office, Owner rate)
   barPrices: BarPrices; // the Prices sheet: doubles, neat or rocks and the off-menu rule (lib/bar/pricing.ts)
+  dayPass?: { id: string; name: string; price: number | string } | null; // the Day pass, for organization comps (its Tickets category stays off the item buttons)
 }) {
   const doubleSettings = useMemo(() => doubleSettingsOf(barPrices), [barPrices]);
   const router = useRouter();
@@ -846,7 +848,7 @@ export default function PosApp({
     setGroupPickerOpen(false);
     setOrgGroup(g);
     if (g.groupId) return setToast(`${g.orgName} group (today) is on the order: no new comps.`);
-    const pass = categories.flatMap((c) => [...c.items, ...c.subcategories.flatMap((s) => s.items)]).find((i) => isDayPassName(i.name));
+    const pass = dayPass ?? categories.flatMap((c) => [...c.items, ...c.subcategories.flatMap((s) => s.items)]).find((i) => isDayPassName(i.name));
     if (!pass) return setToast("There's no Day pass on the menu to comp. Add one in Back office → Menu.");
     const n = groupPeople(g);
     setCart((prev) => [...prev, { key: `${Date.now()}-${Math.random()}`, menuItemId: pass.id, name: pass.name, unit: Number(pass.price), qty: n, mods: [], isAlcohol: false }]);

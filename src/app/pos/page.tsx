@@ -15,6 +15,7 @@ import StaffTools from "./shift/StaffTools";
 import UpdateBanner from "./UpdateBanner";
 import { deploymentId } from "@/lib/deployment";
 import { ownerMembers } from "@/lib/owner-rate-server";
+import { isDayPassName } from "@/lib/orgs";
 
 export const dynamic = "force-dynamic";
 
@@ -53,6 +54,8 @@ export default async function PosPage() {
   // so the menu's tickets category stays off the register's item buttons.
   // Items a manager hid ("Hide from register" on the Menu page) stay off.
   const orderableCategories = withoutHiddenItems(categories).filter((c) => c.key !== "tickets");
+  // ...but organization comps still put the Day pass on the order.
+  const dayPass = categories.flatMap((c) => [...c.items, ...c.subcategories.flatMap((sub) => sub.items)]).find((i) => i.active !== false && isDayPassName(i.name)) ?? null;
 
   return (
     // On a tablet or bigger the register is locked to the screen: this fills
@@ -94,6 +97,7 @@ export default async function PosPage() {
           ownerMembers={(owners ?? []).map((o) => o.memberId)}
           // The Prices sheet: doubles, neat or rocks, the off-menu rule (Back office → Bar Book → Prices).
           barPrices={barPrices}
+          dayPass={dayPass ? { id: dayPass.id, name: dayPass.name, price: dayPass.price } : null}
         />
       </ItemSettingsProvider>
     </div>
