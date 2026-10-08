@@ -250,6 +250,55 @@ export function membershipReceiptXml(r: MembershipReceipt): string {
   return d.toString();
 }
 
+// ---------- organization visit slip ----------
+// An organization group's visit with nothing to pay (Organization guests,
+// lib/orgs.ts): a record for the group's helper, not a receipt. No prices,
+// no staff names, and never a drawer pulse.
+export interface VisitSlip {
+  orderNumber: number;
+  at: string; // ISO, when it was recorded
+  orgName: string;
+  supported: number;
+  helpers: number;
+  used: number; // the organization's comps today, this group included
+  limit: number;
+  movies: string[]; // movies covered, if any tickets
+  reprint?: boolean;
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+export function visitSlipLines(v: VisitSlip): { guests: string; comps: string; footer: string } {
+  return {
+    guests: `${plural(v.supported, "supported guest", "supported guests")} + ${plural(v.helpers, "helper", "helpers")}`,
+    comps: `Comps used today: ${v.used} of ${v.limit}`,
+    footer: `No charge. Counted on ${v.orgName}'s monthly statement.`,
+  };
+}
+
+export function visitSlipXml(v: VisitSlip): string {
+  const t = visitSlipLines(v);
+  const d = new Doc();
+  d.align("center").big(true).bold(true).line("ROYALE CINEMA").big(false);
+  d.line("Visit record - not a receipt").bold(false);
+  if (v.reprint) d.bold(true).line("** REPRINT **").bold(false);
+  d.line().align("left");
+  d.bold(true).lines(wrap(v.orgName, COLS)).bold(false);
+  d.line(when(v.at));
+  d.line(rule());
+  d.lines(wrap(t.guests, COLS));
+  d.line(t.comps);
+  if (v.movies.length) {
+    d.line().line("Movies covered:");
+    for (const m of v.movies) d.lines(wrap(`- ${m}`, COLS));
+  }
+  d.line(rule());
+  d.line(`Order #${v.orderNumber}`);
+  d.line().align("center").lines(wrap(t.footer, COLS));
+  d.cut();
+  return d.toString();
+}
+
 export function drawerXml(): string {
   return new Doc().drawer().toString();
 }

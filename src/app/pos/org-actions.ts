@@ -8,6 +8,7 @@ import { currentMemberId } from "@/lib/member-forward";
 import { compsOn, orgDay, orgGroupFor, orgOnOrderFor, peopleComped, sealOverLimit, todaysGroups } from "@/lib/orgs-server";
 import { sendOrgInvite } from "@/lib/org-invite-server";
 import type { OrgGroupInput, OrgGroupOnOrder, OrgOnOrder, OrgRole } from "@/lib/orgs";
+import type { VisitSlip } from "@/lib/print/receipt";
 
 export interface OrgGroupChoices {
   // Active organizations, with today's comps.
@@ -121,4 +122,37 @@ export async function setMemberOrg(memberId: string, orgId: string | null, role:
 export async function inviteHelper(orgId: string, email: string): Promise<{ ok: true; orgName: string } | { ok: false; error: string }> {
   const staff = await assertStaff();
   return sendOrgInvite(orgId, email, "register", staff);
+}
+
+// Recent orders' "Visit slip": an organization group's visit on this order,
+// as its slip, or null when the order has no group comps. The comps count
+// is that business day's, as it stands now.
+export async function getVisitSlip(orderId: string): Promise<VisitSlip | null> {
+  await assertStaff();
+  const db = createAdminClient();
+  const [{ data: comps, error }, { data: order, error: orderError }] = await Promise.all([
+    db.from("org_comps").select("organization_id, group_id, business_date").eq("order_id", orderId).eq("anonymous", true).limit(1),
+    db.from("orders").select("order_number, completed_at, created_at, items:order_items(name, screening_id)").eq("id", orderId).maybeSingle(),
+  ]);
+  if (error) throw new Error(error.message);
+  if (orderError) throw new Error(orderError.message);
+  const c = comps?.[0];
+  if (!c || !order || !c.group_id) return null;
+  const { data: org, error: orgError } = await db.from("organizations").select("name, daily_comp_limit").eq("id", c.organization_id).maybeSingle();
+  if (orgError) throw new Error(orgError.message);
+  if (!org) return null;
+  const rows = await compsOn(c.organization_id as string, c.business_date as string);
+  const passes = rows.filter((r) => r.group_id === c.group_id && r.kind === "day_pass");
+  const items = ((order.items ?? []) as { name: string; screening_id: string | null }[]).filter((i) => i.screening_id);
+  return {
+    orderNumber: Number(order.order_number),
+    at: (order.completed_at ?? order.created_at) as string,
+    orgName: org.name as string,
+    supported: passes.filter((r) => r.role === "supported").length,
+    helpers: passes.filter((r) => r.role !== "supported").length,
+    used: peopleComped(rows),
+    limit: Number(org.daily_comp_limit),
+    movies: [...new Set(items.map((i) => i.name))],
+    reprint: true,
+  };
 }
