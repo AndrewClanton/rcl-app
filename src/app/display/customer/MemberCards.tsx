@@ -10,7 +10,18 @@ import { cleanDisplayName, lineFromChannel } from "@/lib/member-profile";
 import { SITE_URL } from "@/lib/site";
 import type { RegisterCartSnapshot } from "@/lib/registerChannel";
 import ClaimQr from "./ClaimQr";
+import { CardFrame, NameLine } from "@/components/flair/CardLook";
 import k from "./kiosk.module.css";
+import sp from "./spend.module.css";
+
+// "Spend points": opens the list (SpendPoints.tsx).
+function SpendButton({ onSpend }: { onSpend: () => void }) {
+  return (
+    <button type="button" className={sp.open} onClick={onSpend}>
+      🎁 Spend points
+    </button>
+  );
+}
 
 // The member on the order, on the customer screen (CustomerDisplay.tsx),
 // from what the register broadcasts about them (lib/registerChannel.ts):
@@ -197,12 +208,14 @@ export function AccountPanel({
   alone = false,
   onNotMe,
   onAddCard,
+  onSpend,
 }: {
   member: TabletMember;
   earn?: number;
   alone?: boolean;
   onNotMe?: () => void;
   onAddCard?: () => void;
+  onSpend?: () => void;
 }) {
   const standing = standingOf(member);
   const pts = points(member.points);
@@ -219,6 +232,7 @@ export function AccountPanel({
         </div>
         {perks.length > 0 && <div className={k.accountPerks}>{perks.join(" · ")}</div>}
         {onAddCard && (standing === "unlimited" || standing === "nocard") && <AddCardChip kind={standing} onClick={onAddCard} small />}
+        {onSpend && <SpendButton onSpend={onSpend} />}
       </div>
       {!!earn && earn > 0 && (
         <div className={k.accountEarn}>
@@ -247,7 +261,7 @@ const PHOTO_REF = /^[A-Za-z0-9_-]{40,200}$/;
 // account's Profile tab. Without a profile (still looking it up, or it
 // couldn't be read) it's their first name with the same account facts.
 // onAddCard: their red "add your card" card is down; the chip brings it back.
-export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddCard?: () => void }) {
+export function MemberCard({ member, onAddCard, onSpend }: { member: TabletMember; onAddCard?: () => void; onSpend?: () => void }) {
   const p = member.profile ?? null;
   const standing = standingOf(member);
   const pts = points(member.points);
@@ -265,7 +279,9 @@ export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddC
     todo?.line && { icon: "✍️", text: "Write your profile line" },
     todo?.flair && { icon: "🎨", text: "Pick your color & entrance" },
   ].filter((s): s is { icon: string; text: string } => !!s);
+  const look = p?.look ?? null;
   return (
+    <CardFrame frame={look?.frame} color={color?.hex ?? "#ffc72c"}>
     <section
       className={`${k.memberCard} ${standing === "plus" ? k.memberCardPlus : ""}`}
       style={color ? ({ "--flair": color.hex } as React.CSSProperties) : undefined}
@@ -274,7 +290,7 @@ export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddC
       <div className={k.cardTop}>
         <Photo url={photo} name={name} />
         <div className={k.cardWho}>
-          <h2 className={k.cardName}>{name}</h2>
+          <NameLine as="h2" className={k.cardName} name={name} nameColor={look?.nameColor} title={look?.title} />
           {line && <p className={k.cardLine}>“{line}”</p>}
           <div className={k.cardFacts}>
             <StandingChip standing={standing} />
@@ -329,10 +345,13 @@ export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddC
                 <span aria-hidden="true">{s.icon}</span> {s.text}
               </li>
             ))}
-            <li className={k.cardSoon}>
-              <span aria-hidden="true">🖼️</span> Card frames, unlocked with points <span className={k.soonTag}>Coming soon</span>
-            </li>
+            {!onSpend && (
+              <li className={k.cardSoon}>
+                <span aria-hidden="true">🖼️</span> Card frames, sounds and more, unlocked with points
+              </li>
+            )}
           </ul>
+          {onSpend && <SpendButton onSpend={onSpend} />}
           <div className={k.cardUrl}>{ACCOUNT_LABEL}</div>
         </div>
         <div className={k.cardQr}>
@@ -340,6 +359,7 @@ export function MemberCard({ member, onAddCard }: { member: TabletMember; onAddC
         </div>
       </div>
     </section>
+    </CardFrame>
   );
 }
 

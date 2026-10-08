@@ -4,7 +4,7 @@ import { CAMPAIGN_COLUMNS, outcomeWindowDays, type CampaignRow } from "./campaig
 import { loadFacts } from "./audience";
 import { guardrailPause, guardrailStatus, recallRunning, senderStatus, sendingGate, waitingAtResend, type GuardrailStatus } from "./campaign-send";
 import { hardFilter } from "./rules";
-import type { ConsentSource } from "./types";
+import type { ConsentSource, MemberFacts } from "./types";
 
 // The numbers on Back office -> Email. Counts only: who got what, person by
 // person, lives on each member's own page.
@@ -82,15 +82,24 @@ export interface Overview {
   gate: Awaited<ReturnType<typeof sendingGate>>;
 }
 
-export async function getOverview(): Promise<Overview> {
+// `facts`: a member list read already started (the page counts the
+// ready-made emails from the same one).
+export async function getOverview(opts: { facts?: Promise<MemberFacts[]> } = {}): Promise<Overview> {
   const admin = createAdminClient();
   const now = new Date();
   const since30 = new Date(now.getTime() - 30 * 86_400_000).toISOString();
   const lineupShape = { id: "", kind: "lineup" as const, category: "lineup" as const, automation: null };
 
   const [facts, campaigns, left, delivered, complaints, hardBounces, lastHook, guardrail, pause, waiting, recalling, pausedRows] = await Promise.all([
-    loadFacts().catch(() => []),
-    admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).is("automation", null).order("created_at", { ascending: false }).limit(40),
+    (opts.facts ?? loadFacts({ forDisplay: true })).catch(() => []),
+    // How the latest ones did, as soon as the list is in (not after the
+    // member list).
+    (async () => {
+      const res = await admin.from("email_campaigns").select(CAMPAIGN_COLUMNS).is("automation", null).order("created_at", { ascending: false }).limit(40);
+      const rows = (res.data ?? []) as CampaignRow[];
+      const recentRows = rows.filter((c) => ["sent", "sending", "paused"].includes(c.status) || (c.recipients ?? 0) > 0).slice(0, 10);
+      return { rows, recent: await Promise.all(recentRows.map(summarize)) };
+    })(),
     admin.from("email_consent_log").select("id", { count: "exact", head: true }).eq("action", "opt_out").gte("at", since30),
     admin.from("email_sends").select("id", { count: "exact", head: true }).gte("delivered_at", since30),
     admin.from("email_sends").select("id", { count: "exact", head: true }).gte("complained_at", since30),
@@ -123,10 +132,8 @@ export async function getOverview(): Promise<Overview> {
     if (!f.imported && f.emailOptIn && Date.parse(f.createdAt) > now.getTime() - 30 * 86_400_000) joined30++;
   }
 
-  const rows = (campaigns.data ?? []) as CampaignRow[];
+  const { rows, recent } = campaigns;
   const upcoming = rows.filter((c) => c.status === "scheduled").sort((a, b) => (a.scheduled_for ?? "").localeCompare(b.scheduled_for ?? ""));
-  const recentRows = rows.filter((c) => ["sent", "sending", "paused"].includes(c.status) || (c.recipients ?? 0) > 0).slice(0, 10);
-  const recent = await Promise.all(recentRows.map(summarize));
 
   return {
     mailable,

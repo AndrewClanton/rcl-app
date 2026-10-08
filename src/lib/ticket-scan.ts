@@ -209,7 +209,7 @@ async function scanTicket(text: string, by: string | null): Promise<ScanResult> 
   const claim = await claimBooking(bookingId, by);
   if (!claim.ok) return claim;
   // They're here: a booking with a member counts as today's visit.
-  const visit = claim.memberId ? await recordVisit(claim.memberId, by) : null;
+  const visit = claim.memberId ? await recordVisit(claim.memberId, by, new Date(), `door:${by ?? "staff"}`) : null;
   return { ok: true, kind: "ticket", ticket: claim.ticket, print: claim.print, memberId: claim.memberId, visit };
 }
 
@@ -217,7 +217,7 @@ async function scanMember(memberId: string, by: string | null): Promise<ScanResu
   const { data: m, error } = await createAdminClient().from("members").select("id, name, points").eq("id", memberId).is("erased_at", null).maybeSingle();
   if (error) return refuse("member", "offline", OFFLINE);
   if (!m) return refuse("member", "unknown_member", "That member card isn't on an account anymore. Look them up by name or phone.");
-  const visit = await recordVisit(memberId, by);
+  const visit = await recordVisit(memberId, by, new Date(), `door:${by ?? "staff"}`);
   // The check-in counts even if their tickets can't be listed just now.
   const tickets = await ticketsForMemberToday(memberId).catch(() => []);
   const result: MemberScanned = {

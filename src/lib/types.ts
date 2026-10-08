@@ -274,6 +274,12 @@ export interface Member {
   flair_effect?: string | null;
   flair_sticker?: string | null;
   birthday_party?: boolean;
+  // What they show of the perks they unlocked with points (lib/rewards.ts),
+  // from migration 20261007020000 on.
+  perk_sound?: string | null;
+  perk_frame?: string | null;
+  perk_name_color?: string | null;
+  perk_title?: string | null;
   community_program_id: string | null;
   comp_notes: string | null;
   comped_by: string | null;

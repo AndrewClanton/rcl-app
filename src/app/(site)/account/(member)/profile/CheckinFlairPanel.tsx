@@ -19,7 +19,18 @@ import {
 import { updateFlair } from "../../actions";
 import stage from "./stage.module.css";
 
-const EFFECT_ICON: Record<FlairEffectKey, string> = { classic: "🎟️", confetti: "🎉", unicorn: "🦄", fireworks: "🎆", reactions: "💖" };
+const EFFECT_ICON: Record<FlairEffectKey, string> = {
+  classic: "🎟️",
+  confetti: "🎉",
+  unicorn: "🦄",
+  fireworks: "🎆",
+  reactions: "💖",
+  neon: "💡",
+  vhs: "📼",
+  reel: "🎞️",
+  arcade: "👾",
+  popcorn: "🍿",
+};
 
 // Where a choice plays: on the little stage, or, when the stage is out of
 // sight (scrolled past, or under the site's header), over the whole window
@@ -59,6 +70,7 @@ export default function CheckinFlairPanel({
   hasBirthday,
   firstName,
   line,
+  ownedEntrances = [],
 }: {
   ready: boolean;
   flair: FlairKeys;
@@ -66,7 +78,10 @@ export default function CheckinFlairPanel({
   hasBirthday: boolean;
   firstName: string;
   line: string | null;
+  // Entrances they unlocked with points: listed with the free ones.
+  ownedEntrances?: string[];
 }) {
+  const effects = FLAIR_EFFECTS.filter((e) => !e.paid || ownedEntrances.includes(e.key));
   const router = useRouter();
   const [color, setColor] = useState<FlairColorKey | null>(saved.color);
   const [effect, setEffect] = useState<FlairEffectKey>(saved.effect);
@@ -140,7 +155,7 @@ export default function CheckinFlairPanel({
         <fieldset>
           <legend className="label-xs">Your entrance</legend>
           <div className="grid gap-2 sm:grid-cols-2">
-            {FLAIR_EFFECTS.map((e) => {
+            {effects.map((e) => {
               const on = effect === e.key;
               return (
                 <label
@@ -162,7 +177,10 @@ export default function CheckinFlairPanel({
                     {EFFECT_ICON[e.key]}
                   </span>
                   <span className="min-w-0">
-                    <span className="font-display block leading-tight">{e.label}</span>
+                    <span className="font-display block leading-tight">
+                      {e.label}
+                      {e.paid && <span className="ml-1.5 align-middle text-[11px] font-bold uppercase tracking-wide text-[var(--muted)]">Yours</span>}
+                    </span>
                     <span className={`mt-0.5 block text-[13px] leading-snug ${on ? "text-[var(--foreground)]" : "text-[var(--muted)]"}`}>{e.blurb}</span>
                   </span>
                 </label>

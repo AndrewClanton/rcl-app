@@ -102,16 +102,35 @@ export function parseFacts(r: FactsRow): MemberFacts {
 // starting after the last member id of the one before (so someone joining
 // mid-scan can't shift a page and make us skip a person). `memberId`
 // narrows it to one person.
-export async function loadFacts(opts: { memberId?: string } = {}): Promise<MemberFacts[]> {
+// `forDisplay` (the Email pages, which only count): the same list, read in
+// several stretches of member ids at once instead of page after page. Each
+// stretch is read the same way (after the last id), so it's the same
+// people in the same order.
+export async function loadFacts(opts: { memberId?: string; forDisplay?: boolean } = {}): Promise<MemberFacts[]> {
+  if (opts.memberId) return (await factPages(null, null, PAGE, opts.memberId)).map(parseFacts);
+  if (!opts.forDisplay) return (await factPages(null, null, PAGE)).map(parseFacts);
+  const { count } = await createAdminClient().from("members").select("id", { count: "exact", head: true }).is("erased_at", null).not("email", "is", null);
+  const parts = Math.min(8, Math.max(1, Math.ceil((count ?? 0) / 500)));
+  // Ids are random, so even slices of the id range hold about as many each.
+  const cuts = Array.from({ length: parts - 1 }, (_, i) => `${Math.floor(((i + 1) / parts) * 0x100000000).toString(16).padStart(8, "0")}-0000-0000-0000-000000000000`);
+  const size = Math.min(PAGE, Math.ceil(((count ?? 0) / parts) * 1.3) + 20);
+  const got = await Promise.all([null, ...cuts].map((from, i) => factPages(from, cuts[i] ?? null, size)));
+  return got.flat().map(parseFacts);
+}
+
+// Members after `from` (not counting it) up to `to` (null: to the end),
+// `size` a page.
+async function factPages(from: string | null, to: string | null, size: number, memberId: string | null = null): Promise<FactsRow[]> {
   const admin = createAdminClient();
-  const out: MemberFacts[] = [];
-  let after: string | null = null;
+  const out: FactsRow[] = [];
+  let after = from;
   for (;;) {
-    const { data, error } = await admin.rpc("member_email_facts", { p_offset: 0, p_limit: PAGE, p_member: opts.memberId ?? null, p_after: after });
+    const { data, error } = await admin.rpc("member_email_facts", { p_offset: 0, p_limit: size, p_member: memberId, p_after: after });
     if (error) throw new Error(`Couldn't read the members list (${error.message}).`);
     const rows = (data ?? []) as FactsRow[];
-    out.push(...rows.map(parseFacts));
-    if (rows.length < PAGE || opts.memberId) break;
+    const mine = to ? rows.filter((r) => r.member_id <= to) : rows;
+    out.push(...mine);
+    if (rows.length < size || mine.length < rows.length || memberId) break;
     after = rows[rows.length - 1].member_id;
   }
   return out;
@@ -152,16 +171,21 @@ const usesRule = (a: Audience, r: Rule["r"]) => [...(a.include ?? []), ...(a.exc
 export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> {
   const today = businessDay(now).date;
   const ctx: RuleContext = { now, today };
-  if (usesRule(a, "legacy_needs_setup")) ctx.legacyNeedsSetup = await legacyNeedingSetup();
-  if ((a.include ?? []).some((x) => x.r === "legacy_needs_setup")) ctx.paidOldSystem = await oldSystemPayers();
+  // Each read at once (they were one after the other).
   const genres = genreRules(a);
-  if (genres.length) {
-    ctx.genreMembers = new Map();
-    for (const g of genres) {
-      const { data } = await createAdminClient().rpc("member_genre_days", { p_genre: g.v, p_since: addDays(today, -g.within), p_min: g.min });
-      ctx.genreMembers.set(genreKey(g), new Set(((data ?? []) as { member_id: string }[]).map((x) => x.member_id)));
-    }
-  }
+  const [legacy, paid, genreSets] = await Promise.all([
+    usesRule(a, "legacy_needs_setup") ? legacyNeedingSetup() : undefined,
+    (a.include ?? []).some((x) => x.r === "legacy_needs_setup") ? oldSystemPayers() : undefined,
+    Promise.all(
+      genres.map(async (g) => {
+        const { data } = await createAdminClient().rpc("member_genre_days", { p_genre: g.v, p_since: addDays(today, -g.within), p_min: g.min });
+        return [genreKey(g), new Set(((data ?? []) as { member_id: string }[]).map((x) => x.member_id))] as const;
+      }),
+    ),
+  ]);
+  if (legacy) ctx.legacyNeedsSetup = legacy;
+  if (paid) ctx.paidOldSystem = paid;
+  if (genres.length) ctx.genreMembers = new Map(genreSets);
   return ctx;
 }
 
@@ -173,22 +197,28 @@ export async function ruleContext(a: Audience, now: Date): Promise<RuleContext> 
 export async function orderExtras(): Promise<Map<string, OrderExtras>> {
   const admin = createAdminClient();
   const out = new Map<string, OrderExtras>();
-  try {
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin.from("members").select("id, last_activity_at").not("last_activity_at", "is", null).order("id").range(from, from + PAGE - 1);
-      if (error) break;
-      for (const r of data ?? []) out.set(r.id as string, { activityAt: r.last_activity_at as string });
-      if ((data ?? []).length < PAGE) break;
+  // Both lists at once (they used to be read one after the other), merged
+  // in the same order as before.
+  const readAll = async <T,>(page: (from: number) => PromiseLike<{ data: T[] | null; error: unknown }>): Promise<T[]> => {
+    const rows: T[] = [];
+    try {
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await page(from);
+        if (error) break;
+        rows.push(...(data ?? []));
+        if ((data ?? []).length < PAGE) break;
+      }
+    } catch {
+      // The facts alone.
     }
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin.from("member_email_prefs").select("member_id, consent_at").not("consent_at", "is", null).order("member_id").range(from, from + PAGE - 1);
-      if (error) break;
-      for (const r of data ?? []) out.set(r.member_id as string, { ...out.get(r.member_id as string), consentAt: r.consent_at as string });
-      if ((data ?? []).length < PAGE) break;
-    }
-  } catch {
-    // The facts alone.
-  }
+    return rows;
+  };
+  const [activity, consent] = await Promise.all([
+    readAll<{ id: string; last_activity_at: string }>((from) => admin.from("members").select("id, last_activity_at").not("last_activity_at", "is", null).order("id").range(from, from + PAGE - 1)),
+    readAll<{ member_id: string; consent_at: string }>((from) => admin.from("member_email_prefs").select("member_id, consent_at").not("consent_at", "is", null).order("member_id").range(from, from + PAGE - 1)),
+  ]);
+  for (const r of activity) out.set(r.id, { activityAt: r.last_activity_at });
+  for (const r of consent) out.set(r.member_id, { ...out.get(r.member_id), consentAt: r.consent_at });
   return out;
 }
 
@@ -239,8 +269,7 @@ export async function resolveAudience(
 ): Promise<Resolved> {
   const now = opts.now ?? new Date();
   const facts = opts.facts ?? (await loadFacts({ memberId: opts.memberId }));
-  const ctx = await ruleContext(c.audience, now);
-  const have = await alreadyHave(c.id);
+  const [ctx, have] = await Promise.all([ruleContext(c.audience, now), alreadyHave(c.id)]);
   const excluded: Partial<Record<Exclusion, number>> = {};
   const skip = (why: Exclusion) => {
     excluded[why] = (excluded[why] ?? 0) + 1;

@@ -19,6 +19,8 @@ import { parseCardOnFileAsk, parseReaderPrompt, parseTabletSound, type CardOnFil
 import { cartSound, playSound, setSoundSettings, unlockSound } from "./sounds";
 import AutoUpdate from "../AutoUpdate";
 import { isGuestName } from "@/lib/member-name";
+import { parseRewardAdded, type RewardAdded } from "@/lib/rewards";
+import SpendPoints, { type SpendFor } from "./SpendPoints";
 import k from "./kiosk.module.css";
 
 export interface PromoMovie {
@@ -249,6 +251,15 @@ export default function CustomerDisplay({
     setRedAgain({ firstName, key: Date.now() });
     playSound("card");
   }, []);
+  // "Spend points" (SpendPoints.tsx): open for the member on the order (by
+  // first name), until they close it or leave the order. The register's
+  // answers to a good ("reward-added") go to the open sheet.
+  const [spendFor, setSpendFor] = useState<string | null>(null);
+  const rewardAnswer = useRef<((a: RewardAdded) => void) | null>(null);
+  const listenRewards = useCallback((l: ((a: RewardAdded) => void) | null) => {
+    rewardAnswer.current = l;
+  }, []);
+  const playEntrance = useCallback((entrance: string, color: string | null) => setEncore({ key: Date.now(), entrance, color }), []);
   const lastMember = useRef<RegisterCartSnapshot["member"]>(previewCart?.member ?? null);
   // The last cart, so each new one can make its sound (sounds.ts cartSound).
   const lastCart = useRef<RegisterCartSnapshot | null>(previewCart ?? null);
@@ -298,6 +309,8 @@ export default function CustomerDisplay({
       // A red card put down stays down only while they're on the order.
       setRedDown((d) => (d && now?.firstName === d ? d : null));
       setRedAgain((a) => (a && now?.firstName === a.firstName ? a : null));
+      // Spend points closes when they leave the order, or it's being paid.
+      setSpendFor((s) => (s && now?.firstName === s && !next.paying ? s : null));
       const justSetUp = needsCard(before) && !!now && !needsCard(now) && now.plus && now.firstName === before?.firstName;
       if (justSetUp && celebrated.current !== now.firstName) celebrate(now.firstName, !!before?.noCard);
       if (!needsCard(now)) setSetUp(null);
@@ -355,6 +368,10 @@ export default function CustomerDisplay({
         .on("broadcast", { event: "cof-ask" }, (msg) => onCofAsk(msg.payload))
         .on("broadcast", { event: "cof-end" }, (msg) => onCofEnd(msg.payload?.id))
         .on("broadcast", { event: "paid" }, () => onPaid())
+        .on("broadcast", { event: "reward-added" }, (msg) => {
+          const a = parseRewardAdded(msg.payload);
+          if (a) rewardAnswer.current?.(a);
+        })
         .subscribe((status) => {
           // A screen that just loaded (or refreshed) has missed every prior
           // broadcast: ask the register to resend its current state.
@@ -447,6 +464,31 @@ export default function CustomerDisplay({
     return () => clearTimeout(timer);
   }, [redUp, redLong, redAgainKey]);
   const hero = !hasOrder && !tickets;
+  // Spend points, for whoever's on the order (their card carries the sealed
+  // reference it needs; an older register's doesn't, and the button stays away).
+  const wallet = typeof who?.profile?.wallet === "string" ? who.profile.wallet : null;
+  const openSpend =
+    who && wallet && !cart?.paying
+      ? () => {
+          setSpendFor(who.firstName);
+          playSound("card");
+        }
+      : undefined;
+  const spendWho: SpendFor | null =
+    who && wallet && spendFor === who.firstName
+      ? {
+          firstName: who.firstName,
+          wallet,
+          name: who.profile?.name?.trim() || who.firstName,
+          color: who.profile?.color ?? null,
+          photo: typeof who.profile?.photo === "string" && /^[A-Za-z0-9_-]{40,200}$/.test(who.profile.photo) ? who.profile.photo : null,
+          pendingPoints: Math.max(0, Math.round(Number(who.rewardPoints) || 0)),
+          pending: Array.isArray(who.rewards) ? who.rewards.filter((r) => typeof r?.id === "string" && Number.isInteger(r.qty)) : [],
+        }
+      : null;
+  const closeSpend = useCallback(() => setSpendFor(null), []);
+  const spendEntrance = useCallback((entrance: string) => playEntrance(entrance, who?.profile?.color ?? null), [playEntrance, who?.profile?.color]);
+  const toRegisterSpend = useCallback((event: "reward-add" | "rewards-changed", payload: object) => toRegister(event, payload), [toRegister]);
   // "You're all set, Sarah!": the name staff typed, or the one on the order.
   const greet = setup?.name ? setup.name.split(" ")[0] : who && !isGuestName(who.firstName) ? who.firstName : null;
 
@@ -472,23 +514,24 @@ export default function CustomerDisplay({
             cart={who ? cart : { ...cart, member: null }}
             onNotMe={who ? () => memberOff(who.firstName, "not-me") : undefined}
             onAddCard={finish ? undefined : addCard}
+            onSpend={openSpend}
           />
         ) : welcome && hero ? (
           <PlusWelcomeCard key={welcome.key} firstName={welcome.firstName} renewed={welcome.renewed} hero />
         ) : cardFor && hero ? (
           <>
             <NeedsCardCard firstName={cardFor.firstName} kind={cardKind} hero onDismiss={() => putDown(cardFor, true)} />
-            <AccountPanel member={cardFor} alone />
+            <AccountPanel member={cardFor} alone onSpend={openSpend} />
             <MemberActions onOff={(why) => memberOff(cardFor.firstName, why)} />
           </>
         ) : who && hero && !finish ? (
           <>
-            <MemberCard member={who} onAddCard={addCard} />
+            <MemberCard member={who} onAddCard={addCard} onSpend={openSpend} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : who ? (
           <>
-            <AccountPanel member={who} alone onAddCard={finish ? undefined : addCard} />
+            <AccountPanel member={who} alone onAddCard={finish ? undefined : addCard} onSpend={openSpend} />
             <MemberActions onOff={(why) => memberOff(who.firstName, why)} />
           </>
         ) : (
@@ -500,12 +543,13 @@ export default function CustomerDisplay({
       ) : (
         readerPrompt && <PayOnReader prompt={readerPrompt} cart={cart} />
       )}
+      {spendWho && <SpendPoints key={spendWho.firstName} who={spendWho} send={toRegisterSpend} onAnswer={listenRewards} onEntrance={spendEntrance} onClose={closeSpend} />}
       {setup && <StaffSetupView setup={setup} greet={greet} onOk={setupOk} />}
       {cof && <CardOnFileAsk key={cof.id} ask={cof} onAnswer={cofAnswer} />}
       {burst && <Streamers key={burst.id} pieces={burst.pieces} banner={burst.banner} onDone={clearBurst} />}
       {rickroll && <Rickroll key={rickroll} onDone={clearRickroll} />}
       {version && (
-        <AutoUpdate current={version} busy={hasOrder || !!who || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome || !!approved} />
+        <AutoUpdate current={version} busy={hasOrder || !!who || !!spendWho || !!setup || !!tickets || !!finish || !!burst || !!rickroll || !!cardFor || !!welcome || !!approved} />
       )}
     </div>
   );
@@ -592,7 +636,7 @@ function BadgePitch() {
 // onNotMe: "That's not me" on their account, in case it isn't theirs.
 // onAddCard: their red "add your card" banner is down; the chip on their
 // account brings it back.
-export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartSnapshot; onNotMe?: () => void; onAddCard?: () => void }) {
+export function OrderReceipt({ cart, onNotMe, onAddCard, onSpend }: { cart: RegisterCartSnapshot; onNotMe?: () => void; onAddCard?: () => void; onSpend?: () => void }) {
   const who = cart.member;
   const earn = cart.pointsToEarn ?? 0;
   const count = cart.items.reduce((n, i) => n + i.quantity, 0);
@@ -649,7 +693,7 @@ export function OrderReceipt({ cart, onNotMe, onAddCard }: { cart: RegisterCartS
         )}
       </div>
       {who ? (
-        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} onAddCard={onAddCard} />
+        <AccountPanel member={who} earn={earn} onNotMe={onNotMe} onAddCard={onAddCard} onSpend={onSpend} />
       ) : (
         earn > 0 && (
           <div className={k.earn}>

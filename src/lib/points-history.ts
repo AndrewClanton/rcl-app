@@ -34,6 +34,13 @@ export function rewardOff(note: string | null, delta: number): string {
   return `$${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)} off`;
 }
 
+// A reward from the catalog (Spend points): its note is "Reward: Personal
+// popcorn (order #1234)" -> "Personal popcorn". Null for the $5 off.
+export function rewardName(note: string | null): string | null {
+  const m = note?.match(/^Reward: (.+?)(?: \(order #\d+\))?$/);
+  return m ? m[1] : null;
+}
+
 // A staff-written note, unless it's the old placeholder.
 export function adjustmentNote(note: string | null): string | null {
   const n = note?.trim();

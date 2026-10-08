@@ -300,6 +300,32 @@ export const HELP_TOPICS = {
     body:
       "Members earn 1 point per $1 spent, and 100 points take $5 off. Each visit (a check-in on the customer screen, or a member card or online ticket scanned at the door) adds 5 points, once per business day. Badges pay extra points once each: the first visit, early and late check-ins, weeks in a row, the 10th, 50th and 100th visit, and a birthday-week visit every year. 13 weeks in a row also earns a free popcorn and 26 weeks a free pizza, redeemed here on the register.",
   },
+  "spend-points": {
+    title: "Spend points: rewards on the customer screen",
+    area: "Register: members and the door",
+    body:
+      "A member on the order can tap Spend points under their card on the customer screen. It lists everything points buy, cheapest first: what they can afford is bright with a Use button, the rest is greyed out with how many more points it takes. Real goods (popcorn, a soda, candy, a drink, a movie ticket, a booth hour, $5 off) go on the order by themselves as a $0 line like \"Reward: Personal popcorn (−40 pts)\", and you get a note saying who used what. No PIN. Hand it over like anything else on the order. Their points come off only when the sale is paid, so taking the line off, cancelling the order or a full refund leaves their points as they were. A drink reward is 21+: check ID as you would for any drink. Vanity perks (a sign-in sound, a new entrance, a card frame, a name color, a title) unlock at once and play right there. Spending never lowers what a member has earned all time.",
+    steps: [
+      "Put the member on the order (or they check in on the screen).",
+      "They tap Spend points, then Use, then Use again to be sure.",
+      "A good shows up on the order as a Reward line. Ring the rest and take payment as usual.",
+    ],
+    links: [{ label: "Points", href: "/admin/points" }],
+  },
+  "points-limits-watch": {
+    title: "Points limits and the watch list",
+    area: "Members and memberships",
+    body:
+      "Back office → Points keeps points fair. Limits: check-in points pay once a day as always, and there's a daily ceiling on check-in and badge points and on everything earned; anything over isn't paid. Each reward can have its own daily or monthly limit per member, and there's a limit on real goods per day and per month across the catalog. The watch list shows members whose points look unusual: lots of small orders in one day, bonus points far above what they buy, check-ins from more than one screen or door in a day, rewards bought within an hour of earning the points, lots of points from card matches, or hitting the daily ceiling. It isn't proof of anything. Flag puts it in the member flag system to look into on their page, like a flag from the register. Owners and admins only.",
+    links: [{ label: "Points", href: "/admin/points?tab=watch" }],
+  },
+  "rewards-catalog": {
+    title: "Editing the rewards catalog",
+    area: "Members and memberships",
+    body:
+      "Back office → Points → Rewards lists what members can spend points on. A point is worth about 5¢ (100 points = $5 off), so price a reward at what it sells for: a $2 popcorn is 40 points. The \"Sells for\" box works it out. Put in what one costs us too, so the Economy tab can show what rewards really cost. Untick Offered to hide one; set a daily or monthly limit per member, or a stock count that goes down as it's used. Vanity perks pick from the sounds, entrances, frames, colors and titles the screen knows; a brand new one needs a code change, but its name, price and limits don't. The Economy tab shows points issued and redeemed by month, what members hold in dollars, and the top earners and redeemers.",
+    links: [{ label: "Points", href: "/admin/points" }],
+  },
   "card-linked-points": {
     title: "Points by card, when nobody's attached",
     area: "Register: members and the door",

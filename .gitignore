@@ -46,3 +46,6 @@ supabase/.temp/
 
 # Local agent worktrees (never commit)
 .claude/worktrees/
+
+# benchmark scratch
+/.bench/

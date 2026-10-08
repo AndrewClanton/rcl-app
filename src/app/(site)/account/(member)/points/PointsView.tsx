@@ -5,7 +5,7 @@ import type { PastVisits } from "@/lib/data/fortis-lookup";
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 import { VISIT_POINTS } from "@/lib/visits";
 import { CARD_UNDO_NOTE } from "@/lib/card-match";
-import { adjustmentNote, rewardOff } from "@/lib/points-history";
+import { adjustmentNote, rewardName, rewardOff } from "@/lib/points-history";
 import { dateShort, points } from "../format";
 import { Empty, Panel, SectionHead, SpecPanel, STACK } from "../ui";
 import { BadgeCabinet, StreakPanel } from "./Badges";
@@ -24,6 +24,9 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
       return { title: `Earned on ${what ?? "a purchase"}`, href: receipt };
     case "redeem": {
       const order = l.note?.match(/order #\d+/)?.[0];
+      // Spend points: "Reward: Personal popcorn (order #1234)".
+      const reward = rewardName(l.note);
+      if (reward) return { title: `Used for ${reward}${order ? ` on ${order}` : ""}`, href: receipt };
       return { title: `Used for ${rewardOff(l.note, l.delta)}${order ? ` ${order}` : ""}`, href: receipt };
     }
     case "refund":
