@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { CAMPAIGN_COLUMNS, type CampaignRow } from "@/lib/email/campaign";
 import { designOf, renderCampaign, type CampaignContent, type Recipient } from "@/lib/email/render";
+import type { MemberFacts } from "@/lib/email/types";
 import { DESIGNS } from "@/lib/email/designs";
 import { DESIGN_KEYS, type DesignKey } from "@/lib/email/designs/types";
 import { countAudiences, designCampaign, designResults, type AudienceCount, type DesignResults } from "@/lib/email/designs/ready";
@@ -128,18 +129,26 @@ export interface DesignState {
   left: number; // still to get it (would get it now, plus queued)
 }
 
-export async function designStates(opts: { now: Date; firstWave: number; tests: TestLog; me: string }): Promise<DesignState[]> {
-  const rows = Object.fromEntries(await Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const))) as Record<DesignKey, CampaignRow | null>;
-  const [counts, extra] = await Promise.all([
-    countAudiences(rows, opts.now, opts.firstWave).catch(() => null),
-    Promise.all(
-      DESIGN_KEYS.map(async (k) => {
-        const c = rows[k];
-        if (!c) return { results: null, next: null };
-        const [results, wave] = await Promise.all([designResults(c, k).catch(() => null), lastWave(c.id).catch(() => null)]);
-        return { results, next: nextWaveAfter(wave, opts.now) };
-      }),
+// The counting (who each would go to: the whole member list) is most of
+// the wait, so it starts at once, alongside the rows; the first wave's size
+// and the test log can still be on their way. `facts`: a member list read
+// already started (the overview's), so it's read once.
+export async function designStates(opts: { now: Date; firstWave: number | Promise<number>; tests: TestLog | Promise<TestLog>; me: string; facts?: Promise<MemberFacts[]> }): Promise<DesignState[]> {
+  const rowsP = Promise.all(DESIGN_KEYS.map(async (k) => [k, await designCampaign(k).catch(() => null)] as const)).then((x) => Object.fromEntries(x) as Record<DesignKey, CampaignRow | null>);
+  const [rows, counts, extra, tests] = await Promise.all([
+    rowsP,
+    countAudiences(rowsP, opts.now, opts.firstWave, { facts: opts.facts }).catch(() => null),
+    rowsP.then((rows) =>
+      Promise.all(
+        DESIGN_KEYS.map(async (k) => {
+          const c = rows[k];
+          if (!c) return { results: null, next: null };
+          const [results, wave] = await Promise.all([designResults(c, k).catch(() => null), lastWave(c.id).catch(() => null)]);
+          return { results, next: nextWaveAfter(wave, opts.now) };
+        }),
+      ),
     ),
+    opts.tests,
   ]);
   return DESIGN_KEYS.map((key, i) => {
     const d = DESIGNS[key];
@@ -159,7 +168,7 @@ export async function designStates(opts: { now: Date; firstWave: number; tests: 
       status,
       brake: status === "paused" && !!c?.error?.startsWith(BRAKE_PREFIX),
       nextWaveOn: next ? waveDayWord(next, opts.now) : null,
-      lastTest: lastTestOf(opts.tests, designTestKey(key), opts.me),
+      lastTest: lastTestOf(tests, designTestKey(key), opts.me),
       sent: results?.sent ?? 0,
       left: (count?.willSend ?? 0) + (results?.waiting ?? 0),
     };
