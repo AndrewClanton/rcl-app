@@ -31,12 +31,12 @@ export type SeatStatus = "new" | "making" | "delivered";
 
 // What the guest's page says for each step.
 export const GUEST_STATUS: Record<SeatStatus, { title: string; sub: string }> = {
-  new: { title: "Order received", sub: "It's with the bar now." },
+  new: { title: "Order received", sub: "We've got it. It's next up." },
   making: { title: "We're making it", sub: "Sit tight." },
-  delivered: { title: "On its way", sub: "Enjoy." },
+  delivered: { title: "Delivered — enjoy", sub: "Want anything else? Order more any time." },
 };
 
-export const PAUSED_MESSAGE = "Ordering from your seat is paused, please order at the box office.";
+export const PAUSED_MESSAGE = "Ordering from your seat is paused. Please order at the counter.";
 
 // The big line on a board ticket: "BOOTH 3", "CINEMA · ROW C".
 export function boardLabel(spotName: string | null | undefined): string {

@@ -186,7 +186,7 @@ export type Priced =
 // by id, a "pick one" answered. Then the register's math for the member.
 export async function priceCart(input: CartLineInput[], member: SeatMember, tipPercent: TipChoice): Promise<Priced> {
   if (!Array.isArray(input) || input.length === 0) return { ok: false, error: "Your order is empty." };
-  if (input.length > MAX_LINES) return { ok: false, error: "That's a big order. Order part of it at the bar." };
+  if (input.length > MAX_LINES) return { ok: false, error: "That's a big order. Order part of it at the counter." };
   const lines = input.map((l) => ({
     itemId: String(l?.itemId ?? ""),
     optionIds: Array.isArray(l?.optionIds) ? l.optionIds.map(String).slice(0, 20) : [],
@@ -275,13 +275,13 @@ const clean = (v: unknown, max: number) => {
 // payment for exactly that. Nothing reaches the staff until it's paid.
 export async function startSeatCheckout(args: { code: string; lines: CartLineInput[]; tip: TipChoice; name?: string | null; note?: string | null; memberId: string | null }): Promise<StartResult> {
   const spot = await spotByCode(args.code);
-  if (!spot) return { ok: false, error: "This QR code isn't working anymore. Order at the box office, and let us know." };
-  if (!(await seatOrderingIsOpen())) return { ok: false, paused: true, error: "Ordering from your seat is paused, please order at the box office." };
+  if (!spot) return { ok: false, error: "This QR code isn't working anymore. Order at the counter, and let us know." };
+  if (!(await seatOrderingIsOpen())) return { ok: false, paused: true, error: "Ordering from your seat is paused. Please order at the counter." };
   const member = await seatMember(args.memberId);
   const priced = await priceCart(args.lines, member, args.tip);
   if (!priced.ok) return priced;
   const amount = Math.round(priced.totals.total * 100);
-  if (amount < 50) return { ok: false, error: "Orders under $0.50 can't be paid by phone. Add something, or order at the bar." };
+  if (amount < 50) return { ok: false, error: "Orders under $0.50 can't be paid by phone. Add something, or order at the counter." };
 
   const supabase = db();
   const { data: row, error } = await supabase
@@ -304,7 +304,10 @@ export async function startSeatCheckout(args: { code: string; lines: CartLineInp
       {
         amount,
         currency: "usd",
-        automatic_payment_methods: { enabled: true },
+        // Card only, so a phone order is paid before it's made. Apple Pay and
+        // Google Pay are card wallets and still show; bank debits (ACH) take
+        // days to clear, so they're left out.
+        payment_method_types: ["card"],
         description: `RCL seat order · ${spot.name}`,
         metadata: { kind: "seat_order", seat_checkout_id: row.id, spot: spot.name },
       },
@@ -364,7 +367,7 @@ export async function finishSeatCheckout(checkoutId: string): Promise<FinishResu
   const expected = Math.round(Number(c.totals.total) * 100);
   if (pi.metadata?.seat_checkout_id !== c.id || pi.amount !== expected || pi.currency !== "usd") {
     console.error("seat checkout: payment doesn't match", c.id, pi.id);
-    return { ok: false, error: "The payment doesn't match this order. Show this screen at the bar." };
+    return { ok: false, error: "The payment doesn't match this order. Show this screen at the counter." };
   }
   if (pi.status !== "succeeded") return { ok: false, pending: pi.status === "processing", error: pi.status === "processing" ? "Your payment is still going through." : "The payment didn't go through." };
 

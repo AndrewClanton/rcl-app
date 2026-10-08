@@ -29,7 +29,7 @@ export default async function SeatOrderPage({ params, searchParams }: PageProps<
         <p className="eyebrow">Royale Cinema</p>
         <h1 className="font-display mt-2 text-3xl">This QR code isn&apos;t working</h1>
         <p className="mt-3" style={{ color: "var(--muted)" }}>
-          Please order at the box office, and let us know about the card.
+          Please order at the counter, and let us know about the card.
         </p>
       </main>
     );
