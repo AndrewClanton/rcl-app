@@ -237,7 +237,7 @@ export default function PosApp({
   canNote: boolean; // an admin is signed in: Dev note
   ownerMembers: string[]; // the owners' own member accounts that get the owner rate (Back office, Owner rate)
   barPrices: BarPrices; // the Prices sheet: doubles, neat or rocks and the off-menu rule (lib/bar/pricing.ts)
-  dayPass?: { id: string; name: string; price: number | string } | null; // the Day pass, for organization comps (its Tickets category stays off the item buttons)
+  dayPass?: MenuCategory["items"][number] | null; // the Day pass, for organization comps (its Tickets category stays off the item buttons)
 }) {
   const doubleSettings = useMemo(() => doubleSettingsOf(barPrices), [barPrices]);
   const router = useRouter();
@@ -591,8 +591,11 @@ export default function PosApp({
       for (const i of c.items) byId.set(i.id, i);
       for (const s of c.subcategories) for (const i of s.items) byId.set(i.id, i);
     }
+    // The Day pass isn't on a button (its Tickets category is off the
+    // register), but organization comps still need to know it's the Day pass.
+    if (dayPass && !byId.has(dayPass.id)) byId.set(dayPass.id, dayPass);
     return (id: string | null) => (id ? (byId.get(id) ?? null) : null);
-  }, [categories]);
+  }, [categories, dayPass]);
   const builderItem = findItem(builderItemId);
   // A menu button's tap, wherever it is (a tile, the Bar tab): its choices,
   // or for an 86'd item the question first (sell anyway, or it's back).

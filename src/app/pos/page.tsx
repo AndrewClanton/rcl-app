@@ -97,7 +97,7 @@ export default async function PosPage() {
           ownerMembers={(owners ?? []).map((o) => o.memberId)}
           // The Prices sheet: doubles, neat or rocks, the off-menu rule (Back office → Bar Book → Prices).
           barPrices={barPrices}
-          dayPass={dayPass ? { id: dayPass.id, name: dayPass.name, price: dayPass.price } : null}
+          dayPass={dayPass}
         />
       </ItemSettingsProvider>
     </div>
