@@ -616,7 +616,7 @@ export const HELP_TOPICS = {
     title: "Turning seat ordering off",
     area: "Seat ordering",
     body:
-      "On a short-handed night, switch it off: register → Staff → Seat ordering (shown while it's on), or Back office → Seat ordering. Switching it on is in Back office. Phones then say it's paused and to order at the box office. It's also off by itself outside the hours set in Back office and all day Sunday, when we're closed. Orders already paid still need delivering.",
+      "On a short-handed night, switch it off: register → Staff → Seat ordering (shown while it's on), or Back office → Seat ordering. Switching it on takes a manager: in Back office, or on the register with a manager PIN. Phones then say it's paused and to order at the counter. It's also off by itself outside the hours set in Back office and all day Sunday, when we're closed. Orders already paid still need delivering.",
   },
   "seat-ordering-cards": {
     title: "QR cards and new codes",
