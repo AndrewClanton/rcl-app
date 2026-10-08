@@ -859,6 +859,12 @@ export default function PosApp({
   // the owner rate or anything paid keeps the normal Complete order.
   const visitOnly =
     !!orgGroup && !member && !activeTabId && !ownerTicked && cart.length > 0 && !groupPlan.blocked && Math.abs(totals.total) < 0.005 && cart.every((l, i) => (groupPlan.comps[i] ?? 0) >= l.qty);
+  // Any order (or tab) whose total is $0.00: a points reward covering it,
+  // comps, the owner rate at 100% off, a free ticket. Nothing to pay, so
+  // "Complete order ($0)" saves it like Cash for $0 on the payment screen
+  // (same payment record), with no payment screen, tip, reader or drawer.
+  // Alcohol still gets the 21+ check.
+  const zeroTotal = cart.length > 0 && Math.abs(totals.total) < 0.005;
   const setOrgGroup = (g: OrgGroupOnOrder | null) => setGroupState(g ? { key: activeTabId, g } : null);
   // A new group: its day passes go on the order (the Day pass menu item).
   function applyOrgGroup(g: OrgGroupOnOrder) {
@@ -1495,6 +1501,12 @@ export default function PosApp({
       }
     }
     if (visitOnly && orgGroup) return recordVisit(orgGroup);
+    if (zeroTotal) {
+      setTip(0);
+      setTipAsked(false);
+      if (cart.some((l) => l.isAlcohol)) return setAgeConfirmOpen(true);
+      return completeZeroOrder();
+    }
     // A tab closed with a tap on the reader gets the reader's own tip screen,
     // like any card sale. Only a register with no reader still asks here.
     if (activeTabId && !readerId) {
@@ -1512,6 +1524,13 @@ export default function PosApp({
     if (hasAlcohol) {
       setAgeConfirmOpen(true);
     } else setPayOpen(true);
+  }
+
+  // A $0.00 order: saved with the payment Cash for $0 gives (cash 0, card
+  // 0), so reports, the drawer count and tax are the same. No cash taken,
+  // so no drawer; the receipt prints per the auto-print setting.
+  function completeZeroOrder() {
+    void finalizeCheckout({ method: "cash", cash: 0, card: 0 });
   }
 
   // Record visit: the group's $0 order, saved as a $0 cash sale with no
@@ -1738,7 +1757,8 @@ export default function PosApp({
     }
     setVisitSlip(null);
     void printAfterSale(receipt, payment.cash > 0, tickets);
-    const parts = [`Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
+    const noCharge = Math.abs(order.totals.total + allTip) < 0.005;
+    const parts = [noCharge ? `Order #${orderNumber} complete — no charge` : `Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
     if (allTip > 0) parts.push(`${money(allTip)} tip`);
     if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
     if (change > 0) parts.push(`give ${money(change)} change`);
@@ -2340,7 +2360,7 @@ export default function PosApp({
               saving, the register shouldn't keep charging cards. Nor while
               the owner rate's prices are still coming. */}
           <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale || ownerPending} onClick={startCheckout}>
-            {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : visitOnly ? "Record visit" : "Complete order"}
+            {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : visitOnly ? "Record visit" : zeroTotal ? "Complete order ($0)" : "Complete order"}
           </button>
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
@@ -2626,7 +2646,9 @@ export default function PosApp({
                 className="btn-primary"
                 onClick={() => {
                   setAgeConfirmOpen(false);
-                  setPayOpen(true);
+                  // A $0 order has nothing to pay: it's saved right away.
+                  if (zeroTotal && tip === 0) completeZeroOrder();
+                  else setPayOpen(true);
                 }}
               >
                 ID checked — 21+
