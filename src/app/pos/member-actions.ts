@@ -9,6 +9,8 @@ import { flairKeys, parseFlair, type FlairKeys } from "@/lib/flair";
 import { displayNameFor, visibleLine, type ProfileMemberRow } from "@/lib/member-profile";
 import { BADGES, birthdayWeekYear, visitBusinessDate } from "@/lib/visits";
 import { sealTabletPhoto } from "@/lib/tablet-photo";
+import { sealWallet } from "@/lib/tablet-wallet";
+import { lifetimeTotals, lookOf, sweepPerks } from "@/lib/rewards-server";
 import type { TabletProfile } from "@/lib/registerChannel";
 import { dailyCoffeeToday } from "@/lib/daily-perk-server";
 import { currentMemberId } from "@/lib/member-forward";
@@ -161,9 +163,12 @@ export async function getTabletProfile(memberId: string): Promise<TabletProfile 
   await assertStaff();
   if (typeof memberId !== "string" || !UUID.test(memberId)) return null;
   const supabase = createAdminClient();
-  const [{ data, error }, earned] = await Promise.all([
+  // A timed perk that ran out shows the default again.
+  await sweepPerks(memberId);
+  const [{ data, error }, earned, totals] = await Promise.all([
     supabase.from("members").select("*").eq("id", memberId).is("erased_at", null).maybeSingle(),
     supabase.from("member_badges").select("badge").eq("member_id", memberId),
+    lifetimeTotals(memberId).catch(() => null),
   ]);
   if (error || !data) return null;
   const row = data as unknown as ProfileMemberRow & { id: string };
@@ -177,6 +182,9 @@ export async function getTabletProfile(memberId: string): Promise<TabletProfile 
     entrance: flair.effect === "classic" ? null : flair.effect,
     badges: BADGES.filter((b) => have.has(b.key)).map((b) => b.key),
     todo: { photo: !row.avatar_url, line: !row.tagline?.trim(), flair: !flair.color && flair.effect === "classic" },
+    wallet: sealWallet(row.id),
+    look: lookOf(row as unknown as Record<string, unknown>),
+    ...(totals ? { earned: totals.earned } : {}),
   };
 }
 

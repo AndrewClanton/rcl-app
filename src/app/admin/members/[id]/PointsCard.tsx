@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { PointsHistoryRow } from "@/lib/data/points-history";
 import { BADGES } from "@/lib/visits";
-import { MAX_POINTS_CHANGE, adjustmentNote, formatPoints, pointsReasonProblem, rewardOff } from "@/lib/points-history";
+import { MAX_POINTS_CHANGE, adjustmentNote, formatPoints, pointsReasonProblem, rewardName, rewardOff } from "@/lib/points-history";
 import InfoTip from "@/components/help/InfoTip";
 import { changeMemberPoints, loadPointsHistory } from "../actions";
 
@@ -255,7 +255,7 @@ function WhatHappened({ r }: { r: PointsHistoryRow }) {
     case "redeem":
       return (
         <>
-          Redeemed for {rewardOff(r.note, r.delta)}
+          Redeemed for {rewardName(r.note) ?? rewardOff(r.note, r.delta)}
           {order ? <>, {order}</> : null}
         </>
       );

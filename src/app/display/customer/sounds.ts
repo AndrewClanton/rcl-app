@@ -34,7 +34,21 @@ export type SoundName =
   | "tapeIn" // the Rickroll starts: a tape going into the VCR
   | "tapeOut" // the Rickroll stops: the tape winding down
   | "notFound" // a number we don't know
-  | "error"; // something went wrong
+  | "error" // something went wrong
+  | "unlock" // a reward bought with points
+  // A member's own sign-in sound, unlocked with points (lib/rewards.ts
+  // PERK_SOUNDS): plays at their check-in instead of the coin.
+  | "perk_coin"
+  | "perk_projector"
+  | "perk_organ"
+  | "perk_warp"
+  | "perk_drumroll";
+
+// Their sign-in sound's key ("coin") as a sound to play, or null.
+export function perkSound(key: string | null | undefined): SoundName | null {
+  const name = `perk_${key}`;
+  return key && name in RECIPES ? (name as SoundName) : null;
+}
 
 const KEY = "rcl.tablet-sound.v1";
 
@@ -269,5 +283,48 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
   error: (k) => {
     tone(k, 233, 0, 0.14, 0.24, "sine");
     tone(k, 185, 0.14, 0.26, 0.24, "sine");
+  },
+  // Points spent: a register "ka-" and a sparkle run up.
+  unlock: (k) => {
+    noise(k, 0, 0.05, 0.25, 2400);
+    [NOTE.E5, NOTE.G5, NOTE.C6, NOTE.E6, NOTE.G6].forEach((f, i) => tone(k, f, 0.04 + i * 0.05, 0.12, 0.14, "triangle"));
+    tone(k, NOTE.C7, 0.3, 0.45, 0.08, "sine");
+  },
+  // ---------- sign-in sounds bought with points ----------
+  // Three coins, the last one ringing.
+  perk_coin: (k) => {
+    [0, 0.12, 0.24].forEach((at, i) => {
+      tone(k, NOTE.B5, at, 0.07, 0.14, "square");
+      tone(k, NOTE.E6 * (i === 2 ? 2 : 1), at + 0.065, i === 2 ? 0.5 : 0.1, 0.13, "square");
+    });
+  },
+  // A projector's shutter clatters up to speed, then the lamp hums.
+  perk_projector: (k) => {
+    for (let i = 0; i < 9; i++) noise(k, i * (0.11 - i * 0.008), 0.03, 0.22, 1400 + i * 60);
+    tone(k, 110, 0.55, 0.45, 0.12, "sawtooth", 120);
+    tone(k, 220, 0.55, 0.45, 0.04, "sine");
+  },
+  // A little theater-organ flourish: a run up and a held chord.
+  perk_organ: (k) => {
+    [NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6].forEach((f, i) => {
+      tone(k, f, i * 0.08, 0.12, 0.12, "sine");
+      tone(k, f * 2, i * 0.08, 0.12, 0.04, "triangle");
+    });
+    [NOTE.C5, NOTE.E5, NOTE.G5].forEach((f) => {
+      tone(k, f, 0.34, 0.6, 0.1, "sine");
+      tone(k, f * 2, 0.34, 0.6, 0.035, "triangle");
+    });
+  },
+  // A sci-fi warp: a sweep down, then up and out.
+  perk_warp: (k) => {
+    tone(k, 1600, 0, 0.3, 0.12, "sine", 180);
+    tone(k, 180, 0.28, 0.4, 0.12, "triangle", 2200);
+    noise(k, 0.28, 0.35, 0.05, 600, "bandpass", 5000);
+  },
+  // A snare roll and a cymbal.
+  perk_drumroll: (k) => {
+    for (let i = 0; i < 12; i++) noise(k, i * 0.045, 0.04, 0.12 + i * 0.01, 1800);
+    tone(k, 90, 0.55, 0.18, 0.3, "sine", 50);
+    noise(k, 0.56, 0.6, 0.12, 7000, "highpass");
   },
 };

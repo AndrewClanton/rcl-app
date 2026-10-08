@@ -1,0 +1,137 @@
+/* Card perks bought with points (CardLook.tsx). --c: the member's color. */
+
+.frame {
+  position: relative;
+  border-radius: 22px;
+  padding: 10px;
+}
+
+/* Marquee lights: a gold border with bulbs chasing round it. */
+.f_marquee {
+  background: #2b241b;
+  border: 4px solid #ffc72c;
+  box-shadow:
+    0 0 0 3px #14110c,
+    0 0 18px rgba(255, 199, 44, 0.45);
+}
+.bulbs {
+  position: absolute;
+  inset: 2px;
+  border-radius: 18px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle, #fff6c8 0 3px, transparent 3.5px) 0 0 / 22px 22px repeat-x,
+    radial-gradient(circle, #fff6c8 0 3px, transparent 3.5px) 0 100% / 22px 22px repeat-x;
+  animation: chase 0.9s steps(2) infinite;
+  opacity: 0.9;
+}
+@keyframes chase {
+  to {
+    background-position:
+      11px 0,
+      11px 100%;
+  }
+}
+
+/* Film strip: sprocket holes down both sides. */
+.f_filmstrip {
+  background: #0d0b08;
+  padding: 10px 30px;
+}
+.f_filmstrip::before,
+.f_filmstrip::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 14px;
+  background: repeating-linear-gradient(180deg, #f3ecd9 0 10px, transparent 10px 20px);
+  border-radius: 3px;
+  opacity: 0.85;
+}
+.f_filmstrip::before {
+  left: 8px;
+}
+.f_filmstrip::after {
+  right: 8px;
+}
+
+/* Neon tube: a glowing edge in their color. */
+.f_neon {
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 6px var(--c),
+    0 0 18px var(--c),
+    inset 0 0 10px var(--c);
+  animation: hum 3s ease-in-out infinite;
+}
+@keyframes hum {
+  50% {
+    box-shadow:
+      0 0 4px var(--c),
+      0 0 12px var(--c),
+      inset 0 0 6px var(--c);
+  }
+}
+
+/* Ticket stub: notches and a dashed tear line. */
+.f_ticket {
+  background: #f3ecd9;
+  border: 3px dashed #14110c;
+  -webkit-mask:
+    radial-gradient(circle 14px at 0 50%, transparent 98%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 14px at 100% 50%, transparent 98%, #000) right / 51% 100% no-repeat;
+  mask:
+    radial-gradient(circle 14px at 0 50%, transparent 98%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 14px at 100% 50%, transparent 98%, #000) right / 51% 100% no-repeat;
+}
+
+/* ---------- name colors ---------- */
+.name {
+  display: inline;
+}
+.n_gold {
+  background: linear-gradient(100deg, #b8870e 0%, #ffc72c 30%, #fff3b0 45%, #ffc72c 60%, #b8870e 100%) 0 0 / 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.8s linear infinite;
+}
+.n_rainbow {
+  background: linear-gradient(90deg, #ff5a5f, #ff9a3c, #ffc72c, #5fe3b0, #6cb8ff, #b58cff, #ff5a5f) 0 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+.n_neonpink {
+  color: #fff;
+  text-shadow:
+    0 0 4px #ff6fb5,
+    0 0 12px #ff6fb5,
+    0 0 22px #ff2a8a;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.title {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.42em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #ffc72c;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bulbs,
+  .f_neon,
+  .n_gold,
+  .n_rainbow {
+    animation: none;
+  }
+}

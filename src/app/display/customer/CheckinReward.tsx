@@ -5,7 +5,7 @@ import { isGuestName } from "@/lib/member-name";
 import type { TabletCheckin } from "@/lib/checkin";
 import { flairColor } from "@/lib/flair";
 import s from "./reward.module.css";
-import { playSound, type SoundName } from "./sounds";
+import { perkSound, playSound, type SoundName } from "./sounds";
 
 // The instant payoff for checking in at the screen (Andrew, 10/2): the
 // moment they tap "Check in", before the server has answered, the screen
@@ -18,7 +18,7 @@ import { playSound, type SoundName } from "./sounds";
 // moves on to the next screen. Reduced motion: a plain fade, no confetti.
 
 export type RewardResult =
-  | { kind: "points"; earned: number; alreadyToday: boolean; firstName: string | null; isNew: boolean; accent: string | null; streak: number }
+  | { kind: "points"; earned: number; alreadyToday: boolean; firstName: string | null; isNew: boolean; accent: string | null; streak: number; sound?: SoundName | null }
   // Sent on to the register with nothing checked in here.
   | { kind: "thanks" };
 
@@ -40,6 +40,8 @@ export function rewardFor(c: TabletCheckin | null | undefined): RewardResult {
     isNew: c.isNew === true,
     accent: flairColor(c.flair?.color)?.hex ?? null,
     streak: Math.max(0, Math.round(Number(c.visit?.weekStreak) || 0)),
+    // Their own sign-in sound, if they unlocked one (a key into our list).
+    sound: perkSound(c.flair?.sound),
   };
 }
 
@@ -108,7 +110,7 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
   useEffect(() => {
     playSound("pop");
   }, []);
-  const payoff: SoundName | null = !revealed || r?.kind !== "points" ? null : welcomeOnly ? "welcomeBack" : r.isNew ? "fanfare" : "checkin";
+  const payoff: SoundName | null = !revealed || r?.kind !== "points" ? null : welcomeOnly ? "welcomeBack" : r.isNew ? "fanfare" : (r.sound ?? "checkin");
   useEffect(() => {
     if (payoff) playSound(payoff);
   }, [payoff]);

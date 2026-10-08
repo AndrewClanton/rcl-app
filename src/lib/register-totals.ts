@@ -141,7 +141,10 @@ export function pointsEarned(t: {
 // menu item, named "<reward> (badge reward)" by PosMemberPanel. Not a
 // custom item.
 export function isRewardLine(l: { menu_item_id: string | null; screening_id?: string | null; name: string; unit_price: number }) {
-  return !l.menu_item_id && !l.screening_id && Number(l.unit_price) === 0 && l.name.endsWith("(badge reward)");
+  // Or a reward bought with points on the customer screen:
+  // "Reward: Personal popcorn (−40 pts)" (lib/rewards.ts).
+  if (l.menu_item_id || l.screening_id || Number(l.unit_price) !== 0) return false;
+  return l.name.endsWith("(badge reward)") || (l.name.startsWith("Reward: ") && / pts\)$/.test(l.name));
 }
 
 // ---------- the owner rate ----------
