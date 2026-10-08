@@ -14,6 +14,7 @@ import {
   type EmailMatch,
 } from "@/lib/checkin-server";
 import { recordVisit } from "@/lib/visits-server";
+import { lookOf, sweepPerks } from "@/lib/rewards-server";
 import { currentMemberId } from "@/lib/member-forward";
 import { entranceFor, flairKeys, parseFlair } from "@/lib/flair";
 import { visibleLine } from "@/lib/member-profile";
@@ -117,12 +118,16 @@ async function checkInHere(
   isNew = false,
 ): Promise<{ request: CheckinRequest; checkedIn: TabletCheckin } | null> {
   const memberId = (await currentMemberId(details.memberId)) ?? details.memberId;
-  const visit = await recordVisit(memberId, null);
+  const screen = await assertDisplayScreen();
+  const visit = await recordVisit(memberId, null, new Date(), `screen:${screen.employeeId}`);
   if (!visit) return null;
   const request = sealCheckin({ kind: "known", ...details, memberId, done: true, paid: !visit.alreadyToday });
   await Promise.all([savePhoneFromCheckin(request.ref, memberId), saveNameFromCheckin(request.ref, memberId)]);
+  // A timed perk that ran out shows the default again.
+  await sweepPerks(memberId);
   // "*": only what's picked out below leaves the server.
   const { data: m } = await createAdminClient().from("members").select("*").eq("id", memberId).maybeSingle();
+  const sound = m ? lookOf(m).sound : null;
   const flair = m ? parseFlair(m) : null;
   const keys = flair ? flairKeys(flair) : null;
   const partyWeek = !!m && m.birthday_party !== false && birthdayWeekYear(m.birthday as string | null, visitBusinessDate(new Date())) !== null;
@@ -134,7 +139,7 @@ async function checkInHere(
       points: Math.round(visit.balance),
       isNew,
       visit: { earned: visit.earned, visitPoints: visit.visitPoints, weekStreak: visit.weekStreak, alreadyToday: visit.alreadyToday, badges: visit.badges },
-      ...(flair && keys ? { flair: { color: keys.color, entrance: entranceFor(flair, partyWeek), sticker: keys.sticker } } : {}),
+      ...(flair && keys ? { flair: { color: keys.color, entrance: entranceFor(flair, partyWeek), sticker: keys.sticker, ...(sound ? { sound } : {}) } } : {}),
       ...(line ? { line } : {}),
     },
   };

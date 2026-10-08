@@ -112,7 +112,9 @@ import {
 } from "@/lib/register-totals";
 import { quoteOwnerRate, type OwnerRateQuote } from "./owner-rate-actions";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
-import { getDailyCoffee, getTabletProfile } from "./member-actions";
+import { getDailyCoffee, getPosMember, getTabletProfile } from "./member-actions";
+import { checkOrderReward } from "./reward-actions";
+import { parseRewardAdd, type RewardAdded } from "@/lib/rewards";
 import { approveOrgOverLimit, getOrgOnOrder } from "./org-actions";
 import { compCountText, isDayPassName, orgCompPlan, roleLabel, TAX_INCLUDED_NOTE, type OrgOnOrder } from "@/lib/orgs";
 import { groupCompPlan, groupInput, groupPeople, groupTaxIncluded, joinPlans, type OrgGroupOnOrder } from "@/lib/orgs";
@@ -154,6 +156,17 @@ interface CartLine {
   // A custom drink from "What's in it?" (WhatsInIt.tsx): a one-off line
   // that knows what's in it.
   customRecipe?: { ingredient_id: string; quantity: number }[] | null;
+  // A reward the member picked on the customer screen ("Spend points"): a
+  // $0 line, one each, its points taken when the sale is saved.
+  rewardId?: string | null;
+  rewardPoints?: number;
+  rewardMember?: string | null; // whose points: it comes off if they leave the order
+}
+
+// "Reward: Personal popcorn (−40 pts)" -> 40, for a reward line loaded back from a tab.
+function rewardPointsOf(name: string): number {
+  const m = name.match(/\(−(\d+) pts\)$/);
+  return m ? Number(m[1]) : 0;
 }
 
 // The Movies tab sits alongside the menu categories, and so does Customers
@@ -274,6 +287,13 @@ export default function PosApp({
   const [outPromptId, setOutPromptId] = useState<string | null>(null);
   const [member, setMember] = useState<PosMember | null>(null);
   const memberId = member?.id ?? null;
+  // A reward someone picked with their points comes off the order with them
+  // (adjusted as the member changes, during render, not in an effect).
+  const [rewardsFor, setRewardsFor] = useState<string | null>(memberId);
+  if (rewardsFor !== memberId) {
+    setRewardsFor(memberId);
+    setCart((prev) => (prev.some((l) => l.rewardMember && l.rewardMember !== memberId) ? prev.filter((l) => !l.rewardMember || l.rewardMember === memberId) : prev));
+  }
   // The Insiders+ daily coffee (lib/daily-perk.ts). The attached member's
   // coffee today is looked up when they're put on the order, however they
   // got there (a check-in, a search, a scan, a tab): undefined while it's
@@ -314,6 +334,8 @@ export default function PosApp({
   // up when they're put on the order, like the coffee. Null until then, or
   // if it couldn't be: the screen shows their account panel without it.
   const [tabletCard, setTabletCard] = useState<{ memberId: string; profile: TabletProfile | null } | null>(null);
+  // Looked up again after they unlock a perk on the customer screen.
+  const [cardTry, setCardTry] = useState(0);
   useEffect(() => {
     if (!memberId) return;
     let live = true;
@@ -322,13 +344,14 @@ export default function PosApp({
         if (live) setTabletCard({ memberId, profile });
       },
       () => {
-        if (live) setTabletCard({ memberId, profile: null });
+        // A second look that fails keeps the card already up.
+        if (live) setTabletCard((c) => (c?.memberId === memberId ? c : { memberId, profile: null }));
       },
     );
     return () => {
       live = false;
     };
-  }, [memberId]);
+  }, [memberId, cardTry]);
   const tabletProfile = memberId && tabletCard?.memberId === memberId ? tabletCard.profile : null;
   // On this order unless it's used, unknown, or staff took it off. Only one
   // member is on an order, so only their coffee can be.
@@ -861,6 +884,7 @@ export default function PosApp({
         screening_id: l.screeningId ?? null,
         ...(l.recipeId ? { recipe_id: l.recipeId } : {}),
         ...(l.customRecipe?.length ? { custom_recipe: l.customRecipe } : {}),
+        ...(l.rewardId ? { reward_id: l.rewardId } : {}),
       })),
     };
   }
@@ -878,6 +902,7 @@ export default function PosApp({
         screeningId: l.screening_id ?? null,
         recipeId: l.recipe_id ?? null,
         customRecipe: l.custom_recipe?.length ? l.custom_recipe.map((c) => ({ ingredient_id: c.ingredient_id, quantity: c.quantity })) : null,
+        ...(l.reward_id ? { rewardId: l.reward_id, rewardPoints: rewardPointsOf(l.name), rewardMember: f.member?.id ?? null } : {}),
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -895,8 +920,9 @@ export default function PosApp({
   }
 
   function updateQty(key: string, delta: number) {
-    // Minus on the last one takes the line off, same as the ×.
-    setCart((prev) => prev.flatMap((l) => (l.key !== key ? [l] : l.qty + delta <= 0 ? [] : [{ ...l, qty: l.qty + delta }])));
+    // Minus on the last one takes the line off, same as the ×. A reward
+    // line stays one: another is another tap on the customer screen.
+    setCart((prev) => prev.flatMap((l) => (l.key !== key ? [l] : l.qty + delta <= 0 ? [] : l.rewardId && delta > 0 ? [l] : [{ ...l, qty: l.qty + delta }])));
   }
 
   function removeLine(key: string) {
@@ -982,6 +1008,11 @@ export default function PosApp({
   // which avoids a stale closure in the long-lived channel subscription.
   const cartSnapshotRef = useRef<RegisterCartSnapshot>(EMPTY_CART_SNAPSHOT);
   const finalizingRef = useRef(false);
+  // Points this order spends once it's paid: its reward lines (Spend points
+  // on the customer screen) and the $5 off.
+  const rewardLines = cart.filter((l) => l.rewardId);
+  const discountOn = pointsRedeemed && totals.redemptionDiscount > 0;
+  const orderRewardPoints = rewardLines.reduce((s, l) => s + (l.rewardPoints ?? 0) * l.qty, 0) + (discountOn ? POINTS_PER_REWARD : 0);
   // A card sale that was charged but didn't save (kept across reloads).
   const unsavedSale = useUnsavedSale();
   // "Put a card on file?" for a tab (right after opening it, or from its chip).
@@ -1030,6 +1061,8 @@ export default function PosApp({
           coffee: !coffeeToday ? null : coffeeToday.usedAt ? "used" : totals.dailyPerkDiscount > 0 ? "on-order" : "ready",
           discountPct: Math.round(memberDiscountRate(member) * 100),
           profile: tabletProfile,
+          rewardPoints: orderRewardPoints,
+          rewards: rewardLines.map((l) => ({ id: l.rewardId as string, qty: l.qty })),
         }
       : null,
     pointsToEarn: Math.round(pointsEarned(totalsPayload(totals))),
@@ -1110,6 +1143,76 @@ export default function PosApp({
     setTimeout(() => setToast((t) => (t === message ? null : t)), 8000);
   });
 
+  // "Spend points" on the customer screen: the guest tapped Use on a good
+  // (or the $5 off). The server checks it (still offered, within its
+  // limits, covered after what this order already uses) and it goes on as a
+  // $0 line, "Reward: Personal popcorn (−40 pts)", with no PIN; its points
+  // come off when the sale is saved, so taking the line off or cancelling
+  // costs them nothing. Staff get a note (an alcohol reward: check ID, as
+  // the pay screen asks anyway). The screen hears back either way.
+  const onRewardAdd = useEffectEvent(async (p: unknown) => {
+    const a = parseRewardAdd(p);
+    if (!a) return;
+    const reply = (ok: boolean, message: string) => {
+      const answer: RewardAdded = { id: a.id, ok, message };
+      registerChannelRef.current?.send({ type: "broadcast", event: "reward-added", payload: answer });
+    };
+    if (!member || firstNameFor(member.name) !== a.firstName) return reply(false, "Ask at the bar to put you on the order first.");
+    if (ownerTicked) return reply(false, "Rewards don't go on this order. Ask at the bar.");
+    if (payOpen) return reply(false, "Your order is being paid. Use it on your next one.");
+    const who = member;
+    let r: Awaited<ReturnType<typeof checkOrderReward>>;
+    try {
+      r = await checkOrderReward({
+        memberId: who.id,
+        rewardId: a.rewardId,
+        pending: rewardLines.map((l) => ({ rewardId: l.rewardId as string, qty: l.qty })),
+        pendingPoints: orderRewardPoints,
+        discountOn,
+      });
+    } catch {
+      return reply(false, "That didn't go through. Ask at the bar.");
+    }
+    if (!r.ok) return reply(false, r.error);
+    if (memberNow.current?.id !== who.id) return reply(false, "Ask at the bar to put you on the order first.");
+    const reward = r;
+    if (reward.kind === "discount") setPointsRedeemed(true);
+    else {
+      setCart((prev) => [
+        ...prev,
+        {
+          key: `${Date.now()}-${Math.random()}`,
+          menuItemId: null,
+          name: reward.lineName,
+          unit: 0,
+          qty: 1,
+          mods: [],
+          isAlcohol: reward.isAlcohol,
+          rewardId: reward.rewardId,
+          rewardPoints: reward.points,
+          rewardMember: who.id,
+        },
+      ]);
+    }
+    const message = `${who.name} used ${reward.points} points: ${reward.name}${reward.isAlcohol ? ". Check their ID" : ""}.`;
+    setToast(message);
+    setTimeout(() => setToast((t) => (t === message ? null : t)), 10_000);
+    reply(true, reward.kind === "discount" ? "$5 off is on your order." : `${reward.name} is on your order.`);
+  });
+
+  // A perk unlocked on the customer screen: their points and card again.
+  const onRewardsChanged = useEffectEvent((p: { firstName?: unknown } | null) => {
+    if (!member || p?.firstName !== firstNameFor(member.name)) return;
+    const id = member.id;
+    getPosMember(id).then(
+      (m) => {
+        if (m && memberNow.current?.id === id) setMember(m);
+      },
+      () => {},
+    );
+    setCardTry((n) => n + 1);
+  });
+
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(registerTopic);
@@ -1121,6 +1224,8 @@ export default function PosApp({
       })
       .on("broadcast", { event: "staff-setup-ok" }, (msg) => onSetupOk(msg.payload?.id))
       .on("broadcast", { event: "member-off" }, (msg) => onMemberOff(msg.payload))
+      .on("broadcast", { event: "reward-add" }, (msg) => void onRewardAdd(msg.payload))
+      .on("broadcast", { event: "rewards-changed" }, (msg) => onRewardsChanged(msg.payload))
       .on("broadcast", { event: "rickroll-state" }, (msg) => onRickrollState(msg.payload))
       .on("broadcast", { event: "cof-seen" }, (msg) => {
         const id = msg.payload?.id;

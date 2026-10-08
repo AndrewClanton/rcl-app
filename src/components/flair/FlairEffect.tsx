@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, type CSSProperties } from "react";
-import { ENTRANCE_MS, STILL_MS, effectPalette, partyPalette, rgbTriplet, shade, tint, type EntranceKey, type StickerKey } from "@/lib/flair";
+import { ENTRANCE_MS, STILL_MS, effectPalette, isPaidEffect, partyPalette, rgbTriplet, shade, tint, type EntranceKey, type StickerKey } from "@/lib/flair";
 import { confettiScene, fireworksScene, playScene, seeded, type Rand } from "./canvas";
 import Sticker, { DRAWN_STICKERS } from "./Sticker";
 import Unicorn from "./Unicorn";
+import PaidEntrance from "./PaidEntrance";
 import s from "./flair.module.css";
 
 // A member's check-in flair, played once (lib/flair.ts has the catalog):
@@ -69,6 +70,7 @@ export default function FlairEffect({
       {entrance === "confetti" && <CanvasFx kind="confetti" color={color} mode={mode} seed={seed} />}
       {entrance === "fireworks" && <CanvasFx kind="fireworks" color={color} mode={mode} seed={seed} />}
       {entrance === "reactions" && <Reactions color={color} sticker={sticker} mode={mode} seed={seed} />}
+      {isPaidEffect(entrance) && <PaidEntrance kind={entrance} color={color} seed={seed} soft={t.soft} />}
       {entrance === "party" && (
         <>
           <CanvasFx kind="party" color={color} mode={mode} seed={seed} />

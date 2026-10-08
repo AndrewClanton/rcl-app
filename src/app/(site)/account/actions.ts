@@ -13,7 +13,9 @@ import { insidersPlusPriceIdFor } from "@/lib/member-rate";
 import { ANNUAL_PRICE } from "@/lib/membership-rates";
 import { birthdayFromInput } from "@/lib/visits";
 import { cleanDisplayName, cleanProfileLine, handleProblem, normalizeHandle } from "@/lib/member-profile";
-import { flairColor, isFlairEffect, isSticker } from "@/lib/flair";
+import { flairColor, isFlairEffect, isPaidEffect, isSticker } from "@/lib/flair";
+import { ownedPerks, setLook } from "@/lib/rewards-server";
+import { isPerkSlot } from "@/lib/rewards";
 import { allowAttempt } from "@/lib/rate-limit";
 import { safePath } from "@/lib/safe-path";
 import { pendingClaimFor } from "@/lib/member-claim-token";
@@ -388,6 +390,18 @@ export async function updateSharing(fields: { share: boolean; handle: string; di
 // Their check-in flair: a color from the palette (null for Royale Cinema's
 // own), an effect, a sticker for Floating reactions, and whether their
 // birthday week gets the party.
+// What they show of the perks they unlocked with points (a sign-in sound,
+// a card frame, a name color, a title): one they own, or null for the
+// default. Checked on the server (lib/rewards-server.ts setLook).
+export async function updateLook(slot: string, key: string | null): Promise<ProfileResult> {
+  const member = await requireMember();
+  if (!isPerkSlot(slot) || slot === "entrance" || slot === "mobile") return { ok: false, error: "That isn't one of the choices." };
+  if (!(await allowAttempt(`profile-look:${member.id}`, 40, 600))) return { ok: false, error: "That's a lot of changes. Try again in a few minutes." };
+  const r = await setLook(member.id, slot, typeof key === "string" ? key : null);
+  if (r.ok) revalidatePath("/account", "layout");
+  return r;
+}
+
 export async function updateFlair(fields: { color: string | null; effect: string; sticker: string; birthdayParty: boolean }): Promise<ProfileResult> {
   const member = await requireMember();
   if (!fields || typeof fields !== "object") return { ok: false, error: "Couldn't save. Try again." };
@@ -395,6 +409,10 @@ export async function updateFlair(fields: { color: string | null; effect: string
   const color = fields.color === null ? null : (flairColor(fields.color)?.key ?? undefined);
   if (color === undefined) return { ok: false, error: "Pick one of the colors." };
   if (!isFlairEffect(fields.effect)) return { ok: false, error: "Pick one of the effects." };
+  // An entrance bought with points: only once it's theirs.
+  if (isPaidEffect(fields.effect) && !(await ownedPerks(member.id)).some((o) => o.slot === "entrance" && o.key === fields.effect)) {
+    return { ok: false, error: "Unlock that entrance with points first (Spend points, on the screen at the bar)." };
+  }
   if (!isSticker(fields.sticker)) return { ok: false, error: "Pick one of the stickers." };
   const { error } = await createAdminClient()
     .from("members")

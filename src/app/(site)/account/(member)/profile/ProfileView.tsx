@@ -9,6 +9,7 @@ import type { MyLinkedCard } from "@/lib/data/member-account";
 import { Panel, TAP } from "../ui";
 import { birthdayToInput } from "@/lib/visits";
 import ProfilePanels from "./ProfilePanels";
+import type { OwnedPerkKey } from "./PerksPanel";
 
 export default function ProfileView({
   member,
@@ -16,12 +17,14 @@ export default function ProfileView({
   googlePhoto,
   enabled,
   cards,
+  owned = [],
 }: {
   member: Member;
   providers: string[];
   googlePhoto: string | null;
   enabled: { google: boolean; facebook: boolean };
   cards: MyLinkedCard[];
+  owned?: OwnedPerkKey[];
 }) {
   const has = new Set(providers);
   return (
@@ -84,7 +87,7 @@ export default function ProfileView({
         </div>
       </Panel>
 
-      <ProfilePanels member={member} />
+      <ProfilePanels member={member} owned={owned} />
 
       <Panel title="Emails">
         <div className="p-5">

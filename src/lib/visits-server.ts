@@ -29,7 +29,20 @@ import {
 //
 // `at` is for the checks in scripts/ (a visit on another day); the app
 // always records now.
-export async function recordVisit(memberId: string, confirmedBy: string | null, at = new Date()): Promise<VisitResult | null> {
+// `device`: where the check-in came from ("screen:<login>", "door:<staff>"),
+// logged with every try for Back office -> Points -> Watch list.
+export async function recordVisit(memberId: string, confirmedBy: string | null, at = new Date(), device?: string): Promise<VisitResult | null> {
+  const result = await recordVisitOnce(memberId, confirmedBy, at);
+  if (device) {
+    const { error } = await createAdminClient()
+      .from("checkin_attempts")
+      .insert({ member_id: memberId, device: device.slice(0, 80), paid: !!result && !result.alreadyToday, at: at.toISOString() });
+    if (error) console.error("checkin_attempts insert failed", error.code, error.message);
+  }
+  return result;
+}
+
+async function recordVisitOnce(memberId: string, confirmedBy: string | null, at: Date): Promise<VisitResult | null> {
   const supabase = createAdminClient();
   const date = visitBusinessDate(at);
 

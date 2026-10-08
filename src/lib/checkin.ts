@@ -82,6 +82,9 @@ export interface CheckinFlair {
   color: string | null;
   entrance: string;
   sticker: string;
+  // Their sign-in sound, unlocked with points (lib/rewards.ts PERK_SOUNDS):
+  // plays instead of the coin. Missing: the coin.
+  sound?: string | null;
 }
 
 export interface PointsEarned {

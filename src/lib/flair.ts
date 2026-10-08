@@ -38,7 +38,12 @@ export const FLAIR_COLORS: FlairColor[] = [
 // A member who hasn't picked one gets Royale Cinema's own.
 export const DEFAULT_FLAIR_COLOR: FlairColor = FLAIR_COLORS[0];
 
-export type FlairEffectKey = "classic" | "confetti" | "unicorn" | "fireworks" | "reactions";
+// The free ones everyone can pick, and the ones bought with points
+// (lib/rewards.ts PAID_ENTRANCES; a member picks those only once they own
+// them, checked on the server).
+export type FreeEffectKey = "classic" | "confetti" | "unicorn" | "fireworks" | "reactions";
+export type PaidEffectKey = "neon" | "vhs" | "reel" | "arcade" | "popcorn";
+export type FlairEffectKey = FreeEffectKey | PaidEffectKey;
 // What actually plays: their effect, or the birthday-week party.
 export type EntranceKey = FlairEffectKey | "party";
 
@@ -46,6 +51,7 @@ export interface FlairEffect {
   key: FlairEffectKey;
   label: string;
   blurb: string;
+  paid?: boolean; // unlocked with points
 }
 
 export const FLAIR_EFFECTS: FlairEffect[] = [
@@ -54,7 +60,18 @@ export const FLAIR_EFFECTS: FlairEffect[] = [
   { key: "unicorn", label: "Unicorn run", blurb: "A unicorn gallops across the screen, trailing sparkles. Its mane is your color." },
   { key: "fireworks", label: "Fireworks", blurb: "A few rockets go up and burst in your color." },
   { key: "reactions", label: "Floating reactions", blurb: "Stickers float up and fade away, like reactions on a live video. Pick yours below." },
+  { key: "neon", label: "Neon sign", blurb: "Your name buzzes on in neon, in your color.", paid: true },
+  { key: "vhs", label: "VHS static", blurb: "Static and tracking lines, then PLAY.", paid: true },
+  { key: "reel", label: "Film reel", blurb: "A film leader counts down 3, 2, 1.", paid: true },
+  { key: "arcade", label: "Retro arcade", blurb: "PLAYER 1 READY, in pixels.", paid: true },
+  { key: "popcorn", label: "Popcorn rain", blurb: "It rains popcorn.", paid: true },
 ];
+
+export const FREE_EFFECTS = FLAIR_EFFECTS.filter((e) => !e.paid);
+
+export function isPaidEffect(key: unknown): key is PaidEffectKey {
+  return FLAIR_EFFECTS.some((e) => e.paid && e.key === key);
+}
 
 export type StickerKey = "heart" | "popcorn" | "star" | "reel" | "ticket" | "sparkle" | "mix";
 
