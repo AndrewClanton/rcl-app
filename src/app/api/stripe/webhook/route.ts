@@ -10,7 +10,7 @@ import { activateGiftFromCheckout } from "@/lib/gift-membership";
 import { linkPlusCard, settleBookingCard } from "@/lib/member-cards";
 import { invoicePaidFromCheckout } from "@/lib/org-invoice-server";
 import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
-import { finishSeatCheckout } from "@/lib/seat-ordering-server";
+import { closeIfDeclined, finishSeatCheckout } from "@/lib/seat-ordering-server";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -56,6 +56,15 @@ export async function POST(request: NextRequest) {
         failed.push("seat order");
       }
     }
+  }
+
+  // A seat order's card declined: after MAX_DECLINES its payment is called
+  // off, so one payment can't be used to try card after card (card testing).
+  // Needs payment_intent.payment_failed on the webhook's events. Best
+  // effort: never fails the webhook.
+  if (event.type === "payment_intent.payment_failed") {
+    const pi = event.data.object as Stripe.PaymentIntent;
+    if (pi.metadata?.kind === "seat_order") await closeIfDeclined(pi.id).catch((e) => console.error("seat order webhook: decline not checked", pi.id, e));
   }
 
   if (event.type === "checkout.session.completed") {
