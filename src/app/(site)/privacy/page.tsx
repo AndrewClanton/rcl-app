@@ -148,12 +148,9 @@ export default async function PrivacyPage() {
           </li>
           <li>
             To email Insiders the weekly lineup and member news (events, offers, your birthday week), and to send account emails such as receipts,
-            tickets, sign-in links and billing notices. Members, including those whose accounts moved over from our old website, get these unless they
-            turn them off. You choose which kinds you get, or pause them, at{" "}
-            <Link href="/account/email" className="font-bold text-[var(--accent)] hover:underline">
-              your email settings
-            </Link>{" "}
-            or with the link at the bottom of any of our emails.
+            tickets, sign-in links and billing notices. Members, including those whose accounts moved over from our old website, get the member emails
+            unless they unsubscribe. The link at the bottom of any of our member emails lets you choose which kinds you get, pause them, or
+            unsubscribe.
           </li>
           <li>To keep the website and our records secure, and to meet our tax and legal obligations.</li>
         </ul>
@@ -214,11 +211,8 @@ export default async function PrivacyPage() {
           <li>Add, change or remove your photo anytime.</li>
           <li>Turn your profile page on or off, change its link, and change or clear your profile line and check-in effect, on the Profile tab.</li>
           <li>
-            Choose which member emails you get, pause them for 30 days, or unsubscribe from all of them in one tap, from{" "}
-            <Link href="/account/email" className="font-bold text-[var(--accent)] hover:underline">
-              your email settings
-            </Link>{" "}
-            or the link at the bottom of any of our emails. It takes effect right away. Receipts and account emails still come.
+            Choose which member emails you get, pause them for 30 days, or unsubscribe from all of them in one tap, with the link at the bottom of
+            any of our member emails. It takes effect right away. Receipts and account emails still come.
           </li>
           <li>Remove a linked card, or turn off card linking, on the Profile tab of your account.</li>
           <li>

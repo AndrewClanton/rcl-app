@@ -7,7 +7,9 @@ import EmailPreferences from "../../../email/preferences/EmailPreferences";
 import { Panel } from "../ui";
 
 // The email preference center for a signed-in member: the same screen an
-// email's "Email preferences" link opens, without the link.
+// email's link opens. Not linked from the account pages (owner's call,
+// 10/9); it stays as the landing page for email links sent without a token
+// (/account/email#all), so it must keep working.
 export const metadata: Metadata = { title: "Your emails", robots: { index: false, follow: false } };
 
 export default async function AccountEmailPage() {

@@ -3,7 +3,7 @@ import type { Member } from "@/lib/types";
 import MemberAvatar from "@/components/MemberAvatar";
 import SignOutButton from "../../SignOutButton";
 import { GooglePhotoButton, PhotoUploadButton, RemovePhotoButton } from "../../PhotoButtons";
-import { EmailPreference, PasswordForm, ProfileDetailsForm } from "./ProfileForms";
+import { PasswordForm, ProfileDetailsForm } from "./ProfileForms";
 import { LinkedCards } from "./LinkedCards";
 import type { MyLinkedCard } from "@/lib/data/member-account";
 import { Panel, TAP } from "../ui";
@@ -88,12 +88,6 @@ export default function ProfileView({
       </Panel>
 
       <ProfilePanels member={member} owned={owned} />
-
-      <Panel title="Emails">
-        <div className="p-5">
-          <EmailPreference optIn={member.email_opt_in !== false} />
-        </div>
-      </Panel>
 
       <Panel title="Cards linked to your account">
         <div className="p-5">

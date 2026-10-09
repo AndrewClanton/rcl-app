@@ -7,6 +7,7 @@ import MemberQrCode from "@/components/MemberQrCode";
 import MoviePoster from "@/components/MoviePoster";
 import TicketCard from "@/components/TicketCard";
 import { GooglePhotoButton, PhotoUploadButton } from "../PhotoButtons";
+import SignOutButton from "../SignOutButton";
 import { dayMonth, points } from "./format";
 import PlusLink from "@/components/PlusLink";
 import { plusNeedsCard } from "@/lib/plus-status";
@@ -228,6 +229,10 @@ export default function OverviewView({
           </PlusLink>
         </section>
       )}
+
+      <div className="flex justify-end">
+        <SignOutButton />
+      </div>
     </div>
   );
 }
