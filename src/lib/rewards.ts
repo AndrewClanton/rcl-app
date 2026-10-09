@@ -55,6 +55,12 @@ export const PERK_SOUNDS: PerkOption[] = [
   { key: "organ", label: "Theater organ" },
   { key: "warp", label: "Sci-fi warp" },
   { key: "drumroll", label: "Drumroll" },
+  { key: "airhorn", label: "Air horn" },
+  { key: "sadtrombone", label: "Sad trombone" },
+  { key: "boom", label: "Big boom" },
+  { key: "dramatic", label: "Dun dun dunnn" },
+  { key: "scratch", label: "Record scratch" },
+  { key: "rimshot", label: "Rimshot" },
 ];
 
 // Entrances bought with points (components/flair/PaidEntrance.tsx plays
