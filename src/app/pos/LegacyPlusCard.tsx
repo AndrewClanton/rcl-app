@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import InfoTip from "@/components/help/InfoTip";
 import { firstNameOf, type PlusFinish, type PlusWelcome } from "@/lib/checkin";
 import { LEGACY_DEFAULT_INTERVAL, LEGACY_DEFAULT_RATE } from "@/lib/legacy-plus";
-import { ANNUAL_DISCOUNT, RATE_LABEL, RATE_ORDER, planPrice, type BillingInterval } from "@/lib/membership-rates";
+import { ANNUAL_DISCOUNT, RATE_LABEL, RATE_ORDER, RATE_PRICE, planPrice, type BillingInterval } from "@/lib/membership-rates";
 import type { MemberPriceTier } from "@/lib/types";
 import type { PosMember } from "./member-actions";
 import { cancelUnlimitedCard, checkUnlimitedCard, startUnlimitedCard, unlimitedDone, unlimitedPhoneLink, type PlusReceipt } from "./legacy-plus-actions";
@@ -48,7 +48,8 @@ export default function LegacyPlusCard({
   if (!shown) {
     return (
       <button className="btn-secondary mt-2 min-h-11 w-full !py-2 text-sm" onClick={() => setShown(true)}>
-        Upgrade to Insiders+ · $15/mo
+        {/* Their own rate: a student or senior set at the register shows theirs. */}
+        Upgrade to Insiders+ · ${RATE_PRICE[member.price_tier ?? LEGACY_DEFAULT_RATE]}/mo
       </button>
     );
   }
@@ -233,7 +234,7 @@ function SetupModal({
   onDone: (m: PosMember) => void;
 }) {
   const first = firstNameOf(member.name);
-  const [tier, setTier] = useState<MemberPriceTier>(LEGACY_DEFAULT_RATE);
+  const [tier, setTier] = useState<MemberPriceTier>(member.price_tier ?? LEGACY_DEFAULT_RATE);
   const [interval, setBilling] = useState<BillingInterval>(LEGACY_DEFAULT_INTERVAL);
   const [idChecked, setIdChecked] = useState(false);
   const [phase, setPhase] = useState<Phase>({ name: "plan" });
