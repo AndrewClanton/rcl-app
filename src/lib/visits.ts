@@ -274,12 +274,16 @@ export function badgesFor(f: VisitFacts): BadgeClaim[] {
 // ---------- what a check-in did ----------
 
 // A badge as the register and the customer screen see it.
+// key: a Series 1 badge's BadgeKey, or a newer catalog badge's key
+// (lib/badges). card: the signed copy just minted for it, as its card
+// (SVG front and back), for the customer screen.
 export interface EarnedBadge {
-  key: BadgeKey;
+  key: string;
   label: string;
   emoji: string;
   points: number;
   reward: RewardKind | null;
+  card?: { code: string; front: string; back: string; serial: number } | null;
 }
 
 export function earnedBadge(b: Badge): EarnedBadge {

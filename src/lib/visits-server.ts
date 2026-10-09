@@ -4,7 +4,6 @@ import {
   REWARD_LABEL,
   VISIT_POINTS,
   badgeFor,
-  badgesFor,
   earnedBadge,
   recentWeeks,
   visitBusinessDate,
@@ -12,8 +11,34 @@ import {
   type BadgeKey,
   type EarnedBadge,
   type RewardKind,
+  type VisitFacts,
   type VisitResult,
 } from "@/lib/visits";
+import { claimsFor } from "@/lib/badges/rules";
+import { cardsFor, checkinRules, holderFor, mintClaims, type BadgeCard } from "@/lib/badges/server";
+
+// The signed copies (lib/badges) for the badges a visit just paid, as
+// cards for the customer screen. A copy that can't be minted now (no
+// signing key, a dropped connection) is minted later (ensureCopies, when
+// they open their account): the check-in itself never waits on it failing.
+async function mintVisitBadges(memberId: string, visitId: string, facts: VisitFacts, keys: string[]): Promise<Map<string, BadgeCard>> {
+  if (!keys.length) return new Map();
+  try {
+    const supabase = createAdminClient();
+    const [claims, holder] = await Promise.all([supabase.from("member_badges").select("id, badge, period").eq("visit_id", visitId), holderFor(memberId, supabase)]);
+    if (claims.error || !holder) return new Map();
+    const fresh = (claims.data ?? []).filter((c) => keys.includes(c.badge as string));
+    const copies = await mintClaims(
+      holder,
+      fresh.map((c) => ({ claimId: c.id as string, key: c.badge as string, period: (c.period as string) ?? "", facts })),
+      supabase,
+    );
+    return await cardsFor(copies);
+  } catch (e) {
+    console.error("badge mint at check-in", e instanceof Error ? e.message : e);
+    return new Map();
+  }
+}
 
 // Records a confirmed check-in as today's visit and pays it: VISIT_POINTS,
 // plus any badges it earns (lib/visits.ts) and their rewards. Once per
@@ -73,12 +98,17 @@ async function recordVisitOnce(memberId: string, confirmedBy: string | null, at:
   // Can't tell which badges it earns: leave it unpaid for a retry to pay.
   if (streakRes.error || countRes.error || !memberRes.data) return null;
 
-  const claims = badgesFor({ at: new Date(visit.checked_in_at as string), visitNumber: visits, weekStreak, birthday: (memberRes.data.birthday as string | null) ?? null });
+  // Which badges it earns: the catalog's rules (lib/badges/rules.ts), the
+  // same as the built-in list for the eleven from before.
+  const facts: VisitFacts = { at: new Date(visit.checked_in_at as string), visitNumber: visits, weekStreak, birthday: (memberRes.data.birthday as string | null) ?? null };
+  const rules = await checkinRules();
+  const ruleByKey = new Map(rules.map((r) => [r.key, r]));
+  const claims = claimsFor(rules, facts);
   const payload = claims.flatMap((c) => {
-    const b = badgeFor(c.key);
+    const b = ruleByKey.get(c.key);
     if (!b) return [];
-    const reason = `${b.label} badge${b.weeks ? `: ${b.weeks} weeks in a row` : ""}`;
-    return [{ key: b.key, period: c.period, points: b.points, reward: b.reward ?? null, note: b.label, reason }];
+    const reason = `${b.name} badge${b.ruleType === "week_streak" && b.params.weeks ? `: ${b.params.weeks} weeks in a row` : ""}`;
+    return [{ key: b.key, period: c.period, points: b.points, reward: b.reward ?? null, note: b.name, reason }];
   });
   const { data: award, error: awardErr } = await supabase.rpc("award_member_visit", {
     p_visit: visit.id,
@@ -92,9 +122,14 @@ async function recordVisitOnce(memberId: string, confirmedBy: string | null, at:
   // Paid a moment ago by another register (or this one, twice).
   if (!a.paid) return already(Number(a.balance));
 
+  const cards = await mintVisitBadges(memberId, visit.id as string, facts, a.badges ?? []);
   const badges: EarnedBadge[] = (a.badges ?? []).flatMap((key) => {
     const b = badgeFor(key);
-    return b ? [earnedBadge(b)] : [];
+    const r = ruleByKey.get(key);
+    const e: EarnedBadge | null = b ? earnedBadge(b) : r ? { key, label: r.name, emoji: "🏅", points: r.points, reward: r.reward } : null;
+    if (!e) return [];
+    const card = cards.get(key);
+    return [card ? { ...e, card: { code: card.code, front: card.front, back: card.back, serial: card.serial } } : e];
   });
   const rewards = badges.flatMap((b): RewardKind[] => (b.reward ? [b.reward] : []));
   const earned = VISIT_POINTS + badges.reduce((s, b) => s + b.points, 0);

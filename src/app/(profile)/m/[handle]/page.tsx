@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { getPublicProfile } from "@/lib/member-profile-server";
+import { getPublicProfile, getPublicProfileCards } from "@/lib/member-profile-server";
 import { profileBlurb } from "@/lib/member-profile";
 import ProfileSheet from "./ProfileSheet";
 
@@ -31,5 +31,6 @@ export default async function SharedProfilePage({ params }: PageProps<"/m/[handl
   const { handle } = await params;
   const p = await getPublicProfile(handle);
   if (!p) notFound();
-  return <ProfileSheet p={p} />;
+  const cards = await getPublicProfileCards(handle);
+  return <ProfileSheet p={p} cards={cards} />;
 }
