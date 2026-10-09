@@ -45,7 +45,7 @@ const files = (dir) =>
 // 1. The rate.
 check("the rate is 8.725%", SALES_TAX_PERCENT === 8.725 && Math.abs(SALES_TAX_RATE - 0.08725) < 1e-12);
 const srcDir = new URL("../src/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
-const elsewhere = files(srcDir).filter((p) => !p.replace(/\\/g, "/").endsWith("lib/sales-tax.ts") && /\b(8\.725|0\.08725|1\.08725)\b|TAX_RATE\s*=\s*0\.\d/.test(readFileSync(p, "utf8")));
+const elsewhere = files(srcDir).filter((p) => !p.replace(/\\/g, "/").endsWith("lib/sales-tax.ts") && /\b(8\.725|0\.08725|1\.08725)\b|TAX_RATE\s*=\s*0\.\d/.test(readFileSync(p, "utf8").replace(/^\s*\/\/.*$/gm, "")));
 check("no other file has its own copy of the rate", elsewhere.length === 0, elsewhere.join(", "));
 check("Stripe's tax rate is made from the same number", /percentage:\s*SALES_TAX_PERCENT/.test(read("src/lib/stripe-tax.ts")) && /inclusive:\s*false/.test(read("src/lib/stripe-tax.ts")));
 
