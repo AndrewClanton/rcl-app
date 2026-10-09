@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { UUID } from "@/lib/data/member-merge";
 import { mergeSentence } from "@/lib/member-merge";
 import { memberPhotoPath, removeMemberPhotos } from "@/lib/member-photos";
+import { resealTransfers } from "@/lib/badges/server";
 
 // Merging a duplicate member into another (Back office → Members → a
 // member → "Merge a duplicate into this account"). Owner and admin only,
@@ -41,6 +42,10 @@ export async function mergeMemberAccounts(keepId: string, dropId: string): Promi
     const res = await removeMemberPhotos([dropId], { extra: [memberPhotoPath(before?.avatar_url)], keep: memberPhotoPath(kept.avatar_url) }).catch(() => ({ ok: false }));
     if (!res.ok) console.error("merge: the merged-in account's photo files weren't deleted", dropId);
   }
+  // The duplicate's badge copies moved to the kept account (the
+  // permanence rule, lib/badges/server.ts): sign them for their new holder.
+  // Not fatal: the badge pages sign any still waiting.
+  await resealTransfers(admin).catch((e: unknown) => console.error("merge: badge re-sign", e instanceof Error ? e.message : e));
   const r = (data ?? {}) as { name?: string; points?: number | string; visits?: number };
   revalidatePath("/admin/members");
   revalidatePath("/admin/members/duplicates");

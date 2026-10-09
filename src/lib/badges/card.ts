@@ -83,7 +83,7 @@ export interface BadgeCardData {
   setSize: number; // badges in the series
   rarity: Rarity | null;
   serial: number | null; // null on a preview
-  of: number; // live copies of this badge
+  of: number; // copies of this badge ever minted, erased ones too
   minted: string; // "Oct 9, 2026", or less on a public page
   issuer: string;
   event: string | null;
@@ -92,6 +92,7 @@ export interface BadgeCardData {
   verifyUrl: string | null;
   qr: { size: number; d: string } | null;
   revoked: boolean;
+  voided?: boolean; // voided by the issuer (fraud): VOID on both sides
 }
 
 const W = 250;
@@ -150,8 +151,9 @@ function frame(inner: string, label: string): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${inner}</svg>`;
 }
 
-const revokedStamp = () =>
-  `<g transform="rotate(-24 125 175)"><rect x="35" y="150" width="180" height="50" rx="6" fill="none" stroke="#c8141b" stroke-width="5"/><text x="125" y="186" text-anchor="middle" ${DISPLAY} font-size="30" fill="#c8141b">REVOKED</text></g>`;
+const stamp = (word: string) =>
+  `<g transform="rotate(-24 125 175)"><rect x="35" y="150" width="180" height="50" rx="6" fill="none" stroke="#c8141b" stroke-width="5"/><text x="125" y="186" text-anchor="middle" ${DISPLAY} font-size="30" fill="#c8141b">${word}</text></g>`;
+const statusStamp = (d: BadgeCardData) => (d.voided ? stamp("VOID") : d.revoked ? stamp("REVOKED") : "");
 
 export function cardFrontSvg(d: BadgeCardData): string {
   const tone = d.rarity ? RARITY_COLOR[d.rarity] : UNMINTED;
@@ -170,7 +172,7 @@ export function cardFrontSvg(d: BadgeCardData): string {
       `<text x="${W / 2}" y="${270 + Math.round(nameSize / 3)}" text-anchor="middle" ${DISPLAY} font-size="${nameSize}" fill="${INK}">${esc(name)}</text>` +
       flavor.map((l, i) => `<text x="${W / 2}" y="${302 + i * 15}" text-anchor="middle" ${BODY} font-size="11.5" fill="${MUTED}">${esc(l)}</text>`).join("") +
       `<text x="${W / 2}" y="${H - 15}" text-anchor="middle" ${MONO} font-size="7.5" fill="${MUTED}" letter-spacing="1.4">${esc(d.issuer.toUpperCase())}</text>` +
-      (d.revoked ? revokedStamp() : ""),
+      statusStamp(d),
     `${d.name} badge, ${seriesLine(d)}`,
   );
 }
@@ -217,7 +219,7 @@ export function cardBackSvg(d: BadgeCardData): string {
       `<text x="${tx}" y="${qrY + 45}" ${BODY} font-size="9.5" fill="#b3aa97">Every copy is unique.</text>` +
       (d.code ? `<text x="${tx}" y="${qrY + 68}" ${MONO} font-size="8.5" fill="${GOLD}" letter-spacing=".4">${esc(d.code)}</text>` : "") +
       `<text x="${tx}" y="${qrY + 84}" ${MONO} font-size="7" fill="#7d8590" letter-spacing="1">${esc(d.issuer.toUpperCase().slice(0, 22))}</text>` +
-      (d.revoked ? revokedStamp() : ""),
+      statusStamp(d),
     `Back of the ${d.name} badge: ${serialLine(d)}, ${d.rarity ?? "new"}`,
   );
 }

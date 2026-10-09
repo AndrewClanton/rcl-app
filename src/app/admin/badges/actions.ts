@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { maskEmail, maskPhone } from "@/lib/contact-mask";
-import { awardByHand, createDef } from "@/lib/badges/server";
+import { awardByHand, createDef, voidCopy } from "@/lib/badges/server";
 import { approveDraft, awardEventBadges, countEarners, eventRule, refreshDrafts, skipDraft, type EventRule } from "@/lib/badges/events";
 import { cleanSeriesName } from "@/lib/event-series";
 import { RULE_TYPES, type RuleParams, type RuleType } from "@/lib/badges/rules";
@@ -211,6 +211,18 @@ export async function searchMembersForBadge(query: string): Promise<BadgeResult<
   const { data, error } = await createAdminClient().from("members").select("id, name, email, phone").is("erased_at", null).or(filters.join(",")).order("name").limit(8);
   if (error) return { ok: false, error: "Search didn't work. Try again." };
   return { ok: true, members: (data ?? []).map((m) => ({ id: m.id, name: m.name, hint: [maskEmail(m.email), maskPhone(m.phone)].filter(Boolean).join(" · ") })) };
+}
+
+// Fraud: void a copy, with a reason (managers and up). It stays, marked
+// VOID, and its verify page says so. It can't be undone.
+export async function voidBadgeCopy(code: string, reason: string): Promise<BadgeResult> {
+  const staff = await assertManager();
+  if (typeof code !== "string" || typeof reason !== "string") return { ok: false, error: "Say why it's void." };
+  const r = await voidCopy(code, reason, staff.employeeId);
+  if (!r.ok) return r;
+  revalidatePath(`/admin/badges/${r.defId}`);
+  revalidatePath(`/admin/badges/${r.defId}/copy/${code}`);
+  return { ok: true };
 }
 
 export async function awardBadge(defId: string, memberId: string, note: string): Promise<BadgeResult<{ code: string | null }>> {
