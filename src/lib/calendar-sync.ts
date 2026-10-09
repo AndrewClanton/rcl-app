@@ -427,6 +427,10 @@ export interface Line {
   title: string;
   where: Where;
   detail: string;
+  // Flagged lines only: the plain sentence for Showtimes and the schedule
+  // status ("1 ticket sold for Never Stop Chasing Fri 2 PM, but it's not on
+  // the calendar. Refund or move it.").
+  say?: string;
 }
 
 export interface PlanAdd extends Line {
@@ -594,7 +598,10 @@ export function buildPlan(cal: ParsedCalendar, state: SyncState, picks: Picks = 
     const moves = s.room_id !== room.id || at(s.starts_at) !== at(e.startsAt);
     if (moves && sold) {
       // Left exactly as it is: its price and visibility go with the move.
-      flagged.push(line(e.date, s.starts_at, s.title, whereOf(s.room_id), `${tix(sold)} sold, so it wasn't changed. The calendar has it ${e.where} at ${clockOf(e.startsAt)}: move it with Edit and let the ticket holders know.`));
+      flagged.push({
+        ...line(e.date, s.starts_at, s.title, whereOf(s.room_id), `${tix(sold)} sold, so it wasn't changed. The calendar has it ${e.where} at ${clockOf(e.startsAt)}: move it with Edit and let the ticket holders know.`),
+        say: `${tix(sold)} sold for ${s.title} ${dayName(businessDate(at(s.starts_at)))} ${clockOf(s.starts_at)}, but the calendar has it ${e.where === "outdoor" ? "outdoors " : ""}${dayName(e.date)} ${clockOf(e.startsAt)}. Move it and let the ticket holders know.`,
+      });
       continue;
     }
     if (s.room_id !== room.id) {
@@ -635,7 +642,12 @@ export function buildPlan(cal: ParsedCalendar, state: SyncState, picks: Picks = 
     if (d > cal.lastDate) continue;
     const sold = held[s.id] ?? 0;
     const l = line(d, s.starts_at, s.title, whereOf(s.room_id));
-    if (sold) flagged.push({ ...l, detail: `not on the calendar, but ${tix(sold)} sold, so it wasn't removed. Refund or move it, or put it back on the calendar.` });
+    if (sold)
+      flagged.push({
+        ...l,
+        detail: `not on the calendar, but ${tix(sold)} sold, so it wasn't removed. Refund or move it, or put it back on the calendar.`,
+        say: `${tix(sold)} sold for ${s.title} ${dayName(d)} ${clockOf(s.starts_at)}, but it's not on the calendar. Refund or move it.`,
+      });
     else remove.push({ ...l, id: s.id });
   }
 

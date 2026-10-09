@@ -3,7 +3,9 @@ import { getMenuTree, withoutHiddenItems } from "@/lib/data/menu";
 import { getActiveEmployees } from "@/lib/data/employees";
 import { getRecipesByItem } from "@/lib/data/recipes";
 import { getBarPrices } from "@/lib/data/barBook";
-import { hasAdminAccess, requireStaff } from "@/lib/auth";
+import { hasAdminAccess, hasManagerAccess, requireStaff } from "@/lib/auth";
+import { getCalendarStatus } from "@/lib/calendar-status-server";
+import ScheduleCheckBanner from "@/components/ScheduleCheckBanner";
 import { getDraftOrders } from "./actions";
 import { defaultReaderId } from "./terminal-config";
 import { getRegisterScreenings } from "./ticket-actions";
@@ -38,7 +40,7 @@ export default async function PosPage() {
   // Signing in again comes back here, not to the back office.
   const session = await requireStaff("/pos");
 
-  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, owners, barPrices] = await Promise.all([
+  const [categories, employees, heldOrders, openTabs, recipesByItem, showings, owners, barPrices, calendar] = await Promise.all([
     getMenuTree(),
     getActiveEmployees(),
     getDraftOrders("held"),
@@ -48,6 +50,7 @@ export default async function PosPage() {
     // The owners' own member accounts that get the owner rate (Back office, Owner rate).
     ownerMembers().catch(() => null),
     getBarPrices(),
+    getCalendarStatus(),
   ]);
 
   // Tickets are sold from the Movies tab (per showing, with seats counted),
@@ -74,6 +77,10 @@ export default async function PosPage() {
         </span>
       </div>
       <div className="shrink-0">
+        {/* A slim red strip when the schedule hasn't been checked against
+            the calendar in the last hour: in the flow, above everything,
+            never over the order or payment. */}
+        <ScheduleCheckBanner initial={calendar} canCheck={hasManagerAccess(session.role)} slim />
         <UpdateBanner current={deploymentId()} />
         {/* The shift tools behind the register's Staff button, and any
             reminder that's due. Roles, so the managers' to-dos and Ran out

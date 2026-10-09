@@ -8,7 +8,11 @@ import { schemaMissing } from "@/lib/schema-missing";
 import { PUBLIC_SCREENINGS_TAG } from "@/lib/data/screenings";
 import { applyPlan, buildPlan, loadSyncState, parseCalendar, readCalendarFile, type Candidate, type ParsedCalendar, type Picks, type SyncPlan } from "@/lib/calendar-sync";
 import { CALENDAR_SHEET_SETTING, fetchCalendarFromDrive, parseSheetLink } from "@/lib/calendar-drive";
+import { recordSyncStatus, statusFromPlan } from "@/lib/calendar-status";
+import { DriveError, downloadCalendar, loadConnection, missingGoogleEnv } from "@/lib/google-drive-calendar";
 import { importMovie } from "../actions";
+
+const BACK_OFFICE = "Back office (Sync from calendar)";
 
 // Back office > Showtimes > Sync from calendar. Both actions take the
 // uploaded .xlsx again (it's small), or pull it from Google Drive again
@@ -39,10 +43,20 @@ async function sheetLink(): Promise<{ link: string; from: "app" | "env" } | null
   return env ? { link: env, from: "env" } : null;
 }
 
-// Where the Drive link comes from, for the page (never the link itself).
-export async function calendarDriveSource(): Promise<"app" | "env" | null> {
+// The connected Google Drive file (Connect Google Drive), when it's set up,
+// connected and a calendar file is picked.
+async function googleFile() {
+  if (missingGoogleEnv().length) return null;
+  const conn = await loadConnection().catch(() => null);
+  return conn?.fileId ? conn : null;
+}
+
+// Where "Pull latest from Google Drive" reads from, for the page (never the
+// link itself): the connected Google Drive file first, else a saved link.
+export async function calendarDriveSource(): Promise<"google" | "app" | "env" | null> {
   const { no } = await manager();
   if (no) return null;
+  if (await googleFile()) return "google";
   return (await sheetLink())?.from ?? null;
 }
 
@@ -50,7 +64,17 @@ async function readUpload(form: FormData): Promise<{ cal: ParsedCalendar; fileNa
   const drive = form.get("source") === "drive";
   let bytes: Buffer;
   let fileName: string;
-  if (drive) {
+  const google = drive ? await googleFile() : null;
+  if (google) {
+    try {
+      bytes = await downloadCalendar(google);
+    } catch (e) {
+      if (e instanceof DriveError) return { ok: false, error: e.message };
+      console.error(e);
+      return { ok: false, error: "Couldn't read the calendar from Google Drive. Try again, or upload the file instead." };
+    }
+    fileName = google.fileName ?? "Google Drive";
+  } else if (drive) {
     const src = await sheetLink();
     if (!src) return { ok: false, error: "No Google Drive link is saved yet. Save the calendar's link below first." };
     const got = await fetchCalendarFromDrive(src.link);
@@ -110,6 +134,9 @@ export async function previewCalendarSync(form: FormData): Promise<PreviewResult
     const state = await loadSyncState(createAdminClient());
     const first = buildPlan(up.cal, state, up.picks);
     const plan = first.looks.length ? buildPlan(up.cal, state, up.picks, await tmdbOptions(first)) : first;
+    // Nothing to change means the schedule already matches the calendar:
+    // that counts as a check too.
+    if (!plan.add.length && !plan.change.length && !plan.remove.length) await recordSyncStatus(createAdminClient(), statusFromPlan(plan, BACK_OFFICE, { added: 0, changed: 0, removed: 0 }));
     return { ok: true, plan, fileName: up.fileName };
   } catch (e) {
     console.error(e);
@@ -143,6 +170,8 @@ export async function applyCalendarSync(form: FormData): Promise<ApplyResult> {
     revalidatePath("/admin/screenings/sync");
     revalidatePath("/showtimes");
     revalidatePath("/");
+    await recordSyncStatus(db, statusFromPlan(plan, BACK_OFFICE, r));
+    revalidatePath("/admin", "layout");
     return { ok: true, ...r, filmsAdded: Object.keys(movieIds).length };
   } catch (e) {
     if (schemaMissing(e as { code?: string })) return { ok: false, error: "Calendar sync isn't set up in the database yet (migration 20261007010000_calendar_syncs.sql). Nothing was changed." };

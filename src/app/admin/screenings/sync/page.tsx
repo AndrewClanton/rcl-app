@@ -5,6 +5,8 @@ import PageHeader from "@/components/admin/PageHeader";
 import InfoTip from "@/components/help/InfoTip";
 import CalendarSync from "./CalendarSync";
 import { calendarDriveSource } from "./actions";
+import { googleDriveState } from "./google-actions";
+import GoogleDriveConnect from "./GoogleDriveConnect";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +21,10 @@ function lastSyncedLine(row: { synced_by_name: string | null; created_at: string
   return `Last synced by ${who} · ${time}`;
 }
 
-export default async function CalendarSyncPage() {
+export default async function CalendarSyncPage({ searchParams }: { searchParams: Promise<{ drive?: string | string[] }> }) {
   await requireManager();
+  const back = (await searchParams).drive;
+  const google = await googleDriveState();
   const { data, error } = await createAdminClient().from("calendar_syncs").select("synced_by_name, created_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error && !schemaMissing(error)) throw error;
   const last = lastSyncedLine(data as { synced_by_name: string | null; created_at: string } | null);
@@ -35,6 +39,11 @@ export default async function CalendarSyncPage() {
       />
       <p className="mb-4 text-sm text-[var(--muted)]">{last ?? "Not synced from the calendar here yet."}</p>
       <CalendarSync driveSource={await calendarDriveSource()} />
+      {google && (
+        <div className="mt-6">
+          <GoogleDriveConnect state={google} back={typeof back === "string" ? back : null} />
+        </div>
+      )}
     </>
   );
 }

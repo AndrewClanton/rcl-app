@@ -8,6 +8,8 @@ import AdminShell from "./_nav/AdminShell";
 import { navFor } from "./_nav/map";
 import { RAIL_COOKIE } from "./_nav/prefs";
 import { appVersion } from "@/lib/app-version";
+import { getCalendarStatus } from "@/lib/calendar-status-server";
+import ScheduleCheckBanner from "@/components/ScheduleCheckBanner";
 
 // The back office's frame: the menu (a sidebar on an iPad or computer, a
 // drawer on a phone), grouped by the job and cut down to what this
@@ -16,7 +18,7 @@ import { appVersion } from "@/lib/app-version";
 // never the security.
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff();
-  const [signals, pinStatus, jar] = await Promise.all([getSignals(staff.role), getPinStatus(staff.employeeId), cookies()]);
+  const [signals, pinStatus, jar, calendar] = await Promise.all([getSignals(staff.role), getPinStatus(staff.employeeId), cookies(), getCalendarStatus()]);
   const nav = navFor(staff.role);
 
   return (
@@ -29,6 +31,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       // Which build this is: for the owners only.
       version={staff.role === "owner" ? appVersion().line : null}
     >
+      {/* Red when the schedule hasn't been checked against the staff
+          calendar in the last hour (src/lib/calendar-status.ts). */}
+      <ScheduleCheckBanner initial={calendar} canCheck={hasManagerAccess(staff.role)} />
       {/* Everyone started on 9999, and it keeps working until they pick
           their own -- this nags until they do (src/app/admin/my-pin). */}
       {(pinStatus === "default" || pinStatus === "temporary") && (
