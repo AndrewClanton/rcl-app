@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hashPrinterPassword, newLoginId, newPrinterPassword } from "@/lib/print/printer-auth";
-import { enqueueJobs } from "@/lib/print/queue";
+import { enqueueJobs, stationPrinter, stationProblem } from "@/lib/print/queue";
+import { savePatternSettings } from "@/lib/print/pattern-settings";
 import { testPageXml } from "@/lib/print/receipt";
-import { asStation, withoutDrawer, type PrintJobKind, type RegisterStation } from "@/lib/print/stations";
+import { parsePatternSettings, PATTERN_DESIGNS, type PatternSettings } from "@/lib/print/receipt-patterns";
+import { asStation, hasDrawer, isEposDocument, withoutDrawer, type PrintJobKind, type RegisterStation } from "@/lib/print/stations";
 
 // Back office -> Printers (managers and up): add a printer and get the
 // settings to type into it, say what each printer prints, test it, and
@@ -139,6 +141,39 @@ export async function reprintJob(jobId: string): Promise<Result> {
     );
   } catch {
     return { ok: false, error: "Couldn't send the reprint. Try again." };
+  }
+  revalidate();
+  return { ok: true };
+}
+
+// ---------- patterned receipts ----------
+
+export async function saveReceiptPatterns(input: PatternSettings): Promise<Result> {
+  const staff = await assertManager();
+  try {
+    await savePatternSettings(parsePatternSettings(input), staff.employeeId);
+  } catch (e) {
+    console.error("receipt patterns not saved", e);
+    return { ok: false, error: "Couldn't save that. Try again." };
+  }
+  revalidate();
+  return { ok: true };
+}
+
+// "Print a sample of each": the pictures are drawn in the manager's browser
+// (lib/print/pattern-render.ts) and come here to go to the Bar printer.
+export async function printPatternSamples(xmls: string[]): Promise<Result> {
+  const staff = await assertManager();
+  const list = Array.isArray(xmls) ? xmls.slice(0, PATTERN_DESIGNS.length) : [];
+  if (!list.length || list.some((x) => typeof x !== "string" || x.length > 300_000 || !isEposDocument(x) || hasDrawer(x)))
+    return { ok: false, error: "Those samples didn't come out right. Try again." };
+  const printer = await stationPrinter("bar");
+  const problem = stationProblem("bar", printer);
+  if (problem || !printer) return { ok: false, error: problem ?? "No Bar printer is set up." };
+  try {
+    await enqueueJobs(printer.id, list.map((xml, i) => ({ kind: "test" as const, xml, label: `Receipt pattern sample ${i + 1}` })), staff.employeeId);
+  } catch {
+    return { ok: false, error: "Couldn't send the samples. Try again." };
   }
   revalidate();
   return { ok: true };

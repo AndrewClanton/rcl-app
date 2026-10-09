@@ -6,6 +6,8 @@ import type { PrinterOverview, PrintJobRow } from "@/lib/data/printers";
 import { STATION_LABEL, type RegisterStation } from "@/lib/print/stations";
 import PageHeader from "@/components/admin/PageHeader";
 import InfoTip from "@/components/help/InfoTip";
+import type { PatternSettings } from "@/lib/print/receipt-patterns";
+import PatternReceipts from "./PatternReceipts";
 import { createPrinter, removePrinter, reprintJob, resetPrinterPassword, testPrinter, updatePrinter, type Credentials, type PrinterFields } from "./actions";
 
 const TZ = "America/Chicago";
@@ -29,7 +31,7 @@ function jobsFor(p: Pick<PrinterOverview, "receiptStation" | "orderTickets">): s
 
 type Setup = { name: string; kind: string; interval: number; creds: Extract<Credentials, { ok: true }> };
 
-export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: PrinterOverview[]; jobs: PrintJobRow[]; pollUrl: string }) {
+export default function PrintersAdmin({ printers, jobs, pollUrl, patterns }: { printers: PrinterOverview[]; jobs: PrintJobRow[]; pollUrl: string; patterns: PatternSettings }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -263,6 +265,8 @@ export default function PrintersAdmin({ printers, jobs, pollUrl }: { printers: P
           </p>
         </section>
       </div>
+
+      <PatternReceipts initial={patterns} />
     </div>
   );
 }

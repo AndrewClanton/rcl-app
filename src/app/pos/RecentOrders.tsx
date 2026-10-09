@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { receiptXml, type ReceiptData } from "@/lib/print/receipt";
+import type { ReceiptData } from "@/lib/print/receipt";
 import { printerBaseUrl, type PrintResult } from "@/lib/print/epos-client";
 import ManagerPinModal from "@/components/ManagerPinModal";
 import InfoTip from "@/components/help/InfoTip";
@@ -10,6 +10,7 @@ import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "
 import { printTickets } from "./print-tickets";
 import { ownerTabLabel, ownerTabReceiptLabel } from "@/lib/register-totals";
 import { sendPrint, targetName, type PrintTarget } from "./printing";
+import { customerReceipt } from "./receipt-print";
 
 const TZ = "America/Chicago";
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -212,7 +213,7 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                         disabled={!target || !!busy}
                         onClick={() =>
                           target &&
-                          print("receipt", () => sendPrint(target, "receipt", receiptXml(asReceipt(selected)), `Receipt #${selected.orderNumber} (reprint)`), `Receipt for #${selected.orderNumber} sent to ${targetName(target)}.`)
+                          print("receipt", async () => sendPrint(target, "receipt", await customerReceipt(asReceipt(selected)), `Receipt #${selected.orderNumber} (reprint)`), `Receipt for #${selected.orderNumber} sent to ${targetName(target)}.`)
                         }
                       >
                         {busy === "receipt" ? "Printing…" : "Reprint receipt"}

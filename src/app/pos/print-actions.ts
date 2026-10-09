@@ -4,6 +4,8 @@ import { assertStaff } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { enqueueJobs, printerOnline, splitDrawer, stationPrinter, stationProblem, type NewJob } from "@/lib/print/queue";
+import { getPatternSettings } from "@/lib/print/pattern-settings";
+import type { PatternSettings } from "@/lib/print/receipt-patterns";
 import { asStation, isEposDocument, REGISTER_KINDS, seenLabel, type PrintJobKind, type PrintJobStatus } from "@/lib/print/stations";
 
 // The register's side of the print queue, for a device set to "Print through
@@ -72,4 +74,11 @@ export async function getStationPrinterStatus(stationInput: string): Promise<Sta
   const p = station ? await stationPrinter(station) : null;
   if (!p) return { set: false };
   return { set: true, name: p.name, online: printerOnline(p), seen: seenLabel(p.last_seen_at, p.poll_interval_seconds) };
+}
+
+// Patterned receipts on or off, and which designs (Back office → Printers):
+// the register asks when it opens and every few minutes after.
+export async function getReceiptPatterns(): Promise<PatternSettings> {
+  await assertStaff();
+  return getPatternSettings();
 }
