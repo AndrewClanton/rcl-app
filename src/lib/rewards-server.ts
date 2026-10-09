@@ -2,11 +2,13 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   PAID_ENTRANCE_KEYS,
+  isGoodSection,
   isPerkSlot,
   parseLook,
   perkOption,
   rewardLineName,
   sortOffers,
+  type GoodSection,
   type MemberLook,
   type PerkSlot,
   type RewardKind,
@@ -25,6 +27,7 @@ export interface CatalogRow {
   name: string;
   description: string | null;
   kind: RewardKind;
+  section: GoodSection | null; // a good's section; null: guessed from its name
   perk_slot: PerkSlot | null;
   perk_key: string | null;
   perk_days: number | null;
@@ -38,7 +41,7 @@ export interface CatalogRow {
   sort: number;
 }
 
-const CATALOG_COLUMNS = "id, name, description, kind, perk_slot, perk_key, perk_days, points, real_cost, is_alcohol, daily_limit, monthly_limit, stock, active, sort";
+const CATALOG_COLUMNS = "id, name, description, kind, section, perk_slot, perk_key, perk_days, points, real_cost, is_alcohol, daily_limit, monthly_limit, stock, active, sort";
 
 function toRow(r: Record<string, unknown>): CatalogRow {
   return {
@@ -46,6 +49,7 @@ function toRow(r: Record<string, unknown>): CatalogRow {
     name: String(r.name),
     description: (r.description as string | null) ?? null,
     kind: r.kind as RewardKind,
+    section: isGoodSection(r.section) ? r.section : null,
     perk_slot: isPerkSlot(r.perk_slot) ? r.perk_slot : null,
     perk_key: (r.perk_key as string | null) ?? null,
     perk_days: r.perk_days === null || r.perk_days === undefined ? null : Number(r.perk_days),
@@ -149,6 +153,7 @@ export async function walletFor(memberId: string, pending: { rewardId: string; q
         name: c.name,
         description: c.description,
         kind: c.kind,
+        section: c.section,
         slot: c.perk_slot,
         key: c.perk_key,
         days: c.perk_days,

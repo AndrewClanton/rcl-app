@@ -18,7 +18,8 @@
 import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
 
 export type RewardKind = "good" | "discount" | "perk";
-export type PerkSlot = "sound" | "entrance" | "frame" | "name_color" | "title" | "mobile";
+export type PerkSlot =
+  "sound" | "entrance" | "frame" | "name_color" | "title" | "mobile";
 
 export const POINT_VALUE = REWARD_VALUE / POINTS_PER_REWARD; // $0.05
 
@@ -27,7 +28,11 @@ export function pointsFor(dollars: number): number {
   return Math.max(1, Math.round(dollars / POINT_VALUE));
 }
 
-export const KIND_LABEL: Record<RewardKind, string> = { good: "Real goods", discount: "Money off", perk: "Vanity perk" };
+export const KIND_LABEL: Record<RewardKind, string> = {
+  good: "Real goods",
+  discount: "Money off",
+  perk: "Vanity perk",
+};
 
 export const SLOT_LABEL: Record<PerkSlot, string> = {
   sound: "Sign-in sound",
@@ -87,7 +92,9 @@ export const TITLES: PerkOption[] = [
 
 // Mobile ordering isn't built yet: the slot exists so a perk can be listed
 // as coming soon.
-export const MOBILE_SOUNDS: PerkOption[] = [{ key: "order_up", label: "Order-up sound" }];
+export const MOBILE_SOUNDS: PerkOption[] = [
+  { key: "order_up", label: "Order-up sound" },
+];
 
 export const PERK_OPTIONS: Record<PerkSlot, PerkOption[]> = {
   sound: PERK_SOUNDS,
@@ -105,7 +112,9 @@ export function isPerkSlot(x: unknown): x is PerkSlot {
 }
 
 export function perkOption(slot: PerkSlot, key: unknown): PerkOption | null {
-  return typeof key === "string" ? (PERK_OPTIONS[slot].find((o) => o.key === key) ?? null) : null;
+  return typeof key === "string"
+    ? (PERK_OPTIONS[slot].find((o) => o.key === key) ?? null)
+    : null;
 }
 
 // What the member shows on their card and at check-in, of what they own:
@@ -117,7 +126,12 @@ export interface MemberLook {
   title: string | null;
 }
 
-export const NO_LOOK: MemberLook = { sound: null, frame: null, nameColor: null, title: null };
+export const NO_LOOK: MemberLook = {
+  sound: null,
+  frame: null,
+  nameColor: null,
+  title: null,
+};
 
 export function parseLook(raw: unknown): MemberLook {
   if (!raw || typeof raw !== "object") return NO_LOOK;
@@ -125,7 +139,8 @@ export function parseLook(raw: unknown): MemberLook {
   return {
     sound: perkOption("sound", r.sound ?? r.perk_sound)?.key ?? null,
     frame: perkOption("frame", r.frame ?? r.perk_frame)?.key ?? null,
-    nameColor: perkOption("name_color", r.nameColor ?? r.perk_name_color)?.key ?? null,
+    nameColor:
+      perkOption("name_color", r.nameColor ?? r.perk_name_color)?.key ?? null,
     title: perkOption("title", r.title ?? r.perk_title)?.key ?? null,
   };
 }
@@ -145,6 +160,7 @@ export interface RewardOffer {
   name: string;
   description: string | null;
   kind: RewardKind;
+  section: GoodSection | null; // reward_catalog.section, for goods
   slot: PerkSlot | null;
   key: string | null;
   days: number | null;
@@ -157,8 +173,147 @@ export interface RewardOffer {
 }
 
 // Cheapest first; perks they own sink to the bottom of their price.
-export function sortOffers<T extends { points: number; owned?: boolean; name: string }>(offers: T[]): T[] {
-  return [...offers].sort((a, b) => a.points - b.points || Number(!!a.owned) - Number(!!b.owned) || a.name.localeCompare(b.name));
+export function sortOffers<
+  T extends { points: number; owned?: boolean; name: string },
+>(offers: T[]): T[] {
+  return [...offers].sort(
+    (a, b) =>
+      a.points - b.points ||
+      Number(!!a.owned) - Number(!!b.owned) ||
+      a.name.localeCompare(b.name),
+  );
+}
+
+// ---------- sections (Andrew, 10/9) ----------
+// Spend points and Back office -> Points both list the catalog in four
+// sections, each cheapest first: Money off, Food & drinks, Tickets &
+// booths, then Make it yours (the perks, by slot: Sounds, Name colors,
+// Titles, Card frames, Entrances). A good's section is
+// reward_catalog.section (migration 20261009010000), set in Back office;
+// blank, it's guessed from the name: a ticket, booth or pass is Tickets &
+// booths, anything else Food & drinks.
+
+export type GoodSection = "food" | "tickets";
+export type RewardSection = "money" | GoodSection | "looks";
+
+export const SECTION_ORDER: RewardSection[] = [
+  "money",
+  "food",
+  "tickets",
+  "looks",
+];
+export const SECTION_LABEL: Record<RewardSection, string> = {
+  money: "Money off",
+  food: "Food & drinks",
+  tickets: "Tickets & booths",
+  looks: "Make it yours",
+};
+
+export function isGoodSection(x: unknown): x is GoodSection {
+  return x === "food" || x === "tickets";
+}
+
+// The guess for a good with no section set.
+export function guessGoodSection(name: string): GoodSection {
+  return /ticket|booth|pass|seat|rental/i.test(name) ? "tickets" : "food";
+}
+
+export function sectionOf(r: {
+  kind: RewardKind;
+  section?: string | null;
+  name: string;
+}): RewardSection {
+  if (r.kind === "discount") return "money";
+  if (r.kind === "perk") return "looks";
+  return isGoodSection(r.section) ? r.section : guessGoodSection(r.name);
+}
+
+// The perks' groups, in order.
+const LOOK_ORDER: PerkSlot[] = [
+  "sound",
+  "name_color",
+  "title",
+  "frame",
+  "entrance",
+  "mobile",
+];
+export const LOOK_GROUP_LABEL: Record<PerkSlot, string> = {
+  sound: "Sounds",
+  name_color: "Name colors",
+  title: "Titles",
+  frame: "Card frames",
+  entrance: "Entrances",
+  mobile: "Mobile orders",
+};
+
+// "Sound: Drumroll" -> prefix "Sound", rest "Drumroll".
+function splitPrefix(name: string): { prefix: string | null; rest: string } {
+  const m = /^\s*([^:]{1,24}):\s*(.+)$/.exec(name);
+  return m
+    ? { prefix: m[1].trim(), rest: m[2].trim() }
+    : { prefix: null, rest: name };
+}
+
+// A reward's name inside its section: a perk drops its "Sound: " prefix.
+export function shortName(r: { kind: RewardKind; name: string }): string {
+  return r.kind === "perk" ? splitPrefix(r.name).rest : r.name;
+}
+
+export interface RewardGroup<T> {
+  key: string;
+  label: string | null; // null: the section's only group, no sub-header
+  items: T[];
+}
+export interface RewardSectionList<T> {
+  section: RewardSection;
+  label: string;
+  groups: RewardGroup<T>[];
+}
+
+// The list in sections (empty ones left out), each cheapest first. The
+// sort is stable, so a list already in order keeps its ties' order.
+export function groupRewards<
+  T extends {
+    kind: RewardKind;
+    section?: string | null;
+    name: string;
+    points: number;
+  },
+>(items: T[], slotOf: (r: T) => PerkSlot | null): RewardSectionList<T>[] {
+  return SECTION_ORDER.flatMap((section): RewardSectionList<T>[] => {
+    const list = items
+      .filter((r) => sectionOf(r) === section)
+      .sort((a, b) => a.points - b.points);
+    if (!list.length) return [];
+    if (section !== "looks")
+      return [
+        {
+          section,
+          label: SECTION_LABEL[section],
+          groups: [{ key: section, label: null, items: list }],
+        },
+      ];
+    const groups = new Map<string, RewardGroup<T>>();
+    for (const slot of LOOK_ORDER)
+      groups.set(slot, { key: slot, label: LOOK_GROUP_LABEL[slot], items: [] });
+    for (const r of list) {
+      const key = slotOf(r) ?? splitPrefix(r.name).prefix ?? "other";
+      if (!groups.has(key))
+        groups.set(key, {
+          key,
+          label: key === "other" ? "More" : key,
+          items: [],
+        });
+      groups.get(key)!.items.push(r);
+    }
+    return [
+      {
+        section,
+        label: SECTION_LABEL[section],
+        groups: [...groups.values()].filter((g) => g.items.length),
+      },
+    ];
+  });
 }
 
 // The order line a good becomes: "Reward: Personal popcorn (−40 pts)".
@@ -194,14 +349,22 @@ export function parseRewardAdd(p: unknown): RewardAdd | null {
   if (typeof a.id !== "string" || !a.id || a.id.length > 80) return null;
   if (typeof a.rewardId !== "string" || !UUID.test(a.rewardId)) return null;
   if (typeof a.firstName !== "string" || !a.firstName) return null;
-  return { id: a.id, rewardId: a.rewardId, firstName: a.firstName.slice(0, 60) };
+  return {
+    id: a.id,
+    rewardId: a.rewardId,
+    firstName: a.firstName.slice(0, 60),
+  };
 }
 
 export function parseRewardAdded(p: unknown): RewardAdded | null {
   if (!p || typeof p !== "object") return null;
   const a = p as Partial<RewardAdded>;
   if (typeof a.id !== "string" || typeof a.ok !== "boolean") return null;
-  return { id: a.id, ok: a.ok, message: typeof a.message === "string" ? a.message.slice(0, 160) : "" };
+  return {
+    id: a.id,
+    ok: a.ok,
+    message: typeof a.message === "string" ? a.message.slice(0, 160) : "",
+  };
 }
 
 export function isUuid(x: unknown): x is string {

@@ -2,15 +2,31 @@
 
 import { useEffect, useRef, useState } from "react";
 import { flairColor, DEFAULT_FLAIR_COLOR } from "@/lib/flair";
-import { SLOT_LABEL, type MemberLook, type PerkSlot, type RewardAdd, type RewardOffer } from "@/lib/rewards";
-import { loadWallet, unlockOnTablet, chooseOnTablet, type TabletWallet } from "./reward-actions";
+import {
+  SLOT_LABEL,
+  groupRewards,
+  shortName,
+  type MemberLook,
+  type PerkSlot,
+  type RewardAdd,
+  type RewardOffer,
+} from "@/lib/rewards";
+import {
+  loadWallet,
+  unlockOnTablet,
+  chooseOnTablet,
+  type TabletWallet,
+} from "./reward-actions";
 import { perkSound, playSound } from "./sounds";
 import { CardFrame, NameLine } from "@/components/flair/CardLook";
 import sp from "./spend.module.css";
 
-// "Spend points" on the customer screen: everything points buy, cheapest
-// first, over the whole screen until they close it (or a minute untouched,
-// or they're off the order).
+// "Spend points" on the customer screen: everything points buy, over the
+// whole screen until they close it (or a minute untouched, or they're off
+// the order). In sections, each cheapest first (lib/rewards.ts
+// groupRewards): Money off, Food & drinks, Tickets & booths, then Make it
+// yours, the perks by kind (Sounds, Name colors, Titles, Card frames,
+// Entrances), each named without its "Sound: " prefix.
 // - What they can afford is bright with a Use button (tap, then tap again
 //   to be sure); the rest is greyed out with "X more points".
 // - A good (popcorn, a drink, $5 off...) goes to the register as a $0 line,
@@ -40,7 +56,14 @@ export interface SpendFor {
 
 type Note = { ok: boolean; text: string } | null;
 
-const SLOT_ICON: Record<PerkSlot, string> = { sound: "🔊", entrance: "✨", frame: "🖼️", name_color: "🌈", title: "🏷️", mobile: "📱" };
+const SLOT_ICON: Record<PerkSlot, string> = {
+  sound: "🔊",
+  entrance: "✨",
+  frame: "🖼️",
+  name_color: "🌈",
+  title: "🏷️",
+  mobile: "📱",
+};
 
 function iconFor(o: RewardOffer): string {
   if (o.kind === "discount") return "💵";
@@ -66,20 +89,30 @@ export default function SpendPoints({
   who: SpendFor;
   send: (event: "reward-add" | "rewards-changed", payload: object) => void;
   // The register's "reward-added" answers come in through here.
-  onAnswer: (listen: ((a: { id: string; ok: boolean; message: string }) => void) | null) => void;
+  onAnswer: (
+    listen: ((a: { id: string; ok: boolean; message: string }) => void) | null,
+  ) => void;
   // Plays an entrance over the screen (CheckinKiosk's encore).
   onEntrance: (entrance: string) => void;
   onClose: () => void;
   // For previews only: shown as-is, nothing is loaded.
   previewWallet?: TabletWallet;
 }) {
-  const [wallet, setWallet] = useState<TabletWallet | null>(previewWallet ?? null);
+  const [wallet, setWallet] = useState<TabletWallet | null>(
+    previewWallet ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<Note>(null);
-  const [preview, setPreview] = useState<{ key: number; look: MemberLook } | null>(null);
-  const waiting = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  const [preview, setPreview] = useState<{
+    key: number;
+    look: MemberLook;
+  } | null>(null);
+  const waiting = useRef<{
+    id: string;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
   const [touch, setTouch] = useState(0);
 
   // Loaded on open, whenever the order's rewards change, and after each
@@ -92,7 +125,10 @@ export default function SpendPoints({
     if (previewWallet) return;
     let live = true;
     loadWallet(who.wallet, JSON.parse(pendingKey) as SpendFor["pending"])
-      .catch(() => ({ ok: false as const, error: "The rewards couldn't load just now." }))
+      .catch(() => ({
+        ok: false as const,
+        error: "The rewards couldn't load just now.",
+      }))
       .then((r) => {
         if (!live) return;
         if (r.ok) {
@@ -128,7 +164,10 @@ export default function SpendPoints({
       clearTimeout(waiting.current.timer);
       waiting.current = null;
       setBusy(null);
-      setNote({ ok: a.ok, text: a.ok ? `${a.message} Points come off when you pay.` : a.message });
+      setNote({
+        ok: a.ok,
+        text: a.ok ? `${a.message} Points come off when you pay.` : a.message,
+      });
       playSound(a.ok ? "unlock" : "notFound");
     });
     return () => {
@@ -137,7 +176,9 @@ export default function SpendPoints({
     };
   }, [onAnswer]);
 
-  const available = wallet ? Math.max(0, wallet.points - Math.max(0, who.pendingPoints)) : 0;
+  const available = wallet
+    ? Math.max(0, wallet.points - Math.max(0, who.pendingPoints))
+    : 0;
 
   async function use(o: RewardOffer) {
     setTouch((n) => n + 1);
@@ -150,14 +191,23 @@ export default function SpendPoints({
     setConfirm(null);
     if (o.kind === "perk") {
       setBusy(o.id);
-      const r = await unlockOnTablet(who.wallet, o.id).catch(() => ({ ok: false as const, error: "That didn't go through. Try again." }));
+      const r = await unlockOnTablet(who.wallet, o.id).catch(() => ({
+        ok: false as const,
+        error: "That didn't go through. Try again.",
+      }));
       setBusy(null);
       if (!r.ok) {
         setNote({ ok: false, text: r.error });
         playSound("notFound");
         return;
       }
-      setNote({ ok: true, text: r.status === "owned" ? `${o.name} is already yours.` : `${o.name} is yours!` });
+      setNote({
+        ok: true,
+        text:
+          r.status === "owned"
+            ? `${shortName(o)} is already yours.`
+            : `${shortName(o)} is yours!`,
+      });
       send("rewards-changed", { firstName: who.firstName });
       showOff(r.slot, r.key);
       load();
@@ -173,7 +223,10 @@ export default function SpendPoints({
       timer: setTimeout(() => {
         waiting.current = null;
         setBusy(null);
-        setNote({ ok: false, text: "The register didn't answer. Ask at the bar." });
+        setNote({
+          ok: false,
+          text: "The register didn't answer. Ask at the bar.",
+        });
       }, ANSWER_MS),
     };
     send("reward-add", add);
@@ -189,7 +242,12 @@ export default function SpendPoints({
       playSound(s ?? "unlock");
     } else {
       playSound("unlock");
-      const base = wallet?.look ?? { sound: null, frame: null, nameColor: null, title: null };
+      const base = wallet?.look ?? {
+        sound: null,
+        frame: null,
+        nameColor: null,
+        title: null,
+      };
       const look: MemberLook = {
         ...base,
         ...(slot === "frame" ? { frame: key } : {}),
@@ -205,7 +263,9 @@ export default function SpendPoints({
     setTouch((n) => n + 1);
     if (!o.slot || busy) return;
     setBusy(o.id);
-    const r = await chooseOnTablet(who.wallet, o.slot, on ? o.key : null).catch(() => ({ ok: false as const, error: "That didn't save." }));
+    const r = await chooseOnTablet(who.wallet, o.slot, on ? o.key : null).catch(
+      () => ({ ok: false as const, error: "That didn't save." }),
+    );
     setBusy(null);
     if (!r.ok) {
       setNote({ ok: false, text: r.error });
@@ -238,7 +298,13 @@ export default function SpendPoints({
   const color = (flairColor(who.color) ?? DEFAULT_FLAIR_COLOR).hex;
 
   return (
-    <div className={sp.sheet} role="dialog" aria-modal="true" aria-label="Spend points" onPointerDown={() => setTouch((n) => n + 1)}>
+    <div
+      className={sp.sheet}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Spend points"
+      onPointerDown={() => setTouch((n) => n + 1)}
+    >
       <header className={sp.head}>
         <div>
           <h2 className={sp.title}>Spend points</h2>
@@ -246,8 +312,16 @@ export default function SpendPoints({
             {wallet ? (
               <>
                 <b>{available.toLocaleString("en-US")}</b> to spend
-                {who.pendingPoints > 0 && <span className={sp.dim}> · {who.pendingPoints.toLocaleString("en-US")} on this order</span>}
-                <span className={sp.dim}> · {wallet.earned.toLocaleString("en-US")} earned all time</span>
+                {who.pendingPoints > 0 && (
+                  <span className={sp.dim}>
+                    {" "}
+                    · {who.pendingPoints.toLocaleString("en-US")} on this order
+                  </span>
+                )}
+                <span className={sp.dim}>
+                  {" "}
+                  · {wallet.earned.toLocaleString("en-US")} earned all time
+                </span>
               </>
             ) : (
               "Loading…"
@@ -260,7 +334,11 @@ export default function SpendPoints({
       </header>
 
       {note && (
-        <div className={`${sp.note} ${note.ok ? sp.noteOk : sp.noteNo}`} role="status" aria-live="polite">
+        <div
+          className={`${sp.note} ${note.ok ? sp.noteOk : sp.noteNo}`}
+          role="status"
+          aria-live="polite"
+        >
           {note.text}
         </div>
       )}
@@ -272,70 +350,136 @@ export default function SpendPoints({
             <div className={sp.previewCard}>
               {who.photo ? (
                 // eslint-disable-next-line @next/next/no-img-element -- the screen's own photo route
-                <img src={`/display/customer/photo/${who.photo}`} alt="" width={72} height={72} className={sp.previewPhoto} />
+                <img
+                  src={`/display/customer/photo/${who.photo}`}
+                  alt=""
+                  width={72}
+                  height={72}
+                  className={sp.previewPhoto}
+                />
               ) : (
                 <span className={sp.previewPhoto} aria-hidden="true" />
               )}
-              <NameLine name={who.name} nameColor={preview.look.nameColor} title={preview.look.title} />
+              <NameLine
+                name={who.name}
+                nameColor={preview.look.nameColor}
+                title={preview.look.title}
+              />
             </div>
           </CardFrame>
-          <button type="button" className={sp.previewDone} onClick={() => setPreview(null)}>
+          <button
+            type="button"
+            className={sp.previewDone}
+            onClick={() => setPreview(null)}
+          >
             Looks good
           </button>
         </div>
       )}
 
-      <ul className={sp.list}>
-        {(wallet?.offers ?? []).map((o) => {
-          const owned = o.owned;
-          const forGood = owned && !o.until;
-          const short = Math.max(0, o.points - available);
-          const can = !o.soon && !o.problem && short === 0 && !forGood;
-          const on = owned && isOn(o);
-          return (
-            <li key={o.id} className={`${sp.item} ${can || owned ? sp.bright : sp.grey}`}>
-              <span className={sp.icon} aria-hidden="true">
-                {iconFor(o)}
-              </span>
-              <div className={sp.what}>
-                <div className={sp.name}>
-                  {o.name}
-                  {owned && <span className={sp.yours}>Yours</span>}
-                  {o.soon && <span className={sp.soon}>Coming soon</span>}
-                </div>
-                <div className={sp.desc}>
-                  {o.description ?? (o.slot ? SLOT_LABEL[o.slot] : "")}
-                  {o.kind === "perk" && o.days && !owned ? ` · ${o.days} days` : ""}
-                  {owned && o.until ? ` · until ${new Date(o.until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}
-                  {o.alcohol ? " · 21+" : ""}
-                </div>
+      <div className={sp.list}>
+        {groupRewards(wallet?.offers ?? [], (o) => o.slot).map((s) => (
+          <section key={s.section} className={sp.section} aria-label={s.label}>
+            <h3 className={sp.sectionHead}>{s.label}</h3>
+            {s.groups.map((g) => (
+              <div key={g.key} className={sp.group}>
+                {g.label && <h4 className={sp.groupHead}>{g.label}</h4>}
+                <ul className={sp.grid}>
+                  {g.items.map((o) => {
+                    const owned = o.owned;
+                    const forGood = owned && !o.until;
+                    const short = Math.max(0, o.points - available);
+                    const can =
+                      !o.soon && !o.problem && short === 0 && !forGood;
+                    const on = owned && isOn(o);
+                    return (
+                      <li
+                        key={o.id}
+                        className={`${sp.item} ${can || owned ? sp.bright : sp.grey}`}
+                      >
+                        <span className={sp.icon} aria-hidden="true">
+                          {iconFor(o)}
+                        </span>
+                        <div className={sp.what}>
+                          <div className={sp.name}>
+                            {shortName(o)}
+                            {owned && <span className={sp.yours}>Yours</span>}
+                            {o.soon && (
+                              <span className={sp.soon}>Coming soon</span>
+                            )}
+                          </div>
+                          <div className={sp.desc}>
+                            {o.description ??
+                              (o.slot ? SLOT_LABEL[o.slot] : "")}
+                            {o.kind === "perk" && o.days && !owned
+                              ? ` · ${o.days} days`
+                              : ""}
+                            {owned && o.until
+                              ? ` · until ${new Date(o.until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                              : ""}
+                            {o.alcohol ? " · 21+" : ""}
+                          </div>
+                        </div>
+                        <span className={sp.pts}>
+                          {o.points.toLocaleString("en-US")} pts
+                        </span>
+                        <div className={sp.act}>
+                          {owned && o.slot && o.slot !== "mobile" ? (
+                            <button
+                              type="button"
+                              className={on ? sp.onBtn : sp.useBtn}
+                              disabled={busy === o.id}
+                              onClick={() => choose(o, !on)}
+                              aria-pressed={on}
+                            >
+                              {on ? "✓ On" : "Use"}
+                            </button>
+                          ) : o.soon ? null : can ? (
+                            <button
+                              type="button"
+                              className={
+                                confirm === o.id ? sp.sureBtn : sp.useBtn
+                              }
+                              disabled={!!busy}
+                              onClick={() => use(o)}
+                            >
+                              {busy === o.id
+                                ? "…"
+                                : confirm === o.id
+                                  ? `Use ${o.points} pts?`
+                                  : "Use"}
+                            </button>
+                          ) : (
+                            <span className={sp.more}>
+                              {o.problem && short === 0
+                                ? o.problem
+                                : `${short.toLocaleString("en-US")} more points`}
+                            </span>
+                          )}
+                          {owned && o.until && can && (
+                            <button
+                              type="button"
+                              className={sp.extend}
+                              disabled={!!busy}
+                              onClick={() => use(o)}
+                            >
+                              {confirm === o.id ? "Sure?" : "Add more time"}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-              <span className={sp.pts}>{o.points.toLocaleString("en-US")} pts</span>
-              <div className={sp.act}>
-                {owned && o.slot && o.slot !== "mobile" ? (
-                  <button type="button" className={on ? sp.onBtn : sp.useBtn} disabled={busy === o.id} onClick={() => choose(o, !on)} aria-pressed={on}>
-                    {on ? "✓ On" : "Use"}
-                  </button>
-                ) : o.soon ? null : can ? (
-                  <button type="button" className={confirm === o.id ? sp.sureBtn : sp.useBtn} disabled={!!busy} onClick={() => use(o)}>
-                    {busy === o.id ? "…" : confirm === o.id ? `Use ${o.points} pts?` : "Use"}
-                  </button>
-                ) : (
-                  <span className={sp.more}>{o.problem && short === 0 ? o.problem : `${short.toLocaleString("en-US")} more points`}</span>
-                )}
-                {owned && o.until && can && (
-                  <button type="button" className={sp.extend} disabled={!!busy} onClick={() => use(o)}>
-                    {confirm === o.id ? "Sure?" : "Add more time"}
-                  </button>
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+            ))}
+          </section>
+        ))}
+      </div>
       <p className={sp.foot}>
-        Spending points never lowers your all-time total. Real goods go on your order and come off your points when you pay. Pick your look any time at the bar or
-        on your account.
+        Spending points never lowers your all-time total. Real goods go on your
+        order and come off your points when you pay. Pick your look any time at
+        the bar or on your account.
       </p>
     </div>
   );
