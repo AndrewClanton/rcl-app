@@ -478,6 +478,8 @@ export default function SpendPoints({
                               ? ` · until ${new Date(o.until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
                               : ""}
                             {o.alcohol ? " · 21+" : ""}
+                            {/* For show only (Andrew, 10/9): the real stock stays 0, so the server still refuses it. */}
+                            {tank ? " · 4 in stock" : ""}
                           </div>
                         </div>
                         <span className={sp.pts}>
