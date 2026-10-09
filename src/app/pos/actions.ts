@@ -29,6 +29,7 @@ import { logOrderComps, openOverLimit, orgSaleTerms, termsOrg, type OrgSaleTerms
 import { isUuid } from "@/lib/rewards";
 import { redeemOrderPoints, type RedeemShort } from "@/lib/rewards-server";
 import type { OrgGroupInput } from "@/lib/orgs";
+import { awardEventBadges } from "@/lib/badges/events";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -262,6 +263,10 @@ async function syncTicketBookings(
       })),
     );
     if (error) console.error("register ticket bookings failed", order.id, error.message);
+    // A ticket for tonight on a member's order: its event badges
+    // (lib/badges/events.ts), after the answer, so the sale never waits.
+    const memberId = order.memberId;
+    if (!error && memberId) after(() => awardEventBadges({ memberIds: [memberId] }).then(() => undefined, (e) => console.error("event badges at sale", e)));
   } catch (e) {
     console.error("register ticket bookings failed", order.id, e);
   }

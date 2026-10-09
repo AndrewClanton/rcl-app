@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type Dispatch, type Ref, type RefObject, type SetStateAction } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type Dispatch, type Ref, type RefObject, type SetStateAction } from "react";
 import { flushSync } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -53,6 +53,10 @@ function centralParts(iso: string): { date: string; time: string } {
 
 const NO_TICKETS: TicketCount = { sold: 0, bookings: 0, paying: 0 };
 
+// The series tags a showing can carry (Back office -> Badges -> Series
+// tags), for the forms further down.
+const SeriesTags = createContext<string[]>([]);
+
 // `canEdit`: a manager or up. Anyone else gets the movies, the schedule and
 // the ticket lists, without the scheduler or Duplicate, Edit and Remove.
 export default function ScreeningManager({
@@ -61,12 +65,14 @@ export default function ScreeningManager({
   screenings,
   tickets,
   canEdit,
+  seriesTags = [],
 }: {
   movies: Movie[];
   rooms: Room[];
   screenings: Screening[];
   tickets: Record<string, TicketCount>;
   canEdit: boolean;
+  seriesTags?: string[];
 }) {
   const [draft, setDraft] = useState<Draft>(() => blankDraft(rooms));
   const schedulerRef = useRef<HTMLElement>(null);
@@ -77,7 +83,7 @@ export default function ScreeningManager({
   function duplicate(s: Screening) {
     flushSync(() =>
       setDraft({
-        form: { movieId: s.movie_id, roomId: s.room_id, date: "", time: centralParts(s.starts_at).time, price: String(s.ticket_price), capacity: String(s.capacity), visibility: visibilityOf(s) },
+        form: { movieId: s.movie_id, roomId: s.room_id, date: "", time: centralParts(s.starts_at).time, price: String(s.ticket_price), capacity: String(s.capacity), visibility: visibilityOf(s), series: s.series ?? "" },
         repeat: null,
         note: { tone: "info", text: `Copied from ${s.movie.title} (${when(s.starts_at)}). Pick a date for the new showing, or use Repeat to add several.` },
       }),
@@ -87,6 +93,7 @@ export default function ScreeningManager({
   }
 
   return (
+    <SeriesTags.Provider value={seriesTags}>
     <div className="space-y-8">
       <MovieImporter movies={movies} />
       <MovieLibrary movies={movies} />
@@ -103,6 +110,7 @@ export default function ScreeningManager({
       )}
       <UpcomingScreenings screenings={screenings} tickets={tickets} movies={movies} rooms={rooms} canEdit={canEdit} onDuplicate={duplicate} />
     </div>
+    </SeriesTags.Provider>
   );
 }
 function MovieLibrary({ movies }: { movies: Movie[] }) {
@@ -384,13 +392,14 @@ interface FormState {
   price: string;
   capacity: string;
   visibility: ShowingVisibility;
+  series: string; // "": none
 }
 
 function toFields(f: FormState): ScreeningFields | null {
   const price = parseFloat(f.price);
   const capacity = parseInt(f.capacity, 10);
   if (!f.movieId || !f.roomId || !f.date || !f.time || !(price >= 0) || !(capacity > 0)) return null;
-  return { movie_id: f.movieId, room_id: f.roomId, date: f.date, time: f.time, ticket_price: price, capacity, visibility: f.visibility };
+  return { movie_id: f.movieId, room_id: f.roomId, date: f.date, time: f.time, ticket_price: price, capacity, visibility: f.visibility, series: f.series || null };
 }
 
 // Repeat: the same showing at each start time, on each chosen weekday, from
@@ -415,7 +424,7 @@ interface Draft {
 function blankDraft(rooms: Room[]): Draft {
   const room = rooms.find((r) => r.is_screening_room);
   return {
-    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? ""), visibility: isOutdoorRoom(room) ? "members" : "public" },
+    form: { movieId: "", roomId: room?.id ?? "", date: "", time: "", price: isOutdoorRoom(room) ? "0" : "8", capacity: String(room?.capacity ?? ""), visibility: isOutdoorRoom(room) ? "members" : "public", series: "" },
     repeat: null,
     note: null,
   };
@@ -479,6 +488,8 @@ function ScreeningFieldsForm({
 }) {
   const outdoor = isOutdoorRoom(screeningRooms.find((r) => r.id === value.roomId));
   const set = (patch: Partial<FormState>) => onChange({ ...value, ...patch });
+  const seriesTags = useContext(SeriesTags);
+  const seriesChoices = [...new Set([...seriesTags, ...(value.series ? [value.series] : [])])];
   return (
     <>
       <div>
@@ -549,6 +560,18 @@ function ScreeningFieldsForm({
         </div>
         <div className="mt-1 max-w-xl text-xs text-[var(--muted)]">{outdoor && value.visibility === "public" ? "The outdoor screen is never public. Pick Members only or Private." : VISIBILITY_HELP[value.visibility]}</div>
       </fieldset>
+      <div>
+        <label className={LABEL}>Series (optional)</label>
+        <select className={INPUT} value={value.series} onChange={(e) => set({ series: e.target.value })}>
+          <option value="">No series</option>
+          {seriesChoices.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <div className="mt-0.5 text-[10px] text-[var(--muted)]">For event badges: &ldquo;came to 3 Horror Month showings&rdquo;.</div>
+      </div>
     </>
   );
 }
@@ -884,6 +907,7 @@ function ScreeningRow({
         <span className="truncate font-medium" title={s.movie.title}>
           {s.movie.title}
           <VisibilityBadge visibility={visibilityOf(s)} />
+          {s.series && <span className="ml-1.5 inline-block rounded-full border border-[var(--border)] px-2 py-0.5 align-middle text-[11px] font-bold">{s.series}</span>}
         </span>
         <span className="text-[var(--muted)]">{when(s.starts_at)}</span>
         <span className="truncate text-[var(--muted)]" title={s.room.name}>
@@ -986,6 +1010,7 @@ function EditScreening({
     price: String(s.ticket_price),
     capacity: String(s.capacity),
     visibility: visibilityOf(s),
+    series: s.series ?? "",
   });
   // The server's question when tickets are sold (see updateScreening), and
   // the changes it's about.

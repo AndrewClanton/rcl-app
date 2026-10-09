@@ -51,6 +51,8 @@ const STAT_LABEL: Record<string, string> = {
   time: "Checked in at",
   year: "Birthday year",
   for: "Awarded for",
+  date: "Date", // event badges (lib/badges/events.ts)
+  nth: "Attended",
 };
 const PRIVATE_STATS = new Set(["time"]);
 

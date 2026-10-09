@@ -4,6 +4,7 @@ import { sendDailyReport } from "@/lib/daily-report";
 import { runGiftMaintenance } from "@/lib/gift-membership";
 import { syncMemberPayments, type SyncResult } from "@/lib/membership-payments/sync";
 import { sweepSeatCheckouts } from "@/lib/seat-ordering-server";
+import { awardEventBadges, refreshDrafts } from "@/lib/badges/events";
 
 // Vercel calls this every morning (vercel.json) to email the admins the
 // business day that just ended. With CRON_SECRET set in Vercel, only
@@ -54,6 +55,15 @@ export async function GET(req: NextRequest) {
   after(async () => {
     const r = await sweepSeatCheckouts({ recentMs: 3 * 86_400_000, cleanup: true, max: 50 }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
     console.log("daily report: seat checkout sweep", r);
+  });
+  // Event badges for anyone who came and didn't get theirs at the time
+  // (lib/badges/events.ts), and fresh drafts from the next two weeks'
+  // calendar for Back office -> Badges to review. After the answer.
+  after(async () => {
+    const r = await awardEventBadges({ fresh: true }).catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
+    const awarded = "perDef" in r ? Object.values(r.perDef).reduce((n, d) => n + d.awarded, 0) : r;
+    const drafts = await refreshDrafts().catch((e: unknown) => ({ error: e instanceof Error ? e.message : "failed" }));
+    console.log("daily report: event badges", { awarded, drafts });
   });
   return NextResponse.json({ date, gifts, payments: payments ?? { ok: false, skipped: `still reading Stripe after ${SYNC_WAIT_MS / 1000} s; the email went with what was read before, and the read finishes after this` }, ...result });
 }

@@ -4,7 +4,9 @@ import { requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import { defDetail } from "@/lib/badges/server";
 import { RULE_INFO } from "@/lib/badges/rules";
+import { describeRule } from "@/lib/badges/events";
 import AwardForm from "./AwardForm";
+import EventAward from "./EventAward";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,7 @@ export default async function BadgeDetailPage({ params }: PageProps<"/admin/badg
   if (!d) notFound();
   const { entry, copies, sample, holders } = d;
   const live = copies.filter((c) => !c.revoked).length;
+  const target = entry.def.ruleType === "event" ? await describeRule(entry.def.params) : null;
   return (
     <div className="space-y-6">
       <PageHeader area="guests" title={entry.def.name} purpose={entry.def.flavor || RULE_INFO[entry.def.ruleType].about}>
@@ -53,6 +56,7 @@ export default async function BadgeDetailPage({ params }: PageProps<"/admin/badg
             Art {entry.def.generator}
             {entry.def.formLabel ? ` · ${entry.def.formLabel}` : ""}.
           </p>
+          {target && <EventAward defId={entry.def.id} target={target} active={entry.def.active} />}
           <AwardForm defId={entry.def.id} name={entry.def.name} active={entry.def.active} />
         </div>
       </div>

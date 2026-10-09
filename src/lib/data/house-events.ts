@@ -9,6 +9,7 @@ export interface HouseEvent {
   note: string | null;
   starts_at: string;
   ends_at: string | null;
+  series?: string | null; // its series tag (lib/event-series.ts)
 }
 
 // Events still coming up, plus any that started in the last `minutes`.
@@ -19,7 +20,7 @@ export async function getRecentHouseEvents(minutes = 0, limit = 40): Promise<Hou
 export async function getHouseEventsSince(sinceIso: string, limit = 40): Promise<HouseEvent[]> {
   const { data, error } = await createAdminClient()
     .from("house_events")
-    .select("id, title, note, starts_at, ends_at")
+    .select("id, title, note, starts_at, ends_at, series")
     .or(`starts_at.gte."${sinceIso}",ends_at.gte."${sinceIso}"`)
     .order("starts_at")
     .limit(limit);

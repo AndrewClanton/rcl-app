@@ -29,6 +29,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import readXlsxFile from "read-excel-file/node";
 import { isOutdoorRoom, parseShowingTitle, type ShowingVisibility } from "@/lib/showing-visibility";
+import { DEFAULT_SERIES, guessSeries } from "@/lib/event-series";
 
 // ---------- dates and times (Central) ----------
 const TZ = "America/Chicago";
@@ -341,10 +342,22 @@ export interface SyncState {
   outdoor: SyncRoom;
   showings: DbShowing[]; // from now on, indoor and outdoor screens
   held: Record<string, number>; // tickets sold or being paid for, per showing
+  seriesTags?: string[]; // the series list (lib/event-series.ts), for guessing a new showing's tag
+}
+
+// A new showing's series tag, guessed from the cell as written ("Trivia
+// Night", "Beetlejuice (member screening)") or the outdoor screen. Only a
+// tag on the list; changeable on Showtimes afterwards.
+export function seriesGuess(raw: string, where: Where, tags: readonly string[] = DEFAULT_SERIES): string | null {
+  return guessSeries(raw, tags) ?? (where === "outdoor" && tags.includes("Outdoor") ? "Outdoor" : null);
 }
 
 export async function loadSyncState(db: SupabaseClient, now = Date.now()): Promise<SyncState> {
-  const [m, r] = await Promise.all([db.from("movies").select("id, title, release_year"), db.from("rooms").select("id, key, name, capacity, is_screening_room")]);
+  const [m, r, t] = await Promise.all([
+    db.from("movies").select("id, title, release_year"),
+    db.from("rooms").select("id, key, name, capacity, is_screening_room"),
+    db.from("event_series").select("name").eq("active", true),
+  ]);
   if (m.error) throw m.error;
   if (r.error) throw r.error;
   const rooms = (r.data ?? []) as (SyncRoom & { is_screening_room: boolean })[];
@@ -376,7 +389,9 @@ export async function loadSyncState(db: SupabaseClient, now = Date.now()): Promi
       held[k.screening_id as string] = (held[k.screening_id as string] ?? 0) + (k.quantity as number);
     }
   }
-  return { now, movies: (m.data ?? []) as SyncMovie[], indoor, outdoor, showings, held };
+  // No series list (before its migration): no guesses.
+  const seriesTags = t.error ? [] : (t.data ?? []).map((x) => x.name as string);
+  return { now, movies: (m.data ?? []) as SyncMovie[], indoor, outdoor, showings, held, seriesTags };
 }
 
 // ---------- the plan ----------
@@ -420,6 +435,7 @@ export interface PlanAdd extends Line {
   visibility: ShowingVisibility;
   price: number;
   capacity: number;
+  series?: string | null; // the guessed series tag
 }
 export interface PlanChange extends Line {
   id: string;
@@ -560,8 +576,10 @@ export function buildPlan(cal: ParsedCalendar, state: SyncState, picks: Picks = 
     const price = priceFor(e.where, e.visibility);
     const s = matched.get(e);
     if (!s) {
+      const series = seriesGuess(e.raw, e.where, state.seriesTags ?? []);
       add.push({
-        ...line(e.date, e.startsAt, e.movieTitle, e.where, `${VIS_WORD[e.visibility]}, ${money(price)}${e.movieId?.startsWith("tmdb:") ? ", adds the film from TMDb" : ""}`),
+        ...line(e.date, e.startsAt, e.movieTitle, e.where, `${VIS_WORD[e.visibility]}, ${money(price)}${series ? `, tagged ${series}` : ""}${e.movieId?.startsWith("tmdb:") ? ", adds the film from TMDb" : ""}`),
+        series,
         movieId: e.movieId!,
         roomId: room.id,
         visibility: e.visibility,
@@ -657,5 +675,22 @@ export async function applyPlan(
     p_summary: { flagged: plan.flagged.length, looks: plan.looks.length, skipped: plan.skipped.length, through: plan.lastDate },
   });
   if (error) throw error;
+  // The guessed series tags on the showings just added (found by room and
+  // start), left alone if one is already set. Best effort: a tag is only a
+  // guess, and Showtimes can set it.
+  const tagged = plan.add.filter((a) => a.series);
+  for (let i = 0; i < tagged.length; i += 10) {
+    await Promise.all(
+      tagged.slice(i, i + 10).map((a) =>
+        db
+          .from("screenings")
+          .update({ series: a.series })
+          .eq("room_id", a.roomId)
+          .eq("starts_at", a.startsAt)
+          .is("series", null)
+          .then(({ error: e }) => e && console.error("calendar sync series tag", e.message)),
+      ),
+    );
+  }
   return data as { added: number; changed: number; removed: number; kept: number };
 }
