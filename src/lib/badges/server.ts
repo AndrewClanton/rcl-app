@@ -18,6 +18,24 @@ import { FALLBACK_DEFS, RULE_TYPES, statsFor, type RuleDef, type RuleParams, typ
 // A copy that was reserved but not signed (no BADGE_SIGNING_KEY, a dropped
 // connection) is finished by the next ensureCopies; pages only ever show
 // signed copies.
+//
+// The permanence rule (Andrew, Oct 9 2026: "they have to be scarce yet
+// concrete"). A minted copy is never taken back. Refunds and returned
+// tickets don't revoke one. The only exceptions:
+//   1. A copy minted from a check-in seals 10 minutes after minting. A
+//      check-in undone before then takes the copy with it (undoVisit ->
+//      undoClaimCopies); its serial is retired, never reused. After that,
+//      undoing the check-in leaves the copy (its points go as before).
+//   2. Merging accounts moves the dropped account's copies to the kept
+//      one's holder: same serial and mint data, a "transferred" line in its
+//      history with its old signature, re-signed for the new holder
+//      (resealTransfers), since the certificate covers the holder.
+//   3. Erasing a member's data removes their copies and retires the
+//      serials forever; "#n of N" still counts them.
+//   4. Fraud: a manager voids a copy with a reason (voidCopy). The card
+//      stays, marked VOID, and the verify page says so. Never deleted.
+// The database enforces it: badge_copies_guard_delete
+// (supabase/migrations/20261009050000_badge_permanence.sql).
 
 type Db = ReturnType<typeof createAdminClient>;
 
@@ -166,10 +184,19 @@ export interface CopyRow {
   art_hash: string | null;
   signature: string | null;
   revoked_at: string | null;
+  voided_at: string | null;
+  voided_reason: string | null;
+  history: CopyEvent[] | null;
+  resign_pending: boolean | null;
 }
 
+// What happened to a copy after minting (badge_copies.history).
+export type CopyEvent =
+  | { kind: "transferred"; at: string; note: string; from_holder: string; to_holder: string; signature: string | null; cert_version: number }
+  | { kind: "voided"; at: string; reason: string; by: string | null };
+
 const COPY_COLUMNS =
-  "id, def_id, issuer_id, series, serial, holder_id, code, minted_at, name, flavor, generator, stats, event_kind, event_ref, event_label, art_svg, art_hash, signature, revoked_at";
+  "id, def_id, issuer_id, series, serial, holder_id, code, minted_at, name, flavor, generator, stats, event_kind, event_ref, event_label, art_svg, art_hash, signature, revoked_at, voided_at, voided_reason, history, resign_pending";
 
 export function certFields(c: CopyRow, hash: string): CertFields {
   return {
@@ -297,7 +324,8 @@ export async function claimFacts(db: Db, memberId: string, claims: { id: unknown
 // ---------- live counts: "of N" and rarity ----------
 
 interface Counts {
-  perDef: Map<string, number>;
+  perDef: Map<string, number>; // live copies (not void or revoked): rarity
+  ever: Map<string, number>; // every copy minted, erased ones too: "of N"
   holders: number;
 }
 let countsCache: { at: number; value: Counts } | null = null;
@@ -308,17 +336,28 @@ function forgetCounts() {
 export async function liveCounts(db: Db = createAdminClient()): Promise<Counts> {
   if (countsCache && Date.now() - countsCache.at < 30_000) return countsCache.value;
   const perDef = new Map<string, number>();
+  const ever = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
   const holders = new Set<string>();
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await db.from("badge_copies").select("def_id, holder_id").is("revoked_at", null).not("signature", "is", null).range(from, from + 999);
+    const { data, error } = await db.from("badge_copies").select("def_id, holder_id, revoked_at, voided_at").not("signature", "is", null).order("id").range(from, from + 999);
     if (error) throw new Error(error.message);
     for (const r of data ?? []) {
-      perDef.set(r.def_id as string, (perDef.get(r.def_id as string) ?? 0) + 1);
+      bump(ever, r.def_id as string);
+      if (r.revoked_at || r.voided_at) continue;
+      bump(perDef, r.def_id as string);
       holders.add(r.holder_id as string);
     }
     if (!data || data.length < 1000) break;
   }
-  const value = { perDef, holders: holders.size };
+  // Erased copies were minted, so they still count in "of N".
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await db.from("badge_retired_serials").select("def_id").eq("reason", "erased").order("def_id").order("serial").range(from, from + 999);
+    if (error) break;
+    for (const r of data ?? []) bump(ever, r.def_id as string);
+    if (!data || data.length < 1000) break;
+  }
+  const value = { perDef, ever, holders: holders.size };
   countsCache = { at: Date.now(), value };
   return value;
 }
@@ -369,7 +408,8 @@ export function toCard(c: CopyRow, cat: Catalog, counts: Counts, opts: { publicV
   if (!c.art_svg || !c.signature) return null;
   const def = cat.defs.find((d) => d.id === c.def_id);
   const form = !opts.publicView ? "day" : def?.ruleType === "birthday_week" ? "year" : def?.ruleType === "checkin_time" ? "month" : "day";
-  const of = counts.perDef.get(c.def_id) ?? 0;
+  // Serials can skip (a copy undone inside its grace window), never repeat.
+  const of = Math.max(counts.ever.get(c.def_id) ?? 0, Number(c.serial) || 0);
   const verifyUrl = `${cat.issuer.verifyUrlBase}${c.code}`;
   const data: BadgeCardData = {
     name: c.name,
@@ -389,6 +429,7 @@ export function toCard(c: CopyRow, cat: Catalog, counts: Counts, opts: { publicV
     verifyUrl,
     qr: qrFor(verifyUrl),
     revoked: !!c.revoked_at,
+    voided: !!c.voided_at,
   };
   return { code: c.code, key: def?.key ?? "", name: c.name, serial: Number(c.serial), mintedAt: c.minted_at, front: cardFrontSvg(data), back: cardBackSvg(data) };
 }
@@ -411,6 +452,7 @@ export async function memberCards(memberId: string, opts: { publicView?: boolean
     if (opts.repair) await ensureCopies(memberId, db);
     const ids = await holderIds(db, memberId);
     if (!ids.length) return [];
+    await resealTransfers(db, ids);
     const [cat, counts, copies] = await Promise.all([
       loadCatalog(db),
       liveCounts(db),
@@ -447,7 +489,108 @@ export interface VerifiedCopy {
   issuer: string;
   verified: boolean;
   revoked: boolean;
+  voided: { at: string; reason: string } | null;
+  transferredOn: string[]; // when it moved to this holder, oldest first
   mintedAt: string;
+}
+
+// ---------- the permanence rule's paths ----------
+
+// Signs transferred copies for their new holder (a merge moved them:
+// badge_transfer_holder). Their old signature is already in their history.
+// holderIds: only these holders' copies; all waiting ones otherwise.
+export async function resealTransfers(db: Db = createAdminClient(), holderIds?: string[]): Promise<number> {
+  const key = process.env.BADGE_SIGNING_KEY;
+  if (!key) return 0;
+  let q = db.from("badge_copies").select(COPY_COLUMNS).eq("resign_pending", true).not("art_hash", "is", null).limit(500);
+  if (holderIds) q = q.in("holder_id", holderIds);
+  const { data, error } = await q;
+  if (error || !data?.length) return 0;
+  let done = 0;
+  for (const c of data as CopyRow[]) {
+    const signature = signCert(certFields(c, c.art_hash ?? ""), key);
+    const { data: ok, error: e } = await db.rpc("badge_resign_copy", { p_id: c.id, p_from: c.signature, p_signature: signature });
+    if (e) console.error("badge re-sign", e.code, e.message);
+    else if (ok) done++;
+  }
+  return done;
+}
+
+// A check-in undone: the copies of its claims (already deleted) that
+// haven't sealed yet (minted under 10 minutes ago) go, their serials
+// retired. Sealed copies stay.
+export async function undoClaimCopies(claimIds: string[], db: Db = createAdminClient()): Promise<{ removed: number; kept: number }> {
+  if (!claimIds.length) return { removed: 0, kept: 0 };
+  const { data, error } = await db.rpc("badge_undo_claims", { p_claims: claimIds });
+  if (error) {
+    console.error("badge undo", error.code, error.message);
+    return { removed: 0, kept: 0 };
+  }
+  forgetCounts();
+  return data as { removed: number; kept: number };
+}
+
+// Fraud: a manager voids a copy, with a reason. It stays, marked VOID.
+export async function voidCopy(code: string, reason: string, by: string | null): Promise<{ ok: true; defId: string } | { ok: false; error: string }> {
+  if (!isCopyCode(code)) return { ok: false, error: "That copy isn't in the Badge Case." };
+  const why = reason.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (why.length < 3) return { ok: false, error: "Say why it's void." };
+  const { data, error } = await createAdminClient().rpc("badge_void_copy", { p_code: code, p_reason: why, p_by: by });
+  if (error || !data) return { ok: false, error: "It didn't save. Try again." };
+  const r = data as { ok: boolean; def_id: string | null };
+  if (!r.ok || !r.def_id) return { ok: false, error: "That copy is already void." };
+  forgetCounts();
+  return { ok: true, defId: r.def_id };
+}
+
+export interface CopyDetail {
+  card: BadgeCard;
+  defId: string;
+  serial: number;
+  code: string;
+  mintedAt: string;
+  holder: string;
+  memberId: string | null;
+  voided: { at: string; reason: string } | null;
+  revoked: boolean;
+  history: CopyEvent[];
+  verified: boolean;
+}
+
+// One copy for Back office: its card, holder, history and status.
+export async function copyDetail(code: string): Promise<CopyDetail | null> {
+  if (!isCopyCode(code)) return null;
+  const db = createAdminClient();
+  const { data: c } = await db.from("badge_copies").select(COPY_COLUMNS).eq("code", code).maybeSingle();
+  let copy = c as CopyRow | null;
+  if (!copy?.art_svg || !copy.signature) return null;
+  if (copy.resign_pending && (await resealTransfers(db, [copy.holder_id]))) {
+    const { data: again } = await db.from("badge_copies").select(COPY_COLUMNS).eq("code", code).maybeSingle();
+    copy = (again as CopyRow | null) ?? copy;
+  }
+  const [cat, counts, holder, member, issuer] = await Promise.all([
+    loadCatalog(db),
+    liveCounts(db),
+    db.from("badge_holders").select("display_name").eq("id", copy.holder_id).maybeSingle(),
+    db.from("members").select("id").eq("badge_holder_id", copy.holder_id).maybeSingle(),
+    db.from("badge_issuers").select("public_key").eq("id", copy.issuer_id).maybeSingle(),
+  ]);
+  const card = toCard(copy, cat, counts);
+  if (!card) return null;
+  const key = (issuer.data?.public_key as string | null) ?? null;
+  return {
+    card,
+    defId: copy.def_id,
+    serial: Number(copy.serial),
+    code: copy.code,
+    mintedAt: copy.minted_at,
+    holder: (holder.data?.display_name as string | null) ?? "A guest",
+    memberId: (member.data?.id as string | null) ?? null,
+    voided: copy.voided_at ? { at: copy.voided_at, reason: copy.voided_reason ?? "" } : null,
+    revoked: !!copy.revoked_at,
+    history: Array.isArray(copy.history) ? copy.history : [],
+    verified: !!key && !!copy.art_svg && !!copy.signature && artHash(copy.art_svg) === copy.art_hash && verifyCert(certFields(copy, copy.art_hash ?? ""), copy.signature, key),
+  };
 }
 
 // "Maya Rodriguez" -> "Maya R."
@@ -463,8 +606,14 @@ export async function verifyCopy(code: string): Promise<VerifiedCopy | null> {
   if (!isCopyCode(code)) return null;
   const db = createAdminClient();
   const { data: c } = await db.from("badge_copies").select(COPY_COLUMNS).eq("code", code).maybeSingle();
-  const copy = c as CopyRow | null;
+  let copy = c as CopyRow | null;
   if (!copy?.art_svg || !copy.signature) return null;
+  // Moved by a merge and not signed for its new holder yet: sign it now.
+  if (copy.resign_pending && (await resealTransfers(db, [copy.holder_id]))) {
+    const { data: again } = await db.from("badge_copies").select(COPY_COLUMNS).eq("code", code).maybeSingle();
+    copy = (again as CopyRow | null) ?? copy;
+    if (!copy.art_svg || !copy.signature) return null;
+  }
   const [cat, counts, issuer, holder] = await Promise.all([
     loadCatalog(db),
     liveCounts(db),
@@ -481,6 +630,8 @@ export async function verifyCopy(code: string): Promise<VerifiedCopy | null> {
     issuer: (issuer.data?.name as string) ?? "Unknown issuer",
     verified,
     revoked: !!copy.revoked_at,
+    voided: copy.voided_at ? { at: copy.voided_at, reason: copy.voided_reason ?? "" } : null,
+    transferredOn: (Array.isArray(copy.history) ? copy.history : []).flatMap((h) => (h.kind === "transferred" ? [h.at] : [])),
     mintedAt: copy.minted_at,
   };
 }
@@ -567,6 +718,7 @@ export interface CopyListRow {
   holder: string;
   memberId: string | null;
   revoked: boolean;
+  voided: boolean;
 }
 
 export async function defDetail(id: string): Promise<{ entry: CatalogEntry; copies: CopyListRow[]; sample: BadgeCard | null; holders: number } | null> {
@@ -584,7 +736,7 @@ export async function defDetail(id: string): Promise<{ entry: CatalogEntry; copi
   const member = new Map((ms.data ?? []).map((m) => [m.badge_holder_id as string, m.id as string]));
   const cat = await loadCatalog(db);
   const counts = await liveCounts(db);
-  const latest = rows.filter((r) => !r.revoked_at).at(-1);
+  const latest = rows.filter((r) => !r.revoked_at && !r.voided_at).at(-1);
   return {
     entry,
     holders,
@@ -596,6 +748,7 @@ export async function defDetail(id: string): Promise<{ entry: CatalogEntry; copi
       holder: names.get(r.holder_id) ?? "A guest",
       memberId: member.get(r.holder_id) ?? null,
       revoked: !!r.revoked_at,
+      voided: !!r.voided_at,
     })),
   };
 }

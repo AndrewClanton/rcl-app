@@ -27,7 +27,7 @@ export default async function BadgeVerifyPage({ params }: PageProps<"/b/[code]">
   const { code } = await params;
   const v = await verifyCopy(code);
   if (!v) notFound();
-  const ok = v.verified && !v.revoked;
+  const ok = v.verified && !v.revoked && !v.voided;
   return (
     <article className="space-y-6">
       <div
@@ -35,15 +35,22 @@ export default async function BadgeVerifyPage({ params }: PageProps<"/b/[code]">
         role="status"
       >
         <div className="font-display text-xl leading-tight">
-          {v.revoked ? "Revoked" : v.verified ? `Verified: issued by ${v.issuer}` : "Not verified"}
+          {v.voided ? `Voided by issuer: ${v.voided.reason}` : v.revoked ? "Revoked" : v.verified ? `Verified: issued by ${v.issuer}` : "Not verified"}
         </div>
         <p className="mt-1 text-[15px]">
-          {v.revoked
-            ? `${v.issuer} took this copy back. It no longer counts.`
-            : v.verified
-              ? `The issuer's signature on this copy checks out, and its art is exactly as it was minted.`
-              : `This copy's signature doesn't match its issuer's key. Treat it as a copy, not the real thing.`}
+          {v.voided
+            ? `${v.issuer} voided this copy. It no longer counts, and it stays on record as void.`
+            : v.revoked
+              ? `${v.issuer} took this copy back. It no longer counts.`
+              : v.verified
+                ? `The issuer's signature on this copy checks out, and its art is exactly as it was minted.`
+                : `This copy's signature doesn't match its issuer's key. Treat it as a copy, not the real thing.`}
         </p>
+        {v.transferredOn.map((at) => (
+          <p key={at} className="mt-1 text-[15px]">
+            Transferred on {new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Chicago" })} (accounts combined)
+          </p>
+        ))}
       </div>
 
       <header>

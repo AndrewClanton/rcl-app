@@ -22,7 +22,7 @@ export default async function BadgeDetailPage({ params }: PageProps<"/admin/badg
   const d = await defDetail(id);
   if (!d) notFound();
   const { entry, copies, sample, holders } = d;
-  const live = copies.filter((c) => !c.revoked).length;
+  const live = copies.filter((c) => !c.revoked && !c.voided).length;
   const target = entry.def.ruleType === "event" ? await describeRule(entry.def.params) : null;
   return (
     <div className="space-y-6">
@@ -76,8 +76,12 @@ export default async function BadgeDetailPage({ params }: PageProps<"/admin/badg
               </thead>
               <tbody>
                 {copies.map((c) => (
-                  <tr key={c.code} className={`border-t border-[var(--border)] ${c.revoked ? "text-[var(--muted)] line-through" : ""}`}>
-                    <td className="px-4 py-2 font-bold tabular-nums">#{c.serial}</td>
+                  <tr key={c.code} className={`border-t border-[var(--border)] ${c.revoked || c.voided ? "text-[var(--muted)] line-through" : ""}`}>
+                    <td className="px-4 py-2 font-bold tabular-nums">
+                      <Link href={`/admin/badges/${entry.def.id}/copy/${c.code}`} className="hover:underline">
+                        #{c.serial}
+                      </Link>
+                    </td>
                     <td className="px-4 py-2">
                       {c.memberId ? (
                         <Link href={`/admin/members/${c.memberId}`} className="hover:underline">
@@ -86,7 +90,7 @@ export default async function BadgeDetailPage({ params }: PageProps<"/admin/badg
                       ) : (
                         c.holder
                       )}
-                      {c.revoked ? " (taken back)" : ""}
+                      {c.voided ? " (void)" : c.revoked ? " (taken back)" : ""}
                     </td>
                     <td className="px-4 py-2 whitespace-nowrap">{when(c.mintedAt)}</td>
                     <td className="px-4 py-2">

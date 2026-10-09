@@ -15,7 +15,7 @@ import {
   type VisitResult,
 } from "@/lib/visits";
 import { claimsFor } from "@/lib/badges/rules";
-import { cardsFor, checkinRules, holderFor, mintClaims, type BadgeCard } from "@/lib/badges/server";
+import { cardsFor, checkinRules, holderFor, mintClaims, undoClaimCopies, type BadgeCard } from "@/lib/badges/server";
 import { eventBadgesFor } from "@/lib/badges/events";
 
 // The signed copies (lib/badges) for the badges a visit just paid, as
@@ -205,7 +205,10 @@ export async function undoVisit(
   const badgeIds = (badges ?? []).map((b) => b.id as string);
   const rewardKinds = [...new Set((badges ?? []).flatMap((b) => badgeFor(b.badge as string)?.reward ?? []))];
   await Promise.all([
-    badgeIds.length ? supabase.from("member_badges").delete().in("id", badgeIds) : null,
+    // The claims go, then their badge copies if they haven't sealed (the
+    // permanence rule, lib/badges/server.ts): a copy minted under 10
+    // minutes ago goes with the check-in; an older one stays.
+    badgeIds.length ? supabase.from("member_badges").delete().in("id", badgeIds).then(() => undoClaimCopies(badgeIds, supabase)) : null,
     rewardKinds.length
       ? supabase.from("member_rewards").delete().eq("member_id", memberId).eq("earned_on", visit.business_date as string).in("kind", rewardKinds).is("redeemed_at", null)
       : null,
