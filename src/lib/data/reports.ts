@@ -7,6 +7,7 @@ import { getBarPrices } from "./barBook";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { taxFreeOrders, type TaxFreeOrder, type TaxFreeOrderRow } from "@/lib/tax-exempt";
+import { isGiftCardLine } from "@/lib/register-totals";
 import { attachTaxExemptNames } from "./tax-free-names";
 import { mostRefundable } from "./refund-plan";
 import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, OWNER_TAB_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
@@ -198,6 +199,12 @@ export interface SalesSummary {
   // apart from what was collected. Partial refunds on the day's orders, and
   // membership refunds, are already taken off.
   vouchers: number;
+  // Gift cards (lib/gift-cards.ts): what was spent from them on orders (no
+  // money in, like vouchers: the money came in when the card was sold), and
+  // what cards were sold (money in, but not a taxable sale: its own line in
+  // what sold).
+  giftCardsUsed: number;
+  giftCardsSold: number;
   cash: number;
   card: number;
   online: number;
@@ -309,6 +316,8 @@ type DayOrderRow = Omit<TaxFreeOrderRow, "employee"> & {
   payment_cash_amount: number | null;
   payment_card_amount: number | null;
   payment_voucher_amount: number | null;
+  // Gift cards (20261009120000_gift_cards.sql); missing before it.
+  payment_gift_card_amount?: number | null;
   subtotal: number;
   tax: number;
   tax_free: boolean;
@@ -569,6 +578,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   const boothTax = booths.reduce((s, r) => s + Number(r.tax_amount ?? 0), 0);
 
   let vouchers = 0,
+    giftCardsUsed = 0,
+    giftCardsSold = 0,
     cash = 0,
     card = 0,
     online = 0,
@@ -593,6 +604,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       cash += Number(o.payment_cash_amount ?? 0);
       card += Number(o.payment_card_amount ?? 0);
       vouchers += Number(o.payment_voucher_amount ?? 0);
+      giftCardsUsed += Number(o.payment_gift_card_amount ?? 0);
     } else online += Number(o.total);
     tips += Number(o.tip);
     tax += Number(o.tax);
@@ -637,6 +649,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       // Tickets are counted from their bookings below, not as bar sales.
       if (!l.screening_id) {
         if (owner) ownerTab.sales += amount;
+        else if (isGiftCardLine(l)) giftCardsSold += amount;
         else category[lineBucket(l, bucketByItem)] += amount;
       }
       const it = items.get(l.name) ?? { qty: 0, revenue: 0, options: new Map() };
@@ -705,6 +718,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     { label: CATEGORY_LABEL.coffee, amount: category.coffee },
     { label: CATEGORY_LABEL.liquor, amount: category.liquor },
     { label: BOOTHS_LABEL, amount: boothRevenue },
+    // Not a sale yet (and not taxed): the sale is counted when the card is spent.
+    { label: "Gift cards sold", amount: giftCardsSold, detail: giftCardsSold > 0 ? "not taxed; counted again as sales when spent" : undefined },
     { label: MEMBERSHIPS_LABEL, amount: memberships.sales, detail: membershipsLine || undefined },
     // At what the owners pay, with the menu value it replaced beside it.
     {
@@ -718,6 +733,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
 
   return {
     vouchers,
+    giftCardsUsed,
+    giftCardsSold,
     cash,
     card,
     online,
@@ -1429,7 +1446,10 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   };
 
   for (const o of orders) {
-    const sales = Number(o.total) - Number(o.tax) - Number(o.tip);
+    // Gift cards sold aren't a sale for the tax return (they're taxed when
+    // spent), so they're left out (gift_card_sales, 20261009120000).
+    const giftCards = Number((o as { gift_card_sales?: number | null }).gift_card_sales ?? 0);
+    const sales = Number(o.total) - Number(o.tax) - Number(o.tip) - giftCards;
     add(o.completed_at, isOwnerTab(o) ? "owner" : o.source === "pos" ? "register" : "web", sales, Number(o.tax));
     const m = o.tax_free ? monthOf(o.completed_at) : undefined;
     if (m) m.exempt += sales;

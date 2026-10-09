@@ -2,6 +2,8 @@
 
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { CheckoutPayment } from "./actions";
+import { checkGiftCard } from "./gift-card-actions";
+import { giftCodeTail, type GiftCardTender } from "@/lib/gift-cards";
 import { READER_OFFLINE_MESSAGE } from "@/lib/terminal/reader-status";
 import { createReaderPayment, sendReaderPayment, checkReaderPayment, cancelReaderPayment, askTipOnReader, askCustomTipOnReader, readTipAnswer, cancelReaderQuestion } from "./terminal-actions";
 import { chargeTabCard } from "./tab-card-actions";
@@ -133,6 +135,119 @@ function VoucherTender({ total, onBack, onPaidInFull, onPartial }: { total: numb
       </div>
     </div>
   );
+}
+
+// Gift card (lib/gift-cards.ts): type or scan the code, see what's on it,
+// and use up to the amount due. Nothing comes off the card until the sale
+// is saved; if it doesn't cover everything, cash or card pays the rest.
+function GiftCardPay({ total, max, onBack, onUse }: { total: number; max: number; onBack: () => void; onUse: (g: GiftCardTender) => void }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [found, setFound] = useState<{ code: string; balance: number; memberName: string | null } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [amountTyped, setAmountTyped] = useState("");
+  const most = found ? toCents(Math.max(0, Math.min(found.balance, total, max))) : 0;
+  const amount = amountTyped ? toCents(parseFloat(amountTyped) || 0) : most;
+  const amountProblem = !found ? null : !(amount > 0) ? "Enter an amount." : amount > most + 0.001 ? `At most ${money(most)}.` : null;
+
+  async function look() {
+    if (busy || !typed.trim()) return;
+    setBusy(true);
+    setError(null);
+    setFound(null);
+    setAmountTyped("");
+    try {
+      const r = await checkGiftCard(typed);
+      if (r.ok) setFound({ code: r.code, balance: r.balance, memberName: r.memberName });
+      else setError(r.error);
+    } catch {
+      setError("The gift card couldn't be checked. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card w-full max-w-sm text-center shadow-2xl">
+        <h3 className="text-lg font-semibold" style={{ color: "var(--foreground)" }}>
+          Gift card · {money(total)} due
+        </h3>
+        <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
+          Type the code from the card, or scan it.
+        </p>
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void look();
+          }}
+        >
+          <input
+            id="gift-card-code"
+            autoFocus
+            autoComplete="off"
+            className="input flex-1 text-center font-mono uppercase tracking-wider"
+            placeholder="RCL-XXXX-XXXX"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+          />
+          <button className="btn-secondary !px-4" disabled={busy || !typed.trim()}>
+            {busy ? "..." : "Check"}
+          </button>
+        </form>
+        {error && (
+          <p className="mt-2 text-xs" style={{ color: "var(--danger-text)" }}>
+            {error}
+          </p>
+        )}
+        {found && (
+          <>
+            <div className="mt-4 rounded-lg py-3" style={{ background: "var(--surface-hover)" }}>
+              <div className="text-xs font-bold uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+                {found.code}
+                {found.memberName ? ` · ${found.memberName}` : ""}
+              </div>
+              <div className="font-display text-4xl" style={{ color: "var(--accent)" }}>
+                {money(found.balance)}
+              </div>
+              <div className="text-xs" style={{ color: "var(--muted)" }}>
+                on the card
+              </div>
+            </div>
+            <label className="mt-3 block text-left">
+              <div className="label-xs">Use from the card</div>
+              <input className="input text-center" inputMode="decimal" placeholder={most.toFixed(2)} value={amountTyped} onChange={(e) => setAmountTyped(e.target.value.replace(/[^0-9.]/g, ""))} />
+            </label>
+            {amountProblem && (
+              <p className="mt-1 text-xs" style={{ color: "var(--danger-text)" }}>
+                {amountProblem}
+              </p>
+            )}
+            <button
+              className="btn-primary mt-4 w-full py-3 text-base"
+              disabled={!!amountProblem}
+              onClick={() => onUse({ code: found.code, amount, key: newPaymentKey(), balanceBefore: found.balance })}
+            >
+              {amount + 0.001 >= total ? `Done · ${money(amount)} on the gift card` : `Use ${money(amount)} · pay the other ${money(toCents(total - amount))}`}
+            </button>
+          </>
+        )}
+        <button className="mt-3 text-sm hover:underline" style={{ color: "var(--muted)" }} onClick={onBack}>
+          Back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// A gift card payment's key: the same sale retried takes the money once.
+function newPaymentKey(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `gc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
 }
 
 // Cash: tap what they handed you (or type it) and the change due shows big
@@ -294,7 +409,13 @@ export default function PaymentModal({
   memberId = null,
   cardOnFileLink,
   onCardOnFileStarted,
+  giftCardOk = true,
+  giftCardMax,
 }: {
+  // A gift card can pay (not when the order sells one), up to the order's
+  // total (not a tip asked on the register).
+  giftCardOk?: boolean;
+  giftCardMax?: number;
   // The member on the order: their own saved card can be charged ("Charge
   // card on file"), once they say yes on the customer screen.
   memberId?: string | null;
@@ -337,8 +458,12 @@ export default function PaymentModal({
   const [voucherOpen, setVoucherOpen] = useState(false);
   // Paper vouchers applied so far; cash or card covers the rest (`due`).
   const [voucher, setVoucher] = useState(0);
-  const due = Math.round((total - voucher) * 100) / 100;
-  const withVoucher = voucher > 0 ? { voucher } : {};
+  // A gift card applied for part of it; cash or card covers the rest.
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [gift, setGift] = useState<GiftCardTender | null>(null);
+  const due = Math.round((total - voucher - (gift?.amount ?? 0)) * 100) / 100;
+  // Vouchers and a gift card ride along with however the rest is paid.
+  const withVoucher = { ...(voucher > 0 ? { voucher } : {}), ...(gift ? { giftCard: gift } : {}) };
   // Split: picking the cash part, then taking it. The card part comes after.
   const [splitStep, setSplitStep] = useState<"amount" | "cash" | null>(null);
   const [splitCash, setSplitCash] = useState(0);
@@ -939,6 +1064,21 @@ export default function PaymentModal({
     );
   }
 
+  if (giftOpen) {
+    return (
+      <GiftCardPay
+        total={due}
+        max={giftCardMax === undefined ? due : Math.min(due, toCents(giftCardMax - voucher))}
+        onBack={() => setGiftOpen(false)}
+        onUse={(g) => {
+          setGiftOpen(false);
+          if (g.amount + 0.001 >= due) onConfirm({ method: "gift_card", cash: 0, card: 0, ...(voucher > 0 ? { voucher } : {}), giftCard: { ...g, amount: due } });
+          else setGift(g);
+        }}
+      />
+    );
+  }
+
   if (voucherOpen) {
     return (
       <VoucherTender
@@ -1051,7 +1191,7 @@ export default function PaymentModal({
           Take payment
         </h3>
         <p className="mt-1 text-sm" style={{ color: "var(--muted)" }}>
-          {voucher > 0 ? "Left to pay:" : "Total due:"}{" "}
+          {voucher > 0 || gift ? "Left to pay:" : "Total due:"}{" "}
           <strong className="text-lg" style={{ color: "var(--accent)" }}>
             {money(due)}
           </strong>
@@ -1060,6 +1200,14 @@ export default function PaymentModal({
           <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
             {money(total)} total · {money(voucher)} in vouchers ·{" "}
             <button className="underline" onClick={() => setVoucher(0)}>
+              remove
+            </button>
+          </p>
+        )}
+        {gift && (
+          <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
+            {money(gift.amount)} on gift card ..{giftCodeTail(gift.code)} ·{" "}
+            <button className="underline" onClick={() => setGift(null)}>
               remove
             </button>
           </p>
@@ -1116,9 +1264,14 @@ export default function PaymentModal({
               Split
             </button>
           )}
-          {voucher === 0 && (
+          {voucher === 0 && !gift && (
             <button className="btn-secondary px-4 py-2" onClick={() => setVoucherOpen(true)}>
               Voucher
+            </button>
+          )}
+          {giftCardOk && !gift && voucher === 0 && (
+            <button className="btn-secondary px-4 py-2" onClick={() => setGiftOpen(true)}>
+              Gift card
             </button>
           )}
         </div>

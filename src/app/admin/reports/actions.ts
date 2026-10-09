@@ -9,6 +9,7 @@ import { applyPoints, reversePurchasePoints } from "@/lib/points";
 import { reverseOrderPoints } from "@/lib/order-refund-points";
 import { assertStaff } from "@/lib/auth";
 import { planPartialRefund } from "@/lib/data/refund-plan";
+import { refundOrderGiftCards } from "@/lib/gift-cards-server";
 
 // A plain yes/no, kept for any caller that only needs that. Goes through
 // the same guess limit and log as the refunds below (src/lib/manager-pin.ts).
@@ -53,6 +54,18 @@ export async function refundOrder(orderId: string, pin: string, reason?: string)
   const { data: order, error: fetchErr } = await supabase.from("orders").select("status, stripe_payment_intent_id").eq("id", orderId).single();
   if (fetchErr || !order) return { ok: false, error: "Order not found." };
   if (order.status === "refunded") return { ok: false, error: "This order was already refunded." };
+  // A gift card this order sold that's been spent can't be taken back, so
+  // the order isn't refunded whole (that would pay back money already
+  // spent). Before the gift cards migration there are none to find.
+  const { data: spentCards } = await supabase.from("gift_cards").select("code, initial_amount, balance").eq("sold_order_id", orderId).eq("status", "active");
+  const spent = (spentCards ?? []).filter((c) => Number(c.balance) < Number(c.initial_amount));
+  if (spent.length) {
+    const c = spent[0];
+    return {
+      ok: false,
+      error: `Gift card ${c.code} from this order has been used (${money(Number(c.initial_amount) - Number(c.balance))} spent), so the order can't be refunded whole. Refund part of it instead, and take the rest off the card in Back office, Gift cards.`,
+    };
+  }
   if (order.stripe_payment_intent_id) {
     try {
       // No amount: Stripe refunds whatever is left on the payment, so an
@@ -70,8 +83,11 @@ export async function refundOrder(orderId: string, pin: string, reason?: string)
   // Movie tickets sold on this order give their seats back.
   await supabase.from("bookings").update({ status: "refunded" }).eq("order_id", orderId).eq("status", "confirmed");
   await reverseOrderPoints(orderId, staff.employeeId);
+  // What gift cards paid goes back on them; cards this order sold are voided.
+  await refundOrderGiftCards(orderId, staff.employeeId);
   revalidatePath("/admin/reports");
   revalidatePath("/admin/members");
+  revalidatePath("/admin/gift-cards");
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
 }
 

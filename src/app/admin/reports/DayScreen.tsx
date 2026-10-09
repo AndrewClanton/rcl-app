@@ -237,6 +237,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
           subtitle={
             [
               r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : "",
+              r.giftCardsUsed > 0 ? "Gift cards spent brought in no money today (it came in when each card was sold), so they aren't in Collected." : "",
               r.ownerTab.owed > 0 ? `${money(r.ownerTab.owed)} went on owner tabs: it's money in when an owner pays their monthly statement, not before.` : "",
             ]
               .filter(Boolean)
@@ -250,6 +251,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
               { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
               { label: "Memberships", value: r.memberships.collected, href: to({ show: "memberships" }) },
               { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
+              { label: "Gift cards", value: r.giftCardsUsed, href: "/admin/gift-cards" },
               { label: "Owner tab payments", value: r.ownerTab.paid, href: to({ show: "collected" }) },
             ]}
           />

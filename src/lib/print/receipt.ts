@@ -316,6 +316,40 @@ export function visitSlipXml(v: VisitSlip): string {
   return d.toString();
 }
 
+// ---------- gift card slip ----------
+// One per gift card sold (lib/gift-cards.ts), printed after the receipt and
+// handed over as the gift: the amount, the code big enough to read out, and
+// the code as a QR for the register to scan. No staff names, and never a
+// drawer pulse.
+export interface GiftCardSlip {
+  code: string; // RCL-XXXX-XXXX
+  amount: number;
+  orderNumber: number;
+  at: string; // ISO, when it was sold
+  member?: string | null; // the Insider it's on, if any
+  reprint?: boolean;
+}
+
+export function giftCardSlipXml(g: GiftCardSlip, pics: { logo?: Raster | null } = {}): string {
+  const d = new Doc().align("center");
+  if (pics.logo) d.image(pics.logo).feed(1);
+  else d.big(true).bold(true).line(SITE_NAME.toUpperCase()).big(false).bold(false);
+  d.big(true).bold(true).reverse(true).line("  GIFT CARD  ").reverse(false).feed(1);
+  d.size(4, 4).line(money(g.amount)).size(1, 1).bold(false).feed(1);
+  if (g.reprint) d.bold(true).line("** REPRINT **").bold(false);
+  d.align("left").line(rule("=")).align("center");
+  d.size(2, 2).bold(true).line(g.code).size(1, 1).bold(false);
+  d.align("left").line(rule("=")).align("center").feed(1);
+  d.qr(g.code, 6).feed(1);
+  if (g.member) d.lines(wrap(`On ${g.member}'s Insiders account.`, COLS));
+  d.lines(wrap("Spend it at the register on food, drinks and movie tickets. Use some now and the rest later: we keep the balance.", COLS));
+  d.feed(1).lines(wrap("Keep it safe: anyone with this code can spend it.", COLS));
+  d.feed(1).line(`Order #${g.orderNumber} - ${when(g.at)}`);
+  d.bold(true).line("royalecinemajoplin.com").bold(false);
+  d.cut();
+  return d.toString();
+}
+
 export function drawerXml(): string {
   return new Doc().drawer().toString();
 }

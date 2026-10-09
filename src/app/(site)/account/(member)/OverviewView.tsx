@@ -21,9 +21,12 @@ export default function OverviewView({
   screenings,
   booths = [],
   coffee = null,
+  giftCards = [],
   googlePhoto,
   welcome,
 }: {
+  // Gift cards on their account, with what's left on each.
+  giftCards?: { code: string; balance: number; initial: number }[];
   member: Member;
   purchases: PurchaseRow[];
   screenings: { upcoming: MemberScreening[]; past: MemberScreening[]; tonight?: MemberScreening[] };
@@ -104,6 +107,23 @@ export default function OverviewView({
           </div>
         </Panel>
       </div>
+
+      {giftCards.length > 0 && (
+        <Panel title={giftCards.length === 1 ? "Gift card" : "Gift cards"} aside={`$${giftCards.reduce((s, g) => s + g.balance, 0).toFixed(2)} left`}>
+          <ul className="divide-y-2 divide-dashed divide-[var(--foreground)]/20">
+            {giftCards.map((g) => (
+              <li key={g.code} className="flex flex-wrap items-baseline justify-between gap-2 p-4 sm:px-5">
+                <span className="font-mono text-[15px] tracking-wider">{g.code}</span>
+                <span className="text-[15px]">
+                  <strong className="tabular-nums">${g.balance.toFixed(2)}</strong>
+                  <span className="text-sm text-[var(--muted)]"> left of ${g.initial.toFixed(2)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="px-4 pb-4 text-sm text-[var(--muted)] sm:px-5">Give the code at the register to spend it on food, drinks or tickets.</p>
+        </Panel>
+      )}
 
       {!member.avatar_url && (
         <section className="flex flex-wrap items-center justify-between gap-4 rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] p-4 sm:p-5">

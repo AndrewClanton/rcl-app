@@ -4,6 +4,7 @@ import { orderTicketXml } from "@/lib/print/receipt";
 import { addLines, newLines, readLines, subtractLines, tallyLines, type TicketLine } from "@/lib/print/order-lines";
 import { enqueueJobs, kitchenPrinter } from "@/lib/print/queue";
 import { asStation, type RegisterStation } from "@/lib/print/stations";
+import { isGiftCardLine } from "@/lib/register-totals";
 
 // Kitchen order tickets. Every order prints one ticket with the whole order
 // on it; a tab prints its first ticket like any order, then only what's
@@ -43,7 +44,8 @@ type State = {
 };
 
 const itemsOf = (lines: KitchenOrder["lines"]): TicketLine[] =>
-  tallyLines(lines.filter((l) => !l.screening_id).map((l) => ({ name: l.name, qty: l.quantity, mods: l.modifiers ?? [] })));
+  // Gift cards sold (isGiftCardLine) aren't food either.
+  tallyLines(lines.filter((l) => !l.screening_id && !isGiftCardLine(l)).map((l) => ({ name: l.name, qty: l.quantity, mods: l.modifiers ?? [] })));
 
 // "hold": a tab being rung up (wait a moment for more). "now": the order is
 // paid, or the tab was put away.

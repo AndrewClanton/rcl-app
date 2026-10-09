@@ -109,6 +109,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
   // Owners paying their monthly owner-tab statements, the day it's recorded.
   if (r.ownerTab.paid !== 0) money_in.push(["Owner tab payments", money(r.ownerTab.paid)]);
   if (r.vouchers > 0) money_in.push(["Trivia vouchers (no money in)", money(r.vouchers)]);
+  if (r.giftCardsUsed > 0) money_in.push(["Gift cards spent (no money in)", money(r.giftCardsUsed)]);
   money_in.push(["Collected", money(r.collected), true]);
   // Sold at the owner rate, on an owner's monthly tab: no money in until it's paid.
   if (r.ownerTab.owed > 0) money_in.push([`<span style="color:${MUTED}">Put on owner tabs (not collected yet)</span>`, `<span style="color:${MUTED}">${money(r.ownerTab.owed)}</span>`]);
