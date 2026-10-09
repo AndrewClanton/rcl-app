@@ -89,6 +89,9 @@ interface Toast {
   detail: string;
   tone: "ok" | "warn" | "badge";
   emoji: string | null; // a badge's, big beside the words
+  // A badge's card front (SVG from our own server, for a check-in done on
+  // this screen), in place of the emoji.
+  art?: string | null;
   // A member with no website login, confirmed by staff: a QR code to set
   // one up (only ever a link that passed isClaimUrl).
   claimUrl: string | null;
@@ -395,6 +398,18 @@ export default function CheckinKiosk({
     // Only badges this screen knows, in its own words (never text off the
     // channel).
     const badges = v?.alreadyToday || !Array.isArray(v?.badges) ? [] : [...new Set(v.badges.map((b) => badgeFor(b?.key)).filter((b): b is Badge => !!b))].slice(0, 6);
+    // A check-in done here (not off the channel) also brings its badge
+    // cards from our own server: the card's front replaces the emoji, and
+    // a newer catalog badge gets a banner in its own name.
+    const local = !withToast;
+    const cards = new Map<string, string>();
+    const extra: { label: string; points: number }[] = [];
+    if (local && !v?.alreadyToday && Array.isArray(v?.badges)) {
+      for (const b of v.badges) {
+        if (typeof b?.card?.front === "string" && b.card.front.startsWith("<svg")) cards.set(b.key, b.card.front);
+        if (!badgeFor(b?.key) && typeof b?.label === "string") extra.push({ label: b.label.slice(0, 40), points: Math.max(0, Math.round(Number(b.points) || 0)) });
+      }
+    }
     let detail: string;
     if (v?.alreadyToday) detail = `Already checked in today · ${points.toLocaleString("en-US")} points`;
     else if (v) detail = `+${visitPoints} points${weekStreak > 1 ? ` · 🔥 ${weekStreak} weeks in a row` : ""} · ${points.toLocaleString("en-US")} total`;
@@ -423,7 +438,15 @@ export default function CheckinKiosk({
     if (show !== "classic") playEntrance({ entrance: show, color: flairHex(flair), sticker: flair.sticker });
     badges.forEach((b, i) => {
       const c = badgeCheer(b, guest ? "friend" : name);
-      setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
+      const art = cards.get(b.key) ?? null;
+      setTimeout(() => toast({ title: c.title, detail: c.detail, tone: "badge", emoji: c.emoji, art, claimUrl: null }, b.reward ? BADGE_REWARD_MS : BADGE_MS), BADGE_STAGGER_MS * (i + 1));
+    });
+    extra.slice(0, 3).forEach((b, i) => {
+      const who = guest ? "You" : name;
+      setTimeout(
+        () => toast({ title: `${who} earned ${b.label}!`, detail: b.points ? `+${b.points} points` : "A new badge", tone: "badge", emoji: "🏅", art: null, claimUrl: null }, BADGE_MS),
+        BADGE_STAGGER_MS * (badges.length + i + 1),
+      );
     });
   }
 
@@ -904,10 +927,14 @@ export default function CheckinKiosk({
               className={`${k.toast} ${t.tone === "warn" ? k.toastWarn : ""} ${t.tone === "badge" ? k.toastBadge : ""} ${t.claimUrl ? k.toastClaim : ""} ${t.line ? k.toastHasLine : ""}`}
               style={t.color ? { background: t.color } : undefined}
             >
-              {t.emoji && (
-                <span className={k.badgeEmoji} aria-hidden="true">
-                  {t.emoji}
-                </span>
+              {t.art ? (
+                <span className={`${k.badgeArt} badge-svg`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: t.art }} />
+              ) : (
+                t.emoji && (
+                  <span className={k.badgeEmoji} aria-hidden="true">
+                    {t.emoji}
+                  </span>
+                )
               )}
               <div style={{ minWidth: 0 }}>
                 <div className={k.toastTitle}>{t.title}</div>

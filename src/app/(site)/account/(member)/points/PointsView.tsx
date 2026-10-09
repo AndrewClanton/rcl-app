@@ -8,6 +8,7 @@ import { CARD_UNDO_NOTE } from "@/lib/card-match";
 import { adjustmentNote, rewardName, rewardOff } from "@/lib/points-history";
 import { dateShort, points } from "../format";
 import { Empty, Panel, SectionHead, SpecPanel, STACK } from "../ui";
+import type { BadgeCard, LockedBadge } from "@/lib/badges/server";
 import { BadgeCabinet, StreakPanel } from "./Badges";
 
 // What each line of their history says. Never a staff member's name: a
@@ -61,12 +62,16 @@ export default function PointsView({
   visits,
   birthday,
   past = null,
+  cards = [],
+  earnable = { locked: [], total: 0 },
 }: {
   balance: number;
   ledger: LedgerEntry[];
   visits: VisitSummary;
   birthday: string | null;
   past?: PastVisits | null;
+  cards?: BadgeCard[];
+  earnable?: { locked: LockedBadge[]; total: number };
 }) {
   const earned = ledger.filter((l) => l.delta > 0 && l.reason !== "opening_balance" && l.reason !== "merge").reduce((s, l) => s + l.delta, 0);
   // (Math.abs: no redemptions would otherwise show as "-0".)
@@ -95,7 +100,7 @@ export default function PointsView({
         </Panel>
       )}
 
-      <BadgeCabinet visits={visits} birthday={birthday} />
+      <BadgeCabinet visits={visits} birthday={birthday} cards={cards} earnable={earnable} />
 
       <Panel title="How points work">
         <ul className="grid gap-4 p-5 text-[15px] sm:grid-cols-2">

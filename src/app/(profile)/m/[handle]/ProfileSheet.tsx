@@ -3,12 +3,14 @@ import MoviePoster from "@/components/MoviePoster";
 import { SpecFoot } from "@/components/print";
 import type { PublicProfile } from "@/lib/member-profile";
 import { BADGES } from "@/lib/visits";
+import type { BadgeCard } from "@/lib/badges/server";
+import { BadgeCardFlip } from "@/components/badges/BadgeCard";
 import ProfileHero from "./ProfileHero";
 
 // A shared profile, drawn from what toPublicProfile() allows and nothing
 // else (lib/member-profile.ts): the screen with their name and line, their
 // numbers, badges and movies seen, and an invitation to start your own.
-export default function ProfileSheet({ p }: { p: PublicProfile }) {
+export default function ProfileSheet({ p, cards = [] }: { p: PublicProfile; cards?: BadgeCard[] }) {
   return (
     <article className="space-y-8">
       <ProfileHero displayName={p.displayName} line={p.line} photo={p.photo} initial={p.initial} memberSince={p.memberSince} flair={p.flair} />
@@ -22,7 +24,7 @@ export default function ProfileSheet({ p }: { p: PublicProfile }) {
         </dl>
       </section>
 
-      <Badges p={p} />
+      {cards.length ? <BadgeCase p={p} cards={cards} /> : <Badges p={p} />}
       <Movies p={p} />
 
       <section className="rounded-[6px] border-2 border-dashed border-[var(--foreground)] bg-[var(--surface)] p-5 sm:p-6">
@@ -59,6 +61,24 @@ function SheetHead({ title, aside }: { title: string; aside?: string }) {
       <span>{title}</span>
       {aside && <span>{aside}</span>}
     </h2>
+  );
+}
+
+// Their badge case: each copy a card, tap to turn it over (its serial,
+// rarity and verify QR). Drawn for a public page on the server.
+function BadgeCase({ p, cards }: { p: PublicProfile; cards: BadgeCard[] }) {
+  return (
+    <section className="sheet crop">
+      <SheetHead title="Badge case" aside={`${p.badges.length} of ${p.badgeTotal}`} />
+      <ul className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3 sm:p-5 lg:grid-cols-4">
+        {cards.map((c) => (
+          <li key={c.code} className="min-w-0">
+            <BadgeCardFlip front={c.front} back={c.back} label={`${c.name} #${c.serial}`} />
+          </li>
+        ))}
+      </ul>
+      <SpecFoot />
+    </section>
   );
 }
 

@@ -708,6 +708,14 @@
   font-size: 30px;
   line-height: 1;
 }
+/* A badge's card front (lib/badges/card.ts), small, in place of the emoji. */
+.badgeArt {
+  flex: none;
+  display: block;
+  width: 58px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px var(--gold);
+}
 @keyframes badgeIn {
   from {
     transform: translateY(-10px) scale(0.92);

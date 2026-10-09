@@ -88,6 +88,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       min: "admin",
     },
     {
+      href: "/admin/badges",
+      label: "Badges",
+      about: "The badge catalog as trading cards: make a new badge, give one by hand, and see every copy minted, its rarity and who holds it.",
+      keywords: "badge case catalog trading cards series rarity serial minted award by hand new badge maker parts pin patch coin verify",
+      min: "manager",
+    },
+    {
       href: "/admin/organizations",
       label: "Organizations",
       about: "Groups like Easter Seals: monthly fee, daily comps, helpers and supported guests, statements and the helper sign-up link.",

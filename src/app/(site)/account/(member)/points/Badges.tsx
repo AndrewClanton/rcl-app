@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { VisitSummary } from "@/lib/visits-server";
-import { BADGES, REWARD_LABEL, VISIT_POINTS, birthdayLabel, nextWeekBadge, type Badge } from "@/lib/visits";
+import { BADGES, REWARD_LABEL, VISIT_POINTS, badgeFor, birthdayLabel, nextWeekBadge, type Badge } from "@/lib/visits";
+import type { BadgeCard, LockedBadge } from "@/lib/badges/server";
+import { BadgeCardFlip } from "@/components/badges/BadgeCard";
 import { dateShort, dayMonth } from "../format";
 import { Panel } from "../ui";
 
@@ -61,7 +63,88 @@ export function StreakPanel({ visits }: { visits: VisitSummary }) {
   );
 }
 
-export function BadgeCabinet({ visits, birthday }: { visits: VisitSummary; birthday: string | null }) {
+// The badge case: every copy they hold as a card (tap to turn it over:
+// serial, rarity, mint date and its verify QR), then the badges still to
+// earn, greyed, with how. Falls back to the cabinet below if the cards
+// can't be read.
+export function BadgeCabinet({
+  visits,
+  birthday,
+  cards = [],
+  earnable = { locked: [], total: 0 },
+}: {
+  visits: VisitSummary;
+  birthday: string | null;
+  cards?: BadgeCard[];
+  earnable?: { locked: LockedBadge[]; total: number };
+}) {
+  if (cards.length || earnable.locked.length) return <BadgeCase cards={cards} earnable={earnable} birthday={birthday} />;
+  return <OldCabinet visits={visits} birthday={birthday} />;
+}
+
+function BadgeCase({ cards, earnable, birthday }: { cards: BadgeCard[]; earnable: { locked: LockedBadge[]; total: number }; birthday: string | null }) {
+  const have = new Set(cards.map((c) => c.key));
+  const locked = earnable.locked.filter((b) => !have.has(b.key));
+  return (
+    <Panel title="Badge case" aside={`${have.size} of ${Math.max(earnable.total, have.size)}`}>
+      {cards.length > 0 ? (
+        <ul className="grid grid-cols-2 gap-4 p-5 sm:grid-cols-3 lg:grid-cols-4">
+          {cards.map((c) => (
+            <li key={c.code} className="min-w-0">
+              <BadgeCardFlip front={c.front} back={c.back} label={`${c.name} #${c.serial}`} />
+              <div className="mt-2 flex items-baseline justify-between gap-2 text-sm">
+                <span className="spec-code">Earned {dateShort(c.mintedAt)}</span>
+                <Link href={`/b/${c.code}`} className="font-bold text-[var(--accent)] hover:underline">
+                  Verify
+                </Link>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="p-5 text-[15px] text-[var(--muted)]">No badges yet. The first one comes with your first check-in.</p>
+      )}
+      {locked.length > 0 && (
+        <>
+          <h3 className="spec-code border-t-2 border-dashed border-[var(--border)] px-5 pt-4">Still to earn</h3>
+          <ul className="grid grid-cols-3 gap-3 p-5 sm:grid-cols-4 lg:grid-cols-6">
+            {locked.map((b) => {
+              const how = badgeFor(b.key)?.how ?? b.flavor;
+              const needsBirthday = b.key === "birthday" && !birthdayLabel(birthday);
+              return (
+                <li key={b.key} className="min-w-0 text-[var(--muted)]">
+                  <div className="badge-svg opacity-40 grayscale" aria-hidden="true" dangerouslySetInnerHTML={{ __html: b.front }} />
+                  <div className="font-display mt-1.5 text-[14px] leading-tight text-[var(--foreground)]">{b.name}</div>
+                  <div className="text-[13px] leading-snug">
+                    {how}
+                    {needsBirthday && (
+                      <>
+                        {" "}
+                        <Link href="/account/profile" className="font-bold text-[var(--accent)] hover:underline">
+                          Add your birthday
+                        </Link>
+                      </>
+                    )}
+                  </div>
+                  <div className="spec-code">
+                    +{b.points}
+                    {b.reward ? ` · ${REWARD_LABEL[b.reward].toLowerCase()}` : ""}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+      <p className="border-t-2 border-dashed border-[var(--border)] px-5 py-3 text-sm text-[var(--muted)]">
+        Each badge pays its points once ({VISIT_POINTS} points every check-in on top), and each one you earn is your own numbered copy, signed by Royale Cinema
+        Lounge. Tap a card to turn it over. The birthday one comes back every year.
+      </p>
+    </Panel>
+  );
+}
+
+function OldCabinet({ visits, birthday }: { visits: VisitSummary; birthday: string | null }) {
   // A badge's latest earning (Birthday Visit can come every year).
   const earned = new Map<string, { at: string; times: number }>();
   for (const b of visits.badges) earned.set(b.key, { at: b.earnedAt, times: (earned.get(b.key)?.times ?? 0) + 1 });

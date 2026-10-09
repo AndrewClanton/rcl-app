@@ -18,7 +18,19 @@ import { perkSound, playSound, type SoundName } from "./sounds";
 // moves on to the next screen. Reduced motion: a plain fade, no confetti.
 
 export type RewardResult =
-  | { kind: "points"; earned: number; alreadyToday: boolean; firstName: string | null; isNew: boolean; accent: string | null; streak: number; sound?: SoundName | null }
+  | {
+      kind: "points";
+      earned: number;
+      alreadyToday: boolean;
+      firstName: string | null;
+      isNew: boolean;
+      accent: string | null;
+      streak: number;
+      sound?: SoundName | null;
+      // The first badge this check-in earned, as its card (SVG from our own
+      // server): it takes the icon's place and turns over to its back.
+      card?: { front: string; back: string } | null;
+    }
   // Sent on to the register with nothing checked in here.
   | { kind: "thanks" };
 
@@ -42,7 +54,18 @@ export function rewardFor(c: TabletCheckin | null | undefined): RewardResult {
     streak: Math.max(0, Math.round(Number(c.visit?.weekStreak) || 0)),
     // Their own sign-in sound, if they unlocked one (a key into our list).
     sound: perkSound(c.flair?.sound),
+    card: firstCard(c),
   };
+}
+
+function firstCard(c: TabletCheckin): { front: string; back: string } | null {
+  if (c.visit?.alreadyToday || !Array.isArray(c.visit?.badges)) return null;
+  for (const b of c.visit.badges) {
+    const front = b?.card?.front;
+    const back = b?.card?.back;
+    if (typeof front === "string" && typeof back === "string" && front.startsWith("<svg") && back.startsWith("<svg")) return { front, back };
+  }
+  return null;
 }
 
 // The icon has the stage to itself this long before the points can show;
@@ -50,6 +73,9 @@ export function rewardFor(c: TabletCheckin | null | undefined): RewardResult {
 const ICON_MS = 420;
 const HOLD_MS = 1_350;
 const HOLD_NEW_MS = 1_900;
+// With a new badge's card: its front, a turn, a look at the back.
+const HOLD_CARD_MS = 4_600;
+const TURN_MS = 1_900;
 const FADE_MS = 320;
 
 const GOLD = "#ffc72c";
@@ -79,9 +105,18 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
   const [ready, setReady] = useState(false);
   const [out, setOut] = useState(false);
   const done = useEffectEvent(onDone);
+  const [turned, setTurned] = useState(false);
   const r = shown.result;
   const revealed = ready && !!r && !shown.leaving;
-  const hold = r?.kind === "points" && r.isNew ? HOLD_NEW_MS : HOLD_MS;
+  const card = revealed && r?.kind === "points" && !r.alreadyToday && r.earned > 0 ? (r.card ?? null) : null;
+  const hold = card ? HOLD_CARD_MS : r?.kind === "points" && r.isNew ? HOLD_NEW_MS : HOLD_MS;
+
+  // A new badge's card shows its front, then turns over to its back.
+  useEffect(() => {
+    if (!card) return;
+    const timer = setTimeout(() => setTurned(true), TURN_MS);
+    return () => clearTimeout(timer);
+  }, [card]);
 
   useEffect(() => {
     const timer = setTimeout(() => setReady(true), ICON_MS);
@@ -139,9 +174,18 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
           ))}
         </div>
       )}
-      <div className={`${s.icon} ${revealed ? s.iconUp : r || shown.leaving ? "" : s.iconWait}`} aria-hidden="true">
-        {welcomeOnly ? "👋" : "🎟️"}
-      </div>
+      {card ? (
+        <div className={s.card} aria-hidden="true">
+          <span className={`badge-flip-inner ${turned ? "is-flipped" : ""}`}>
+            <span className="badge-face badge-svg" dangerouslySetInnerHTML={{ __html: card.front }} />
+            <span className="badge-face badge-face-back badge-svg" dangerouslySetInnerHTML={{ __html: card.back }} />
+          </span>
+        </div>
+      ) : (
+        <div className={`${s.icon} ${revealed ? s.iconUp : r || shown.leaving ? "" : s.iconWait}`} aria-hidden="true">
+          {welcomeOnly ? "👋" : "🎟️"}
+        </div>
+      )}
       {points ? (
         <>
           {welcomeOnly ? (

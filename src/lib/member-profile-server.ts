@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { allowAttempt } from "@/lib/rate-limit";
 import { badgeFor } from "@/lib/visits";
+import { memberCards, type BadgeCard } from "@/lib/badges/server";
 import {
   beforeToday,
   isShared,
@@ -125,6 +126,18 @@ export const getPublicProfile = cache(async (handle: string): Promise<PublicProf
   const now = new Date();
   const [facts, seen] = await Promise.all([pastFacts(m.id, now).catch(() => ({ visits: 0, weekStreak: 0, badges: [] })), seenScreenings(m.id, now)]);
   return toPublicProfile(m, { ...facts, seen }, now);
+});
+
+// Their badge case for the shared page: the signed copies as cards, drawn
+// for a public page (lib/badges/server.ts toCard: no time of day, a
+// birthday badge's year only), and nothing minted today (like the rest of
+// the page). Empty if the page isn't shared.
+export const getPublicProfileCards = cache(async (handle: string): Promise<BadgeCard[]> => {
+  const m = await sharedMember(handle);
+  if (!m) return [];
+  const now = new Date();
+  const cards = await memberCards(m.id, { publicView: true });
+  return cards.filter((c) => beforeToday(c.mintedAt, now));
 });
 
 const AVATAR_MARKER = "/storage/v1/object/public/member-avatars/";

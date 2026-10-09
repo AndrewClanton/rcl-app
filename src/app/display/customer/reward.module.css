@@ -61,6 +61,14 @@
     width 260ms ease-out,
     font-size 260ms ease-out;
 }
+/* A new badge's card (lib/badges/card.ts) in the icon's place: it pops in,
+   then turns over (globals.css .badge-flip-inner). */
+.card {
+  width: clamp(150px, 30vh, 230px);
+  perspective: 1200px;
+  filter: drop-shadow(0 0 28px rgba(255, 199, 44, 0.45));
+  animation: pop 420ms cubic-bezier(0.2, 1.5, 0.4, 1) both;
+}
 @keyframes pop {
   from {
     transform: scale(0.2);
