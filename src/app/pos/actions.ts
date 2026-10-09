@@ -15,7 +15,7 @@ import { asStation, type RegisterStation } from "@/lib/print/stations";
 import { readRegisterCard, settleSaleCard } from "@/lib/member-cards";
 import { cardLabel, type CardNotice } from "@/lib/card-match";
 import { schemaMissing } from "@/lib/schema-missing";
-import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
+import { cents, ENFORCE_REGISTER_TOTALS, giftCardSales, isGiftCardLine, isRewardLine, pointsEarned } from "@/lib/register-totals";
 import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type CoffeeCheck, type TotalsCheck } from "@/lib/register-sale-checks";
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
@@ -75,6 +75,9 @@ export interface CheckoutTotals {
   // guest's tax-included prices (lib/orgs.ts). Optional: none.
   org_comp_discount?: number;
   tax_included?: boolean;
+  // Gift cards sold on the order (isGiftCardLine): untaxed, no points.
+  // The server figures its own from the lines for the points.
+  gift_card_sales?: number;
 }
 
 export interface CheckoutPayment {
@@ -131,7 +134,7 @@ export interface DraftOrderFull {
   lines: (CheckoutLine & { unit: number })[];
 }
 
-// The order's tax-exempt columns (migration 20261003200000): only on a
+// The order's tax-exempt columns (migration 20261009110000): only on a
 // tax-free order, so every other sale saves the same as before (and keeps
 // saving if the migration isn't in yet).
 function taxExemptColumns(taxFree: boolean, mark: TaxExemptMark | null | undefined) {
@@ -780,7 +783,9 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // 1 point per $1 of the order after discounts. Each change lands in the
   // member's points history, tied to this order.
   if (memberId && !ownerSale) {
-    const earned = pointsEarned(params.totals);
+    // No points for gift cards sold, figured from the lines (not the register's word).
+    const giftCards = giftCardSales(params.lines.map((l) => ({ unit: Number(l.unit_price), qty: Number(l.quantity), giftCard: isGiftCardLine(l) })));
+    const earned = pointsEarned({ ...params.totals, gift_card_sales: giftCards });
     if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
   // What the sale spends: the $5 off's 100 points and the rewards picked on
@@ -1054,7 +1059,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const supabase = createAdminClient();
   // recipe_id: a Bar Book drink's recipe, once migration 20261004030000 is
   // in; read without it before then. The order's own columns are "*": the
-  // tax-exempt columns come along once migration 20261003200000 is in.
+  // tax-exempt columns come along once migration 20261009110000 is in.
   type DraftRow = {
     id: string;
     order_name: string | null;

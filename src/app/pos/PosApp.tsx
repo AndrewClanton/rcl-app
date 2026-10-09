@@ -112,6 +112,7 @@ import {
   OWNER_RATE_NAME,
   ownerCartKey,
   ownerOrderTotals,
+  isGiftCardLine,
   pointsEarned,
   registerTotals,
 } from "@/lib/register-totals";
@@ -217,6 +218,7 @@ function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
     // Only when there's one, so every other sale saves as it always has.
     ...(t.orgCompDiscount > 0 ? { org_comp_discount: t.orgCompDiscount } : {}),
     ...(t.taxIncluded ? { tax_included: true } : {}),
+    ...(t.giftCardSales > 0 ? { gift_card_sales: t.giftCardSales } : {}),
   };
 }
 
@@ -856,7 +858,7 @@ export default function PosApp({
   const compOrgName = orgOnOrder?.orgName ?? orgGroup?.orgName;
   const totalsLines = cart.map((l, i) => {
     const item = findItem(l.menuItemId);
-    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i] };
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i], giftCard: isGiftCardLine(l) };
   });
   // At the owner rate, what's charged is the server's owner prices, taxed,
   // with nothing else off.

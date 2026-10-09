@@ -4,7 +4,7 @@ import { salesTaxOn } from "@/lib/sales-tax";
 // Sales tax tab and the nightly email describe it. Everything is taxed
 // (lib/sales-tax.ts) unless the register's "Tax exempt" box is ticked, which
 // takes a manager PIN and one of these reasons (saved on the order:
-// migration 20261003200000_tax_exempt_reason.sql).
+// migration 20261009110000_tax_exempt_reason.sql).
 // (No server imports: the register uses it too.)
 
 export const TAX_EXEMPT_REASONS = {

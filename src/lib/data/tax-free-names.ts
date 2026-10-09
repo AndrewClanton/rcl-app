@@ -6,7 +6,7 @@ import { taxFreeStaffIds, type TaxFreeOrderRow } from "@/lib/tax-exempt";
 // order rows (tax_exempt_marker, tax_exempt_approver), for Reports' list of
 // tax-free orders (lib/tax-exempt.ts). One lookup, only when there are any.
 // Looked up rather than joined, so Reports keep working before the
-// tax-exempt migration (20261003200000) is applied. Never throws: without
+// tax-exempt migration (20261009110000) is applied. Never throws: without
 // names the list still shows each order and why.
 export async function attachTaxExemptNames(rows: TaxFreeOrderRow[]): Promise<void> {
   const ids = taxFreeStaffIds(rows);

@@ -12,6 +12,8 @@
 //  5. Memberships with no tax on top, counted as tax-included in Reports:
 //     $15.00 is $13.80 + $1.20.
 //  6. Booth bookings carry tax at checkout, like online tickets.
+//  7. Gift cards: untaxed when sold (no manager PIN), no discount or
+//     points on them; taxed when spent, since a gift card pays like cash.
 //
 // Usage: node scripts/check-sales-tax.mjs   (Node 23.6+ runs the .ts directly)
 import { register } from "node:module";
@@ -26,7 +28,7 @@ register(
     ),
 );
 const { SALES_TAX_PERCENT, SALES_TAX_RATE, salesTaxOn, taxInsideCents, UNTAXED_MEMBERSHIPS } = await import("../src/lib/sales-tax.ts");
-const { registerTotals } = await import("../src/lib/register-totals.ts");
+const { registerTotals, isGiftCardLine, pointsEarned } = await import("../src/lib/register-totals.ts");
 const { REWARD_VALUE, POINTS_PER_REWARD } = await import("../src/lib/loyalty.ts");
 const { TAX_EXEMPT_REASONS, taxFreeOrders, taxFreeLine, taxFreeCallout, taxFreeStaffIds } = await import("../src/lib/tax-exempt.ts");
 
@@ -114,7 +116,7 @@ check("the register asks a reason too", /approveTaxExempt\(\{ pin, tabId: active
   const actions = read("src/app/pos/actions.ts");
   check('"other" needs a note', /input\.reason === "other" && !note/.test(actions));
   check("the reason goes on the order only when it's tax-free", /if \(!taxFree \|\| !mark/.test(actions) && (actions.match(/\.\.\.taxExemptColumns\(/g) ?? []).length === 3);
-  const mig = read("supabase/migrations/20261003200000_tax_exempt_reason.sql");
+  const mig = read("supabase/migrations/20261009110000_tax_exempt_reason.sql");
   check("the migration only adds columns (no old order is changed)", /add column if not exists tax_exempt_reason/.test(mig) && !/\bupdate\s+orders\b|\bdelete\s+from\b/i.test(mig.replace(/^--.*$/gm, "")));
 }
 {
@@ -152,6 +154,29 @@ check("Reports read memberships through the setting", /rows: rows\.map\(withTaxI
 const booths = read("src/app/(site)/booths/actions.ts");
 check("booth checkout adds the sales tax rate", /tax_rates:\s*\[taxRate\]/.test(booths) && /salesTaxRateId\(\)/.test(booths));
 check("online tickets still add it", /tax_rates:\s*\[taxRate\]/.test(read("src/app/(site)/showtimes/[id]/actions.ts")));
+
+// 7. Gift cards.
+check(
+  "a gift card line: the button's and the old custom item's names",
+  isGiftCardLine({ menu_item_id: null, name: "Gift card" }) && isGiftCardLine({ menu_item_id: null, name: "$50 Gift Card" }) && isGiftCardLine({ menuItemId: null, name: "giftcard" }),
+);
+check(
+  "not a gift card: a menu item, or anything else",
+  !isGiftCardLine({ menu_item_id: "x", name: "Gift card" }) && !isGiftCardLine({ menu_item_id: null, name: "Gift card refund" }) && !isGiftCardLine({ menu_item_id: null, name: "Nachos" }),
+);
+{
+  // A $50 gift card and $10 nachos: tax on the $10 only.
+  const t = registerTotals([{ unit: 50, qty: 1, giftCard: true }, { unit: 10, qty: 1 }], null, false, false, false);
+  check("a gift card sold isn't taxed: $50 card + $10 nachos -> $0.87 tax, $60.87", t.tax === 0.87 && t.total === 60.87 && t.subtotal === 60 && t.giftCardSales === 50, `tax ${t.tax} total ${t.total}`);
+  const alone = registerTotals([{ unit: 25, qty: 2, giftCard: true }], null, false, false, false);
+  check("two $25 cards alone: $50.00, no tax", alone.tax === 0 && alone.total === 50);
+  const p = registerTotals([{ unit: 50, qty: 1, giftCard: true }, { unit: 10, qty: 1 }], plus, true, false, false);
+  check("no member or monthly 10% off a gift card", p.tierDiscount === 1 && p.monthlyDiscount === 1 && p.total === Math.round((50 + 8 + salesTaxOn(8)) * 100) / 100, `total ${p.total}`);
+  check("no points for the gift card, points for the nachos", pointsEarned({ subtotal: 60, tier_discount: 0, monthly_discount: 0, redemption_discount: 0, gift_card_sales: 50 }) === 10);
+  check("the register marks gift card lines itself (no Tax exempt, no PIN)", /giftCard: isGiftCardLine\(l\)/.test(read("src/app/pos/PosApp.tsx")));
+  check("the server pays no points on gift cards sold", /gift_card_sales: giftCards/.test(read("src/app/pos/actions.ts")));
+  check("the totals check knows gift card lines", /giftCard: isGiftCardLine\(sale\.lines\[i\]\)/.test(read("src/lib/register-sale-checks.ts")));
+}
 
 console.log(failures ? `\n${failures} failed` : "\nAll good.");
 process.exit(failures ? 1 : 0);

@@ -9,6 +9,9 @@
 // Nothing on the menu is tax-free. The only way a sale goes without tax is
 // the register's "Tax exempt" tick (a customer with a Missouri exemption
 // certificate), and a manager has to approve each one with their PIN.
+// Gift cards are the one thing sold untaxed, by what they are, with no PIN
+// (isGiftCardLine in lib/register-totals.ts): the tax comes when a card is
+// spent, since a gift card pays for an order like cash or a card does.
 export const SALES_TAX_PERCENT = 8.725;
 export const SALES_TAX_RATE = SALES_TAX_PERCENT / 100;
 
