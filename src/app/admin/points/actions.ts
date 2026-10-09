@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assertAdmin } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isPerkSlot, perkOption, type RewardKind } from "@/lib/rewards";
+import { guessGoodSection, isGoodSection, isPerkSlot, perkOption, type RewardKind } from "@/lib/rewards";
 import { addFlag } from "@/lib/member-flags-server";
 import { FLAG_NOTE_MAX } from "@/lib/member-flags";
 
@@ -17,6 +17,7 @@ export interface RewardInput {
   name: string;
   description: string;
   kind: RewardKind;
+  section: string | null; // a good's: "food" or "tickets" (blank: guessed from the name)
   perkSlot: string | null;
   perkKey: string | null;
   perkDays: number | null;
@@ -70,6 +71,7 @@ export async function saveReward(input: RewardInput): Promise<SaveResult> {
     name,
     description,
     kind,
+    section: kind === "good" ? (isGoodSection(input.section) ? input.section : guessGoodSection(name)) : null,
     perk_slot: perkSlot,
     perk_key: perkKey,
     perk_days: perkDays,
