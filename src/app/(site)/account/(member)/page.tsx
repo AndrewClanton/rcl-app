@@ -16,7 +16,7 @@ export default async function AccountOverviewPage({ searchParams }: { searchPara
     data: { user },
   } = await supabase.auth.getUser();
   const [purchases, screenings, booths, coffee] = await Promise.all([
-    getPurchases(member.id),
+    getPurchases(member.id, { oldRegister: true }),
     getMemberScreenings(member.id),
     getMemberBooths(member.id),
     // Insiders+: today's free coffee (lib/daily-perk.ts).

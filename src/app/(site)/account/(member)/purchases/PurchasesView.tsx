@@ -34,12 +34,14 @@ export default function PurchasesView({ purchases }: { purchases: PurchaseRow[] 
               </span>
             </h2>
             <PurchaseRows rows={rows} />
+            {rows.some((r) => r.kind !== "old_register") && (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t-2 border-dashed border-[var(--border)] px-4 py-3">
               <span className="text-sm text-[var(--muted)]">Every purchase, the tax you paid and your points for {year}, in one PDF.</span>
               <a href={`/account/statements/${year}`} className={`btn-secondary ${TAP} w-full px-4 py-2 text-sm sm:w-auto`}>
                 {year} statement (PDF)
               </a>
             </div>
+            )}
           </section>
         );
       })}

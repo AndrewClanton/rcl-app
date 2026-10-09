@@ -7,6 +7,7 @@ import { cardLabel } from "@/lib/card-match";
 import { stripeKeyMode } from "@/lib/stripe";
 import { schemaMissing } from "@/lib/schema-missing";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
+import { OLD_REGISTER_LABEL, OLD_REGISTER_REFUND_LABEL, oldRegisterPurchases } from "@/lib/data/fortis-claim";
 
 // Everything a signed-in member sees about themselves. Every query is
 // scoped to a memberId already confirmed by requireMember() (or the PDF
@@ -24,7 +25,9 @@ export function yearOf(iso: string) {
 export type PurchaseKind = "order" | "ticket" | "booth";
 
 export interface PurchaseRow {
-  kind: PurchaseKind;
+  // old_register: a card purchase from before the new system (Fortis):
+  // date and amount only, no receipt.
+  kind: PurchaseKind | "old_register";
   id: string;
   date: string;
   label: string;
@@ -40,7 +43,9 @@ export interface PurchaseRow {
 // shows only as points in their points history. Before migration
 // 20261001220000 there's no member_source, and every sale is theirs.
 
-export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
+// oldRegister: also their card purchases from before the new system (My
+// Account's Purchases page and overview). A year statement leaves them out.
+export async function getPurchases(memberId: string, opts: { oldRegister?: boolean } = {}): Promise<PurchaseRow[]> {
   const supabase = createAdminClient();
   const ordersQuery = (withSource: boolean) => {
     let q = supabase
@@ -117,6 +122,20 @@ export async function getPurchases(memberId: string): Promise<PurchaseRow[]> {
       tax: Number(r.tax_amount ?? 0),
       status: r.status === "cancelled" ? "refunded" : "completed",
     });
+  }
+  if (opts.oldRegister) {
+    for (const p of await oldRegisterPurchases(memberId).catch(() => [])) {
+      rows.push({
+        kind: "old_register",
+        id: p.id,
+        date: p.date,
+        label: p.refund ? OLD_REGISTER_REFUND_LABEL : OLD_REGISTER_LABEL,
+        detail: "No item details from the old register",
+        amount: p.amount,
+        tax: 0,
+        status: "completed",
+      });
+    }
   }
   return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }

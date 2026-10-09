@@ -3,6 +3,7 @@ import { contactForRole } from "@/lib/contact-mask";
 import type { CommunityProgram, EmployeeRole, Member } from "@/lib/types";
 import { cardLabel, type CreditHow } from "@/lib/card-match";
 import { schemaMissing } from "@/lib/schema-missing";
+import { OLD_REGISTER_LABEL, OLD_REGISTER_REFUND_LABEL, oldRegisterPurchases } from "@/lib/data/fortis-claim";
 
 const MEMBER_SELECT =
   "*, community_program:community_programs(name), rate_set_by:employees!members_price_tier_set_by_fkey(name), erased_by_staff:employees!members_erased_by_fkey(name)";
@@ -107,7 +108,8 @@ export async function getCommunityPrograms(): Promise<CommunityProgram[]> {
 }
 
 export interface MemberPurchase {
-  kind: "order" | "booking";
+  // old_register: a card purchase from before the new system (Fortis).
+  kind: "order" | "booking" | "old_register";
   id: string;
   label: string;
   total: number;
@@ -241,7 +243,20 @@ export async function getMemberPurchaseHistory(memberId: string): Promise<Member
     ];
   });
 
-  return [...orderItems, ...bookingItems, ...creditedItems].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // Card purchases from before the new system, on their approved cards:
+  // date and amount only (no items, nothing to refund here).
+  const oldItems: MemberPurchase[] = (await oldRegisterPurchases(memberId).catch(() => [])).map((p) => ({
+    kind: "old_register",
+    id: p.id,
+    label: p.refund ? OLD_REGISTER_REFUND_LABEL : OLD_REGISTER_LABEL,
+    total: p.amount,
+    status: "completed",
+    paymentMethod: null,
+    stripePaymentIntentId: null,
+    createdAt: p.date,
+  }));
+
+  return [...orderItems, ...bookingItems, ...creditedItems, ...oldItems].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 // ---------- linked cards (lib/member-cards.ts) ----------

@@ -3,6 +3,8 @@ import PageHeader from "@/components/admin/PageHeader";
 import { BACKFILL_PAGE_SIZE, BACKFILL_TABS, getBackfillData, type BackfillTab } from "@/lib/data/fortis-backfill";
 import BackfillReview from "./BackfillReview";
 import Rewind from "./Rewind";
+import NeedsApproval from "./NeedsApproval";
+import { getApprovalQueue } from "@/lib/data/fortis-claim";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +17,14 @@ export const dynamic = "force-dynamic";
 export default async function PastPurchasesPage({ searchParams }: { searchParams: Promise<{ tab?: string; q?: string; page?: string }> }) {
   const staff = await requireManager();
   const isAdmin = hasAdminAccess(staff.role);
-  const rewind = <Rewind isAdmin={isAdmin} />;
+  // Needs approval first (lib/fortis-claim.ts): what isn't paid on its own.
+  const queue = await getApprovalQueue().catch(() => null);
+  const rewind = (
+    <>
+      {queue && <NeedsApproval cards={queue} />}
+      <Rewind isAdmin={isAdmin} />
+    </>
+  );
   if (!isAdmin) {
     return (
       <div className="space-y-6">
