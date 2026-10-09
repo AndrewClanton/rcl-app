@@ -25,7 +25,6 @@ export interface DesignRecipient {
 }
 
 export interface DesignLinks {
-  preferencesUrl: string;
   unsubscribeUrl: string;
   // A link to our site: tracked through /e/<send>/<i> when sending.
   href: (url: string, label: string) => string;

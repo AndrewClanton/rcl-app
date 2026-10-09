@@ -69,7 +69,6 @@ export function paragraphsHtml(text: string, opts: { size?: number; color?: stri
 }
 
 export interface FooterInput {
-  preferencesUrl: string;
   unsubscribeUrl: string;
   why: string;
   promotional: boolean;
@@ -79,7 +78,7 @@ export function footerHtml(f: FooterInput): string {
   const link = (href: string, label: string) => `<a href="${esc(href)}" style="color:${C.ink};text-decoration:underline;font-weight:700;">${label}</a>`;
   return `<tr><td class="px" bgcolor="${C.cream}" style="background:${C.cream};padding:26px 28px 30px;border-top:3px solid ${C.ink};">
 <div style="font-family:${BODY};font-size:14px;line-height:21px;color:${C.ink};">Questions? Just reply. A real person reads these.</div>
-<div style="font-family:${BODY};font-size:14px;line-height:21px;color:${C.ink};padding-top:10px;">${link(f.preferencesUrl, "Email preferences")} &nbsp;&middot;&nbsp; ${link(f.unsubscribeUrl, "Unsubscribe")}</div>
+<div style="font-family:${BODY};font-size:14px;line-height:21px;color:${C.ink};padding-top:10px;">${link(f.unsubscribeUrl, "Unsubscribe")}</div>
 <div style="font-family:${BODY};font-size:12px;line-height:19px;color:${C.muted};padding-top:14px;">${esc(f.why)}${f.promotional ? " A promotional email from Royale Cinema Lounge." : ""}</div>
 <div style="font-family:${MONO};font-size:11px;line-height:17px;letter-spacing:1px;text-transform:uppercase;color:${C.muted};padding-top:12px;">${esc(THEATER_LINE)}</div>
 </td></tr>`;
@@ -89,7 +88,6 @@ export function footerText(f: FooterInput): string {
   return [
     "Questions? Just reply. A real person reads these.",
     "",
-    `Email preferences: ${f.preferencesUrl}`,
     `Unsubscribe: ${f.unsubscribeUrl}`,
     "",
     `${f.why}${f.promotional ? " A promotional email from Royale Cinema Lounge." : ""}`,

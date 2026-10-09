@@ -483,8 +483,8 @@ const forward = src("lib/member-forward.ts");
 check("a merged id on an open sale follows to the kept account", /from\("member_merges"\)\.select\("keep_id"\)\.eq\("dropped_id", id\)/.test(forward) && /currentMemberId\(params\.memberId\)/.test(src("app/pos/actions.ts")));
 check(
   "an email link from before a merge (unsubscribe, preferences) acts on the account it became",
-  /const memberId = \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId;\s+const r = await setMarketingOptIn\(memberId, false, "one_click"/.test(src("app/api/email/unsubscribe/route.ts")) &&
-    /memberId: \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId, source: "prefs_page"/.test(src("app/(site)/email/preferences/actions.ts")) &&
+  /const memberId = \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId;\s+const r = await setMarketingOptIn\(memberId, false, "one_click"/.test(src("lib/email/unsubscribe.ts")) &&
+    /const memberId = \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId;[\s\S]*resubscribe\(memberId, "prefs_page"\)/.test(src("app/(site)/email/preferences/actions.ts")) &&
     /\.eq\("id", \(await currentMemberId\(t\.memberId\)\) \?\? t\.memberId\)/.test(src("app/(site)/email/preferences/page.tsx")),
 );
 check("the register links only owners/admins to the review", /href: hasAdminAccess\(staff\.role\) \? mergeHref\(/.test(src("app/pos/checkin-actions.ts")));

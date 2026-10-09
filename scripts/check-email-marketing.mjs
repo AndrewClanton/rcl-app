@@ -273,7 +273,7 @@ const facts = (over = {}) => ({
   eq("headers: List-Unsubscribe is our one-click address in angle brackets", h["List-Unsubscribe"], `<${SITE_URL}/api/email/unsubscribe?t=${t}>`);
   eq("headers: List-Unsubscribe-Post is RFC 8058's exact value", h["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click");
   check("headers: no address in either", !JSON.stringify(h).includes("@"));
-  check("prefs link carries #all for Unsubscribe", tokens.preferencesUrl(t, "all").endsWith(`/email/preferences?t=${t}#all`));
+  check("the footer's Unsubscribe link opens the unsubscribe page with the token", tokens.unsubscribePageUrl(t).endsWith(`/email/preferences?t=${t}`));
 }
 
 // ===================== 8. MPLC lint and rendering =====================
@@ -282,7 +282,7 @@ const films = [
   { movieId: "m-old", title: "The Texas Chain Saw Massacre", posterUrl: null, rating: "R", runtime: 83, archive: true, showtimes: [{ id: randomUUID(), startsAt: cdt("2026-10-16", "23:59").toISOString() }] },
 ];
 const data = { range: { start: "2026-10-13", days: 7 }, films, happenings: [{ id: randomUUID(), title: "Horror trivia", note: "Teams of six", startsAt: cdt("2026-10-13", "19:00").toISOString() }], menuItems: [] };
-const links = { preferencesUrl: `${SITE_URL}/email/preferences?t=TOKEN`, unsubscribeUrl: `${SITE_URL}/email/preferences?t=TOKEN#all`, href: (u) => u };
+const links = { unsubscribeUrl: `${SITE_URL}/email/preferences?t=TOKEN`, href: (u) => u };
 const recipient = { firstName: "Sam", consentSource: "indy_yes", tier: "Insiders", hasLogin: false, email: null, claimUrl: null };
 {
   const restricted = ["The Texas Chain Saw Massacre", "Jaws", "It"];
@@ -302,7 +302,7 @@ const recipient = { firstName: "Sam", consentSource: "indy_yes", tier: "Insiders
   const archiveAt = r.html.indexOf("From the film archive");
   check("render: the archive film is only inside the archive section, after its note", archiveAt > 0 && r.html.indexOf("Texas Chain Saw") > archiveAt && r.html.indexOf(render.ARCHIVE_NOTE.slice(0, 40)) > archiveAt);
   check("render: every email has the street address", r.html.includes("715 E Broadway") && r.html.includes("Joplin, MO 64801") && r.text.includes("715 E Broadway"));
-  check("render: ...and the unsubscribe and preferences links, in HTML and text", r.html.includes(`${SITE_URL}/email/preferences?t=TOKEN#all`) && r.text.includes("Unsubscribe: ") && r.html.includes("Email preferences"));
+  check("render: ...and the unsubscribe link (no preferences link), in HTML and text", r.html.includes(`${SITE_URL}/email/preferences?t=TOKEN`) && r.text.includes("Unsubscribe: ") && !r.html.includes("Email preferences"));
   check("render: the CAN-SPAM ad line on marketing, not on account email", r.html.includes("A promotional email from Royale Cinema Lounge") && !render.renderCampaign({ ...lineup, kind: "invite", category: "account" }, data, recipient, links).html.includes("A promotional email"));
   check("render: no view-in-browser or forward link", !/view (it )?in (your )?browser|forward to a friend/i.test(r.html));
   check("render: the first name fills in, and the house event gets a calendar link", r.html.includes("Hi Sam,") && r.html.includes("/api/calendar/"));
@@ -766,7 +766,7 @@ const goesToday = () => timing.centralParts(timing.nextSendSlot(new Date())).dat
     return Object.assign(r, { nextUrl: new URL(url) });
   };
   const g = await unsubRoute.GET(req("GET", t));
-  check("unsubscribe: GET never unsubscribes (it goes to the preference page)", g.status === 303 && (g.headers.get("location") ?? "").includes("/email/preferences?t=") && db.members.find((x) => x.id === m.id).email_opt_in === true);
+  check("unsubscribe: GET never unsubscribes (it goes to the unsubscribe page)", g.status === 303 && (g.headers.get("location") ?? "").includes("/email/preferences?t=") && db.members.find((x) => x.id === m.id).email_opt_in === true);
   const bad = Buffer.from(t, "base64url");
   bad[20] ^= 1;
   const b = await unsubRoute.POST(req("POST", bad.toString("base64url"), "List-Unsubscribe=One-Click"));

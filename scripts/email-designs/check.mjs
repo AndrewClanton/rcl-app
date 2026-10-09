@@ -74,7 +74,7 @@ const readers = [
   { tag: "noname", r: { firstName: null, hasLogin: false, claimUrl: null, finishUrl: null, fromOldSite: true, sendId: null } },
   { tag: "login", r: { firstName: "Jo", hasLogin: true, claimUrl: null, finishUrl: null, fromOldSite: false, sendId: null } },
 ];
-const L = { preferencesUrl: `${SITE}/email/preferences?t=x`, unsubscribeUrl: `${SITE}/email/preferences?t=x#all`, href: (u) => u };
+const L = { unsubscribeUrl: `${SITE}/email/preferences?t=x`, href: (u) => u };
 
 const work = mkdtempSync(join(tmpdir(), "rcl-email-check-"));
 const pages = [];

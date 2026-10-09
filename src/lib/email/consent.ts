@@ -15,7 +15,7 @@ import { PREF_CATEGORIES, type ConsentSource, type PrefCategory } from "./types"
 
 export type ConsentWriteSource =
   | "one_click" // the mailbox's own Unsubscribe button (RFC 8058)
-  | "prefs_page" // the preference page, from an email link
+  | "prefs_page" // the unsubscribe page, from an email link
   | "account" // their account page, signed in
   | "kiosk"
   | "join_form"

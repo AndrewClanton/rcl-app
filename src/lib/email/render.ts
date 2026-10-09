@@ -114,7 +114,6 @@ export interface Recipient {
 }
 
 export interface RenderLinks {
-  preferencesUrl: string;
   unsubscribeUrl: string;
   // Turns a link into what goes in the email (a tracked /e/<send>/<i>
   // address when sending, the link itself in a preview).
@@ -543,7 +542,7 @@ ${line ? `<div style="padding-top:4px;font-family:${BODY};font-size:15px;line-he
   }
 
   const promotional = c.category !== "account";
-  const footer = { preferencesUrl: L.preferencesUrl, unsubscribeUrl: L.unsubscribeUrl, why: whyLine(c.kind, r.consentSource), promotional };
+  const footer = { unsubscribeUrl: L.unsubscribeUrl, why: whyLine(c.kind, r.consentSource), promotional };
   return {
     subject,
     preheader,

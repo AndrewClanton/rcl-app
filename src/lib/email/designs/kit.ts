@@ -163,7 +163,6 @@ export const spacer = (h: number) => `<div style="height:${h}px;line-height:${h}
 
 // ---------- the footer (the same in all three) ----------
 export interface FooterLinks {
-  preferencesUrl: string;
   unsubscribeUrl: string;
 }
 
@@ -177,12 +176,12 @@ ${band(
 ${txt("715 E Broadway, Joplin, MO 64801 &middot; On Route 66", 13, 20, C.cream, "margin-top:20px;")}
 ${txt(`417-281-4172 &middot; <a href="${esc(SITE)}" style="color:${C.cream};text-decoration:none;">royalecinemajoplin.com</a>`, 13, 20, C.cream)}
 ${txt(esc(why), 13, 20, C.inkMute, "margin-top:12px;")}
-<div style="margin-top:4px;font-family:${FA};font-size:13px;line-height:20px;color:${C.cream};">${link(f.preferencesUrl, "Email preferences")} <span style="color:${C.inkMute};">&nbsp;&middot;&nbsp;</span> ${link(f.unsubscribeUrl, "Unsubscribe")}</div>`,
+<div style="margin-top:4px;font-family:${FA};font-size:13px;line-height:20px;color:${C.cream};">${link(f.unsubscribeUrl, "Unsubscribe")}</div>`,
   `${dev === "m" ? 32 : 40}px ${d.G}px`,
 )}`;
 }
 
-// The same footer without the preferences and unsubscribe links, for an
+// The same footer without the unsubscribe link, for an
 // email about the member's own account (the paid-through explainer, the
 // renewal notice): it's owed either way.
 export function accountFooter(dev: Dev, why: string): string {
