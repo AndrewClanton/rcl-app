@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { flairColor, DEFAULT_FLAIR_COLOR } from "@/lib/flair";
 import {
   SLOT_LABEL,
@@ -20,6 +20,7 @@ import {
 import { perkSound, playSound } from "./sounds";
 import { CardFrame, NameLine } from "@/components/flair/CardLook";
 import sp from "./spend.module.css";
+import { FLY_MS, FPS, bodyKeyframes, simulate, type Box } from "./blast";
 
 // "Spend points" on the customer screen: everything points buy, over the
 // whole screen until they close it (or a minute untouched, or they're off
@@ -72,18 +73,64 @@ const SLOT_ICON: Record<PerkSlot, string> = {
 function isTank(o: RewardOffer): boolean {
   return o.kind === "good" && o.section === "big";
 }
-const BOOM_MS = 2_200;
-// Debris: where each piece flies (deterministic, no Math.random in render).
-const DEBRIS = Array.from({ length: 14 }, (_, i) => {
-  const a = (i / 14) * Math.PI * 2 + (i % 3) * 0.35;
-  const d = 90 + ((i * 37) % 70);
-  return {
-    dx: Math.round(Math.cos(a) * d),
-    dy: Math.round(Math.sin(a) * d * 0.7 - 30),
-    r: ((i * 83) % 540) - 270,
-    s: 6 + ((i * 5) % 8),
-  };
-});
+// The blast (blast.ts): the card's pieces fly as rigid bodies off the other
+// cards and the screen's edges for FLY_MS, then ease home for HOME_MS. The
+// physics runs once at the tap (≤ 30 bodies, 108 frames) and plays back as
+// transform-only keyframes on a fixed layer, so nothing reflows.
+const HOME_MS = 650;
+const BOOM_MS = FLY_MS + HOME_MS + 60;
+const SHARDS = 6;
+const MAX_BITS = 30 - SHARDS;
+const MAX_OBSTACLES = 24;
+
+// The tank's words, each its own piece (data-bit), so each can fly. Long
+// text pairs words up so the card stays at `max` pieces or fewer.
+function Bits({ text, max }: { text: string; max: number }) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const per = Math.max(1, Math.ceil(words.length / Math.max(1, max)));
+  const chunks: string[] = [];
+  for (let i = 0; i < words.length; i += per)
+    chunks.push(words.slice(i, i + per).join(" "));
+  return chunks.map((c, i) => (
+    <span key={i}>
+      {i > 0 && " "}
+      <span data-bit="" className={sp.bit}>
+        {c}
+      </span>
+    </span>
+  ));
+}
+
+// Copies a piece onto the blast layer: the button as itself, text and the
+// icon as a plain box in the same font, at the same spot.
+function cloneBit(el: HTMLElement, at: Box): HTMLElement {
+  let c: HTMLElement;
+  if (el.tagName === "BUTTON") {
+    c = el.cloneNode(true) as HTMLElement;
+    c.removeAttribute("disabled");
+  } else {
+    c = document.createElement("div");
+    c.textContent = el.textContent;
+    const cs = getComputedStyle(el);
+    c.style.fontFamily = cs.fontFamily;
+    c.style.fontSize = cs.fontSize;
+    c.style.fontWeight = cs.fontWeight;
+    c.style.letterSpacing = cs.letterSpacing;
+    c.style.textTransform = cs.textTransform;
+    c.style.color = cs.color;
+    c.style.lineHeight = `${at.h}px`;
+    c.className = sp.bitClone;
+  }
+  c.removeAttribute("data-bit");
+  c.style.position = "absolute";
+  c.style.margin = "0";
+  c.style.left = `${at.x}px`;
+  c.style.top = `${at.y}px`;
+  c.style.width = `${at.w}px`;
+  c.style.height = `${at.h}px`;
+  c.style.willChange = "transform";
+  return c;
+}
 
 function iconFor(o: RewardOffer): string {
   if (isTank(o)) return "🪖";
@@ -135,17 +182,131 @@ export default function SpendPoints({
     timer: ReturnType<typeof setTimeout>;
   } | null>(null);
   const [touch, setTouch] = useState(0);
-  // The tank card mid-explosion (n: a new key each tap, so it replays).
-  const [boom, setBoom] = useState<{ id: string; n: number } | null>(null);
+  // The tank card mid-explosion (n: a new key each tap, so it replays; fly:
+  // its pieces are out on the blast layer, so the card's own are hidden).
+  const [boom, setBoom] = useState<{
+    id: string;
+    n: number;
+    fly: boolean;
+  } | null>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const blasting = useRef(false);
+  const wobbles = useRef<Animation[]>([]);
+  const boomN = useRef(0);
   useEffect(() => {
     if (!boom) return;
-    const t = setTimeout(() => setBoom(null), BOOM_MS);
+    const t = setTimeout(() => {
+      layerRef.current?.replaceChildren();
+      wobbles.current.forEach((a) => a.cancel());
+      wobbles.current = [];
+      blasting.current = false;
+      setBoom(null);
+    }, BOOM_MS);
     return () => clearTimeout(t);
   }, [boom]);
-  function explode(o: RewardOffer) {
+  useEffect(
+    () => () => {
+      wobbles.current.forEach((a) => a.cancel());
+    },
+    [],
+  );
+  // Never redeems anything: no register, no server. Just the show.
+  function explode(o: RewardOffer, e: MouseEvent<HTMLButtonElement>) {
+    if (blasting.current) return; // one at a time
+    blasting.current = true;
     setTouch((n) => n + 1);
-    setBoom((b) => ({ id: o.id, n: (b?.n ?? 0) + 1 }));
+    const n = ++boomN.current;
     playSound("boom");
+    const card = e.currentTarget.closest("li");
+    const layer = layerRef.current;
+    const still =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let fly = false;
+    if (card && layer && !still && typeof layer.animate === "function") {
+      fly = launch(card, layer, (Math.round(e.clientX) * 73856093) ^ (Math.round(e.clientY) * 19349663) ^ (n * 83492791));
+    }
+    setBoom({ id: o.id, n, fly });
+  }
+  function launch(card: HTMLElement, layer: HTMLDivElement, seed: number) {
+    const home = layer.getBoundingClientRect();
+    const box = (r: DOMRect): Box => ({
+      x: r.left - home.left,
+      y: r.top - home.top,
+      w: r.width,
+      h: r.height,
+    });
+    const bits = Array.from(
+      card.querySelectorAll<HTMLElement>("[data-bit]"),
+    ).slice(0, MAX_BITS);
+    const at = bits.map((b) => box(b.getBoundingClientRect()));
+    const c = box(card.getBoundingClientRect());
+    const center = { x: c.x + c.w * 0.3, y: c.y + c.h * 0.6 };
+    for (let i = 0; i < SHARDS; i++) {
+      const s = 8 + ((i * 5) % 7);
+      at.push({
+        x: center.x - s / 2 + ((i * 29) % 40) - 20,
+        y: center.y - s / 2 + ((i * 17) % 20) - 10,
+        w: s,
+        h: s,
+      });
+    }
+    // The other cards on screen are what the pieces hit.
+    const others: HTMLElement[] = [];
+    const walls: Box[] = [];
+    for (const li of layer.parentElement?.querySelectorAll<HTMLElement>("li") ?? []) {
+      if (li === card || others.length >= MAX_OBSTACLES) continue;
+      const b = box(li.getBoundingClientRect());
+      if (b.y + b.h < 0 || b.y > home.height || b.w === 0) continue;
+      others.push(li);
+      walls.push(b);
+    }
+    const plan = simulate(at, walls, { w: home.width, h: home.height }, center, seed);
+    const frag = document.createDocumentFragment();
+    const els = at.map((b, i) => {
+      const el =
+        i < bits.length
+          ? cloneBit(bits[i], b)
+          : (() => {
+              const d = document.createElement("div");
+              d.className = sp.shard;
+              d.style.left = `${b.x}px`;
+              d.style.top = `${b.y}px`;
+              d.style.width = d.style.height = `${b.w}px`;
+              return d;
+            })();
+      frag.appendChild(el);
+      return el;
+    });
+    layer.replaceChildren(frag);
+    const total = FLY_MS + HOME_MS;
+    els.forEach((el, i) => {
+      const keys = bodyKeyframes(plan.tracks[i], plan.frames, HOME_MS);
+      // Shards burn up instead of flying home.
+      if (i >= bits.length) {
+        keys.forEach((k) => {
+          k.opacity = Math.max(0, 1 - (k.offset as number) * 1.6);
+        });
+      }
+      el.animate(keys, { duration: total, easing: "linear", fill: "forwards" });
+    });
+    // A hard hit knocks the card it hit, then it settles.
+    wobbles.current = plan.hits.map((h) => {
+      const dx = h.dx * 16;
+      const dy = h.dy * 12;
+      const r = h.dx * 2.5 - h.dy * 1.5;
+      return others[h.obstacle].animate(
+        [
+          { transform: "none" },
+          { transform: `translate(${dx}px, ${dy}px) rotate(${r}deg)` },
+          { transform: `translate(${-dx * 0.4}px, ${-dy * 0.4}px) rotate(${-r * 0.4}deg)` },
+          { transform: `translate(${dx * 0.15}px, ${dy * 0.15}px)` },
+          { transform: "none" },
+        ],
+        { duration: 480, delay: (h.frame / FPS) * 1000, easing: "ease-out" },
+      );
+    });
+    return true;
   }
 
   // Loaded on open, whenever the order's rewards change, and after each
@@ -430,7 +591,7 @@ export default function SpendPoints({
                     return (
                       <li
                         key={o.id}
-                        className={`${sp.item} ${can || owned || tank ? sp.bright : sp.grey}${blowing ? ` ${sp.boom}` : ""}`}
+                        className={`${sp.item} ${can || owned || tank ? sp.bright : sp.grey}${blowing ? ` ${sp.boom}` : ""}${blowing && boom.fly ? ` ${sp.blasted}` : ""}`}
                       >
                         {blowing && (
                           <span
@@ -440,34 +601,36 @@ export default function SpendPoints({
                           >
                             <span className={sp.flash} />
                             <span className={sp.smoke} />
-                            {DEBRIS.map((p, i) => (
-                              <span
-                                key={i}
-                                className={sp.debris}
-                                style={
-                                  {
-                                    "--dx": `${p.dx}px`,
-                                    "--dy": `${p.dy}px`,
-                                    "--r": `${p.r}deg`,
-                                    width: p.s,
-                                    height: p.s,
-                                  } as CSSProperties
-                                }
-                              />
-                            ))}
                           </span>
                         )}
-                        <span className={sp.icon} aria-hidden="true">
+                        <span
+                          className={sp.icon}
+                          aria-hidden="true"
+                          data-bit={tank ? "" : undefined}
+                        >
                           {iconFor(o)}
                         </span>
                         <div className={sp.what}>
                           <div className={sp.name}>
-                            {shortName(o)}
+                            {tank ? (
+                              <Bits text={shortName(o)} max={6} />
+                            ) : (
+                              shortName(o)
+                            )}
                             {owned && <span className={sp.yours}>Yours</span>}
                             {o.soon && (
                               <span className={sp.soon}>Coming soon</span>
                             )}
                           </div>
+                          {tank ? (
+                            <div className={sp.desc}>
+                              {/* For show only (Andrew, 10/9): the real stock stays 0, so the server still refuses it. */}
+                              <Bits
+                                text={`${o.description ?? ""} · 4 in stock`}
+                                max={MAX_BITS - 9}
+                              />
+                            </div>
+                          ) : (
                           <div className={sp.desc}>
                             {o.description ??
                               (o.slot ? SLOT_LABEL[o.slot] : "")}
@@ -478,11 +641,13 @@ export default function SpendPoints({
                               ? ` · until ${new Date(o.until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
                               : ""}
                             {o.alcohol ? " · 21+" : ""}
-                            {/* For show only (Andrew, 10/9): the real stock stays 0, so the server still refuses it. */}
-                            {tank ? " · 4 in stock" : ""}
                           </div>
+                          )}
                         </div>
-                        <span className={sp.pts}>
+                        <span
+                          className={sp.pts}
+                          data-bit={tank ? "" : undefined}
+                        >
                           {o.points.toLocaleString("en-US")} pts
                         </span>
                         <div className={sp.act}>
@@ -491,7 +656,8 @@ export default function SpendPoints({
                               type="button"
                               className={sp.useBtn}
                               disabled={blowing}
-                              onClick={() => explode(o)}
+                              data-bit=""
+                              onClick={(e) => explode(o, e)}
                             >
                               Use
                             </button>
@@ -552,6 +718,7 @@ export default function SpendPoints({
         order and come off your points when you pay. Pick your look any time at
         the bar or on your account.
       </p>
+      <div ref={layerRef} className={sp.blastLayer} aria-hidden="true" />
     </div>
   );
 }
