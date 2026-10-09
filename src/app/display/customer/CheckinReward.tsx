@@ -106,11 +106,12 @@ export default function CheckinReward({ shown, onDone }: { shown: RewardShown; o
 
   // A pop as the icon comes in, then the payoff's own sound: a coin for
   // "+5", a little fanfare for someone new, two notes for "Welcome back!"
-  // (sounds.ts). One sent on to the register chimes on the screen after.
+  // (sounds.ts). A member's own sign-in sound plays on every check-in, the
+  // day's second one too. One sent on to the register chimes on the screen after.
   useEffect(() => {
     playSound("pop");
   }, []);
-  const payoff: SoundName | null = !revealed || r?.kind !== "points" ? null : welcomeOnly ? "welcomeBack" : r.isNew ? "fanfare" : (r.sound ?? "checkin");
+  const payoff: SoundName | null = !revealed || r?.kind !== "points" ? null : r.sound ? r.sound : welcomeOnly ? "welcomeBack" : r.isNew ? "fanfare" : "checkin";
   useEffect(() => {
     if (payoff) playSound(payoff);
   }, [payoff]);
