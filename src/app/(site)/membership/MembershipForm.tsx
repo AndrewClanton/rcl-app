@@ -136,7 +136,18 @@ export default function MembershipForm({ initialPlan = "free", returnTo = null, 
       <button className="btn-primary mt-5 w-full px-5 py-3 text-base" disabled={!canSubmit || submitting} onClick={handleSubmit}>
         {submitting ? "One moment…" : !canSubmit ? "Add your name and email" : plan === "free" ? "Join Insiders, free" : "Continue to payment"}
       </button>
-      <p className="mt-2 text-center text-xs text-[var(--muted)]">We&apos;ll email you showtimes and member news. Every email has an unsubscribe link.</p>
+      {/* The terms say an account comes with member emails (Mary, 10/9). */}
+      <p className="mt-2 text-center text-xs text-[var(--muted)]">
+        By creating an account, you agree to RCL&apos;s{" "}
+        <a href="/terms" className="underline">
+          Terms and Conditions
+        </a>{" "}
+        and{" "}
+        <a href="/privacy" className="underline">
+          Privacy Policy
+        </a>
+        .
+      </p>
       <p className="mt-3 text-center text-sm text-[var(--muted)]">
         Already have an account?{" "}
         <a href={signInHref} className="font-bold text-[var(--accent)] hover:underline">
