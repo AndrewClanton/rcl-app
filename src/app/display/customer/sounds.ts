@@ -190,7 +190,8 @@ function tone(k: Kit, f: number, at: number, dur: number, peak: number, type: Os
 
 // One organ pipe: held at full voice while the key is down (a short
 // swell in, a short release out), drawbar partials, and a tremulant.
-function organ(k: Kit, f: number, at: number, dur: number, peak: number) {
+// full: the big "tutti" registration, with a brassy reed rank on top.
+function organ(k: Kit, f: number, at: number, dur: number, peak: number, full = false) {
   const t0 = k.t + at;
   const g = k.ac.createGain();
   g.gain.setValueAtTime(0.0001, t0);
@@ -218,6 +219,20 @@ function organ(k: Kit, f: number, at: number, dur: number, peak: number) {
     o.connect(lv).connect(g);
     o.start(t0);
     o.stop(t0 + dur + 0.15);
+  }
+  if (full) {
+    const reed = k.ac.createOscillator();
+    const tone = k.ac.createBiquadFilter();
+    const lv = k.ac.createGain();
+    reed.type = "sawtooth";
+    reed.frequency.setValueAtTime(f, t0);
+    depth.connect(reed.frequency);
+    tone.type = "lowpass";
+    tone.frequency.value = Math.min(4200, f * 7);
+    lv.gain.value = 0.45;
+    reed.connect(tone).connect(lv).connect(g);
+    reed.start(t0);
+    reed.stop(t0 + dur + 0.15);
   }
   g.connect(k.out);
   trem.start(t0);
@@ -364,12 +379,24 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
     tone(k, 110, 0.55, 0.45, 0.12, "sawtooth", 120);
     tone(k, 220, 0.55, 0.45, 0.04, "sine");
   },
-  // A theater-organ flourish: a quick run up into a big held chord, with
-  // the organ's own voice (drawbars: a sub, the note, its octave and the
-  // twelfth, held steady, not plucked) and the tremulant's wobble.
+  // The spooky movie-palace organ (Andrew, 10/9): the opening of Bach's
+  // Toccata and Fugue in D minor (public domain, the original haunted-house
+  // organ). Full organ in octaves: the A with its quick turn, held; the run
+  // down to the C sharp; then D over a low pedal D and the D minor chord.
+  // (Not the Phantom of the Opera lick: that's still under copyright.)
   perk_organ: (k) => {
-    [NOTE.G4, NOTE.C5, NOTE.E5, NOTE.G5].forEach((f, i) => organ(k, f, i * 0.075, 0.09, 0.05));
-    [261.63, NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6].forEach((f) => organ(k, f, 0.31, 1.1, 0.04));
+    const play = (f: number, at: number, dur: number) => {
+      organ(k, f, at, dur, 0.045, true);
+      organ(k, f / 2, at, dur, 0.04, true);
+    };
+    play(440, 0, 0.06);
+    play(392, 0.07, 0.06);
+    play(440, 0.14, 0.5);
+    [392, 349.23, 329.63, 293.66].forEach((f, i) => play(f, 0.78 + i * 0.075, 0.065));
+    play(277.18, 1.08, 0.36);
+    play(293.66, 1.5, 0.9);
+    [349.23, 220].forEach((f) => organ(k, f, 1.5, 0.9, 0.035, true));
+    organ(k, 73.42, 1.5, 0.95, 0.09);
   },
   // A sci-fi warp: a sweep down, then up and out.
   perk_warp: (k) => {
