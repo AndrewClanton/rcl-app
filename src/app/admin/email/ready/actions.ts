@@ -33,7 +33,7 @@ import { sendEmail } from "@/lib/email/send";
 import { firstNameOf } from "@/lib/email/format";
 import { renderCampaign, type Recipient } from "@/lib/email/render";
 import { arrivalLabel } from "@/lib/email/undo";
-import { listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "@/lib/email/tokens";
+import { listUnsubscribeHeaders, sealEmailToken, unsubscribePageUrl } from "@/lib/email/tokens";
 import { DESIGNS, isDesignKey } from "@/lib/email/designs";
 import { sealArtName } from "@/lib/email/designs/art-token";
 import { designCampaign, picturesReady } from "@/lib/email/designs/ready";
@@ -116,8 +116,7 @@ export async function sendDesignTest(key: string): Promise<Result<{ message: str
     { range: { start: "", days: 7 }, films: [], happenings: [], menuItems: [] },
     r,
     {
-      preferencesUrl: token ? preferencesUrl(token) : `${SITE_URL}/account/email`,
-      unsubscribeUrl: token ? preferencesUrl(token, "all") : `${SITE_URL}/account/email#all`,
+      unsubscribeUrl: token ? unsubscribePageUrl(token) : `${SITE_URL}/email/preferences`,
       href: (u) => u,
     },
   );

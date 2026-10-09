@@ -36,13 +36,21 @@ export type SoundName =
   | "notFound" // a number we don't know
   | "error" // something went wrong
   | "unlock" // a reward bought with points
+  | "boom" // the display-only tank on Spend points, tapped
   // A member's own sign-in sound, unlocked with points (lib/rewards.ts
   // PERK_SOUNDS): plays at their check-in instead of the coin.
   | "perk_coin"
   | "perk_projector"
   | "perk_organ"
   | "perk_warp"
-  | "perk_drumroll";
+  | "perk_drumroll"
+  // Meme sounds (Andrew, 10/9), made here like the rest: no clips.
+  | "perk_airhorn"
+  | "perk_sadtrombone"
+  | "perk_boom"
+  | "perk_dramatic"
+  | "perk_scratch"
+  | "perk_rimshot";
 
 // Their sign-in sound's key ("coin") as a sound to play, or null.
 export function perkSound(key: string | null | undefined): SoundName | null {
@@ -116,6 +124,15 @@ export function unlockSound() {
   }
 }
 
+// A sample from a tap (the sign-in sound picker): wakes the audio, then
+// plays it once it's actually running.
+export function previewSound(name: SoundName) {
+  unlockSound();
+  if (!ctx) return;
+  if (ctx.state === "running") playSound(name);
+  else void ctx.resume().then(() => playSound(name)).catch(() => {});
+}
+
 // Plays one, if sound is on and the tablet's been tapped since it loaded.
 // n: for "add", how many items are on the order (each one a little higher).
 export function playSound(name: SoundName, n = 1) {
@@ -169,6 +186,57 @@ function tone(k: Kit, f: number, at: number, dur: number, peak: number, type: Os
   o.connect(g).connect(k.out);
   o.start(t0);
   o.stop(t0 + dur + 0.03);
+}
+
+// One organ pipe: held at full voice while the key is down (a short
+// swell in, a short release out), drawbar partials, and a tremulant.
+// full: the big "tutti" registration, with a brassy reed rank on top.
+function organ(k: Kit, f: number, at: number, dur: number, peak: number, full = false) {
+  const t0 = k.t + at;
+  const g = k.ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(peak, t0 + 0.025);
+  g.gain.setValueAtTime(peak, t0 + dur);
+  g.gain.linearRampToValueAtTime(0.0001, t0 + dur + 0.12);
+  const trem = k.ac.createOscillator();
+  const depth = k.ac.createGain();
+  trem.frequency.value = 6.5;
+  depth.gain.value = f * 0.006;
+  trem.connect(depth);
+  // 16', 8', 4', 2 2/3': the theater-organ stack.
+  for (const [mult, level] of [
+    [0.5, 0.5],
+    [1, 1],
+    [2, 0.6],
+    [3, 0.3],
+  ]) {
+    const o = k.ac.createOscillator();
+    const lv = k.ac.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(f * mult, t0);
+    depth.connect(o.frequency);
+    lv.gain.value = level;
+    o.connect(lv).connect(g);
+    o.start(t0);
+    o.stop(t0 + dur + 0.15);
+  }
+  if (full) {
+    const reed = k.ac.createOscillator();
+    const tone = k.ac.createBiquadFilter();
+    const lv = k.ac.createGain();
+    reed.type = "sawtooth";
+    reed.frequency.setValueAtTime(f, t0);
+    depth.connect(reed.frequency);
+    tone.type = "lowpass";
+    tone.frequency.value = Math.min(4200, f * 7);
+    lv.gain.value = 0.45;
+    reed.connect(tone).connect(lv).connect(g);
+    reed.start(t0);
+    reed.stop(t0 + dur + 0.15);
+  }
+  g.connect(k.out);
+  trem.start(t0);
+  trem.stop(t0 + dur + 0.15);
 }
 
 function noise(k: Kit, at: number, dur: number, peak: number, freq: number, type: BiquadFilterType = "bandpass", sweepTo?: number) {
@@ -290,6 +358,13 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
     [NOTE.E5, NOTE.G5, NOTE.C6, NOTE.E6, NOTE.G6].forEach((f, i) => tone(k, f, 0.04 + i * 0.05, 0.12, 0.14, "triangle"));
     tone(k, NOTE.C7, 0.3, 0.45, 0.08, "sine");
   },
+  // The tank on Spend points blows up (never a purchase): a crack, a low
+  // rumble falling away, a thump underneath.
+  boom: (k) => {
+    noise(k, 0, 0.08, 0.5, 2200);
+    noise(k, 0.01, 0.75, 0.6, 900, "lowpass", 60);
+    tone(k, 90, 0, 0.6, 0.5, "sine", 32);
+  },
   // ---------- sign-in sounds bought with points ----------
   // Three coins, the last one ringing.
   perk_coin: (k) => {
@@ -304,16 +379,24 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
     tone(k, 110, 0.55, 0.45, 0.12, "sawtooth", 120);
     tone(k, 220, 0.55, 0.45, 0.04, "sine");
   },
-  // A little theater-organ flourish: a run up and a held chord.
+  // The spooky movie-palace organ (Andrew, 10/9): the opening of Bach's
+  // Toccata and Fugue in D minor (public domain, the original haunted-house
+  // organ). Full organ in octaves: the A with its quick turn, held; the run
+  // down to the C sharp; then D over a low pedal D and the D minor chord.
+  // (Not the Phantom of the Opera lick: that's still under copyright.)
   perk_organ: (k) => {
-    [NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6].forEach((f, i) => {
-      tone(k, f, i * 0.08, 0.12, 0.12, "sine");
-      tone(k, f * 2, i * 0.08, 0.12, 0.04, "triangle");
-    });
-    [NOTE.C5, NOTE.E5, NOTE.G5].forEach((f) => {
-      tone(k, f, 0.34, 0.6, 0.1, "sine");
-      tone(k, f * 2, 0.34, 0.6, 0.035, "triangle");
-    });
+    const play = (f: number, at: number, dur: number) => {
+      organ(k, f, at, dur, 0.045, true);
+      organ(k, f / 2, at, dur, 0.04, true);
+    };
+    play(440, 0, 0.06);
+    play(392, 0.07, 0.06);
+    play(440, 0.14, 0.5);
+    [392, 349.23, 329.63, 293.66].forEach((f, i) => play(f, 0.78 + i * 0.075, 0.065));
+    play(277.18, 1.08, 0.36);
+    play(293.66, 1.5, 0.9);
+    [349.23, 220].forEach((f) => organ(k, f, 1.5, 0.9, 0.035, true));
+    organ(k, 73.42, 1.5, 0.95, 0.09);
   },
   // A sci-fi warp: a sweep down, then up and out.
   perk_warp: (k) => {
@@ -326,5 +409,65 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
     for (let i = 0; i < 12; i++) noise(k, i * 0.045, 0.04, 0.12 + i * 0.01, 1800);
     tone(k, 90, 0.55, 0.18, 0.3, "sine", 50);
     noise(k, 0.56, 0.6, 0.12, 7000, "highpass");
+  },
+  // ---------- meme sign-in sounds ----------
+  // The air horn: three short blasts and a long one.
+  perk_airhorn: (k) => {
+    [0, 0.16, 0.32].forEach((at) => [415, 418, 622].forEach((f) => tone(k, f, at, 0.12, 0.07, "sawtooth")));
+    [415, 418, 622, 830].forEach((f) => tone(k, f, 0.5, 0.75, 0.06, "sawtooth", f * 0.97));
+  },
+  // Wah, wah, wah, waaah (each one bending down, the last one wobbling).
+  perk_sadtrombone: (k) => {
+    [311, 294, 277].forEach((f, i) => tone(k, f, i * 0.38, 0.34, 0.12, "sawtooth", f * 0.94));
+    const t0 = k.t + 1.14;
+    const o = k.ac.createOscillator();
+    const g = k.ac.createGain();
+    const lfo = k.ac.createOscillator();
+    const d = k.ac.createGain();
+    o.type = "sawtooth";
+    o.frequency.setValueAtTime(262, t0);
+    o.frequency.linearRampToValueAtTime(240, t0 + 1);
+    lfo.frequency.value = 6;
+    d.gain.value = 9;
+    lfo.connect(d).connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.03);
+    g.gain.setValueAtTime(0.12, t0 + 0.8);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.1);
+    o.connect(g).connect(k.out);
+    o.start(t0);
+    lfo.start(t0);
+    o.stop(t0 + 1.15);
+    lfo.stop(t0 + 1.15);
+  },
+  // The big bass "boom" that lands after a punchline.
+  perk_boom: (k) => {
+    tone(k, 120, 0, 0.9, 0.5, "sine", 38);
+    tone(k, 60, 0, 1.1, 0.35, "sine", 30);
+    noise(k, 0, 0.12, 0.2, 300, "lowpass");
+  },
+  // Dun, dun, DUNNN.
+  perk_dramatic: (k) => {
+    const hit = (at: number, root: number, dur: number) => {
+      [root, root * 1.189, root * 1.498, root * 2].forEach((f) => tone(k, f, at, dur, 0.07, "sawtooth"));
+      tone(k, root / 2, at, dur, 0.12, "triangle");
+    };
+    hit(0, 196, 0.28);
+    hit(0.36, 185, 0.28);
+    hit(0.72, 165, 1.2);
+    noise(k, 0.72, 0.9, 0.06, 6000, "highpass");
+  },
+  // A record scratch: back and forth.
+  perk_scratch: (k) => {
+    noise(k, 0, 0.12, 0.3, 900, "bandpass", 2600);
+    noise(k, 0.12, 0.1, 0.3, 2600, "bandpass", 700);
+    noise(k, 0.24, 0.16, 0.3, 800, "bandpass", 3200);
+  },
+  // Ba-dum, tss.
+  perk_rimshot: (k) => {
+    noise(k, 0, 0.09, 0.35, 1800);
+    tone(k, 200, 0, 0.12, 0.25, "sine", 150);
+    tone(k, 110, 0.18, 0.25, 0.35, "sine", 60);
+    noise(k, 0.42, 0.7, 0.16, 8000, "highpass");
   },
 };

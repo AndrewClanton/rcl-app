@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { CardFrame, NameLine } from "@/components/flair/CardLook";
 import { DEFAULT_FLAIR_COLOR, flairColor } from "@/lib/flair";
 import { SLOT_LABEL, perkOption, type MemberLook, type PerkSlot } from "@/lib/rewards";
-import { perkSound, playSound, unlockSound } from "@/app/display/customer/sounds";
+import { perkSound, previewSound } from "@/app/display/customer/sounds";
 import { updateLook } from "../../actions";
 
 // The perks they've unlocked with points (Spend points, on the screen at
@@ -38,11 +38,8 @@ export default function PerksPanel({ owned, look: saved, name, color }: { owned:
 
   async function pick(slot: (typeof SLOTS)[number], key: string | null) {
     if (busy) return;
-    if (slot === "sound" && key) {
-      unlockSound();
-      const s = perkSound(key);
-      if (s) setTimeout(() => playSound(s), 60);
-    }
+    // A sample of the sound they picked; "The coin" is the one everyone has.
+    if (slot === "sound") previewSound(key ? (perkSound(key) ?? "checkin") : "checkin");
     setBusy(true);
     setMsg(null);
     const r = await updateLook(slot, key).catch(() => ({ ok: false as const, error: "Something went wrong." }));

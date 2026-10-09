@@ -131,6 +131,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       min: "manager",
     },
     {
+      href: "/admin/members/indy-review",
+      label: "Indy history review",
+      about: "What the old Indy register's purchases would turn into as points, member by member, with the orders behind each number. Look only: nothing is given yet.",
+      keywords: "indy import old register ticketing history points proposed past purchases gift cards vouchers unmatched review",
+      min: "admin",
+    },
+    {
       href: "/admin/email",
       label: "Email",
       about: "Member emails: what's up next, campaigns, how the list is doing and what each email brought in.",

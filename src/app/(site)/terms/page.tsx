@@ -40,6 +40,10 @@ export default async function TermsPage() {
             You can sign in with a password, or with Google or Facebook. Keep your sign-in to yourself; you&apos;re responsible for what happens on
             your account.
           </li>
+          <li>
+            Making an account signs you up for our member emails: showtimes, the weekly lineup and member news. Every one has an unsubscribe link at
+            the bottom. Receipts, tickets and account emails always come.
+          </li>
           <li>If we find two accounts for the same person, we may combine them, keeping all the points and history from both.</li>
         </ul>
       </section>

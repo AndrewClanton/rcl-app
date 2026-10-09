@@ -22,7 +22,7 @@ import { capCheck, looksDeliverable, paidShare, type CampaignShape } from "./rul
 import { sendEmail } from "./send";
 import { inSendWindow, nextSendSlot, sendByFor, type SendBy } from "./timing";
 import { centralToIso, shiftDate } from "@/lib/ops/time";
-import { emailTokensReady, listUnsubscribeHeaders, preferencesUrl, sealEmailToken } from "./tokens";
+import { emailTokensReady, listUnsubscribeHeaders, sealEmailToken, unsubscribePageUrl } from "./tokens";
 import { EXCLUSION_LABEL, SENT_STATUSES, type Automation, type CampaignKind, type Category, type ConsentSource, type PrefCategory, type SendRecord, type SendStatus } from "./types";
 import { canUndoWave, EVERYONE_STARTS_AFTER_MS, undoHoldMs, undoNeedsMs, undoOpen, UNDO_LEASE_WAIT_MS, UNDO_RUN_MS, UNDO_SECONDS, UNDO_STOP_BEFORE_MS, type UndoBefore, type UndoDone, type WaveUndo } from "./undo";
 
@@ -1115,8 +1115,7 @@ export function freezeLinks(c: CampaignInput, data: RenderData, existing: Frozen
   const out = [...existing];
   const known = new Set(out.map((l) => l.url));
   const collect: RenderLinks = {
-    preferencesUrl: `${SITE_URL}/email/preferences`,
-    unsubscribeUrl: `${SITE_URL}/email/preferences#all`,
+    unsubscribeUrl: `${SITE_URL}/email/preferences`,
     href: (url, label) => {
       if (!known.has(url)) {
         known.add(url);
@@ -1141,7 +1140,7 @@ export function asInput(c: Pick<CampaignRow, "kind" | "category" | "subject" | "
 // ---------- lint ----------
 export async function lintStored(c: CampaignInput, data?: RenderData): Promise<LintResult & { recipientPreview: string }> {
   const d = data ?? (await loadRenderData(c.content));
-  const r = renderCampaign(c, d, SAMPLE, { preferencesUrl: "#", unsubscribeUrl: "#", href: (u) => u });
+  const r = renderCampaign(c, d, SAMPLE, { unsubscribeUrl: "#", href: (u) => u });
   const [titles, unknown] = await Promise.all([restrictedTitles(), unknownHouseEventIds(c.content)]);
   const result = lintCampaign({
     subject: r.subject,
@@ -1177,7 +1176,7 @@ export async function prepareCampaign(c: CampaignRow, data: RenderData, now = ne
   }
   const links = freezeLinks(asInput(c), data, c.links ?? []);
   if (links.length !== (c.links ?? []).length) patch.links = links;
-  const archive = renderCampaign(asInput(c), data, SAMPLE, { preferencesUrl: "#", unsubscribeUrl: "#", href: (u) => u }).meta.containsArchive;
+  const archive = renderCampaign(asInput(c), data, SAMPLE, { unsubscribeUrl: "#", href: (u) => u }).meta.containsArchive;
   if (archive !== c.contains_archive) patch.contains_archive = archive;
   if (Object.keys(patch).length) {
     const { error } = await admin
@@ -1998,8 +1997,7 @@ export async function deliverQueued(c: CampaignRow, data: RenderData, deadline: 
       };
       const track = href(r.id);
       const rendered = renderCampaign(input, data, recipient, {
-        preferencesUrl: preferencesUrl(token),
-        unsubscribeUrl: preferencesUrl(token, "all"),
+        unsubscribeUrl: unsubscribePageUrl(token),
         href: (url) => track(url),
       });
       const later = at.getTime() > Date.now() + 60_000 ? at.toISOString() : undefined;
@@ -2388,8 +2386,8 @@ export async function sendTestEmail(c: CampaignInput, to: { email: string; name:
   for (const addr of addresses) {
     const facts = await memberForAddress(addr);
     const token = facts ? sealEmailToken({ memberId: facts.id, sendId: null }) : null;
-    const prefs = token ? preferencesUrl(token) : `${SITE_URL}/account/email`;
-    const unsub = token ? preferencesUrl(token, "all") : `${SITE_URL}/account/email#all`;
+    // No member behind this address: the link opens the page's "doesn't open" note.
+    const unsub = token ? unsubscribePageUrl(token) : `${SITE_URL}/email/preferences`;
     const recipient: Recipient = {
       firstName: firstNameOf(facts?.name ?? to.name),
       consentSource: "unknown",
@@ -2400,7 +2398,7 @@ export async function sendTestEmail(c: CampaignInput, to: { email: string; name:
       ticketSpend30: 24,
       paidTickets30: 3,
     };
-    const r = renderCampaign(c, data, recipient, { preferencesUrl: prefs, unsubscribeUrl: unsub, href: (u) => u });
+    const r = renderCampaign(c, data, recipient, { unsubscribeUrl: unsub, href: (u) => u });
     const res = await sendEmail(addr, `[Test] ${r.subject}`, r.html, {
       text: r.text,
       replyTo: replyTo(),

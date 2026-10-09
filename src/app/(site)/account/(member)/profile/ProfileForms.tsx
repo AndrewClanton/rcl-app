@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import BirthdayPicker from "@/components/BirthdayPicker";
 import { badgeFor, birthdayFromInput } from "@/lib/visits";
-import { setEmailOptIn, updateMyProfile } from "../../actions";
+import { updateMyProfile } from "../../actions";
 import { PROFILE_LINE_MAX } from "@/lib/member-profile";
 
 // birthday is "12-30" or "" (see BirthdayPicker).
@@ -149,38 +148,5 @@ export function PasswordForm({ hasPassword }: { hasPassword: boolean }) {
         {msg && !msg.ok && <span className="text-sm text-[var(--danger-text)]">{msg.text}</span>}
       </div>
     </form>
-  );
-}
-
-export function EmailPreference({ optIn }: { optIn: boolean }) {
-  const router = useRouter();
-  const [value, setValue] = useState(optIn);
-  const [busy, setBusy] = useState(false);
-  return (
-    <label className="flex cursor-pointer items-start gap-3">
-      <input
-        id="email-opt-in"
-        type="checkbox"
-        className="mt-0.5 h-5 w-5 accent-[var(--accent)]"
-        checked={value}
-        disabled={busy}
-        onChange={async (e) => {
-          const next = e.target.checked;
-          setValue(next);
-          setBusy(true);
-          const r = await setEmailOptIn(next).catch(() => ({ ok: false as const, error: "" }));
-          setBusy(false);
-          if (!r.ok) setValue(!next);
-          else router.refresh();
-        }}
-      />
-      <span className="text-sm">
-        <strong>Weekly lineup and member news</strong>
-        <span className="block text-[var(--muted)]">What&apos;s playing each week, including the members-only classics. We&apos;ll still send receipts and account notices.</span>
-        <Link href="/account/email" className="mt-1 inline-block font-bold text-[var(--accent)] hover:underline">
-          Choose which emails, or pause them
-        </Link>
-      </span>
-    </label>
   );
 }

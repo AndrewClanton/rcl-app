@@ -98,8 +98,8 @@ export default async function DataDeletionPage() {
       <section>
         <h2 id="fewer-emails">Just want fewer emails?</h2>
         <p>
-          You don&apos;t need to delete your account for that. Turn off the weekly emails on the Profile tab of your account, or use the unsubscribe
-          link in any of those emails.
+          You don&apos;t need to delete your account for that. Use the unsubscribe link at the bottom of any of those emails. It takes effect right
+          away.
         </p>
       </section>
     </LegalPage>

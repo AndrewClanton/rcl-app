@@ -11,7 +11,6 @@ const TABS = [
   { href: "/account/movies", label: "Movies" },
   { href: "/account/billing", label: "Billing" },
   { href: "/account/profile", label: "Profile" },
-  { href: "/account/email", label: "Emails" },
 ];
 
 // How far the fade reaches in from an edge with more tabs past it.
