@@ -339,23 +339,47 @@
   box-shadow: 0 1px 0 #b8870e;
 }
 
-/* The tank card blows up (SpendPoints explode): shake, flash, debris and a
-   smoke puff, then it pulls itself back together. Screen only. */
+/* The tank card blows up (SpendPoints explode + blast.ts): shake, flash
+   and smoke on the card while copies of its pieces fly on .blastLayer,
+   bounce off the other cards and the screen, and come home. Screen only. */
 .boom {
   position: relative;
   z-index: 2;
   animation: boomShake 0.4s linear;
 }
-.boom > :not(.blast) {
-  animation: boomScatter 2.2s ease-in-out;
+/* Its own pieces hide while their copies are out flying. */
+.blasted [data-bit] {
+  visibility: hidden;
 }
-.boom > :nth-child(odd):not(.blast) {
-  --sx: -28px;
-  --sr: -14deg;
+.bit {
+  display: inline-block;
 }
-.boom > :nth-child(even):not(.blast) {
-  --sx: 30px;
-  --sr: 12deg;
+.blastLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+}
+.bitClone {
+  white-space: nowrap;
+  text-align: center;
+  backface-visibility: hidden;
+}
+.shard {
+  position: absolute;
+  border-radius: 2px;
+  background: #6b6f4a;
+  box-shadow: 0 0 6px #ff8a2a;
+  will-change: transform, opacity;
+}
+.shard:nth-child(3n) {
+  background: #ffc72c;
+}
+.shard:nth-child(4n) {
+  background: #3a3126;
+  border-radius: 50%;
 }
 .blast {
   position: absolute;
@@ -380,20 +404,6 @@
   opacity: 0;
   animation: boomSmoke 1.8s ease-out 0.1s forwards;
 }
-.debris {
-  position: absolute;
-  border-radius: 2px;
-  background: #6b6f4a;
-  box-shadow: 0 0 6px #ff8a2a;
-  animation: boomDebris 1.3s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
-}
-.debris:nth-child(3n) {
-  background: #ffc72c;
-}
-.debris:nth-child(4n) {
-  background: #3a3126;
-  border-radius: 50%;
-}
 @keyframes boomShake {
   0%, 100% { transform: translate(0, 0); }
   15% { transform: translate(-7px, 3px) rotate(-1.5deg); }
@@ -401,12 +411,6 @@
   45% { transform: translate(-6px, -2px) rotate(-1deg); }
   60% { transform: translate(5px, 4px) rotate(1deg); }
   80% { transform: translate(-3px, 0); }
-}
-@keyframes boomScatter {
-  0%, 12% { transform: none; opacity: 1; filter: none; }
-  25% { transform: translate(var(--sx), -18px) rotate(var(--sr)) scale(0.8); opacity: 0; filter: blur(3px); }
-  70% { transform: translate(var(--sx), -18px) rotate(var(--sr)) scale(0.8); opacity: 0; filter: blur(3px); }
-  100% { transform: none; opacity: 1; filter: none; }
 }
 @keyframes boomFlash {
   0% { opacity: 0; transform: scale(0.4); }
@@ -418,22 +422,16 @@
   25% { opacity: 0.9; transform: scale(1); }
   100% { opacity: 0; transform: translateY(-40px) scale(1.8); }
 }
-@keyframes boomDebris {
-  0% { transform: translate(0, 0) rotate(0); opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)); opacity: 0; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .preview {
     animation: none;
   }
   /* Just a quick flash. */
-  .boom,
-  .boom > :not(.blast) {
+  .boom {
     animation: none;
   }
-  .smoke,
-  .debris {
+  .smoke {
     display: none;
   }
   .flash {
