@@ -6,6 +6,8 @@ import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { memberLabel } from "@/lib/member-name";
 import type { DeclineInfo } from "@/lib/decline-slip";
+import { ANNUAL_PRICE, RATE_PRICE } from "@/lib/membership-rates";
+import { SALES_TAX_RATE } from "@/lib/sales-tax";
 
 // The register's "Declines" list (RecentDeclines.tsx): every declined card
 // since midnight (at least the last 2 hours), read straight from Stripe, so
@@ -31,6 +33,12 @@ function since(now: Date): number {
   return Math.floor(Math.min(now.getTime() - intoDay, now.getTime() - 2 * 3600_000) / 1000);
 }
 
+// An Insiders+ first charge comes from an invoice with no description: spot
+// it by its price (any rate, monthly or yearly, plus tax).
+const PLAN_CENTS = new Set(
+  [...Object.values(RATE_PRICE), ...Object.values(ANNUAL_PRICE)].map((d) => Math.round(Math.round(d * 100) * (1 + SALES_TAX_RATE))),
+);
+
 const idOf = (v: string | { id: string } | null | undefined) => (typeof v === "string" ? v : (v?.id ?? null));
 
 function toDecline(c: Stripe.Charge, tappedOk: boolean, who: string | null): RecentDecline {
@@ -39,7 +47,8 @@ function toDecline(c: Stripe.Charge, tappedOk: boolean, who: string | null): Rec
   const present = d?.card_present ?? d?.interac_present ?? null;
   const online = !present;
   const desc = c.description ?? "";
-  const membership = /subscription|insiders/i.test(desc) || c.metadata?.source === "pos-unlimited";
+  const membership =
+    /subscription|insiders/i.test(desc) || c.metadata?.source === "pos-unlimited" || (online && !!c.customer && PLAN_CENTS.has(c.amount));
   return {
     chargeId: c.id,
     at: new Date(c.created * 1000).toISOString(),
