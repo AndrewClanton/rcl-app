@@ -45,6 +45,20 @@ export function rgbaToGray(rgba: Uint8ClampedArray | Uint8Array, width: number, 
   return gray;
 }
 
+// RGBA pixels to bits with a plain threshold, no dithering: for drawn
+// pictures (patterned receipts), where text has to stay crisp. Anything
+// darker than `cut` (0-255) prints.
+export function thresholdToRaster(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number, cut = 140): Raster {
+  const bytesPerRow = width / 8;
+  const out = new Uint8Array(bytesPerRow * height);
+  for (let i = 0; i < width * height; i++) {
+    const a = rgba[i * 4 + 3] / 255;
+    const lum = (0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2]) * a + 255 * (1 - a);
+    if (lum < cut) out[((i / width) | 0) * bytesPerRow + ((i % width) >> 3)] |= 0x80 >> (i % width & 7);
+  }
+  return { width, height, data: toBase64(out) };
+}
+
 function toBase64(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));

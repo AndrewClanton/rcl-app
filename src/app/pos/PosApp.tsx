@@ -71,7 +71,7 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
-import { receiptXml, drawerXml, visitSlipXml, type ReceiptData, type VisitSlip } from "@/lib/print/receipt";
+import { drawerXml, visitSlipXml, type ReceiptData, type VisitSlip } from "@/lib/print/receipt";
 import VisitSlipNotice from "./VisitSlipNotice";
 import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
@@ -80,6 +80,7 @@ import RecentOrders from "./RecentOrders";
 import EasterEggs, { useRickroll } from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
+import { customerReceipt, receiptPatterns } from "./receipt-print";
 import { receiptClaimUrl } from "./receipt-claim";
 import DevicesPanel from "./devices/DevicesPanel";
 import { useReaderMonitor } from "./devices/reader-monitor";
@@ -270,6 +271,10 @@ export default function PosApp({
   useEffect(() => {
     publishCashier(employeeId || null);
   }, [employeeId]);
+  // Patterned receipts' setting, fetched now so the first receipt has it.
+  useEffect(() => {
+    void receiptPatterns();
+  }, []);
   // 86'd items: what the Staff tools' poll last saw, else what the page
   // loaded with.
   const ranOut = useRanOut();
@@ -1581,7 +1586,7 @@ export default function PosApp({
       // A member with no website login gets a "claim your account" QR code.
       const claimUrl = devices.autoPrint ? await receiptClaimUrl(member, receipt) : null;
       const r = devices.autoPrint
-        ? await sendPrint(printTarget, "receipt", receiptXml(receipt, { openDrawer, flourish: surprise, claimUrl }), `Receipt #${receipt.orderNumber}`)
+        ? await sendPrint(printTarget, "receipt", await customerReceipt(receipt, { openDrawer, flourish: surprise, claimUrl }), `Receipt #${receipt.orderNumber}`)
         : await sendPrint(printTarget, "drawer", drawerXml(), `Drawer (#${receipt.orderNumber})`);
       if (!r.ok) return setPrintNote(r.error);
     }
@@ -2127,7 +2132,7 @@ export default function PosApp({
               <button
                 className="chip !px-3 !py-1"
                 onClick={async () => {
-                  const r = await sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber}`);
+                  const r = await sendPrint(printTarget, "receipt", await customerReceipt(lastReceipt), `Receipt #${lastReceipt.orderNumber}`);
                   setPrintNote(r.ok ? null : r.error);
                 }}
               >
@@ -2437,7 +2442,7 @@ export default function PosApp({
               fallbackReaderId={defaultReaderId}
               reader={readerMonitor}
               onReprintTickets={lastTickets && printTarget ? () => printTickets(printTarget, lastTickets.orderNumber, lastTickets.lines) : null}
-              onReprint={lastReceipt && printTarget ? () => sendPrint(printTarget, "receipt", receiptXml(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
+              onReprint={lastReceipt && printTarget ? async () => sendPrint(printTarget, "receipt", await customerReceipt(lastReceipt), `Receipt #${lastReceipt.orderNumber} (again)`) : null}
               sendToTablet={sendToTablet}
             />
             {/* Booths held today (it used to be a box above the register). */}

@@ -48,7 +48,7 @@ function escapeXml(s: string) {
 
 // The printer only has Latin fonts; curly quotes, emoji and the like would
 // print as garbage, so fold them to plain ASCII.
-function plain(s: string) {
+export function plain(s: string) {
   return s
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
@@ -161,6 +161,8 @@ function header(d: Doc) {
   d.line().align("left");
 }
 
+export const receiptWhen = (iso: string) => when(iso);
+
 function when(iso: string) {
   return new Date(iso).toLocaleString("en-US", {
     month: "short",
@@ -206,6 +208,21 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   if (opts.flourish?.length) {
     d.feed(1);
     for (const l of opts.flourish) d.line(l);
+  }
+  d.cut();
+  return d.toString();
+}
+
+// A patterned receipt (lib/print/receipt-patterns.ts): the whole receipt
+// as one picture, then the claim QR code as the printer's own QR (it scans
+// better than a drawn one), then the cut. The drawer kick still goes first.
+export function patternedReceiptXml(picture: Raster, opts: { openDrawer?: boolean; claimUrl?: string | null } = {}): string {
+  const d = new Doc();
+  if (opts.openDrawer) d.drawer();
+  d.image(picture);
+  if (isClaimUrl(opts.claimUrl)) {
+    d.feed(1).align("center").bold(true).line("Scan to see your points online").bold(false);
+    d.qr(opts.claimUrl, 5);
   }
   d.cut();
   return d.toString();
