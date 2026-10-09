@@ -2,7 +2,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { SITE_URL } from "@/lib/site";
 
-// The token in every email's unsubscribe and preferences links. It says
+// The token in every email's unsubscribe link and header. It says
 // which member (and which email, when there is one) without the address
 // ever going in a URL, and it can't be made up or edited.
 //
@@ -71,8 +71,11 @@ export function unsubscribeUrl(token: string): string {
   return `${SITE_URL}${UNSUBSCRIBE_PATH}?t=${token}`;
 }
 
-export function preferencesUrl(token: string, anchor: "" | "all" = ""): string {
-  return `${SITE_URL}${PREFERENCES_PATH}?t=${token}${anchor ? `#${anchor}` : ""}`;
+// The footer's "Unsubscribe" link: a page that unsubscribes as it opens in
+// a browser and offers a way back in. (The path is the old preference
+// page's, so links in emails already sent keep working.)
+export function unsubscribePageUrl(token: string): string {
+  return `${SITE_URL}${PREFERENCES_PATH}?t=${token}`;
 }
 
 // RFC 8058 one-click unsubscribe: Gmail and Yahoo show their own

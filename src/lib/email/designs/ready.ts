@@ -197,7 +197,7 @@ export function previewHtml(key: DesignKey, as: PreviewAs = "claim"): { subject:
     { kind: d.kind, category: d.category, subject: d.subject, preheader: d.preheader, content: { blocks: [{ t: "design", key }] } },
     { range: { start: "", days: 7 }, films: [], happenings: [], menuItems: [] },
     r,
-    { preferencesUrl: `${SITE_URL}/account/email`, unsubscribeUrl: `${SITE_URL}/account/email#all`, href: (u) => u },
+    { unsubscribeUrl: `${SITE_URL}/email/preferences`, href: (u) => u },
   );
   return { subject: out.subject, preheader: out.preheader, html: out.html, text: out.text };
 }

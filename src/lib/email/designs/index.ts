@@ -113,7 +113,6 @@ export function renderDesignEmail(key: DesignKey, subject: string, preheader: st
   const text = [
     ...out.text,
     "",
-    `Email preferences: ${L.preferencesUrl}`,
     `Unsubscribe: ${L.unsubscribeUrl}`,
     "",
     "Royale Cinema Lounge · 715 E Broadway, Joplin, MO 64801 · On Route 66 · 417-281-4172",

@@ -541,7 +541,7 @@ export default function Composer({
         { kind: c.kind, category: shown.category, subject: shown.subject, preheader: shown.preheader, content: shown.content },
         shown.data,
         { firstName: shown.sample.trim() || null, consentSource: "indy_yes", tier: "Insiders", hasLogin: false, email: myEmail || "sam@example.com", claimUrl: "https://example.com/account/claim", ticketSpend30: 24, paidTickets30: 3 },
-        { preferencesUrl: "#preferences", unsubscribeUrl: "#unsubscribe", href: (u) => u },
+        { unsubscribeUrl: "#unsubscribe", href: (u) => u },
       );
       const bytes = new TextEncoder().encode(rendered.html).length;
       const lint = engine.lintCampaign({

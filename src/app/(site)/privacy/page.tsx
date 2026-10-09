@@ -98,8 +98,7 @@ export default async function PrivacyPage() {
             <strong>Visits:</strong> screenings you have tickets for, and the days you make a purchase with your account attached.
           </li>
           <li>
-            <strong>Email preferences and history:</strong> whether you get our member emails, which kinds you chose, any pause, and where and when you said
-            yes or no. For each email we send, whether it was delivered, opened, or a link in it was clicked, so we can send less of what isn&apos;t
+            <strong>Email history:</strong> whether you get our member emails, and where and when you said yes or no. For each email we send, whether it was delivered, opened, or a link in it was clicked, so we can send less of what isn&apos;t
             wanted.
           </li>
           <li>
@@ -149,8 +148,7 @@ export default async function PrivacyPage() {
           <li>
             To email Insiders the weekly lineup and member news (events, offers, your birthday week), and to send account emails such as receipts,
             tickets, sign-in links and billing notices. Members, including those whose accounts moved over from our old website, get the member emails
-            unless they unsubscribe. The link at the bottom of any of our member emails lets you choose which kinds you get, pause them, or
-            unsubscribe.
+            unless they unsubscribe with the link at the bottom of any of our member emails.
           </li>
           <li>To keep the website and our records secure, and to meet our tax and legal obligations.</li>
         </ul>
@@ -211,8 +209,8 @@ export default async function PrivacyPage() {
           <li>Add, change or remove your photo anytime.</li>
           <li>Turn your profile page on or off, change its link, and change or clear your profile line and check-in effect, on the Profile tab.</li>
           <li>
-            Choose which member emails you get, pause them for 30 days, or unsubscribe from all of them in one tap, with the link at the bottom of
-            any of our member emails. It takes effect right away. Receipts and account emails still come.
+            Unsubscribe from our member emails in one tap, with the Unsubscribe link at the bottom of any of them (or your mail app&apos;s own
+            Unsubscribe button). It takes effect right away. Receipts and account emails still come.
           </li>
           <li>Remove a linked card, or turn off card linking, on the Profile tab of your account.</li>
           <li>

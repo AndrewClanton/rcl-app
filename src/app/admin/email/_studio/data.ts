@@ -46,7 +46,7 @@ const SAMPLE: Recipient = {
   finishUrl: null,
 };
 const NO_DATA = { range: { start: "", days: 7 }, films: [], happenings: [], menuItems: [] };
-const LINKS = { preferencesUrl: `${SITE_URL}/account/email`, unsubscribeUrl: `${SITE_URL}/account/email#all`, href: (u: string) => u };
+const LINKS = { unsubscribeUrl: `${SITE_URL}/email/preferences`, href: (u: string) => u };
 
 export interface DesignLook {
   thumb: Thumb;
