@@ -4,6 +4,7 @@ import Link from "next/link";
 import { getMembersOnlyScreenings, getMembersOnlySlots, getPubliclyVisibleScreenings, PUBLIC_SCHEDULE_WINDOW_DAYS } from "@/lib/data/screenings";
 import InsiderTeaser from "@/components/site/InsiderTeaser";
 import { getSignedInMember } from "@/lib/member-auth";
+import { shiftDate } from "@/lib/ops/time";
 import MoviePoster from "@/components/MoviePoster";
 import ScreenTag from "@/components/site/ScreenTag";
 import { jsonLdScript, screeningEventJsonLd } from "@/lib/seo/screening-events";
@@ -69,7 +70,9 @@ type Day = { key: string; label: string; short: string; films: Film[]; count: nu
 // chips -- how a cinema listing reads, instead of one row per showing.
 function groupByDay(screenings: Screening[]): Day[] {
   const today = dayKey(new Date());
-  const tomorrow = dayKey(new Date(Date.now() + 86_400_000));
+  // The next date, not now + 24 hours: that's a date off for an hour the
+  // nights the clocks change.
+  const tomorrow = shiftDate(today, 1);
   const days = new Map<string, Day>();
   for (const s of screenings) {
     const when = new Date(s.starts_at);

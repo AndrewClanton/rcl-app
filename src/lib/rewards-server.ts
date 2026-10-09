@@ -292,6 +292,42 @@ export async function redeemOrderRewards(args: {
   return { short: res.short ?? [] };
 }
 
+export interface RedeemShort {
+  reward_id?: string;
+  name?: string;
+  points?: number;
+  balance?: number;
+  why?: "short" | "limit" | "stock" | "not_found";
+  problem?: string;
+}
+
+// The sale's whole points spending in one locked step: the $5 off
+// (discountPoints) and the goods, each checked against the balance, its
+// limits and stock (redeem_order_points, 20261008030000). Never throws: the
+// sale already stands. null: it couldn't run; short: what wasn't taken.
+export async function redeemOrderPoints(args: {
+  memberId: string;
+  orderId: string;
+  items: { rewardId: string; qty: number }[];
+  discountPoints: number;
+  by: string | null;
+}): Promise<{ short: RedeemShort[]; discountTaken: boolean } | null> {
+  if (!args.items.length && !args.discountPoints) return { short: [], discountTaken: false };
+  const { data, error } = await createAdminClient().rpc("redeem_order_points", {
+    p_member: args.memberId,
+    p_order: args.orderId,
+    p_items: args.items.map((i) => ({ reward_id: i.rewardId, quantity: i.qty })),
+    p_discount_points: args.discountPoints,
+    p_by: args.by,
+  });
+  if (error) {
+    console.error("redeem_order_points failed", error.code, error.message);
+    return null;
+  }
+  const res = data as { short?: RedeemShort[]; discount_taken?: boolean };
+  return { short: res.short ?? [], discountTaken: !!res.discount_taken };
+}
+
 // ---------- settings ----------
 
 export interface PointsSettings {

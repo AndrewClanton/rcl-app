@@ -114,7 +114,7 @@ import {
 import { quoteOwnerRate, type OwnerRateQuote } from "./owner-rate-actions";
 import { DAILY_COFFEE_LINE, DAILY_COFFEE_TITLE, type DailyCoffeeState } from "@/lib/daily-perk";
 import { getDailyCoffee, getPosMember, getTabletProfile } from "./member-actions";
-import { checkOrderReward } from "./reward-actions";
+import { approveShortRewards, checkOrderReward, checkRewardsBeforePay } from "./reward-actions";
 import { parseRewardAdd, type RewardAdded } from "@/lib/rewards";
 import { approveOrgOverLimit, getOrgOnOrder } from "./org-actions";
 import { compCountText, isDayPassName, orgCompPlan, roleLabel, TAX_INCLUDED_NOTE, type OrgOnOrder } from "@/lib/orgs";
@@ -383,6 +383,9 @@ export default function PosApp({
   // A manager's OK to comp past today's limit, for one organization.
   const [orgApproval, setOrgApproval] = useState<{ orgId: string; token: string } | null>(null);
   const [orgPinOpen, setOrgPinOpen] = useState(false);
+  // Reward lines the member can't have now (points short, past a limit, out
+  // of stock): a manager PIN lets the sale go ahead (code review N12).
+  const [rewardPin, setRewardPin] = useState<string[] | null>(null);
   const orgOverride = !!orgOnOrder && orgApproval?.orgId === orgOnOrder.orgId;
   const orgTaxIncluded = !!orgOnOrder?.active && orgOnOrder.role === "supported";
   // Organization guests with no account (OrgGuests.tsx), for the order
@@ -1428,7 +1431,8 @@ export default function PosApp({
     router.refresh();
   }
 
-  async function startCheckout() {
+  // rewardsApproved: a manager's PIN let short rewards through just now.
+  async function startCheckout(rewardsApproved = false) {
     if (!employeeId || cart.length === 0) return;
     // A tab closed on the other register (paid or cancelled) would be
     // charged a second time from here: check before anyone pays.
@@ -1453,6 +1457,16 @@ export default function PosApp({
         setToast(r && !r.ok ? r.error : "Couldn't check seats. Check the connection and try again.");
         return;
       }
+    }
+    // Reward lines from Spend points, all checked together before anyone
+    // pays. One that's short needs a manager PIN to go ahead. If the check
+    // can't run, the sale goes ahead (the save still checks and flags).
+    const rewardsOnOrder = cart.filter((l) => l.rewardId).map((l) => ({ rewardId: l.rewardId as string, qty: l.qty }));
+    if (rewardsOnOrder.length && memberId && !rewardsApproved) {
+      setBusy(true);
+      const rc = await checkRewardsBeforePay({ memberId, rewards: rewardsOnOrder, discountOn: pointsRedeemed && totals.redemptionDiscount > 0 }).catch(() => null);
+      setBusy(false);
+      if (rc && !rc.ok) return setRewardPin(rc.problems);
     }
     // A points reward the member no longer has the points for, or a daily
     // coffee they've already had today (on the other register, say), comes
@@ -2281,7 +2295,7 @@ export default function PosApp({
           {/* No new charges while a charged sale is unsaved: if sales aren't
               saving, the register shouldn't keep charging cards. Nor while
               the owner rate's prices are still coming. */}
-          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale || ownerPending} onClick={startCheckout}>
+          <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale || ownerPending} onClick={() => void startCheckout()}>
             {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : "Complete order"}
           </button>
           {!employeeId && cart.length > 0 && (
@@ -2613,6 +2627,20 @@ export default function PosApp({
             setOrgApproval({ orgId: pinOrg.orgId, token: r.token });
             setOrgPinOpen(false);
             setToast(`Comp approved${r.approvedBy ? ` by ${r.approvedBy}` : ""}. Take payment when ready.`);
+          }}
+        />
+      )}
+
+      {rewardPin && (
+        <ManagerPinModal
+          title="Reward can't be covered"
+          description={`${rewardPin.join(" ")} Take the reward off the order, or a manager's PIN lets the sale go ahead (a manager is told).`}
+          onCancel={() => setRewardPin(null)}
+          onSubmit={async (pin) => {
+            const r = await approveShortRewards(pin);
+            if (!r.ok) throw new Error(r.error);
+            setRewardPin(null);
+            void startCheckout(true);
           }}
         />
       )}

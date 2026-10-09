@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { assertManager } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { businessDay, centralToIso } from "@/lib/ops/time";
+import { businessDay, centralToIso, shiftDate } from "@/lib/ops/time";
 import { finishTodo, removeTodo, reopenTodo } from "@/lib/ops/outages";
 import { centralLocal } from "@/lib/hours";
 
@@ -157,8 +157,9 @@ export async function addScheduledShift(input: { employeeId: string; date: strin
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{1,2}:\d{2}$/.test(input.start) || !/^\d{1,2}:\d{2}$/.test(input.end)) return { ok: false, error: "Pick a day, a start and an end time." };
   const startsAt = centralToIso(input.date, input.start);
   let endsAt = centralToIso(input.date, input.end);
-  // Ends after midnight (a closing shift): the next day.
-  if (endsAt <= startsAt) endsAt = new Date(new Date(endsAt).getTime() + 86_400_000).toISOString();
+  // Ends after midnight (a closing shift): that time on the next date, not 24
+  // hours on, which is an hour off the night the clocks change.
+  if (endsAt <= startsAt) endsAt = centralToIso(shiftDate(input.date, 1), input.end);
   const { error } = await createAdminClient()
     .from("staff_schedule")
     .insert({ employee_id: input.employeeId, starts_at: startsAt, ends_at: endsAt, note: input.note.trim() || null, created_by: staff.employeeId });
@@ -199,8 +200,10 @@ export async function copyWeekForward(weekStart: string): Promise<Result & { cop
   const staff = await assertManager();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) return { ok: false, error: "Pick a week." };
   const supabase = createAdminClient();
+  // The week's business days, 4 a.m. Monday to 4 a.m. the next Monday by
+  // the wall clock (not 7 x 24 hours, an hour off across a clock change).
   const from = centralToIso(weekStart, "04:00");
-  const to = new Date(new Date(from).getTime() + 7 * 86_400_000).toISOString();
+  const to = centralToIso(shiftDate(weekStart, 7), "04:00");
   const { data } = await supabase.from("staff_schedule").select("employee_id, starts_at, ends_at, note").is("deleted_at", null).gte("starts_at", from).lt("starts_at", to);
   if (!data?.length) return { ok: false, error: "There's nothing on this week to copy." };
   const week = 7 * 86_400_000;
@@ -220,7 +223,7 @@ export async function copyWeekForward(weekStart: string): Promise<Result & { cop
     .select("employee_id, starts_at")
     .is("deleted_at", null)
     .gte("starts_at", to)
-    .lt("starts_at", new Date(new Date(to).getTime() + 7 * 86_400_000).toISOString());
+    .lt("starts_at", centralToIso(shiftDate(weekStart, 14), "04:00"));
   const taken = new Set((existing ?? []).map((e) => `${e.employee_id}|${new Date(e.starts_at).getTime()}`));
   const fresh = next.filter((s) => !taken.has(`${s.employee_id}|${new Date(s.starts_at).getTime()}`));
   if (fresh.length) {
