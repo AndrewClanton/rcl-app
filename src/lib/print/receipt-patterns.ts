@@ -147,7 +147,6 @@ function sections(r: ReceiptData, o: PatternOpts) {
   if (r.reprint) head.push({ t: "c", text: "** REPRINT **", size: 22, bold: true });
   if (r.orderName) head.push({ t: "c", text: r.orderName, size: 24, bold: true });
   head.push({ t: "c", text: receiptWhen(r.at), size: 20 }, { t: "c", text: `Order #${r.orderNumber}`, size: 20 });
-  if (r.cashier) head.push({ t: "c", text: `Server: ${r.cashier}`, size: 18 });
   if (r.member) head.push({ t: "c", text: `Insider: ${r.member}`, size: 18 });
 
   const items: Block[] = [];

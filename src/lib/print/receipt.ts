@@ -185,7 +185,7 @@ export function receiptXml(r: ReceiptData, opts: { openDrawer?: boolean; flouris
   if (r.reprint) d.align("center").bold(true).line("** REPRINT **").bold(false).align("left");
   d.lines(columns(`Order #${r.orderNumber}`, when(r.at)));
   if (r.orderName) d.line(`Name: ${r.orderName}`);
-  if (r.cashier) d.line(`Server: ${r.cashier}`);
+  // No staff names on customer receipts (Andrew, 10/9).
   if (r.member) d.line(`Insider: ${r.member}`);
   d.line(rule());
   for (const l of r.lines) {
