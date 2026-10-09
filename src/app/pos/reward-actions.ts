@@ -34,13 +34,16 @@ export async function checkOrderReward(args: {
 // (the balance after the $5 off and the lines before it, the per-reward and
 // goods limits, stock). problems: what's short, for the manager PIN prompt
 // (code review N12). ok when there's nothing to check.
-export async function checkRewardsBeforePay(args: { memberId: string; rewards: { rewardId: string; qty: number }[]; discountOn: boolean }): Promise<{ ok: true } | { ok: false; problems: string[] }> {
+export async function checkRewardsBeforePay(args: { memberId: string; rewards: { rewardId: string; qty: number }[]; discountOn: boolean; discountPoints?: number }):Promise<{ ok: true } | { ok: false; problems: string[] }> {
   await assertStaff();
   if (!isUuid(args?.memberId)) return { ok: true };
   const memberId = (await currentMemberId(args.memberId)) ?? args.memberId;
   const lines = (Array.isArray(args.rewards) ? args.rewards : []).filter((r) => isUuid(r?.rewardId) && Number.isInteger(r.qty) && r.qty > 0).slice(0, 50);
   const pending: { rewardId: string; qty: number }[] = [];
-  let pendingPoints = args.discountOn ? POINTS_PER_REWARD : 0;
+  // The $5 off takes only the points for what it took off (discountPoints,
+  // lib/loyalty.ts rewardPointsFor); the full 100 if the register didn't say.
+  const dp = Number(args.discountPoints);
+  let pendingPoints = args.discountOn ? (Number.isFinite(dp) && dp > 0 ? Math.min(POINTS_PER_REWARD, Math.round(dp)) : POINTS_PER_REWARD) : 0;
   const problems: string[] = [];
   for (const l of lines) {
     for (let n = 0; n < Math.min(l.qty, 20); n++) {

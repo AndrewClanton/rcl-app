@@ -57,7 +57,7 @@ import { useMenuTileExtras } from "./item-settings/ItemSettings";
 import type { RegisterOut } from "@/lib/ops/shared";
 import MovieTickets from "./MovieTickets";
 import { checkTicketSeats, type RegisterScreening } from "./ticket-actions";
-import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import { POINTS_PER_REWARD, REWARD_VALUE, rewardLabel, rewardPointsFor } from "@/lib/loyalty";
 import PosMemberPanel from "./PosMemberPanel";
 import { UnlimitedBanner } from "./LegacyPlusCard";
 import { PlusRibbon, SignalFrame } from "./MemberSignal";
@@ -1046,7 +1046,7 @@ export default function PosApp({
   // on the customer screen) and the $5 off.
   const rewardLines = cart.filter((l) => l.rewardId);
   const discountOn = pointsRedeemed && totals.redemptionDiscount > 0;
-  const orderRewardPoints = rewardLines.reduce((s, l) => s + (l.rewardPoints ?? 0) * l.qty, 0) + (discountOn ? POINTS_PER_REWARD : 0);
+  const orderRewardPoints = rewardLines.reduce((s, l) => s + (l.rewardPoints ?? 0) * l.qty, 0) + (discountOn ? totals.redemptionPoints : 0);
   // A card sale that was charged but didn't save (kept across reloads).
   const unsavedSale = useUnsavedSale();
   // "Put a card on file?" for a tab (right after opening it, or from its chip).
@@ -1079,7 +1079,7 @@ export default function PosApp({
       // Named for the guest: "Insiders+ 10% off" is the perk they see applied.
       { label: isPlus && !member?.legacyUnlimited ? `Insiders+ ${Math.round(memberDiscountRate(member) * 100)}% off` : "Member discount", amount: totals.tierDiscount },
       { label: "Monthly member discount", amount: totals.monthlyDiscount },
-      { label: "Points reward", amount: totals.redemptionDiscount },
+      { label: rewardLabel(totals.redemptionDiscount), amount: totals.redemptionDiscount },
     ].filter((d) => d.amount > 0),
     // Only what the screen shows: a first name, points, where they stand
     // (gold only for Insiders+ that's paid for; red for unlimited or no
@@ -1489,7 +1489,7 @@ export default function PosApp({
     const rewardsOnOrder = cart.filter((l) => l.rewardId).map((l) => ({ rewardId: l.rewardId as string, qty: l.qty }));
     if (rewardsOnOrder.length && memberId && !rewardsApproved) {
       setBusy(true);
-      const rc = await checkRewardsBeforePay({ memberId, rewards: rewardsOnOrder, discountOn: pointsRedeemed && totals.redemptionDiscount > 0 }).catch(() => null);
+      const rc = await checkRewardsBeforePay({ memberId, rewards: rewardsOnOrder, discountOn: pointsRedeemed && totals.redemptionDiscount > 0, discountPoints: totals.redemptionPoints }).catch(() => null);
       setBusy(false);
       if (rc && !rc.ok) return setRewardPin(rc.problems);
     }
@@ -1739,7 +1739,7 @@ export default function PosApp({
         { label: DAILY_COFFEE_LINE, amount: order.totals.daily_perk_discount ?? 0 },
         { label: "Member discount", amount: order.totals.tier_discount },
         { label: "Monthly member discount", amount: order.totals.monthly_discount },
-        { label: "Points reward", amount: order.totals.redemption_discount },
+        { label: rewardLabel(order.totals.redemption_discount), amount: order.totals.redemption_discount },
       ],
       tax: order.totals.tax,
       taxIncluded: !!order.totals.tax_included,
@@ -1751,7 +1751,7 @@ export default function PosApp({
         { label: "Card", amount: payment.card },
         ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
       ],
-      points: { earned: order.ownerRate ? 0 : pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0 },
+      points: { earned: order.ownerRate ? 0 : pointsEarned(order.totals), rewardUsed: order.pointsRedeemed && order.totals.redemption_discount > 0, rewardPoints: order.pointsRedeemed ? rewardPointsFor(order.totals.redemption_discount) : 0 },
     };
     setLastReceipt(receipt);
     const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
@@ -2336,7 +2336,7 @@ export default function PosApp({
           {totals.canRedeem && (
             <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
               <input type="checkbox" checked={pointsRedeemed} onChange={(e) => setPointsRedeemed(e.target.checked)} />
-              Redeem {POINTS_PER_REWARD} pts for {money(REWARD_VALUE)} off
+              {totals.rewardAvailable > 0 ? `Points reward: ${money(totals.rewardAvailable)} off (${rewardPointsFor(totals.rewardAvailable)} pts)` : `Redeem ${POINTS_PER_REWARD} pts for ${money(REWARD_VALUE)} off`}
             </label>
           )}
           </div>

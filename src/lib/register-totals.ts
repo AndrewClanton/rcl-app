@@ -1,4 +1,4 @@
-import { POINTS_PER_REWARD, REWARD_VALUE } from "@/lib/loyalty";
+import { POINTS_PER_REWARD, REWARD_VALUE, rewardPointsFor } from "@/lib/loyalty";
 import { SALES_TAX_RATE } from "@/lib/sales-tax";
 import type { MemberTier } from "@/lib/types";
 import { taxInside } from "@/lib/orgs";
@@ -86,9 +86,15 @@ export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthl
   const rest = cents(subtotal - orgCompDiscount - dailyPerkDiscount);
   const tierDiscount = cents(rest * memberDiscountRate(member));
   const monthlyDiscount = monthlyMember ? cents(rest * 0.1) : 0;
-  const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
-  // A $5 reward on a $3 order takes $3 off, never more than what's left.
-  const redemptionDiscount = canRedeem && pointsRedeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, rest - tierDiscount - monthlyDiscount))) : 0;
+  // A $5 reward on a $3 order takes $3 off, never more than what's left,
+  // and only the points for what it took (60 for $3: rewardPointsFor). So
+  // it's on offer when the balance covers what it would take now (the full
+  // 100 on an empty order).
+  const rewardCould = cents(Math.min(REWARD_VALUE, Math.max(0, rest - tierDiscount - monthlyDiscount)));
+  const canRedeem = !!member && member.points >= (rewardCould > 0 ? rewardPointsFor(rewardCould) : POINTS_PER_REWARD);
+  const redemptionDiscount = canRedeem && pointsRedeemed ? rewardCould : 0;
+  // The points the reward takes (0 without one).
+  const redemptionPoints = rewardPointsFor(redemptionDiscount);
   const discount = orgCompDiscount + dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
@@ -106,6 +112,9 @@ export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthl
     tierDiscount,
     monthlyDiscount,
     redemptionDiscount,
+    redemptionPoints,
+    // What a reward would take off now, ticked or not (the member panel).
+    rewardAvailable: rewardCould,
     discount,
     tax,
     total,

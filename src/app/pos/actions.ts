@@ -7,7 +7,8 @@ import { checkManagerPin } from "@/lib/manager-pin";
 import type { ApprovalResult } from "@/lib/pin-rules";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
-import { applyPoints, POINTS_PER_REWARD } from "@/lib/points";
+import { applyPoints } from "@/lib/points";
+import { rewardPointsFor } from "@/lib/loyalty";
 import { releaseTabCard } from "@/lib/tab-card";
 import { refundOrder } from "@/app/admin/reports/actions";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
@@ -424,11 +425,12 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
   if (fields.pointsRedeemed && totals.redemption_discount > 0) {
     if (!memberId) return { ok: false, error: "A points reward needs a member on the order. Attach the member, or uncheck the reward." };
     const points = await memberPoints(supabase, memberId);
-    if (points !== undefined && (points ?? 0) < POINTS_PER_REWARD) {
+    const needed = rewardPointsFor(totals.redemption_discount);
+    if (points !== undefined && (points ?? 0) < needed) {
       return {
         ok: false,
         points: points ?? 0,
-        error: `This member has ${Math.floor(points ?? 0)} points now, and a reward takes ${POINTS_PER_REWARD}, so it's been taken off the order. Check the new total, then take payment.`,
+        error: `This member has ${Math.floor(points ?? 0)} points now, and this reward takes ${needed}, so it's been taken off the order. Check the new total, then take payment.`,
       };
     }
   }
@@ -758,7 +760,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     const earned = pointsEarned(params.totals);
     if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
-  // What the sale spends: the $5 off's 100 points and the rewards picked on
+  // What the sale spends: the $5 off's points (only what it took off, 60
+  // for $3.00: rewardPointsFor) and the rewards picked on
   // the customer screen (Spend points), at the catalog's price. All in one
   // step with the member locked (redeem_order_points, code review M9, N12):
   // each is taken only if their points cover it (the $5 off against the
@@ -768,7 +771,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // sale stands; anything not taken is flagged for a manager. (The register
   // re-checks all of it before payment and asks for a manager PIN when
   // something's short.)
-  const discountWanted = memberId && !ownerSale && params.pointsRedeemed && params.totals.redemption_discount > 0 ? POINTS_PER_REWARD : 0;
+  const discountWanted = memberId && !ownerSale && params.pointsRedeemed && params.totals.redemption_discount > 0 ? rewardPointsFor(params.totals.redemption_discount) : 0;
   const rewardItems = params.lines.flatMap((l) => {
     const id = rewardIdOf(l);
     return id ? [{ rewardId: id, qty: Math.max(1, Math.round(Number(l.quantity) || 1)) }] : [];

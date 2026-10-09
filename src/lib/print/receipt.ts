@@ -36,8 +36,9 @@ export interface ReceiptData {
   reprint?: boolean; // printed again later (Recent orders): marked REPRINT
   // For the customer screen's points, not printed: what completeOrder
   // credits (pointsEarned in lib/register-totals.ts) and whether a reward
-  // was used (it takes POINTS_PER_REWARD back out).
-  points?: { earned: number; rewardUsed: boolean };
+  // was used and the points it took (rewardPoints: only what it took off,
+  // lib/loyalty.ts rewardPointsFor; older receipts have just rewardUsed).
+  points?: { earned: number; rewardUsed: boolean; rewardPoints?: number };
 }
 
 const money = (n: number) => `$${n.toFixed(2)}`;

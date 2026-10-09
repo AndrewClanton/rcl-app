@@ -23,7 +23,7 @@ register(
 );
 const { registerTotals, pointsEarned, dailyPerkPick, cents } = await import("../src/lib/register-totals.ts");
 const { SALES_TAX_RATE } = await import("../src/lib/sales-tax.ts");
-const { POINTS_PER_REWARD, REWARD_VALUE } = await import("../src/lib/loyalty.ts");
+const { POINTS_PER_REWARD, REWARD_VALUE, rewardPointsFor } = await import("../src/lib/loyalty.ts");
 const { DAILY_COFFEE_LINE, DAILY_COFFEE_PERK } = await import("../src/lib/daily-perk.ts");
 const { receiptXml } = await import("../src/lib/print/receipt.ts");
 
@@ -86,8 +86,11 @@ function before(lines, member, monthly, taxFree, redeemed) {
   const rate = !member ? 0 : member.tier === "Insiders+" ? 0.1 : 0;
   const tierDiscount = cents(subtotal * rate);
   const monthlyDiscount = monthly ? cents(subtotal * 0.1) : 0;
-  const canRedeem = !!member && member.points >= POINTS_PER_REWARD;
-  const redemptionDiscount = canRedeem && redeemed ? cents(Math.min(REWARD_VALUE, Math.max(0, subtotal - tierDiscount - monthlyDiscount))) : 0;
+  // Since Oct 9 the reward only needs the points for what it takes off
+  // (lib/loyalty.ts rewardPointsFor; scripts/check-prorate-points.mjs).
+  const could = cents(Math.min(REWARD_VALUE, Math.max(0, subtotal - tierDiscount - monthlyDiscount)));
+  const canRedeem = !!member && member.points >= (could > 0 ? rewardPointsFor(could) : POINTS_PER_REWARD);
+  const redemptionDiscount = canRedeem && redeemed ? could : 0;
   const discount = tierDiscount + monthlyDiscount + redemptionDiscount;
   const taxable = subtotal - discount;
   const tax = taxFree ? 0 : cents(Math.max(0, taxable) * SALES_TAX_RATE);
