@@ -4,7 +4,7 @@ import { visitBusinessDate } from "@/lib/visits";
 import { DEFAULT_SERIES, MEMBERS_SHOWING, guessSeries } from "@/lib/event-series";
 import { P, STARTERS, cleanSpec, type ArtSpec } from "./art";
 import { whoCame, showingLabel, type Attendance, type CameFilter } from "./attendance";
-import { createDef, forgetCatalog, holderFor, loadCatalog, mintClaims, type CatalogDef, type CopyRow } from "./server";
+import { createDef, forgetCatalog, holderFor, loadCatalog, mintClaims, signedClaims, type CatalogDef, type CopyRow } from "./server";
 import type { RuleParams } from "./rules";
 
 // Event badges (Badge Case build 2): badges_defs with rule_type 'event'.
@@ -126,22 +126,13 @@ async function claimsOf(db: Db, key: string, memberIds: string[]): Promise<Map<s
   for (let i = 0; i < memberIds.length; i += 150) {
     const { data, error } = await db
       .from("member_badges")
-      .select("id, member_id")
+      .select("id, member_id, copy_id")
       .eq("badge", key)
       .in("member_id", memberIds.slice(i, i + 150));
     if (error) throw new Error(error.message);
     const rows = data ?? [];
-    const { data: copies } = rows.length
-      ? await db
-          .from("badge_copies")
-          .select("source_ref, signature")
-          .in(
-            "source_ref",
-            rows.map((r) => `member_badges:${r.id}`),
-          )
-      : { data: [] };
-    const signed = new Set((copies ?? []).filter((c) => c.signature).map((c) => c.source_ref as string));
-    for (const r of rows) out.set(r.member_id as string, { id: r.id as string, signed: signed.has(`member_badges:${r.id}`) });
+    const signed = rows.length ? await signedClaims(db, rows) : new Set<string>();
+    for (const r of rows) out.set(r.member_id as string, { id: r.id as string, signed: signed.has(r.id as string) });
   }
   return out;
 }

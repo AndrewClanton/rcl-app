@@ -25,7 +25,9 @@ import { FALLBACK_DEFS, RULE_TYPES, statsFor, type RuleDef, type RuleParams, typ
 //   1. A copy minted from a check-in seals 10 minutes after minting. A
 //      check-in undone before then takes the copy with it (undoVisit ->
 //      undoClaimCopies); its serial is retired, never reused. After that,
-//      undoing the check-in leaves the copy (its points go as before).
+//      undoing the check-in leaves the copy (its points go as before), and
+//      checking in again gets that copy back, never a second one: one live
+//      copy per badge, holder and period (badge_copies_one_live).
 //   2. Merging accounts moves the dropped account's copies to the kept
 //      one's holder: same serial and mint data, a "transferred" line in its
 //      history with its old signature, re-signed for the new holder
@@ -280,19 +282,40 @@ export async function mintClaims(holderId: string, claims: ClaimToMint[], db: Db
   return out;
 }
 
+// The claims (member_badges ids) that have a signed copy: the one minted
+// for them, or the live one the holder already had of that badge and
+// period (member_badges.copy_id). A check-in undone after its copy sealed
+// and then made again gets that copy back, never a second one
+// (badge_reserve_copy, supabase/migrations/20261009060000_badge_one_copy.sql).
+export async function signedClaims(db: Db, claims: { id: unknown; copy_id?: unknown }[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (let i = 0; i < claims.length; i += 150) {
+    const part = claims.slice(i, i + 150);
+    const copyIds = [...new Set(part.map((c) => c.copy_id as string | null).filter((v): v is string => !!v))];
+    const [bySource, byId] = await Promise.all([
+      db.from("badge_copies").select("source_ref").in("source_ref", part.map((c) => `member_badges:${c.id}`)).not("signature", "is", null),
+      copyIds.length ? db.from("badge_copies").select("id").in("id", copyIds).not("signature", "is", null) : null,
+    ]);
+    const refs = new Set((bySource.data ?? []).map((h) => h.source_ref as string));
+    const ids = new Set((byId?.data ?? []).map((h) => h.id as string));
+    for (const c of part) {
+      if (refs.has(`member_badges:${c.id}`) || ids.has(c.copy_id as string)) out.add(c.id as string);
+    }
+  }
+  return out;
+}
+
 // Copies for any of a member's claims that don't have a signed one yet.
 // Facts for the stats come from the visit that earned it.
 export async function ensureCopies(memberId: string, db: Db = createAdminClient()): Promise<number> {
-  const { data: claims, error } = await db.from("member_badges").select("id, badge, period, visit_id, earned_at").eq("member_id", memberId).order("earned_at");
+  const { data: claims, error } = await db.from("member_badges").select("id, badge, period, visit_id, earned_at, copy_id").eq("member_id", memberId).order("earned_at");
   if (error || !claims?.length) return 0;
-  const refs = claims.map((c) => `member_badges:${c.id}`);
-  const { data: have } = await db.from("badge_copies").select("source_ref, signature").in("source_ref", refs);
-  const done = new Set((have ?? []).filter((h) => h.signature).map((h) => h.source_ref as string));
+  const done = await signedClaims(db, claims);
   // An event badge's copy is minted by lib/badges/events.ts, which knows
   // the showing or event that earned it (and finishes any left unminted).
   const { defs } = await loadCatalog(db);
   const eventKeys = new Set(defs.filter((d) => d.ruleType === "event").map((d) => d.key));
-  const todo = claims.filter((c) => !done.has(`member_badges:${c.id}`) && !eventKeys.has(c.badge as string));
+  const todo = claims.filter((c) => !done.has(c.id as string) && !eventKeys.has(c.badge as string));
   if (!todo.length) return 0;
   const holder = await holderFor(memberId, db);
   if (!holder) return 0;

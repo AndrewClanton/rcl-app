@@ -237,8 +237,11 @@ if (process.argv.includes("--db")) {
     const [m] = await q("select id from members where erased_at is null limit 1");
     const [{ id: claim }] = await q("insert into member_badges (member_id, badge, period, points) values ($1, 'zz_rehearsal', '', 0) returning id", [m.id]);
     const [{ c: fresh }] = await q("select public.badge_reserve_copy($1, $2, $3, gen_random_uuid(), 'zzzzzzzzzzzz', '{}'::jsonb) as c", [def.id, hA, `member_badges:${claim}`]);
+    // Another holder (merged into B, so B's erasure below covers it): hA
+    // already has a live copy of this badge, and gets no second one.
+    const [{ id: hC }] = await q("insert into badge_holders (display_name, merged_into) values ('Rehearsal C', $1) returning id", [hB]);
     const [{ id: claim2 }] = await q("insert into member_badges (member_id, badge, period, points) values ($1, 'zz_rehearsal2', '', 0) returning id", [m.id]);
-    const [{ c: sealed }] = await q("select public.badge_reserve_copy($1, $2, $3, gen_random_uuid(), 'zzzzzzzzzzzy', '{}'::jsonb, null, null, null, now() - interval '11 minutes') as c", [def.id, hA, `member_badges:${claim2}`]);
+    const [{ c: sealed }] = await q("select public.badge_reserve_copy($1, $2, $3, gen_random_uuid(), 'zzzzzzzzzzzy', '{}'::jsonb, null, null, null, now() - interval '11 minutes') as c", [def.id, hC, `member_badges:${claim2}`]);
     await q("delete from member_badges where id = any($1::uuid[])", [[claim, claim2]]);
     const [{ u }] = await q("select public.badge_undo_claims($1::uuid[]) as u", [[claim, claim2]]);
     const left = await q("select id from badge_copies where id = any($1::uuid[])", [[fresh.id, sealed.id]]);
@@ -249,6 +252,40 @@ if (process.argv.includes("--db")) {
     check("db: a claim undone before minting gets no copy", none === null);
     const [{ serial: next }] = await q("select (public.badge_reserve_copy($1, $2, null, gen_random_uuid(), 'zzzzzzzzzzzw', '{}'::jsonb)->>'serial')::int as serial", [def.id, hB]);
     check("db: the next serial skips the retired one, never reuses it", next > fresh.serial);
+
+    // One copy, ever: a check-in minted it, it sealed (minted_at faked to
+    // 11 minutes ago), the check-in was undone, then made again.
+    const [{ id: hD }] = await q("insert into badge_holders (display_name) values ('Rehearsal D') returning id");
+    const claimFor = async (badge, period) => (await q("insert into member_badges (member_id, badge, period, points) values ($1, $2, $3, 0) returning id", [m.id, badge, period]))[0].id;
+    const reserve = async (d, holder, claimId, code, mintedAt = null) =>
+      (await q("select public.badge_reserve_copy($1, $2, $3, gen_random_uuid(), $4, '{}'::jsonb, null, null, null, $5) as c", [d, holder, `member_badges:${claimId}`, code, mintedAt]))[0].c;
+    const firstClaim = await claimFor("zz_once", "");
+    const first = { claim: firstClaim, copy: await reserve(def.id, hD, firstClaim, "zzzzzzzzzzzv", new Date(Date.now() - 11 * 60_000).toISOString()) };
+    await q("update badge_copies set art_svg = '<svg/>', art_hash = 'ab', signature = 'rehearsal' where id = $1", [first.copy.id]);
+    await q("delete from member_badges where id = $1", [first.claim]);
+    const [{ u: u2 }] = await q("select public.badge_undo_claims($1::uuid[]) as u", [[first.claim]]);
+    const again = await claimFor("zz_once", "");
+    const back = await reserve(def.id, hD, again, "zzzzzzzzzzzu");
+    const [{ n: copiesD }] = await q("select count(*)::int as n from badge_copies where def_id = $1 and holder_id = $2", [def.id, hD]);
+    const [link] = await q("select copy_id from member_badges where id = $1", [again]);
+    check(
+      "db: undo after the seal, then check in again: the same copy, one copy, linked to the new claim",
+      u2.kept === 1 && back?.id === first.copy.id && copiesD === 1 && link?.copy_id === first.copy.id,
+    );
+    check(
+      "db: a second live copy of a once-ever badge is refused (badge_copies_one_live)",
+      await refused(
+        "insert into badge_copies (id, def_id, issuer_id, series, serial, holder_id, code, name, generator, mint_holder_id, period_key) values (gen_random_uuid(), $1, $2, 1, 99999, $3, 'zzzzzzzzzzzt', 'x', 'gen-1', $3, '')",
+        [def.id, def.issuer_id, hD],
+      ),
+    );
+    const [yearly] = await q("select id from badge_defs where period = 'yearly' order by set_number limit 1");
+    if (yearly) {
+      const y1 = await reserve(yearly.id, hD, await claimFor("zz_year", "2026"), "zzzzzzzzzzzs");
+      const y1b = await reserve(yearly.id, hD, await claimFor("zz_year2", "2026"), "zzzzzzzzzzzr");
+      const y2 = await reserve(yearly.id, hD, await claimFor("zz_year", "2027"), "zzzzzzzzzzzq");
+      check("db: a yearly badge: one copy a year", y1b.id === y1.id && y2.id !== y1.id && y2.period_key === "2027");
+    }
 
     const [{ e }] = await q("select public.badge_erase_holder_copies($1) as e", [hB]);
     const gone = await q("select reason from badge_retired_serials where def_id = $1 and serial in ($2, $3)", [def.id, old.serial, next]);
