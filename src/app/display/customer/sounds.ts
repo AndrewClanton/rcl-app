@@ -36,6 +36,7 @@ export type SoundName =
   | "notFound" // a number we don't know
   | "error" // something went wrong
   | "unlock" // a reward bought with points
+  | "boom" // the display-only tank on Spend points, tapped
   // A member's own sign-in sound, unlocked with points (lib/rewards.ts
   // PERK_SOUNDS): plays at their check-in instead of the coin.
   | "perk_coin"
@@ -341,6 +342,13 @@ const RECIPES: Record<SoundName, (k: Kit, n: number) => void> = {
     noise(k, 0, 0.05, 0.25, 2400);
     [NOTE.E5, NOTE.G5, NOTE.C6, NOTE.E6, NOTE.G6].forEach((f, i) => tone(k, f, 0.04 + i * 0.05, 0.12, 0.14, "triangle"));
     tone(k, NOTE.C7, 0.3, 0.45, 0.08, "sine");
+  },
+  // The tank on Spend points blows up (never a purchase): a crack, a low
+  // rumble falling away, a thump underneath.
+  boom: (k) => {
+    noise(k, 0, 0.08, 0.5, 2200);
+    noise(k, 0.01, 0.75, 0.6, 900, "lowpass", 60);
+    tone(k, 90, 0, 0.6, 0.5, "sine", 32);
   },
   // ---------- sign-in sounds bought with points ----------
   // Three coins, the last one ringing.

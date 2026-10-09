@@ -199,7 +199,13 @@ export function sortOffers<
 // blank, it's guessed from the name: a ticket, booth or pass is Tickets &
 // booths, anything else Food & drinks.
 
-export type GoodSection = "food" | "tickets";
+// "big": Big ticket, the display-only M1 Abrams joke (migration
+// 20261009090500). An M1A2 SEPv3 runs about $10 million a tank (the
+// commonly cited unit cost; recent contracts run higher). At 100 points =
+// $5, that's 20 points a dollar: $10,000,000 x 20 = 200,000,000 points,
+// or about $200 million spent at 1 point per $1. Its stock is 0, so the
+// server never lets it be redeemed.
+export type GoodSection = "food" | "tickets" | "big";
 export type RewardSection = "money" | GoodSection | "looks";
 
 export const SECTION_ORDER: RewardSection[] = [
@@ -207,16 +213,18 @@ export const SECTION_ORDER: RewardSection[] = [
   "food",
   "tickets",
   "looks",
+  "big",
 ];
 export const SECTION_LABEL: Record<RewardSection, string> = {
   money: "Money off",
   food: "Food & drinks",
   tickets: "Tickets & booths",
   looks: "Make it yours",
+  big: "Big ticket",
 };
 
 export function isGoodSection(x: unknown): x is GoodSection {
-  return x === "food" || x === "tickets";
+  return x === "food" || x === "tickets" || x === "big";
 }
 
 // The guess for a good with no section set.
