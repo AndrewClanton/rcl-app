@@ -1,8 +1,8 @@
 // How badges are earned, as data (badge_defs.rule_type and rule_params),
 // replacing the hard-coded checks in lib/visits.ts badgesFor. Check-in
 // rules run at every paid check-in (lib/visits-server.ts); `manual` badges
-// are given in Back office; `event` badges are modeled now and get their
-// attendance hookup in build 2 (they never match a check-in here).
+// are given in Back office; `event` badges never match a check-in here:
+// lib/badges/events.ts awards them from attendance (lib/badges/attendance.ts).
 //
 // The eleven badges from before are Series 1 defs with these rules, and
 // FALLBACK_DEFS below is the same list, used if the catalog can't be read,
@@ -20,7 +20,7 @@ export const RULE_INFO: Record<RuleType, { label: string; about: string }> = {
   checkin_time: { label: "Time of day", about: "Checked in between two times (Central)." },
   birthday_week: { label: "Birthday week", about: "Checked in during their birthday week. Every year." },
   manual: { label: "Awarded by hand", about: "Staff give it in Back office -> Badges." },
-  event: { label: "Came to an event", about: "A showing or house event. Attendance hooks up in a later build." },
+  event: { label: "Came to an event", about: "A showing, a house event, or a series (\"came to 5 Trivia nights\"). Awarded on its own when they come." },
 };
 
 export interface RuleParams {

@@ -2,7 +2,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow, clock, shiftDate, shortDay } from "@/lib/ops/time";
 import { readTicketCode, ticketCode } from "@/lib/ticket-code";
+import { after } from "next/server";
 import { recordVisit } from "@/lib/visits-server";
+import { awardEventBadges } from "@/lib/badges/events";
 import { firstNameOf } from "@/lib/checkin";
 import {
   bookingNumber,
@@ -210,6 +212,10 @@ async function scanTicket(text: string, by: string | null): Promise<ScanResult> 
   if (!claim.ok) return claim;
   // They're here: a booking with a member counts as today's visit.
   const visit = claim.memberId ? await recordVisit(claim.memberId, by, new Date(), `door:${by ?? "staff"}`) : null;
+  // Checked in earlier today: the visit didn't run event badges again, so
+  // this showing's (lib/badges/events.ts) are awarded after the answer.
+  const memberId = claim.memberId;
+  if (memberId && (!visit || visit.alreadyToday)) after(() => awardEventBadges({ memberIds: [memberId] }).then(() => undefined, (e) => console.error("event badges at scan", e)));
   return { ok: true, kind: "ticket", ticket: claim.ticket, print: claim.print, memberId: claim.memberId, visit };
 }
 

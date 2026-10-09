@@ -5,7 +5,14 @@ import { useRouter } from "next/navigation";
 import { FORM_IDS, FORM_INFO, P, PART_COLOR, PART_IDS, PART_TEXT, SERIES1_ART, SHAPE_IDS, STARTERS, renderArt, type ArtSpec, type FormId, type FormOpts, type PartId, type PartOpts } from "@/lib/badges/art";
 import { cardFrontSvg } from "@/lib/badges/card";
 import { RULE_INFO, RULE_TYPES, type RuleType } from "@/lib/badges/rules";
-import { createBadge } from "../actions";
+import { countEventBadge, createBadge } from "../actions";
+
+// What "For an event" can point at (lib/badges/events.ts eventChoices).
+export interface EventChoices {
+  screenings: { id: string; label: string; series: string | null; upcoming: boolean }[];
+  houseEvents: { id: string; label: string; series: string | null; upcoming: boolean }[];
+  series: string[];
+}
 
 // The badge maker: a recipe (a form, its colors, parts placed on it) drawn
 // live by the same generator that draws minted copies (lib/badges/art.ts),
@@ -38,19 +45,42 @@ const Thumb = ({ spec, size = 48 }: { spec: ArtSpec; size?: number }) => (
   <span className="badge-svg block" style={{ width: size }} aria-hidden="true" dangerouslySetInnerHTML={{ __html: renderArt(spec) }} />
 );
 
-export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number; issuer: string }) {
+export default function BadgeMaker({ nextNumber, issuer, events, forEvent = false }: { nextNumber: number; issuer: string; events: EventChoices; forEvent?: boolean }) {
   const router = useRouter();
   const [spec, setSpec] = useState<ArtSpec>(() => clone(STARTERS[0].spec));
   const [name, setName] = useState("");
   const [flavor, setFlavor] = useState("");
   const [formLabel, setFormLabel] = useState<string | null>(null);
-  const [ruleType, setRuleType] = useState<RuleType>("manual");
+  const [ruleType, setRuleType] = useState<RuleType>(forEvent ? "event" : "manual");
   const [count, setCount] = useState("25");
   const [weeks, setWeeks] = useState("8");
   const [from, setFrom] = useState("12:00");
   const [before, setBefore] = useState("14:00");
-  const [eventKind, setEventKind] = useState("house_event");
+  const [eventKind, setEventKind] = useState<"house_event" | "screening" | "series">("house_event");
   const [eventMatch, setEventMatch] = useState("");
+  const [eventTimes, setEventTimes] = useState("1");
+  const [came, setCame] = useState<{ key: string; n: number } | null>(null);
+  const [counting, startCount] = useTransition();
+  const eventKey = `${eventKind}|${eventMatch}|${eventKind === "series" ? eventTimes : 1}`;
+  const cameNow = came && came.key === eventKey ? came.n : null;
+  function countWhoCame() {
+    setError(null);
+    startCount(async () => {
+      const r = await countEventBadge({ eventKind, eventMatch, eventTimes: Number(eventTimes) });
+      if (!r.ok) return setError(r.error);
+      setCame({ key: eventKey, n: r.came });
+    });
+  }
+  // Picking a series (or an event in one) starts the art from that series'
+  // remix, if there is one and the art hasn't been touched.
+  const [artTouched, setArtTouched] = useState(false);
+  function pickEvent(match: string) {
+    setEventMatch(match);
+    const list = eventKind === "screening" ? events.screenings : eventKind === "house_event" ? events.houseEvents : null;
+    const series = list ? (list.find((e) => e.id === match)?.series ?? null) : match;
+    const starter = series ? STARTERS.find((s) => s.name.toLowerCase().startsWith(series.toLowerCase().split(" ")[0])) : null;
+    if (starter && !artTouched) setSpec(clone(starter.spec));
+  }
   const [points, setPoints] = useState("25");
   const [addPart, setAddPart] = useState<PartId>("star");
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +144,7 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
         before,
         eventKind,
         eventMatch,
+        eventTimes: Number(eventTimes),
         points: Number(points),
       });
       if (!r.ok) return setError(r.error);
@@ -126,8 +157,102 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <div className="space-y-6">
-        <section className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+      <div className="space-y-6" onClickCapture={(e) => {
+        // Any click in the art sections counts as touching the art.
+        if ((e.target as HTMLElement).closest("[data-art]")) setArtTouched(true);
+      }}>
+        <section className="space-y-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+          <h2 className="font-bold">What it&apos;s for</h2>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={`chip ${ruleType === "event" ? "chip-selected" : ""}`} aria-pressed={ruleType === "event"} onClick={() => setRuleType("event")}>
+              For an event
+            </button>
+            <button type="button" className={`chip ${ruleType !== "event" ? "chip-selected" : ""}`} aria-pressed={ruleType !== "event"} onClick={() => setRuleType(ruleType === "event" ? "manual" : ruleType)}>
+              Something else
+            </button>
+          </div>
+          {ruleType === "event" && (
+            <div className="space-y-3">
+              <p className="text-sm text-[var(--muted)]">
+                Everyone who already came gets it when you add it, and anyone who comes later gets it then: a ticket for the showing, or a check-in that day for an event like trivia.
+              </p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Kind">
+                {(
+                  [
+                    ["house_event", "A house event"],
+                    ["screening", "A showing"],
+                    ["series", "A series"],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={`chip ${eventKind === k ? "chip-selected" : ""}`}
+                    aria-pressed={eventKind === k}
+                    onClick={() => {
+                      setEventKind(k);
+                      setEventMatch("");
+                    }}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+              {eventKind === "series" ? (
+                <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-3">
+                  <label className={label}>
+                    Series
+                    <select className={input} value={eventMatch} onChange={(e) => pickEvent(e.target.value)}>
+                      <option value="">Pick a series…</option>
+                      {events.series.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={label}>
+                    Times
+                    <input className={input} type="number" min={1} max={100} value={eventTimes} onChange={(e) => setEventTimes(e.target.value)} />
+                  </label>
+                </div>
+              ) : (
+                <label className={label}>
+                  {eventKind === "screening" ? "Showing" : "Event"}
+                  <select className={input} value={eventMatch} onChange={(e) => pickEvent(e.target.value)}>
+                    <option value="">{eventKind === "screening" ? "Pick a showing…" : "Pick an event…"}</option>
+                    {(["upcoming", "past"] as const).map((when) => {
+                      const list = (eventKind === "screening" ? events.screenings : events.houseEvents).filter((e) => e.upcoming === (when === "upcoming"));
+                      const ordered = when === "upcoming" ? [...list].reverse() : list;
+                      return ordered.length ? (
+                        <optgroup key={when} label={when === "upcoming" ? "Coming up" : "Already happened"}>
+                          {ordered.map((e) => (
+                            <option key={e.id} value={e.id}>
+                              {e.label}
+                              {e.series ? ` [${e.series}]` : ""}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ) : null;
+                    })}
+                  </select>
+                </label>
+              )}
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" className="btn-secondary px-3 py-2 disabled:opacity-50" disabled={!eventMatch || counting} onClick={countWhoCame}>
+                  {counting ? "Counting…" : "Count who came (dry run)"}
+                </button>
+                {cameNow !== null && (
+                  <span className="text-sm font-bold">
+                    {cameNow === 0 ? "Nobody yet. It goes to people as they come." : `${cameNow.toLocaleString("en-US")} ${cameNow === 1 ? "member has" : "members have"} earned it so far.`}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section data-art className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <h2 className="font-bold">Start from</h2>
           <p className="text-sm text-[var(--muted)]">A remix of a badge that&apos;s already drawn. Then change anything.</p>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -145,7 +270,7 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
           </div>
         </section>
 
-        <section className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+        <section data-art className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <h2 className="font-bold">Form</h2>
           <div className="mt-2 flex flex-wrap gap-2">
             {FORM_IDS.map((id) => (
@@ -180,7 +305,7 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
           <input id="form-label" className={input} maxLength={30} value={formLabel ?? FORM_INFO[formId].label} onChange={(e) => setFormLabel(e.target.value)} />
         </section>
 
-        <section className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
+        <section data-art className="rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
           <h2 className="font-bold">Parts</h2>
           <ul className="mt-2 space-y-3">
             {parts.map(([id, o = {}], i) => (
@@ -249,7 +374,7 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
         </section>
 
         <section className="space-y-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface)] p-4">
-          <h2 className="font-bold">Name and rule</h2>
+          <h2 className="font-bold">{ruleType === "event" ? "Name and points" : "Name and rule"}</h2>
           <label className={label} htmlFor="badge-name">
             Name
           </label>
@@ -258,17 +383,21 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
             Flavor text
           </label>
           <input id="badge-flavor" className={input} maxLength={80} value={flavor} onChange={(e) => setFlavor(e.target.value)} placeholder="Same stool, every Friday." />
-          <label className={label} htmlFor="badge-rule">
-            How it&apos;s earned
-          </label>
-          <select id="badge-rule" className={input} value={ruleType} onChange={(e) => setRuleType(e.target.value as RuleType)}>
-            {RULE_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {RULE_INFO[t].label}
-              </option>
-            ))}
-          </select>
-          <p className="text-sm text-[var(--muted)]">{RULE_INFO[ruleType].about}</p>
+          {ruleType !== "event" && (
+            <>
+              <label className={label} htmlFor="badge-rule">
+                How it&apos;s earned
+              </label>
+              <select id="badge-rule" className={input} value={ruleType} onChange={(e) => setRuleType(e.target.value as RuleType)}>
+                {RULE_TYPES.filter((t) => t !== "event").map((t) => (
+                  <option key={t} value={t}>
+                    {RULE_INFO[t].label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-[var(--muted)]">{RULE_INFO[ruleType].about}</p>
+            </>
+          )}
           {ruleType === "visit_count" && (
             <label className={label}>
               Which check-in
@@ -293,22 +422,6 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
               </label>
             </div>
           )}
-          {ruleType === "event" && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className={label}>
-                Kind
-                <select className={input} value={eventKind} onChange={(e) => setEventKind(e.target.value)}>
-                  <option value="house_event">House event</option>
-                  <option value="screening">Showing</option>
-                  <option value="series">Series</option>
-                </select>
-              </label>
-              <label className={label}>
-                Which
-                <input className={input} maxLength={80} value={eventMatch} onChange={(e) => setEventMatch(e.target.value)} placeholder="Midweek Movies" />
-              </label>
-            </div>
-          )}
           <label className={label}>
             Points when earned
             <input className={input} type="number" min={0} max={1000} value={points} onChange={(e) => setPoints(e.target.value)} />
@@ -328,8 +441,12 @@ export default function BadgeMaker({ nextNumber, issuer }: { nextNumber: number;
             {error}
           </p>
         )}
-        <button type="button" className="btn-primary w-full px-4 py-3 disabled:opacity-50" disabled={pending || name.trim().length < 2} onClick={save}>
-          {pending ? "Saving…" : `Add it as Series 1 · #${String(nextNumber).padStart(2, "0")}`}
+        <button type="button" className="btn-primary w-full px-4 py-3 disabled:opacity-50" disabled={pending || name.trim().length < 2 || (ruleType === "event" && !eventMatch)} onClick={save}>
+          {pending
+            ? "Saving…"
+            : ruleType === "event"
+              ? `Create and award${cameNow ? ` to ${cameNow.toLocaleString("en-US")}` : ""} · #${String(nextNumber).padStart(2, "0")}`
+              : `Add it as Series 1 · #${String(nextNumber).padStart(2, "0")}`}
         </button>
       </aside>
     </div>

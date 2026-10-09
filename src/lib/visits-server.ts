@@ -16,6 +16,7 @@ import {
 } from "@/lib/visits";
 import { claimsFor } from "@/lib/badges/rules";
 import { cardsFor, checkinRules, holderFor, mintClaims, type BadgeCard } from "@/lib/badges/server";
+import { eventBadgesFor } from "@/lib/badges/events";
 
 // The signed copies (lib/badges) for the badges a visit just paid, as
 // cards for the customer screen. A copy that can't be minted now (no
@@ -131,9 +132,21 @@ async function recordVisitOnce(memberId: string, confirmedBy: string | null, at:
     const card = cards.get(key);
     return [card ? { ...e, card: { code: card.code, front: card.front, back: card.back, serial: card.serial } } : e];
   });
+  // Event badges this check-in makes true (a house event today: trivia,
+  // comedy): awarded and minted like any badge, shown with the rest.
+  let balance = Number(a.balance);
+  const events = await eventBadgesFor(memberId);
+  if (events.length) {
+    const eventCards = await cardsFor(events.flatMap((e) => (e.copy ? [e.copy] : []))).catch(() => new Map<string, BadgeCard>());
+    for (const e of events) {
+      const card = eventCards.get(e.def.key);
+      badges.push({ key: e.def.key, label: e.def.name, emoji: "🏅", points: e.def.points, reward: null, ...(card ? { card: { code: card.code, front: card.front, back: card.back, serial: card.serial } } : {}) });
+      if (e.balance !== null) balance = e.balance; // the latest award's balance
+    }
+  }
   const rewards = badges.flatMap((b): RewardKind[] => (b.reward ? [b.reward] : []));
   const earned = VISIT_POINTS + badges.reduce((s, b) => s + b.points, 0);
-  return { earned, visitPoints: VISIT_POINTS, badges, rewards, weekStreak, alreadyToday: false, balance: Number(a.balance), visits };
+  return { earned, visitPoints: VISIT_POINTS, badges, rewards, weekStreak, alreadyToday: false, balance, visits };
 }
 
 // Today's visit, for the register's pop-up when someone checks in at the

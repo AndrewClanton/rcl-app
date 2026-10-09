@@ -143,9 +143,10 @@ export interface ClaimToMint {
   note?: string | null;
   event?: { kind: string; ref: string; label: string } | null;
   mintedAt?: string | null; // when it was earned, for a copy minted after the fact
+  stats?: Record<string, string | number> | null; // an event badge's own stats (lib/badges/events.ts)
 }
 
-interface CopyRow {
+export interface CopyRow {
   id: string;
   def_id: string;
   issuer_id: string;
@@ -235,7 +236,7 @@ export async function mintClaims(holderId: string, claims: ClaimToMint[], db: Db
       p_source: `member_badges:${cl.claimId}`,
       p_id: randomUUID(),
       p_code: newCode(),
-      p_stats: statsFor(def, cl.facts, cl.period, cl.note),
+      p_stats: cl.stats ?? statsFor(def, cl.facts, cl.period, cl.note),
       p_event_kind: cl.event?.kind ?? null,
       p_event_ref: cl.event?.ref ?? null,
       p_event_label: cl.event?.label ?? null,
@@ -260,7 +261,11 @@ export async function ensureCopies(memberId: string, db: Db = createAdminClient(
   const refs = claims.map((c) => `member_badges:${c.id}`);
   const { data: have } = await db.from("badge_copies").select("source_ref, signature").in("source_ref", refs);
   const done = new Set((have ?? []).filter((h) => h.signature).map((h) => h.source_ref as string));
-  const todo = claims.filter((c) => !done.has(`member_badges:${c.id}`));
+  // An event badge's copy is minted by lib/badges/events.ts, which knows
+  // the showing or event that earned it (and finishes any left unminted).
+  const { defs } = await loadCatalog(db);
+  const eventKeys = new Set(defs.filter((d) => d.ruleType === "event").map((d) => d.key));
+  const todo = claims.filter((c) => !done.has(`member_badges:${c.id}`) && !eventKeys.has(c.badge as string));
   if (!todo.length) return 0;
   const holder = await holderFor(memberId, db);
   if (!holder) return 0;

@@ -209,6 +209,8 @@ export interface Screening {
   box_office_revenue: number | null;
   // Who it's listed for: lib/showing-visibility.ts
   visibility: "public" | "members" | "private";
+  // Its series tag (lib/event-series.ts), for event badges.
+  series?: string | null;
   movie: Movie;
   room: Room;
 }

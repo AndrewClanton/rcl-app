@@ -3,6 +3,8 @@ import { requireManager } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import { catalogEntries } from "@/lib/badges/server";
 import { RULE_INFO } from "@/lib/badges/rules";
+import { openDrafts } from "@/lib/badges/events";
+import Drafts from "./Drafts";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +14,7 @@ export const dynamic = "force-dynamic";
 // it, and Award by hand.
 export default async function BadgesPage() {
   await requireManager();
-  const { entries, holders } = await catalogEntries();
+  const [{ entries, holders }, drafts] = await Promise.all([catalogEntries(), openDrafts()]);
   const minted = entries.reduce((n, e) => n + e.copies, 0);
   return (
     <div className="space-y-6">
@@ -25,11 +27,18 @@ export default async function BadgesPage() {
           <Link href="/admin/badges/new" className="btn-primary px-4 py-2">
             New badge
           </Link>
+          <Link href="/admin/badges/new?for=event" className="btn-secondary px-4 py-2">
+            New event badge
+          </Link>
+          <Link href="/admin/badges/series" className="btn-secondary px-4 py-2">
+            Series tags
+          </Link>
           <span className="text-sm text-[var(--muted)]">
             {entries.length} badges · {minted.toLocaleString("en-US")} copies minted · {holders.toLocaleString("en-US")} holders
           </span>
         </div>
       </PageHeader>
+      <Drafts drafts={drafts.map((d) => ({ id: d.id, sourceLabel: d.sourceLabel, kind: d.sourceKind, name: d.name, flavor: d.flavor, points: d.points, spec: d.spec }))} />
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         {entries.map((e) => (
           <li key={e.def.id} className={`min-w-0 ${e.def.active ? "" : "opacity-50"}`}>

@@ -3,6 +3,7 @@ import { getMovies } from "@/lib/data/movies";
 import { getRooms } from "@/lib/data/rooms";
 import { getTicketCounts, getUpcomingScreenings } from "@/lib/data/screenings";
 import { getRecentHouseEvents } from "@/lib/data/house-events";
+import { seriesTags } from "@/lib/badges/events";
 import { hasManagerAccess, requireStaff } from "@/lib/auth";
 import PageHeader from "@/components/admin/PageHeader";
 import ScreeningManager from "./ScreeningManager";
@@ -16,7 +17,8 @@ export const dynamic = "force-dynamic";
 export default async function AdminScreeningsPage() {
   const staff = await requireStaff();
   const canEdit = hasManagerAccess(staff.role);
-  const [movies, rooms, screenings, events] = await Promise.all([getMovies(), getRooms(), getUpcomingScreenings(), getRecentHouseEvents()]);
+  const [movies, rooms, screenings, events, tags] = await Promise.all([getMovies(), getRooms(), getUpcomingScreenings(), getRecentHouseEvents(), seriesTags()]);
+  const series = tags.filter((t) => t.active).map((t) => t.name);
   const tickets = await getTicketCounts(screenings.map((s) => s.id));
   return (
     <>
@@ -35,8 +37,8 @@ export default async function AdminScreeningsPage() {
       {!canEdit && (
         <p className="notice mb-4 text-sm">You can look up showings and who has tickets here. Adding, moving or removing a showing or a house event takes a manager.</p>
       )}
-      <ScreeningManager movies={movies} rooms={rooms} screenings={screenings} tickets={tickets} canEdit={canEdit} />
-      <HouseEvents events={events} canEdit={canEdit} />
+      <ScreeningManager movies={movies} rooms={rooms} screenings={screenings} tickets={tickets} canEdit={canEdit} seriesTags={series} />
+      <HouseEvents events={events} canEdit={canEdit} seriesTags={series} />
     </>
   );
 }

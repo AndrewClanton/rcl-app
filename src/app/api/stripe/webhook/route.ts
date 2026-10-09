@@ -12,6 +12,7 @@ import { invoicePaidFromCheckout } from "@/lib/org-invoice-server";
 import { recordCheckoutPayment, recordGiftPayment, recordSubscriptionEnd } from "@/lib/membership-payments/sync";
 import { closeIfDeclined, finishSeatCheckout } from "@/lib/seat-ordering-server";
 import { flagStripeDispute, syncStripeRefunds } from "@/lib/stripe-refunds";
+import { awardEventBadges } from "@/lib/badges/events";
 
 // Stripe requires the exact raw request body (not re-serialized JSON) to
 // verify the webhook signature, so this reads request.text() rather than
@@ -129,6 +130,9 @@ export async function POST(request: NextRequest) {
             bookingId,
             note: `${booking.quantity} ticket${booking.quantity === 1 ? "" : "s"}, bought online`,
           });
+          // A ticket for a showing today: its event badges (lib/badges/events.ts).
+          const memberId = booking.member_id as string;
+          after(() => awardEventBadges({ memberIds: [memberId] }).then(() => undefined, (e) => console.error("event badges online", e)));
         }
         // The card that paid: linked to the member if they were signed in,
         // or, with nobody on the booking, finding the member it belongs to

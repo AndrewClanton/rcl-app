@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { HouseEvent } from "@/lib/data/house-events";
-import { addHouseEvent, deleteHouseEvent } from "./actions";
+import { addHouseEvent, deleteHouseEvent, setHouseEventSeries } from "./actions";
+import { guessSeries } from "@/lib/event-series";
 import InfoTip from "@/components/help/InfoTip";
 
 const QUICK = ["Trivia Night", "Comedy Night", "Book Swap", "Open Mic Night"];
@@ -20,25 +21,36 @@ function when(e: HouseEvent) {
 // Trivia, comedy, the book swap: they show on the ramp TV's countdown next
 // to the films. Not on the public website. Adding and removing them is
 // for managers and up (`canEdit`); everyone sees the list.
-export default function HouseEvents({ events, canEdit }: { events: HouseEvent[]; canEdit: boolean }) {
+// `seriesTags`: the series list (Back office -> Badges -> Series tags). A
+// tag lets an event badge say "came to Trivia"; the name's guess fills it
+// in and stays changeable.
+export default function HouseEvents({ events, canEdit, seriesTags = [] }: { events: HouseEvent[]; canEdit: boolean; seriesTags?: string[] }) {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState("");
   const [start, setStart] = useState("19:00");
   const [end, setEnd] = useState("");
+  const [series, setSeries] = useState<string>("");
+  const [seriesPicked, setSeriesPicked] = useState(false); // chosen by hand: the name stops guessing it
+  const named = (t: string) => {
+    setTitle(t);
+    if (!seriesPicked) setSeries(guessSeries(t, seriesTags) ?? "");
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function add() {
     setBusy(true);
     setError(null);
-    const r = await addHouseEvent({ title, note, date, start, end }).catch(() => ({ ok: false as const, error: "Couldn't save that event. Try again." }));
+    const r = await addHouseEvent({ title, note, date, start, end, series: series || null }).catch(() => ({ ok: false as const, error: "Couldn't save that event. Try again." }));
     setBusy(false);
     if (!r.ok) return setError(r.error);
     setTitle("");
     setNote("");
     setEnd("");
+    setSeries("");
+    setSeriesPicked(false);
     router.refresh();
   }
 
@@ -58,7 +70,28 @@ export default function HouseEvents({ events, canEdit }: { events: HouseEvent[];
               <span className="min-w-0 flex-1">
                 <span className="font-medium">{e.title}</span>
                 {e.note && <span className="text-[var(--muted)]"> · {e.note}</span>}
+                {!canEdit && e.series && <span className="text-[var(--muted)]"> · {e.series}</span>}
               </span>
+              {canEdit && (
+                <select
+                  aria-label={`Series for ${e.title}`}
+                  className="min-h-10 rounded-lg border border-[var(--border)] px-2 text-base"
+                  value={e.series ?? ""}
+                  onChange={async (ev) => {
+                    setError(null);
+                    const r = await setHouseEventSeries(e.id, ev.target.value || null).catch(() => ({ ok: false as const, error: "Couldn't save that. Try again." }));
+                    if (!r.ok) setError(r.error);
+                    router.refresh();
+                  }}
+                >
+                  <option value="">No series</option>
+                  {[...new Set([...seriesTags, ...(e.series ? [e.series] : [])])].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              )}
               {canEdit && (
                 <button
                   className="min-h-10 rounded-lg border border-[var(--danger-text)] px-3 text-base text-[var(--danger-text)]"
@@ -82,7 +115,7 @@ export default function HouseEvents({ events, canEdit }: { events: HouseEvent[];
         <>
           <div className="mb-3 flex flex-wrap gap-2">
             {QUICK.map((q) => (
-              <button key={q} className={`chip inline-flex min-h-10 items-center !px-4 !text-base ${title === q ? "chip-selected" : ""}`} onClick={() => setTitle(q)}>
+              <button key={q} className={`chip inline-flex min-h-10 items-center !px-4 !text-base ${title === q ? "chip-selected" : ""}`} onClick={() => named(q)}>
                 {q}
               </button>
             ))}
@@ -90,7 +123,25 @@ export default function HouseEvents({ events, canEdit }: { events: HouseEvent[];
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-xs text-[var(--muted)]">
               Name
-              <input className={INPUT} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Trivia Night" />
+              <input className={INPUT} value={title} onChange={(e) => named(e.target.value)} placeholder="Trivia Night" />
+            </label>
+            <label className="text-xs text-[var(--muted)]">
+              Series (optional)
+              <select
+                className={INPUT}
+                value={series}
+                onChange={(e) => {
+                  setSeries(e.target.value);
+                  setSeriesPicked(true);
+                }}
+              >
+                <option value="">No series</option>
+                {seriesTags.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="text-xs text-[var(--muted)]">
               Date

@@ -42,7 +42,12 @@ async function signedIn(who: "staff" | "manager"): Promise<{ staff: StaffSession
 
 // ---------- house events (trivia, comedy, book swap...) for the ramp TV ----------
 
-export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string }): Promise<{ ok: true } | Refusal> {
+async function seriesOnList(name: string): Promise<boolean> {
+  const { data } = await createAdminClient().from("event_series").select("name").eq("name", name).maybeSingle();
+  return !!data;
+}
+
+export async function addHouseEvent(input: { title: string; note: string; date: string; start: string; end: string; series?: string | null }): Promise<{ ok: true } | Refusal> {
   const { no } = await signedIn("manager");
   if (no) return no;
   const title = input.title.trim();
@@ -57,8 +62,25 @@ export async function addHouseEvent(input: { title: string; note: string; date: 
     // not 24 hours on, which is an hour off the night the clocks change.
     if (endsAt <= startsAt) endsAt = centralToIso(shiftDate(input.date, 1), input.end);
   }
-  const { error } = await createAdminClient().from("house_events").insert({ title, note: input.note.trim() || null, starts_at: startsAt, ends_at: endsAt });
+  const series = input.series || null;
+  if (series && !(await seriesOnList(series))) return { ok: false, error: "Pick a series from the list." };
+  const { error } = await createAdminClient().from("house_events").insert({ title, note: input.note.trim() || null, starts_at: startsAt, ends_at: endsAt, series });
   if (error) return { ok: false, error: "Couldn't save that event. Try again." };
+  revalidatePath("/admin/screenings");
+  return { ok: true };
+}
+
+// A house event's series tag, changed after it was added. "" or null takes
+// it off.
+export async function setHouseEventSeries(id: string, series: string | null): Promise<{ ok: true } | Refusal> {
+  const { no } = await signedIn("manager");
+  if (no) return no;
+  if (series && !(await seriesOnList(series))) return { ok: false, error: "Pick a series from the list." };
+  const { error } = await createAdminClient()
+    .from("house_events")
+    .update({ series: series || null })
+    .eq("id", id);
+  if (error) return { ok: false, error: "Couldn't save that. Try again." };
   revalidatePath("/admin/screenings");
   return { ok: true };
 }
@@ -266,6 +288,20 @@ export interface ScreeningFields {
   // Who it's listed for (lib/showing-visibility.ts). Left out: public on a
   // new showing, unchanged on an edit.
   visibility?: ShowingVisibility;
+  // Its series tag (lib/event-series.ts), from the managed list. Left out:
+  // none on a new showing, unchanged on an edit; null or "" takes it off.
+  series?: string | null;
+}
+
+// A series tag must be on the managed list (Back office -> Badges -> Series tags).
+async function checkSeries(names: (string | null | undefined)[]) {
+  const wanted = [...new Set(names.filter((n): n is string => typeof n === "string" && n !== ""))];
+  if (!wanted.length) return;
+  const { data, error } = await createAdminClient().from("event_series").select("name").in("name", wanted);
+  if (error) throw error;
+  const known = new Set((data ?? []).map((r) => r.name as string));
+  const odd = wanted.find((n) => !known.has(n));
+  if (odd) throw new UserFacingError(`${odd} isn't on the series list. Pick one from the list, or add it in Back office -> Badges -> Series tags.`);
 }
 
 function checkFields(f: ScreeningFields) {
@@ -326,8 +362,10 @@ async function insertScreenings(list: ScreeningFields[]): Promise<number> {
       ticket_price: f.ticket_price,
       capacity: f.capacity,
       visibility: f.visibility ?? "public",
+      series: f.series || null,
     };
   });
+  await checkSeries(rows.map((r) => r.series));
 
   const outdoor = await outdoorRoomIds(rows.map((r) => r.room_id));
   const publicOutdoor = rows.findIndex((r) => outdoor.has(r.room_id) && r.visibility === "public");
@@ -398,6 +436,7 @@ export async function updateScreening(
 ): Promise<Result<object> | { ok: false; error: string; confirm: string }> {
   const result = await attempt(async () => {
     checkFields(fields);
+    await checkSeries([fields.series]);
     const supabase = createAdminClient();
     const { data: current, error: readErr } = await supabase.from("screenings").select("starts_at, movie_id, visibility").eq("id", id).maybeSingle();
     if (readErr) throw readErr;
@@ -430,6 +469,7 @@ export async function updateScreening(
         ticket_price: fields.ticket_price,
         capacity: fields.capacity,
         ...(fields.visibility && { visibility: fields.visibility }),
+        ...(fields.series !== undefined && { series: fields.series || null }),
       })
       .eq("id", id);
     if (error) throw error;
