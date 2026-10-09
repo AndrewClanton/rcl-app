@@ -11,6 +11,14 @@
     {
       "path": "/api/cron/renewal-notices",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/calendar-sync",
+      "schedule": "7 * * * *"
+    },
+    {
+      "path": "/api/cron/calendar-alert",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

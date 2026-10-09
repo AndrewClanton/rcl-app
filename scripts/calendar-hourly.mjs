@@ -29,7 +29,11 @@ async function record(value) {
   });
   await c.connect();
   await c.query(
-    "insert into settings (key, value, updated_at) values ('calendar_sync_status', $1, now()) on conflict (key) do update set value = excluded.value, updated_at = now()",
+    // A failed run keeps when the schedule was last checked (lastOkAt).
+    `insert into settings (key, value, updated_at) values ('calendar_sync_status', $1, now())
+     on conflict (key) do update set value = excluded.value || jsonb_strip_nulls(jsonb_build_object('lastOkAt',
+       case when settings.value->>'ok' = 'true' then settings.value->>'at' else settings.value->>'lastOkAt' end)),
+       updated_at = now()`,
     [JSON.stringify(value)],
   );
   await c.end();
@@ -48,7 +52,9 @@ try {
     writeFileSync(xlsx, Buffer.from(b64, "base64"));
   }
   const report = path.join(dir, "report.txt");
-  const out = execFileSync(process.execPath, ["scripts/sync-calendar.mjs", xlsx, "--apply", "--out", report], { encoding: "utf8" });
+  // sync-calendar.mjs --apply records the status itself (with the flagged
+  // lines in plain words); this only records a failure.
+  const out = execFileSync(process.execPath, ["scripts/sync-calendar.mjs", xlsx, "--apply", "--out", report, "--source", "hourly (this computer, Google Drive connector)"], { encoding: "utf8" });
   const text = readFileSync(report, "utf8");
   const count = (label) => Number((text.match(new RegExp(`^${label}[^\\n]*?\\((\\d+)`, "m")) ?? [])[1] ?? 0);
   const flaggedBlock = (text.match(/^FLAGGED[^\n]*\n([\s\S]*?)\n\n/m) ?? [])[1] ?? "";
@@ -63,7 +69,6 @@ try {
     titlesToPick: count("TITLES TO PICK"),
     flaggedLines: flaggedBlock.split("\n").map((l) => l.trim()).filter((l) => l && l !== "nothing").slice(0, 10),
   };
-  await record(status);
   console.log(out.trim());
   console.log(JSON.stringify(status));
 } catch (e) {

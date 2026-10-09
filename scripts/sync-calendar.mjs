@@ -6,6 +6,8 @@
 //   node scripts/sync-calendar.mjs "RCL Calendar 2026.xlsx"                 (dry run)
 //   node scripts/sync-calendar.mjs calendar.xlsx --out report.txt
 //   node scripts/sync-calendar.mjs calendar.xlsx --apply                    (writes)
+//     --apply also records settings.calendar_sync_status (src/lib/calendar-status.ts);
+//     --source "<where it ran>" names the run there.
 //   node scripts/sync-calendar.mjs --drive [--apply]     (pulls it from Google Drive:
 //     the link saved on the Back office page, else CALENDAR_SHEET_URL)
 //
@@ -31,10 +33,11 @@ register(
 const sync = await import("../src/lib/calendar-sync.ts");
 
 const drive = await import("../src/lib/calendar-drive.ts");
+const status = await import("../src/lib/calendar-status.ts");
 
 const args = process.argv.slice(2);
 const fromDrive = args.includes("--drive");
-const file = fromDrive ? "Google Drive" : args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out");
+const file = fromDrive ? "Google Drive" : args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--source");
 const outIdx = args.indexOf("--out");
 const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
 const apply = args.includes("--apply");
@@ -96,5 +99,8 @@ if (outFile) writeFileSync(outFile, report + "\n");
 
 if (apply) {
   const r = await sync.applyPlan(db, plan, { id: null, name: "sync-calendar script", file: file.split(/[\\/]/).pop() });
+  // The schedule check's last result, for the "Schedule not checked" banner.
+  const srcIdx = args.indexOf("--source");
+  await status.recordSyncStatus(db, status.statusFromPlan(plan, srcIdx >= 0 ? args[srcIdx + 1] : fromDrive ? "command line (Google Drive link)" : "command line", r));
   console.log(`\nWrote ${r.added} adds, ${r.changed} changes, ${r.removed} removals${r.kept ? ` (${r.kept} kept: tickets sold just now)` : ""}.`);
 }

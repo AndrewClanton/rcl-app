@@ -42,7 +42,7 @@ function SmallList({ items, empty }: { items: Line[]; empty?: string }) {
 // each time) or an uploaded file.
 type Source = File | "drive";
 
-export default function CalendarSync({ driveSource }: { driveSource: "app" | "env" | null }) {
+export default function CalendarSync({ driveSource }: { driveSource: "google" | "app" | "env" | null }) {
   const [file, setFile] = useState<Source | null>(null);
   const [picks, setPicks] = useState<Picks>({});
   const [plan, setPlan] = useState<SyncPlan | null>(null);
@@ -343,7 +343,9 @@ export default function CalendarSync({ driveSource }: { driveSource: "app" | "en
       <section className="card space-y-3">
         <h2 className="text-lg font-semibold">Google Drive link</h2>
         <p className="text-sm text-[var(--muted)]">
-          {drive === "app"
+          {drive === "google"
+            ? "Not needed while Google Drive is connected below: Pull reads the connected file."
+            : drive === "app"
             ? "A link to the calendar is saved here."
             : drive === "env"
               ? "The server has a link to the calendar. Saving one here replaces it."
