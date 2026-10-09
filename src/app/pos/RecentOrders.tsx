@@ -10,6 +10,9 @@ import { getRecentRegisterOrders, refundRegisterOrder, type RecentOrder } from "
 import { printTickets } from "./print-tickets";
 import { ownerTabLabel, ownerTabReceiptLabel } from "@/lib/register-totals";
 import { sendPrint, targetName, type PrintTarget } from "./printing";
+import { getVisitSlip } from "./org-actions";
+import { visitSlipXml, type VisitSlip } from "@/lib/print/receipt";
+import VisitSlipNotice from "./VisitSlipNotice";
 
 const TZ = "America/Chicago";
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -58,6 +61,8 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<{ tone: "ok" | "error"; text: string; certUrl?: string } | null>(null);
   const [refunding, setRefunding] = useState(false);
+  // An organization group's visit slip, looked up for the selected order.
+  const [slip, setSlip] = useState<VisitSlip | null>(null);
 
   async function load(keep?: string | null) {
     setLoadError(null);
@@ -76,6 +81,21 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
   }
 
   const selected = orders?.find((o) => o.id === selectedId) ?? null;
+  // A $0 order with organization comps: it may be a group's visit.
+  const maybeVisit = !!selected && selected.total === 0 && selected.discounts.some((d) => d.label === "Organization comp" && d.amount > 0);
+  const shownSlip = slip && selected && slip.orderNumber === selected.orderNumber ? slip : null;
+
+  async function visitSlip() {
+    if (!selected) return;
+    setBusy("slip");
+    setNote(null);
+    const s = await getVisitSlip(selected.id).catch(() => undefined);
+    setBusy(null);
+    if (s === undefined) return setNote({ tone: "error", text: "Couldn't load the visit slip. Check the connection and try again." });
+    if (!s) return setNote({ tone: "error", text: "There's no organization group visit on this order." });
+    setSlip(s);
+    if (target) await print("slip", () => sendPrint(target, "receipt", visitSlipXml(s), `Visit slip #${s.orderNumber} (reprint)`), `Visit slip for #${s.orderNumber} sent to ${targetName(target)}.`);
+  }
   const tickets = selected ? selected.lines.filter((l) => l.screeningId).map((l) => ({ screeningId: l.screeningId as string, qty: l.qty })) : [];
 
   return (
@@ -226,6 +246,11 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                           {busy === "tickets" ? "Printing…" : `Reprint ticket${tickets.reduce((n, t) => n + t.qty, 0) === 1 ? "" : "s"}`}
                         </button>
                       )}
+                      {maybeVisit && (
+                        <button className="btn-secondary !px-4" disabled={!!busy} onClick={() => void visitSlip()}>
+                          {busy === "slip" ? "Printing…" : "Visit slip"}
+                        </button>
+                      )}
                       {selected.status === "completed" && (
                         <span className="inline-flex items-center">
                           <button className="btn-secondary !px-4" style={{ color: "var(--danger-text)" }} disabled={!!busy} onClick={() => setRefunding(true)}>
@@ -239,6 +264,15 @@ export default function RecentOrders({ target }: { target: PrintTarget | null })
                       <p className="mt-2 text-xs" style={{ color: "var(--muted)" }}>
                         No printer is set up on this register. Add it under Devices.
                       </p>
+                    )}
+                    {shownSlip && (
+                      <div className="mt-3">
+                        <VisitSlipNotice
+                          slip={shownSlip}
+                          onPrint={target ? () => print("slip", () => sendPrint(target, "receipt", visitSlipXml(shownSlip), `Visit slip #${shownSlip.orderNumber} (reprint)`), `Visit slip for #${shownSlip.orderNumber} sent to ${targetName(target)}.`) : null}
+                          onClose={() => setSlip(null)}
+                        />
+                      </div>
                     )}
                     {note && (
                       <div className={`notice ${note.tone === "ok" ? "notice-success" : "notice-warn"} mt-3 !p-3 text-sm`}>

@@ -71,7 +71,8 @@ import ManagerPinModal from "@/components/ManagerPinModal";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
-import { receiptXml, drawerXml, type ReceiptData } from "@/lib/print/receipt";
+import { receiptXml, drawerXml, visitSlipXml, type ReceiptData, type VisitSlip } from "@/lib/print/receipt";
+import VisitSlipNotice from "./VisitSlipNotice";
 import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
 import { handleDoorScan } from "./door-print";
@@ -141,6 +142,9 @@ import {
 function money(n: number) {
   return `$${n.toFixed(2)}`;
 }
+
+// An organization visit's slip, before the order has its number.
+type VisitDetails = Omit<VisitSlip, "orderNumber" | "at" | "reprint">;
 
 interface CartLine {
   key: string;
@@ -488,6 +492,9 @@ export default function PosApp({
   // The most recent sale's receipt, kept for "Print receipt" / "Reprint".
   const [lastReceipt, setLastReceipt] = useState<ReceiptData | null>(null);
   const [printNote, setPrintNote] = useState<string | null>(null);
+  // The last organization visit recorded (Record visit): its slip, to
+  // print again.
+  const [visitSlip, setVisitSlip] = useState<VisitSlip | null>(null);
   // The last sale's movie tickets, kept for "Reprint last tickets".
   const [lastTickets, setLastTickets] = useState<{ orderNumber: number; lines: TicketSale[] } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -848,6 +855,19 @@ export default function PosApp({
   // Whose comps the manager PIN is for: the group's when they're the
   // blocked ones, else the member's.
   const pinOrg = groupPlan.blocked && orgGroup ? orgGroup : orgOnOrder;
+  // An organization group's visit with nothing to pay: every line is the
+  // group's comp and the total is $0. "Record visit" saves it like a $0
+  // cash sale (same comps, same order), with no payment screen, tip, age
+  // check or drawer, and prints a visit slip. A member on the order, a tab,
+  // the owner rate or anything paid keeps the normal Complete order.
+  const visitOnly =
+    !!orgGroup && !member && !activeTabId && !ownerTicked && cart.length > 0 && !groupPlan.blocked && Math.abs(totals.total) < 0.005 && cart.every((l, i) => (groupPlan.comps[i] ?? 0) >= l.qty);
+  // Any order (or tab) whose total is $0.00: a points reward covering it,
+  // comps, the owner rate at 100% off, a free ticket. Nothing to pay, so
+  // "Complete order ($0)" saves it like Cash for $0 on the payment screen
+  // (same payment record), with no payment screen, tip, reader or drawer.
+  // Alcohol still gets the 21+ check.
+  const zeroTotal = cart.length > 0 && Math.abs(totals.total) < 0.005;
   const setOrgGroup = (g: OrgGroupOnOrder | null) => setGroupState(g ? { key: activeTabId, g } : null);
   // A new group: its day passes go on the order (the Day pass menu item).
   function applyOrgGroup(g: OrgGroupOnOrder) {
@@ -1494,6 +1514,13 @@ export default function PosApp({
         return setToast(r.error);
       }
     }
+    if (visitOnly && orgGroup) return recordVisit(orgGroup);
+    if (zeroTotal) {
+      setTip(0);
+      setTipAsked(false);
+      if (cart.some((l) => l.isAlcohol)) return setAgeConfirmOpen(true);
+      return completeZeroOrder();
+    }
     // A tab closed with a tap on the reader gets the reader's own tip screen,
     // like any card sale. Only a register with no reader still asks here.
     if (activeTabId && !readerId) {
@@ -1511,6 +1538,34 @@ export default function PosApp({
     if (hasAlcohol) {
       setAgeConfirmOpen(true);
     } else setPayOpen(true);
+  }
+
+  // A $0.00 order: saved with the payment Cash for $0 gives (cash 0, card
+  // 0), so reports, the drawer count and tax are the same. No cash taken,
+  // so no drawer; the receipt prints per the auto-print setting.
+  function completeZeroOrder() {
+    void finalizeCheckout({ method: "cash", cash: 0, card: 0 });
+  }
+
+  // Record visit: the group's $0 order, saved as a $0 cash sale with no
+  // cash taken (so no drawer), and its slip.
+  function recordVisit(g: OrgGroupOnOrder) {
+    const people = groupPeople(g);
+    const movies = [...new Set(cart.filter((l) => l.screeningId).map((l) => l.name))];
+    void finalizeCheckout({ method: "cash", cash: 0, card: 0 }, undefined, {
+      orgName: g.orgName,
+      supported: g.supported,
+      helpers: g.helpers,
+      used: g.groupId ? g.used : g.used + people,
+      limit: g.limit,
+      movies,
+    });
+  }
+
+  async function printVisitSlip(slip: VisitSlip, again = false) {
+    if (!printTarget) return;
+    const r = await sendPrint(printTarget, "receipt", visitSlipXml(slip), `Visit slip #${slip.orderNumber}${again ? " (again)" : ""}`);
+    setPrintNote(r.ok ? null : `Visit slip didn't print: ${r.error}`);
   }
 
   // Never blocks or undoes a sale: the order is already saved when this runs,
@@ -1563,7 +1618,7 @@ export default function PosApp({
     keepPendingReaderSale({ readerId: readerId ?? "", order: orderFor(payment), memberName: member?.name ?? null, startedAt: Date.now(), final: true });
   }
 
-  async function finalizeCheckout(payment: CheckoutPayment, note?: string) {
+  async function finalizeCheckout(payment: CheckoutPayment, note?: string, visit?: VisitDetails) {
     // A double tap (or a second "paid" answer from the reader) must not save
     // or print the sale twice.
     if (finalizingRef.current) return;
@@ -1574,7 +1629,7 @@ export default function PosApp({
     setPayOpen(false);
     setBusy(true);
     try {
-      const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note);
+      const saved = await saveSale({ order: orderFor(payment), memberName: member?.name ?? null, tries: 0 }, note, visit);
       // The customer screen's "paid" sound.
       if (saved) sendToTablet("paid", {});
       // A charged card that didn't save is cleared too: the sale now lives in
@@ -1594,7 +1649,7 @@ export default function PosApp({
   // Saves a paid sale, then prints and shows the receipt note. Also what
   // Retry saving runs, with the very same sale, after a card was charged but
   // the save failed. True if it saved.
-  async function saveSale(sale: UnsavedSale, note?: string): Promise<boolean> {
+  async function saveSale(sale: UnsavedSale, note?: string, visit?: VisitDetails): Promise<boolean> {
     const { order } = sale;
     const { payment } = order;
     const allTip = order.tip ?? 0;
@@ -1696,8 +1751,28 @@ export default function PosApp({
     setLastReceipt(receipt);
     const tickets: TicketSale[] = order.lines.filter((l) => l.screening_id).map((l) => ({ screeningId: l.screening_id as string, qty: l.quantity }));
     setLastTickets(tickets.length ? { orderNumber, lines: tickets } : null);
+    if (visit) {
+      // A visit: its slip prints (whatever the receipt setting: it's the
+      // point), then any tickets. No receipt, no drawer.
+      const slip: VisitSlip = { ...visit, orderNumber, at: receipt.at };
+      setVisitSlip(slip);
+      void (async () => {
+        setPrintNote(null);
+        await printVisitSlip(slip);
+        if (printTarget && devices.printTickets && tickets.length) {
+          const t = await printTickets(printTarget, orderNumber, tickets);
+          if (!t.ok) setPrintNote(`Tickets didn't print: ${t.error}`);
+        }
+      })();
+      setToast(`Visit recorded for ${visit.orgName} — Order #${orderNumber}, no charge.${warning ? ` ${warning}` : ""}`);
+      router.refresh();
+      setTimeout(() => setToast(null), warning ? 30000 : 7000);
+      return true;
+    }
+    setVisitSlip(null);
     void printAfterSale(receipt, payment.cash > 0, tickets);
-    const parts = [`Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
+    const noCharge = Math.abs(order.totals.total + allTip) < 0.005;
+    const parts = [noCharge ? `Order #${orderNumber} complete — no charge` : `Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
     if (allTip > 0) parts.push(`${money(allTip)} tip`);
     if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
     if (change > 0) parts.push(`give ${money(change)} change`);
@@ -2043,7 +2118,10 @@ export default function PosApp({
           {cardNotices.map((n) => (
             <CardNoticeBanner key={n.key} notice={n.notice} onClose={() => setCardNotices((list) => list.filter((x) => x.key !== n.key))} />
           ))}
-          {lastReceipt && printTarget && (printNote || !devices.autoPrint) && (
+          {visitSlip && (
+            <VisitSlipNotice slip={visitSlip} onPrint={printTarget ? () => printVisitSlip(visitSlip, true) : null} onClose={() => setVisitSlip(null)} />
+          )}
+          {lastReceipt && printTarget && (printNote || (!devices.autoPrint && !visitSlip)) && (
             <div className={`notice ${printNote ? "notice-warn" : ""} flex flex-wrap items-center justify-between gap-2 p-2.5 text-xs`}>
               <span>{printNote ?? `Order #${lastReceipt.orderNumber}`}</span>
               <button
@@ -2296,7 +2374,7 @@ export default function PosApp({
               saving, the register shouldn't keep charging cards. Nor while
               the owner rate's prices are still coming. */}
           <button className="btn-primary mt-2 w-full py-3 text-base" disabled={cart.length === 0 || !employeeId || busy || !!unsavedSale || ownerPending} onClick={() => void startCheckout()}>
-            {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : "Complete order"}
+            {!employeeId ? "Pick a cashier" : ownerPending ? "Getting owner prices…" : visitOnly ? "Record visit" : zeroTotal ? "Complete order ($0)" : "Complete order"}
           </button>
           {!employeeId && cart.length > 0 && (
             <p className="mt-1 text-center text-xs" style={{ color: "var(--danger-text)" }}>
@@ -2582,7 +2660,9 @@ export default function PosApp({
                 className="btn-primary"
                 onClick={() => {
                   setAgeConfirmOpen(false);
-                  setPayOpen(true);
+                  // A $0 order has nothing to pay: it's saved right away.
+                  if (zeroTotal && tip === 0) completeZeroOrder();
+                  else setPayOpen(true);
                 }}
               >
                 ID checked — 21+
