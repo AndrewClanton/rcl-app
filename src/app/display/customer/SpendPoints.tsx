@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { flairColor, DEFAULT_FLAIR_COLOR } from "@/lib/flair";
 import {
   SLOT_LABEL,
@@ -65,7 +65,28 @@ const SLOT_ICON: Record<PerkSlot, string> = {
   mobile: "📱",
 };
 
+// The Big ticket section is the M1 Abrams joke (lib/rewards.ts GoodSection):
+// its button only blows the card up, here on the screen. It never asks the
+// register or the server for anything, and its stock of 0 means the server
+// would refuse it anyway.
+function isTank(o: RewardOffer): boolean {
+  return o.kind === "good" && o.section === "big";
+}
+const BOOM_MS = 2_200;
+// Debris: where each piece flies (deterministic, no Math.random in render).
+const DEBRIS = Array.from({ length: 14 }, (_, i) => {
+  const a = (i / 14) * Math.PI * 2 + (i % 3) * 0.35;
+  const d = 90 + ((i * 37) % 70);
+  return {
+    dx: Math.round(Math.cos(a) * d),
+    dy: Math.round(Math.sin(a) * d * 0.7 - 30),
+    r: ((i * 83) % 540) - 270,
+    s: 6 + ((i * 5) % 8),
+  };
+});
+
 function iconFor(o: RewardOffer): string {
+  if (isTank(o)) return "🪖";
   if (o.kind === "discount") return "💵";
   if (o.kind === "perk" && o.slot) return SLOT_ICON[o.slot];
   const n = o.name.toLowerCase();
@@ -114,6 +135,18 @@ export default function SpendPoints({
     timer: ReturnType<typeof setTimeout>;
   } | null>(null);
   const [touch, setTouch] = useState(0);
+  // The tank card mid-explosion (n: a new key each tap, so it replays).
+  const [boom, setBoom] = useState<{ id: string; n: number } | null>(null);
+  useEffect(() => {
+    if (!boom) return;
+    const t = setTimeout(() => setBoom(null), BOOM_MS);
+    return () => clearTimeout(t);
+  }, [boom]);
+  function explode(o: RewardOffer) {
+    setTouch((n) => n + 1);
+    setBoom((b) => ({ id: o.id, n: (b?.n ?? 0) + 1 }));
+    playSound("boom");
+  }
 
   // Loaded on open, whenever the order's rewards change, and after each
   // unlock or pick (version).
@@ -392,11 +425,38 @@ export default function SpendPoints({
                     const can =
                       !o.soon && !o.problem && short === 0 && !forGood;
                     const on = owned && isOn(o);
+                    const tank = isTank(o);
+                    const blowing = tank && boom?.id === o.id;
                     return (
                       <li
                         key={o.id}
-                        className={`${sp.item} ${can || owned ? sp.bright : sp.grey}`}
+                        className={`${sp.item} ${can || owned || tank ? sp.bright : sp.grey}${blowing ? ` ${sp.boom}` : ""}`}
                       >
+                        {blowing && (
+                          <span
+                            key={boom.n}
+                            className={sp.blast}
+                            aria-hidden="true"
+                          >
+                            <span className={sp.flash} />
+                            <span className={sp.smoke} />
+                            {DEBRIS.map((p, i) => (
+                              <span
+                                key={i}
+                                className={sp.debris}
+                                style={
+                                  {
+                                    "--dx": `${p.dx}px`,
+                                    "--dy": `${p.dy}px`,
+                                    "--r": `${p.r}deg`,
+                                    width: p.s,
+                                    height: p.s,
+                                  } as CSSProperties
+                                }
+                              />
+                            ))}
+                          </span>
+                        )}
                         <span className={sp.icon} aria-hidden="true">
                           {iconFor(o)}
                         </span>
@@ -424,7 +484,16 @@ export default function SpendPoints({
                           {o.points.toLocaleString("en-US")} pts
                         </span>
                         <div className={sp.act}>
-                          {owned && o.slot && o.slot !== "mobile" ? (
+                          {tank ? (
+                            <button
+                              type="button"
+                              className={sp.useBtn}
+                              disabled={blowing}
+                              onClick={() => explode(o)}
+                            >
+                              Use
+                            </button>
+                          ) : owned && o.slot && o.slot !== "mobile" ? (
                             <button
                               type="button"
                               className={on ? sp.onBtn : sp.useBtn}

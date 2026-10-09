@@ -302,6 +302,7 @@ function RewardForm({
             >
               <option value="food">{SECTION_LABEL.food}</option>
               <option value="tickets">{SECTION_LABEL.tickets}</option>
+              <option value="big">{SECTION_LABEL.big}</option>
             </select>
           </label>
           <label className="flex items-center gap-2 self-end pb-2">
