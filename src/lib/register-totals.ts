@@ -1,5 +1,5 @@
 import { POINTS_PER_REWARD, REWARD_VALUE, rewardPointsFor } from "@/lib/loyalty";
-import { SALES_TAX_RATE } from "@/lib/sales-tax";
+import { salesTaxOn } from "@/lib/sales-tax";
 import type { MemberTier } from "@/lib/types";
 import { taxInside } from "@/lib/orgs";
 
@@ -51,7 +51,33 @@ export function memberDiscountRate(member: TotalsMember) {
   return member.tier === "Insiders+" ? 0.1 : 0;
 }
 
-export type TotalsLine = { unit: number; qty: number; perkBase?: number | null; comp?: number };
+// giftCard: a gift card being sold (isGiftCardLine). It isn't a sale of
+// anything yet, so it's never taxed, never discounted and earns no points;
+// the tax comes when the card is spent on taxable things, since paying
+// with a gift card is a way to pay, like cash or card, not a discount.
+export type TotalsLine = { unit: number; qty: number; perkBase?: number | null; comp?: number; giftCard?: boolean };
+
+// A gift card on the register: the Gift card button's line ("Gift card"),
+// or the custom item staff rang before it existed ("$50 Gift Card"). No
+// menu item, no showing, no reward; the name is all it is. No manager PIN:
+// a gift card is tax-free by what it is, not by anyone's say-so.
+export function isGiftCardLine(l: {
+  menu_item_id?: string | null;
+  menuItemId?: string | null;
+  screening_id?: string | null;
+  screeningId?: string | null;
+  reward_id?: string | null;
+  rewardId?: string | null;
+  name: string;
+}) {
+  if (l.menu_item_id || l.menuItemId || l.screening_id || l.screeningId || l.reward_id || l.rewardId) return false;
+  return /^(\$\d+(\.\d{2})? )?gift ?card$/i.test(String(l.name ?? "").trim());
+}
+
+// What the gift cards sold on an order come to, to the cent.
+export function giftCardSales(lines: { unit: number; qty: number; giftCard?: boolean }[]) {
+  return cents(lines.reduce((s, l) => s + (l.giftCard ? Math.max(0, Number(l.unit) || 0) * (Number(l.qty) || 0) : 0), 0));
+}
 
 export type TotalsExtra = { taxIncluded?: boolean };
 
@@ -71,19 +97,25 @@ export function dailyPerkPick(lines: TotalsLine[]): { index: number; amount: num
   return best;
 }
 
-export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean, dailyPerk = false, extra: TotalsExtra = {}) {
-  const subtotal = cents(lines.reduce((s, l) => s + l.unit * l.qty, 0));
+export function registerTotals(allLines: TotalsLine[], member: TotalsMember, monthlyMember: boolean, taxFree: boolean, pointsRedeemed: boolean, dailyPerk = false, extra: TotalsExtra = {}) {
+  // Gift cards sold go on at the end: everything below (comps, the daily
+  // coffee, discounts, tax) is figured on the rest. Each keeps its place in
+  // the list at $0, so the daily coffee's line number still matches.
+  const giftCards = giftCardSales(allLines);
+  const lines = giftCards > 0 ? allLines.map((l) => (l.giftCard ? { ...l, unit: 0, perkBase: null, comp: 0 } : l)) : allLines;
+  const goods = cents(lines.reduce((s, l) => s + l.unit * l.qty, 0));
+  const subtotal = cents(goods + giftCards);
   // An organization's comps: never more than the order.
   const compOf = (l: TotalsLine) => Math.min(l.qty, Math.max(0, Math.floor(Number(l.comp) || 0)));
-  const orgCompDiscount = cents(Math.min(subtotal, lines.reduce((s, l) => s + Math.max(0, l.unit) * compOf(l), 0)));
+  const orgCompDiscount = cents(Math.min(goods, lines.reduce((s, l) => s + Math.max(0, l.unit) * compOf(l), 0)));
   // A comped line is never the free coffee.
   const perkLines = orgCompDiscount > 0 ? lines.map((l) => (compOf(l) > 0 ? { ...l, perkBase: null } : l)) : lines;
   const perk = dailyPerk && member?.tier === "Insiders+" ? dailyPerkPick(perkLines) : null;
-  const dailyPerkDiscount = perk ? Math.min(perk.amount, cents(subtotal - orgCompDiscount)) : 0;
+  const dailyPerkDiscount = perk ? Math.min(perk.amount, cents(goods - orgCompDiscount)) : 0;
   // What the percentage discounts and a reward are figured on. Without a
   // daily coffee or a comp this is the subtotal, so every other order adds
   // up exactly as it always has.
-  const rest = cents(subtotal - orgCompDiscount - dailyPerkDiscount);
+  const rest = cents(goods - orgCompDiscount - dailyPerkDiscount);
   const tierDiscount = cents(rest * memberDiscountRate(member));
   const monthlyDiscount = monthlyMember ? cents(rest * 0.1) : 0;
   // A $5 reward on a $3 order takes $3 off, never more than what's left,
@@ -96,13 +128,17 @@ export function registerTotals(lines: TotalsLine[], member: TotalsMember, monthl
   // The points the reward takes (0 without one).
   const redemptionPoints = rewardPointsFor(redemptionDiscount);
   const discount = orgCompDiscount + dailyPerkDiscount + tierDiscount + monthlyDiscount + redemptionDiscount;
-  const taxable = subtotal - discount;
+  const taxable = goods - discount;
   // Never negative: a $5 reward on a $4 order is a free order, not a tax refund.
+  // Tax is figured once, on the whole order after every discount (tips are
+  // never taxed), and rounded to the cent (lib/sales-tax.ts).
   const taxIncluded = !taxFree && !!extra.taxIncluded;
-  const tax = taxFree ? 0 : taxIncluded ? taxInside(taxable).tax : cents(Math.max(0, taxable) * SALES_TAX_RATE);
-  const total = taxIncluded ? cents(Math.max(0, taxable)) : cents(Math.max(0, taxable) + tax);
+  const tax = taxFree ? 0 : taxIncluded ? taxInside(taxable).tax : salesTaxOn(taxable);
+  const total = cents((taxIncluded ? Math.max(0, taxable) : Math.max(0, taxable) + tax) + giftCards);
   return {
     subtotal,
+    // Gift cards sold on the order: in the subtotal and the total, untaxed.
+    giftCardSales: giftCards,
     orgCompDiscount,
     // The tax is inside the total (an organization's supported guest).
     taxIncluded,
@@ -138,11 +174,13 @@ export function pointsEarned(t: {
   org_comp_discount?: number;
   tax_included?: boolean;
   tax?: number;
+  // Gift cards sold on it earn nothing (points come when a card is spent).
+  gift_card_sales?: number;
 }) {
   const inside = t.tax_included ? Number(t.tax) || 0 : 0;
   return Math.max(
     0,
-    cents(t.subtotal - (Number(t.daily_perk_discount) || 0) - (Number(t.org_comp_discount) || 0) - t.tier_discount - t.monthly_discount - t.redemption_discount - inside),
+    cents(t.subtotal - (Number(t.gift_card_sales) || 0) - (Number(t.daily_perk_discount) || 0) - (Number(t.org_comp_discount) || 0) - t.tier_discount - t.monthly_discount - t.redemption_discount - inside),
   );
 }
 

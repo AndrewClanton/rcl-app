@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { checkManagerPin } from "@/lib/manager-pin";
-import type { ApprovalResult } from "@/lib/pin-rules";
+import type { Approval, ApprovalResult } from "@/lib/pin-rules";
 import { assertStaff } from "@/lib/auth";
 import { getPosMember, type PosMember } from "./member-actions";
 import { applyPoints } from "@/lib/points";
@@ -16,7 +16,7 @@ import { asStation, type RegisterStation } from "@/lib/print/stations";
 import { readRegisterCard, settleSaleCard } from "@/lib/member-cards";
 import { cardLabel, type CardNotice } from "@/lib/card-match";
 import { schemaMissing } from "@/lib/schema-missing";
-import { cents, ENFORCE_REGISTER_TOTALS, isRewardLine, pointsEarned } from "@/lib/register-totals";
+import { cents, ENFORCE_REGISTER_TOTALS, giftCardSales, isGiftCardLine, isRewardLine, pointsEarned } from "@/lib/register-totals";
 import { checkDailyCoffee, checkSaleTotals, flagSale, verifyCardPayment, type CoffeeCheck, type TotalsCheck } from "@/lib/register-sale-checks";
 import { currentMemberId } from "@/lib/member-forward";
 import { coffeeDay } from "@/lib/daily-perk-server";
@@ -31,6 +31,7 @@ import { isUuid } from "@/lib/rewards";
 import { redeemOrderPoints, type RedeemShort } from "@/lib/rewards-server";
 import type { OrgGroupInput } from "@/lib/orgs";
 import { awardEventBadges } from "@/lib/badges/events";
+import { isTaxExemptReason, TAX_EXEMPT_NOTE_MAX, type TaxExemptMark, type TaxExemptReason } from "@/lib/tax-exempt";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
@@ -75,6 +76,9 @@ export interface CheckoutTotals {
   // guest's tax-included prices (lib/orgs.ts). Optional: none.
   org_comp_discount?: number;
   tax_included?: boolean;
+  // Gift cards sold on the order (isGiftCardLine): untaxed, no points.
+  // The server figures its own from the lines for the points.
+  gift_card_sales?: number;
 }
 
 export interface CheckoutPayment {
@@ -93,6 +97,9 @@ export interface DraftFields {
   memberId: string | null;
   orderName: string;
   taxFree: boolean;
+  // Why it's tax-free, who marked it and which manager approved it
+  // (approveTaxExempt). Saved on the order only when taxFree.
+  taxExempt?: TaxExemptMark | null;
   monthlyMember: boolean;
   pointsRedeemed: boolean;
   lines: CheckoutLine[];
@@ -122,9 +129,24 @@ export interface DraftOrderFull {
   member_id: string | null;
   member: PosMember | null;
   tax_free: boolean;
+  tax_exempt: TaxExemptMark | null;
   monthly_member: boolean;
   points_redeemed: boolean;
   lines: (CheckoutLine & { unit: number })[];
+}
+
+// The order's tax-exempt columns (migration 20261009110000): only on a
+// tax-free order, so every other sale saves the same as before (and keeps
+// saving if the migration isn't in yet).
+function taxExemptColumns(taxFree: boolean, mark: TaxExemptMark | null | undefined) {
+  if (!taxFree || !mark || !isTaxExemptReason(mark.reason)) return {};
+  return {
+    tax_exempt_reason: mark.reason,
+    tax_exempt_note: mark.note?.trim().slice(0, TAX_EXEMPT_NOTE_MAX) || null,
+    tax_exempt_marked_by: mark.markedBy || null,
+    tax_exempt_approved_by: mark.approvedBy || null,
+    tax_exempt_at: mark.at || new Date().toISOString(),
+  };
 }
 
 function revalidate() {
@@ -535,6 +557,7 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     monthly_discount: params.totals.monthly_discount,
     redemption_discount: params.totals.redemption_discount,
     tax_free: params.taxFree,
+    ...taxExemptColumns(params.taxFree, params.taxExempt),
     monthly_member: params.monthlyMember,
     tax: params.totals.tax,
     tip,
@@ -762,7 +785,9 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
   // 1 point per $1 of the order after discounts. Each change lands in the
   // member's points history, tied to this order.
   if (memberId && !ownerSale) {
-    const earned = pointsEarned(params.totals);
+    // No points for gift cards sold, figured from the lines (not the register's word).
+    const giftCards = giftCardSales(params.lines.map((l) => ({ unit: Number(l.unit_price), qty: Number(l.quantity), giftCard: isGiftCardLine(l) })));
+    const earned = pointsEarned({ ...params.totals, gift_card_sales: giftCards });
     if (earned > 0) await applyPoints({ memberId, delta: earned, reason: "purchase", orderId, note: `Order #${orderNumber}`, by: params.employeeId || null });
   }
   // What the sale spends: the $5 off's points (only what it took off, 60
@@ -925,6 +950,7 @@ export async function saveDraftOrder(status: "held" | "tab", fields: DraftFields
       order_name: fields.orderName || null,
       tab_name: status === "tab" ? fields.orderName || null : null,
       tax_free: fields.taxFree,
+      ...taxExemptColumns(fields.taxFree, fields.taxExempt),
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
       subtotal: totals.subtotal,
@@ -977,6 +1003,7 @@ export async function updateDraftOrder(id: string, fields: DraftFields, totals: 
       order_name: fields.orderName || null,
       tab_name: fields.orderName || null,
       tax_free: fields.taxFree,
+      ...taxExemptColumns(fields.taxFree, fields.taxExempt),
       monthly_member: fields.monthlyMember,
       points_redeemed: fields.pointsRedeemed,
       subtotal: totals.subtotal,
@@ -1034,13 +1061,27 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   await assertStaff();
   const supabase = createAdminClient();
   // recipe_id: a Bar Book drink's recipe, once migration 20261004030000 is
-  // in; read without it before then.
-  type DraftRow = { id: string; order_name: string | null; member_id: string | null; tax_free: boolean; monthly_member: boolean; points_redeemed: boolean; items: unknown };
+  // in; read without it before then. The order's own columns are "*": the
+  // tax-exempt columns come along once migration 20261009110000 is in.
+  type DraftRow = {
+    id: string;
+    order_name: string | null;
+    member_id: string | null;
+    tax_free: boolean;
+    monthly_member: boolean;
+    points_redeemed: boolean;
+    items: unknown;
+    tax_exempt_reason?: string | null;
+    tax_exempt_note?: string | null;
+    tax_exempt_marked_by?: string | null;
+    tax_exempt_approved_by?: string | null;
+    tax_exempt_at?: string | null;
+  };
   const read = async (columns: string) => {
     const r = await supabase.from("orders").select(columns).eq("id", id).in("status", OPEN_DRAFT).single();
     return { data: r.data as unknown as DraftRow | null, error: r.error };
   };
-  const ORDER_COLUMNS = "id, order_name, member_id, tax_free, monthly_member, points_redeemed";
+  const ORDER_COLUMNS = "*";
   const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
   // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
   // reward_id: a reward line (Spend points), once migration 20261007020000 is in.
@@ -1056,6 +1097,10 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
     member_id: order.member_id,
     member: order.member_id ? await getPosMember(order.member_id) : null,
     tax_free: order.tax_free,
+    tax_exempt:
+      order.tax_free && isTaxExemptReason(order.tax_exempt_reason)
+        ? { reason: order.tax_exempt_reason, note: order.tax_exempt_note ?? null, markedBy: order.tax_exempt_marked_by ?? null, approvedBy: order.tax_exempt_approved_by ?? null, at: order.tax_exempt_at ?? new Date().toISOString() }
+        : null,
     monthly_member: order.monthly_member,
     points_redeemed: order.points_redeemed,
     lines: items.map((i) => ({
@@ -1110,6 +1155,29 @@ export async function cancelTab(id: string, pin: string): Promise<ApprovalResult
   await supabase.from("orders").delete().eq("id", id).in("status", OPEN_DRAFT);
   revalidate();
   return { ok: true, approvedBy: approval.approvedBy, defaultPin: approval.defaultPin };
+}
+
+// A manager OKs a tax-free sale with their PIN, and the cashier says why
+// (lib/tax-exempt.ts), before the register lets the "Tax exempt" box be
+// ticked. Everything else is taxed (lib/sales-tax.ts). The answer is the
+// mark the register sends with the order, which saves it on the order for
+// Reports; the PIN log (pin_attempts, context "tax-exempt") has the
+// approval too, with the tab it was for when there is one.
+export type TaxExemptApproval = ({ ok: true; mark: TaxExemptMark } & Approval) | { ok: false; error: string };
+
+export async function approveTaxExempt(input: { pin: string; tabId: string | null; cashierId: string | null; reason: TaxExemptReason; note: string }): Promise<TaxExemptApproval> {
+  const staff = await assertStaff();
+  if (!isTaxExemptReason(input.reason)) return { ok: false, error: "Pick why this order is tax-free." };
+  const note = input.note.trim().slice(0, TAX_EXEMPT_NOTE_MAX);
+  if (input.reason === "other" && !note) return { ok: false, error: "Add a short note saying why." };
+  const approval = await checkManagerPin(input.pin, "tax-exempt", staff.employeeId, input.tabId ?? undefined);
+  if (!approval.ok) return approval;
+  return {
+    ok: true,
+    approvedBy: approval.approvedBy,
+    defaultPin: approval.defaultPin,
+    mark: { reason: input.reason, note: note || null, markedBy: input.cashierId || null, approvedBy: approval.approverId, at: new Date().toISOString() },
+  };
 }
 
 // ---------- recent orders (reprint, refund, "what did they order?") ----------

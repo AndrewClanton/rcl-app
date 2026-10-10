@@ -1,6 +1,7 @@
 import type { DailyDigest } from "@/lib/data/daily-digest";
 import { DAILY_COFFEE_LINE } from "@/lib/daily-perk";
 import { ownerRateLine } from "@/lib/register-totals";
+import { taxFreeCallout, taxFreeLine } from "@/lib/tax-exempt";
 import type { MembershipLineKey, MembershipTotals } from "@/lib/membership-payments/rows";
 
 // The end-of-day report as an email: plain tables and inline styles, which
@@ -126,10 +127,13 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
     sold.push([`<span style="color:${MUTED}">${esc(`${line.label} (${line.who})`)}</span>`, `<span style="color:${MUTED}">${esc(line.value)}</span>`]);
   }
   sold.push([`<span style="color:${MUTED}">Tips · sales tax</span>`, `<span style="color:${MUTED}">${money(r.tips)} · ${money(r.tax)}</span>`]);
+  // Orders rung up tax-free: a line at the top, and each one with who and why.
+  const taxFree = taxFreeCallout(r.taxFreeOrders);
 
   const body = [
     section("Money in", rows(money_in)),
     sold.length > 2 ? section("What sold", rows(sold)) : "",
+    r.taxFreeOrders.length ? section(`Tax-free orders · ${r.taxFreeOrders.length}`, bullets(r.taxFreeOrders.map(taxFreeLine))) : "",
     r.topItems.length ? section("Top items", rows(r.topItems.slice(0, 5).map((i) => [`${i.qty}× ${esc(i.name)}`, money(i.revenue)]))) : "",
     d.showings.length
       ? section(
@@ -183,6 +187,7 @@ export function dailyDigestHtml(d: DailyDigest, reportUrl: string) {
         <div style="font:900 40px/1 'Arial Black',Arial,sans-serif;color:${RED}">${money(r.collected)}</div>
         <div style="font:15px/1.5 Arial,sans-serif;color:${INK};margin-top:6px">${orders} order${orders === 1 ? "" : "s"} · ${r.ticketsSold} ticket${r.ticketsSold === 1 ? "" : "s"}${orders ? ` · ${money(orderMoney / Math.max(1, orders))} average` : ""}</div>${ownerLine}
         ${compare.length ? `<div style="font:14px/1.5 Arial,sans-serif;color:${MUTED};margin-top:2px">${esc(compare.join(" · "))}</div>` : ""}
+        ${taxFree ? `<div style="font:14px/1.5 Arial,sans-serif;color:${INK};margin-top:12px;padding:8px 10px;background:#fff6d6;border-left:4px solid ${GOLD}">${esc(taxFree)} Who and why are under Tax-free orders.</div>` : ""}
       </td></tr>
       ${body}
       <tr><td style="padding:26px 0 0">

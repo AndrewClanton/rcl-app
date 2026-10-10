@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { businessDay, businessDayWindow } from "@/lib/ops/time";
 import { subscriptionLive } from "@/lib/plus-status";
 import { countedModes, paymentsSyncAllowed, stripeKeyMode } from "./mode";
+import { UNTAXED_MEMBERSHIPS, taxInsideCents } from "@/lib/sales-tax";
 import {
   TIERS,
   giftRow,
@@ -41,6 +42,19 @@ export interface MemberPaymentRecord {
   period_end: string | null;
   refund_of: string | null;
   member: { name: string } | null;
+  // Charged with no tax on top, and counted as tax-included in Reports
+  // (UNTAXED_MEMBERSHIPS, lib/sales-tax.ts): sales_cents and tax_cents are
+  // the split, not what's saved.
+  tax_inside?: boolean;
+}
+
+// A membership charge (or its refund) that carried no tax on top, as
+// Reports count it: with UNTAXED_MEMBERSHIPS "included", $15.00 is $13.80
+// of sales and $1.20 of tax. Only how it's read; the saved row is untouched.
+function withTaxInside(r: MemberPaymentRecord): MemberPaymentRecord {
+  if (UNTAXED_MEMBERSHIPS !== "included" || r.tax_cents !== 0 || !r.amount_cents) return r;
+  const tax = taxInsideCents(r.amount_cents);
+  return { ...r, sales_cents: r.amount_cents - tax, tax_cents: tax, tax_inside: true };
 }
 
 // One payment in a list (the Day drill-down, the Members tab), in dollars.
@@ -109,7 +123,7 @@ export async function getMemberPaymentsBetween(start: string, end: string | null
   } catch (e) {
     console.warn("member payments: gifts not yet read from Stripe weren't looked for:", (e as PostgrestError)?.message ?? e);
   }
-  return { tracked: true, rows };
+  return { tracked: true, rows: rows.map(withTaxInside) };
 }
 
 const GIFT_COLUMNS = "id, recipient_member_id, price, tax_amount, paid_at, starts_at, ends_at, stripe_payment_intent_id, stripe_checkout_session_id, member:members(name)";
@@ -179,7 +193,7 @@ export async function getMembershipRefundsMade(start: string, end: string): Prom
     quiet("refunds", error);
     return [];
   }
-  return (data ?? []) as unknown as MemberPaymentRecord[];
+  return ((data ?? []) as unknown as MemberPaymentRecord[]).map(withTaxInside);
 }
 
 // Insiders+ subscriptions that ended between two instants. Null when the
@@ -334,6 +348,6 @@ export async function getMembersPayments(now = new Date()): Promise<MembersPayme
     plans,
     months: [month(thisMonth, current.rows, endedThis), month(lastMonth, last.rows, endedLast)],
     renewing,
-    recent: recentRes.error ? [] : ((recentRes.data ?? []) as unknown as MemberPaymentRecord[]).map(paymentLine),
+    recent: recentRes.error ? [] : ((recentRes.data ?? []) as unknown as MemberPaymentRecord[]).map((r) => paymentLine(withTaxInside(r))),
   };
 }

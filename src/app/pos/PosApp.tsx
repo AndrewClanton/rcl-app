@@ -68,6 +68,8 @@ import CustomersTab from "./CustomersTab";
 import type { PosMember } from "./member-actions";
 import DevNoteDialog, { NoteIcon, type NoteAbout } from "@/components/dev-notes/DevNoteDialog";
 import ManagerPinModal from "@/components/ManagerPinModal";
+import TaxExemptModal from "./TaxExemptModal";
+import type { TaxExemptMark, TaxExemptReason } from "@/lib/tax-exempt";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -113,6 +115,7 @@ import {
   OWNER_RATE_NAME,
   ownerCartKey,
   ownerOrderTotals,
+  isGiftCardLine,
   pointsEarned,
   registerTotals,
 } from "@/lib/register-totals";
@@ -136,6 +139,7 @@ import {
   loadDraftOrder,
   discardDraftOrder,
   cancelTab,
+  approveTaxExempt,
   type CheckoutPayment,
   type CheckoutTotals,
   type CompleteOrderInput,
@@ -217,6 +221,7 @@ function totalsPayload(t: ReturnType<typeof registerTotals>): CheckoutTotals {
     // Only when there's one, so every other sale saves as it always has.
     ...(t.orgCompDiscount > 0 ? { org_comp_discount: t.orgCompDiscount } : {}),
     ...(t.taxIncluded ? { tax_included: true } : {}),
+    ...(t.giftCardSales > 0 ? { gift_card_sales: t.giftCardSales } : {}),
   };
 }
 
@@ -444,6 +449,10 @@ export default function PosApp({
   }, [flourish]);
   const [tabsListOpen, setTabsListOpen] = useState(false);
   const [cancelTabId, setCancelTabId] = useState<string | null>(null);
+  // Ticking "Tax exempt" waits for a reason and a manager PIN
+  // (approveTaxExempt); the mark goes on the order for Reports.
+  const [askTaxExempt, setAskTaxExempt] = useState(false);
+  const [taxExemptMark, setTaxExemptMark] = useState<TaxExemptMark | null>(null);
   const [openTabPromptOpen, setOpenTabPromptOpen] = useState(false);
   const [confirmState, setConfirmState] = useState<{ title: string; description?: string; danger?: boolean; confirmLabel?: string; onConfirm: () => void } | null>(
     null
@@ -854,7 +863,7 @@ export default function PosApp({
   const compOrgName = orgOnOrder?.orgName ?? orgGroup?.orgName;
   const totalsLines = cart.map((l, i) => {
     const item = findItem(l.menuItemId);
-    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i] };
+    return { unit: l.unit, qty: l.qty, perkBase: item?.daily_perk ? Number(item.price) : null, comp: compPlan.comps[i], giftCard: isGiftCardLine(l) };
   });
   // At the owner rate, what's charged is the server's owner prices, taxed,
   // with nothing else off.
@@ -907,6 +916,7 @@ export default function PosApp({
       memberId,
       orderName,
       taxFree,
+      taxExempt: taxFree ? taxExemptMark : null,
       monthlyMember: monthlyOn,
       pointsRedeemed,
       station: devices.station,
@@ -947,6 +957,7 @@ export default function PosApp({
     setOrderName(f.order_name ?? "");
     setMember(f.member);
     setTaxFree(f.tax_free);
+    setTaxExemptMark(f.tax_exempt);
     setMonthlyMember(f.monthly_member);
     setPointsRedeemed(f.points_redeemed);
     setCoffeeOffFor(null);
@@ -1035,7 +1046,7 @@ export default function PosApp({
     }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId, cart, orderName, taxFree, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded, totals.taxIncluded, !!ownerRate]);
+  }, [activeTabId, cart, orderName, taxFree, taxExemptMark, monthlyOn, pointsRedeemed, memberId, coffeeOn, compPlan.amount, orgTaxIncluded, totals.taxIncluded, !!ownerRate]);
 
   // Mirrors the cart onto the customer-facing kiosk display in real time,
   // via Realtime broadcast rather than a database row -- entirely separate
@@ -1296,6 +1307,7 @@ export default function PosApp({
     setOrderName("");
     setMember(null);
     setTaxFree(false);
+    setTaxExemptMark(null);
     setMonthlyMember(false);
     setPointsRedeemed(false);
     setActiveTabId(null);
@@ -1459,6 +1471,16 @@ export default function PosApp({
     setToast(`Tab cancelled. ${approvalText(r)}`);
     setTimeout(() => setToast(null), 7000);
     router.refresh();
+  }
+
+  async function handleTaxExempt(reason: TaxExemptReason, note: string, pin: string) {
+    const r = await approveTaxExempt({ pin, tabId: activeTabId, cashierId: employeeId || null, reason, note });
+    if (!r.ok) throw new Error(r.error); // shown in the box
+    setTaxExemptMark(r.mark);
+    setTaxFree(true);
+    setAskTaxExempt(false);
+    setToast(`Tax exempt. ${approvalText(r)}`);
+    setTimeout(() => setToast(null), 7000);
   }
 
   // rewardsApproved: a manager's PIN let short rewards through just now.
@@ -2352,7 +2374,7 @@ export default function PosApp({
             </label>
           )}
           <label className="flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-            <input type="checkbox" checked={taxFree} onChange={(e) => setTaxFree(e.target.checked)} />
+            <input type="checkbox" checked={taxFree} onChange={(e) => (e.target.checked ? setAskTaxExempt(true) : setTaxFree(false))} />
             Tax exempt
           </label>
           {totals.canRedeem && (
@@ -2760,6 +2782,10 @@ export default function PosApp({
           onCancel={() => setCancelTabId(null)}
           onSubmit={handleCancelTab}
         />
+      )}
+
+      {askTaxExempt && (
+        <TaxExemptModal onCancel={() => setAskTaxExempt(false)} onSubmit={handleTaxExempt} />
       )}
 
       {tabCardFor && (

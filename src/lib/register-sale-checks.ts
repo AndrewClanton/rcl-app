@@ -2,7 +2,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cents, registerTotals, type TotalsMember } from "@/lib/register-totals";
+import { cents, isGiftCardLine, registerTotals, type TotalsMember } from "@/lib/register-totals";
 import type { MemberTier } from "@/lib/types";
 import { hasPlusPerks } from "@/lib/plus-status";
 import { coffeeTime } from "@/lib/daily-perk";
@@ -390,7 +390,7 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   // decides whether a sale rung with no comps was right to charge.
   const org = sale.org ?? (await orgSaleTerms(sale.memberId, sale.lines, Number(sale.totals.org_comp_discount ?? 0) > 0, undefined, sale.orgGroup));
   const t = registerTotals(
-    lines.map((l, i) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase, comp: org.plan.comps[i] ?? 0 })),
+    lines.map((l, i) => ({ unit: l.expected, qty: l.qty, perkBase: l.perkBase, comp: org.plan.comps[i] ?? 0, giftCard: isGiftCardLine(sale.lines[i]) })),
     member,
     sale.monthlyMember,
     sale.taxFree,
