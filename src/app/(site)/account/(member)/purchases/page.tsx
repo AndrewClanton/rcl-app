@@ -6,5 +6,5 @@ export const metadata = { title: "Purchases" };
 
 export default async function PurchasesPage() {
   const member = await requireMember();
-  return <PurchasesView purchases={await getPurchases(member.id)} />;
+  return <PurchasesView purchases={await getPurchases(member.id, { oldRegister: true })} />;
 }

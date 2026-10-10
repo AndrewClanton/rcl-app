@@ -101,6 +101,8 @@ import UnsavedSaleBanner, {
 import { pickCashier, useCashierPick } from "./cashier-pick";
 import { checkReaderPayment, cancelReaderPayment } from "./terminal-actions";
 import CardNoticeBanner from "./CardNotice";
+import OldCardPrompt from "./OldCardPrompt";
+import type { OldCardOffer } from "@/lib/fortis-claim";
 import type { CardNotice } from "@/lib/card-match";
 import { isStaleBuildError } from "@/lib/deployment";
 import {
@@ -452,6 +454,8 @@ export default function PosApp({
   // so the next sale's notice doesn't take away the last one's Undo while
   // its 2 minutes are still running. `key` starts each one fresh.
   const [cardNotices, setCardNotices] = useState<{ key: number; notice: CardNotice }[]>([]);
+  // "Old card on file?" (OldCardPrompt.tsx), newest first.
+  const [oldCardOffers, setOldCardOffers] = useState<{ key: number; offer: OldCardOffer }[]>([]);
   const devices = useDeviceSettings();
   // Where this register prints: its station's printer through the website,
   // or straight to a printer IP (Devices).
@@ -1723,6 +1727,20 @@ export default function PosApp({
       const next = { key: Date.now(), notice: card };
       setCardNotices((list) => [next, ...list.filter((n) => n.notice.orderId !== next.notice.orderId)].slice(0, 3));
     }
+    // A card from the old register nobody has claimed? Asked after the sale
+    // is saved and never waited on (lib/old-card-offer.ts): a member
+    // attached and paid by card on the reader. A plain fetch, not a Server
+    // Action, so it can't hold up the next sale.
+    const piForOldCard = payment.stripePaymentIntentId;
+    if (piForOldCard && order.memberId) {
+      fetch("/api/pos/old-card", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paymentIntentId: piForOldCard }), cache: "no-store" })
+        .then((res) => (res.ok ? (res.json() as Promise<{ offer: OldCardOffer | null }>) : null))
+        .then((r) => {
+          const offer = r?.offer;
+          if (offer) setOldCardOffers((list) => [{ key: Date.now(), offer }, ...list.filter((o) => o.offer.cardId !== offer.cardId)].slice(0, 2));
+        })
+        .catch(() => {});
+    }
     const receipt: ReceiptData = {
       orderNumber,
       at: new Date().toISOString(),
@@ -2123,6 +2141,9 @@ export default function PosApp({
           )}
           {cardNotices.map((n) => (
             <CardNoticeBanner key={n.key} notice={n.notice} onClose={() => setCardNotices((list) => list.filter((x) => x.key !== n.key))} />
+          ))}
+          {oldCardOffers.map((o) => (
+            <OldCardPrompt key={o.key} offer={o.offer} onClose={() => setOldCardOffers((list) => list.filter((x) => x.key !== o.key))} />
           ))}
           {visitSlip && (
             <VisitSlipNotice slip={visitSlip} onPrint={printTarget ? () => printVisitSlip(visitSlip, true) : null} onClose={() => setVisitSlip(null)} />

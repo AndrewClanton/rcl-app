@@ -44,7 +44,10 @@ function describe(l: LedgerEntry): { title: string; href: string | null } {
     case "merge":
       return { title: "Merged in from your other account", href: null };
     case "backfill":
-      // Card purchases from before the new system.
+      // Card purchases from before the new system. One card's grant says
+      // what it spent: "Past purchases (old register): $123.45"
+      // (grant_fortis_card, lib/fortis-claim.ts).
+      if (l.note?.startsWith("Past purchases (old register)")) return { title: l.note, href: null };
       return { title: "Points from your past visits", href: null };
     default: {
       // Points given for a sale at the register (after a card mix-up) are

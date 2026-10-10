@@ -193,7 +193,7 @@ export default function MemberDetail({
         </div>
       )}
       <div className="xl:col-span-2">
-        <RemovePersonalInfo member={member} purchaseCount={purchases.length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
+        <RemovePersonalInfo member={member} purchaseCount={purchases.filter((p) => p.kind !== "old_register").length} isStaffLogin={!!staffInfo} viewerIsAdmin={viewerIsAdmin} />
       </div>
     </div>
   );
@@ -768,7 +768,9 @@ function PurchaseHistoryCard({ member, purchases, canUndoCardMatch }: { member: 
               <span>{p.label}</span>
               <span className="text-[var(--muted)]">{money(p.total)}</span>
               <span className="text-xs text-[var(--muted)]">
-                {new Date(p.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                {p.kind === "old_register"
+                  ? new Date(p.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                  : new Date(p.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                 {p.cardLabel ? ` · ${p.cardLabel}` : p.paymentMethod ? ` · ${p.paymentMethod}` : ""}
               </span>
               {p.cardHow && (
@@ -802,7 +804,7 @@ function PurchaseHistoryCard({ member, purchases, canUndoCardMatch }: { member: 
               )}
               {p.status === "refunded" ? (
                 <span className="rounded-full border border-[var(--danger-text)] px-2 py-0.5 text-xs text-[var(--danger-text)]">Refunded</span>
-              ) : p.total > 0 && !p.pointsOnly ? (
+              ) : p.total > 0 && !p.pointsOnly && p.kind !== "old_register" ? (
                 <button
                   className="ml-auto rounded border border-[var(--border)] px-2 py-1 text-xs "
                   onClick={() => setRefundTarget(p)}

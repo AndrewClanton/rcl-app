@@ -63,7 +63,26 @@ export function TicketStub({ s, past = false }: { s: MemberScreening; past?: boo
 export function PurchaseRows({ rows }: { rows: PurchaseRow[] }) {
   return (
     <ul>
-      {rows.map((p) => (
+      {rows.map((p) =>
+        p.kind === "old_register" ? (
+          // Before the new system: date and amount, no receipt to open.
+          <li key={`${p.kind}-${p.id}`} className="border-b border-[var(--border)] last:border-b-0">
+            <div className="flex min-h-14 items-center gap-3 px-4 py-3 sm:gap-4">
+              <div className="spec-code hidden w-24 shrink-0 sm:block">{dateShort(p.date)}</div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-bold">{p.label}</div>
+                <div className="truncate text-sm text-[var(--muted)]">
+                  <span className="sm:hidden">{dateShort(p.date)} · </span>
+                  {p.detail}
+                </div>
+              </div>
+              <div className="shrink-0 text-right font-display tabular-nums">{money(p.amount)}</div>
+              <span className="font-display text-transparent" aria-hidden="true">
+                ›
+              </span>
+            </div>
+          </li>
+        ) : (
         <li key={`${p.kind}-${p.id}`} className="border-b border-[var(--border)] last:border-b-0">
           <Link href={`/account/purchases/${p.kind}/${p.id}`} className="flex min-h-14 items-center gap-3 px-4 py-3 transition-colors hover:bg-[var(--surface-hover)] sm:gap-4">
             <div className="spec-code hidden w-24 shrink-0 sm:block">{dateShort(p.date)}</div>
@@ -83,7 +102,8 @@ export function PurchaseRows({ rows }: { rows: PurchaseRow[] }) {
             </span>
           </Link>
         </li>
-      ))}
+        ),
+      )}
     </ul>
   );
 }
