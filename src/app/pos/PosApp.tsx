@@ -81,6 +81,7 @@ import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
 import { handleDoorScan } from "./door-print";
 import RecentOrders from "./RecentOrders";
+import RecentDeclines from "./RecentDeclines";
 import EasterEggs, { useRickroll } from "./EasterEggs";
 import { flourishLines, type FlourishKey } from "@/lib/print/flourishes";
 import { sendPrint, usePrintTarget } from "./printing";
@@ -2482,6 +2483,7 @@ export default function PosApp({
               New tab
             </button>
             <RecentOrders target={printTarget} />
+            <RecentDeclines target={printTarget} />
             <EasterEggs
               next={flourish}
               onPick={setFlourish}

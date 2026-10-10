@@ -6,6 +6,7 @@ import { SITE_NAME, THEATER_ADDRESS } from "@/lib/site";
 import { isClaimUrl } from "@/lib/claim-link";
 import { STATION_LABEL, type RegisterStation } from "@/lib/print/stations";
 import type { Raster } from "./raster";
+import { declineSlipParts, type DeclineInfo } from "@/lib/decline-slip";
 
 // 80mm paper, Font A: 48 characters per line (24 at double width).
 const COLS = 48;
@@ -346,6 +347,24 @@ export function giftCardSlipXml(g: GiftCardSlip, pics: { logo?: Raster | null } 
   d.feed(1).lines(wrap("Keep it safe: anyone with this code can spend it.", COLS));
   d.feed(1).line(`Order #${g.orderNumber} - ${when(g.at)}`);
   d.bold(true).line("royalecinemajoplin.com").bold(false);
+  d.cut();
+  return d.toString();
+}
+
+// ---------- decline slip ----------
+// A declined card, for the guest to show their bank (lib/decline-slip.ts).
+// Not a receipt: nothing was charged, and never a drawer pulse.
+export function declineSlipXml(dec: DeclineInfo): string {
+  const d = new Doc();
+  header(d);
+  for (const p of declineSlipParts(dec, when(dec.at))) {
+    if (p.kind === "title") d.align("center").big(true).bold(true).lines(wrap(p.text, COLS / 2)).big(false).bold(false).align("left");
+    else if (p.kind === "rule") d.line(rule());
+    else if (p.kind === "gap") d.line();
+    else if (p.kind === "head") d.bold(true).lines(wrap(p.text, COLS)).bold(false);
+    else if (p.kind === "pair") d.lines(columns(p.left, p.right));
+    else d.lines(wrap(p.text, COLS));
+  }
   d.cut();
   return d.toString();
 }
