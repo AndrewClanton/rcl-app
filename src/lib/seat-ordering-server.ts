@@ -6,6 +6,9 @@ import { cents, pointsEarned, registerTotals } from "@/lib/register-totals";
 import { coffeeDay, dailyCoffeeUse } from "@/lib/daily-perk-server";
 import { getBoardEntries } from "@/lib/data/barBook";
 import { sendKitchenTicket } from "@/lib/print/kitchen";
+import { enqueueJobs, kitchenPrinter, stationPrinter } from "@/lib/print/queue";
+import { orderTicketXml } from "@/lib/print/receipt";
+import { isGiftCardLine } from "@/lib/register-totals";
 import { pictureOf, textIconShown, type TextIcon } from "@/lib/menu-pictures/shared";
 import type { IconSpec } from "@/lib/bar/icons";
 import type { MemberTier } from "@/lib/types";
@@ -704,8 +707,26 @@ async function fulfilSeatOrder(c: CheckoutRow, orderId: string): Promise<void> {
     }
     // The kitchen printer's ticket, headed with the spot (plain ASCII: the
     // printer drops anything else).
-    const head = [boardLabel(c.spot_name).replace(/·/g, "-"), c.guest_name, c.totals.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
-    await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, lines: c.lines }, "now");
+    // Who: the name they typed, or a signed-in member's first name.
+    let who = c.guest_name?.trim() || null;
+    if (!who && memberId) {
+      const { data: m } = await supabase.from("members").select("name").eq("id", memberId).maybeSingle();
+      who = (m?.name as string | null)?.trim().split(/\s+/)[0] || null;
+    }
+    const head = [boardLabel(c.spot_name).replace(/·/g, "-"), who, c.totals.idCheck ? "ID CHECK" : null].filter(Boolean).join(" - ");
+    await sendKitchenTicket({ orderId, orderNumber, name: head, tab: false, station: null, where: "SEAT ORDER", lines: c.lines }, "now");
+    // A copy at the bar too (Andrew, 10/10: "it should say who ordered it
+    // and where they ordered it from"), unless the bar is the kitchen printer.
+    try {
+      const [bar, kitchen] = await Promise.all([stationPrinter("bar"), kitchenPrinter()]);
+      const lines = c.lines.filter((l) => !isGiftCardLine(l)).map((l) => ({ name: l.name, qty: l.quantity, mods: l.modifiers ?? [] }));
+      if (bar && bar.id !== kitchen?.id && lines.length) {
+        const xml = orderTicketXml({ orderNumber, name: head, tab: false, station: null, where: "SEAT ORDER", at: new Date().toISOString(), kind: "order", lines });
+        await enqueueJobs(bar.id, [{ kind: "order_ticket", xml, orderId, label: `Seat #${orderNumber}` }]);
+      }
+    } catch (e) {
+      console.error("seat order: bar ticket not queued", orderId, e);
+    }
   }
   await supabase.from("seat_checkouts").update({ fulfilled_at: new Date().toISOString() }).eq("id", c.id);
 }

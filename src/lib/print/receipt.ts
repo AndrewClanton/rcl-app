@@ -476,6 +476,7 @@ export interface OrderTicket {
   name: string | null; // the tab or order name
   tab: boolean;
   station: RegisterStation | null; // which register rang it
+  where?: string | null; // printed instead of the register, e.g. "SEAT ORDER"
   at: string; // ISO: when it was rung (a reprint keeps the order's time)
   kind: "order" | "addon" | "reprint";
   lines: { name: string; qty: number; mods: string[] }[];
@@ -514,7 +515,7 @@ export function orderTicketXml(t: OrderTicket): string {
   d.size(4, 4).bold(true).line(`#${t.orderNumber}`).bold(false);
   const name = t.name?.trim() ? `${t.tab ? "Tab: " : ""}${t.name.trim()}` : t.tab ? "Tab" : "";
   if (name) d.size(2, 2).bold(true).lines(wrap(name, 24)).bold(false);
-  const where = t.station ? STATION_LABEL[t.station] : "Register";
+  const where = t.where?.trim() || (t.station ? STATION_LABEL[t.station] : "Register");
   d.size(1, 2).bold(true).line(`${where.toUpperCase()}  |  ${clock(t.at)}`).bold(false);
   d.size(1, 1).align("left").line(rule("="));
   for (const l of t.lines) {
