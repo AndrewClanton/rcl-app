@@ -305,6 +305,7 @@ function OrdersView({
               { key: "members", label: "Insiders+ memberships (Stripe billing)", value: money(r.memberships.collected), href: hrefFor({ show: "memberships" }) },
               ...(r.ownerTab.paid !== 0 ? [{ key: "ownerpaid", label: "Owner tab payments (recorded today)", value: money(r.ownerTab.paid) }] : []),
               { key: "total", label: "Collected", value: money(r.collected), strong: true },
+              ...(r.giftCardsSold > 0 ? [{ key: "gc", label: "Gift cards sold (owed: not in Collected, counted as sales when spent)", value: money(r.giftCardsSold), muted: true }] : []),
               ...(r.vouchers > 0 ? [{ key: "v", label: "Vouchers used (no money in, not counted)", value: money(r.vouchers), muted: true, href: hrefFor({ show: "orders", pay: "vouchers" }) }] : []),
               ...(r.ownerTab.owed > 0
                 ? [{ key: "owner", label: "Put on owner tabs (money in once it's paid, not counted)", value: money(r.ownerTab.owed), muted: true, href: hrefFor({ show: "orders", pay: "owner" }) }]

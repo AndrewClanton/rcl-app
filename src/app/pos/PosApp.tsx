@@ -869,7 +869,7 @@ export default function PosApp({
   // At the owner rate, what's charged is the server's owner prices, taxed,
   // with nothing else off.
   const totals = ownerRate
-    ? ownerOrderTotals(ownerRate.lines.map((l) => ({ unit: l.unit_price, qty: l.quantity })))
+    ? ownerOrderTotals(ownerRate.lines.map((l) => ({ unit: l.unit_price, qty: l.quantity, giftCard: isGiftCardLine(l) })))
     : registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: !ownerTicked && (orgTaxIncluded || groupTaxIncluded(orgGroup)) });
   const menuSubtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
   // Whose comps the manager PIN is for: the group's when they're the
@@ -954,6 +954,7 @@ export default function PosApp({
         recipeId: l.recipe_id ?? null,
         customRecipe: l.custom_recipe?.length ? l.custom_recipe.map((c) => ({ ingredient_id: c.ingredient_id, quantity: c.quantity })) : null,
         ...(l.reward_id ? { rewardId: l.reward_id, rewardPoints: rewardPointsOf(l.name), rewardMember: f.member?.id ?? null } : {}),
+        ...(l.gift_member_id ? { giftMemberId: l.gift_member_id } : {}),
       }))
     );
     setOrderName(f.order_name ?? "");

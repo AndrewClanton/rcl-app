@@ -70,6 +70,9 @@ create index if not exists gift_card_transactions_order_idx on gift_card_transac
 alter table gift_card_transactions enable row level security;
 grant select, insert, update on public.gift_card_transactions to service_role;
 
+-- A gift card line on a held order or tab: the member the card goes on
+-- once it is paid (no foreign key, like gift_cards.member_id).
+alter table order_items add column if not exists gift_member_id uuid;
 alter table orders add column if not exists payment_gift_card_amount numeric(10, 2) not null default 0 check (payment_gift_card_amount >= 0);
 alter table orders add column if not exists gift_card_sales numeric(10, 2) not null default 0 check (gift_card_sales >= 0);
 alter table orders drop constraint if exists orders_payment_method_check;
@@ -285,6 +288,70 @@ grant execute on function public.refund_order_gift_cards(uuid, uuid) to service_
 revoke execute on function public.adjust_gift_card(uuid, numeric, text, uuid) from public, anon, authenticated;
 grant execute on function public.adjust_gift_card(uuid, numeric, text, uuid) to service_role;
 
+-- ---------- points for a card matched to a sale later ----------
+-- credit_card_sale (20261001220000_member_cards.sql) gives a sale's points to
+-- the member a card belongs to, after the sale. The same function, except
+-- that gift cards sold on the order are left out of the points, like
+-- completeOrder does (pointsEarned with gift_card_sales).
+create or replace function public.credit_card_sale(p_order uuid, p_member uuid, p_how text, p_note text, p_by uuid default null)
+returns numeric
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  o orders%rowtype;
+  cp card_payments%rowtype;
+  pts numeric := 0;
+  gifts numeric := 0;
+begin
+  if p_how not in ('card', 'picked', 'given') then
+    return null;
+  end if;
+  select * into o from orders where id = p_order for update;
+  if not found or o.status <> 'completed' or o.member_id is not null then
+    return null;
+  end if;
+  select * into cp from card_payments where order_id = p_order for update;
+  if not found then
+    return null;
+  end if;
+  if not exists (select 1 from members where id = p_member and erased_at is null) then
+    return null;
+  end if;
+  if p_how = 'given' then
+    if cp.undone_at is null then
+      return null;
+    end if;
+  elsif cp.credited_member_id is not null or cp.undone_at is not null
+     or exists (select 1 from points_ledger where order_id = p_order and reason = 'purchase') then
+    return null;
+  end if;
+
+  update orders set member_id = p_member, member_source = 'card' where id = p_order;
+  -- pointsEarned (lib/register-totals.ts): never negative, to the cent.
+  -- Gift cards sold on it earn nothing (isGiftCardLine, lib/register-totals.ts),
+  -- read from its lines so it holds however soon after the sale this runs.
+  select coalesce(sum(unit_price * quantity), 0) into gifts from order_items
+    where order_id = p_order and menu_item_id is null and screening_id is null
+      and btrim(name) ~* '^([$][0-9]+([.][0-9]{2})? )?gift ?card$';
+  pts := greatest(0, round(coalesce(o.subtotal, 0) - gifts - coalesce(o.tier_discount, 0) - coalesce(o.monthly_discount, 0) - coalesce(o.redemption_discount, 0), 2));
+  if pts > 0 then
+    perform public.apply_member_points(p_member, pts, case when p_how = 'given' then 'adjustment' else 'purchase' end, p_order, null, p_note, p_by);
+  end if;
+  update card_payments
+  set credited_member_id = p_member, credited_how = p_how, credited_at = now(), credited_by = p_by, undone_at = null, undone_by = null
+  where id = cp.id;
+  if p_how <> 'given' then
+    update member_cards set last_used_at = now()
+    where member_id = p_member and fingerprint = cp.fingerprint and livemode = cp.livemode and removed_at is null;
+  end if;
+  return pts;
+end;
+$$;
+revoke execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.credit_card_sale(uuid, uuid, text, text, uuid) to service_role;
+
 -- ---------- members ----------
 -- A merge (merge_members logs it in member_merges just before deleting the
 -- duplicate) moves the duplicate's cards to the kept account.
@@ -296,6 +363,7 @@ set search_path = public
 as $$
 begin
   update gift_cards set member_id = new.keep_id, updated_at = now() where member_id = new.dropped_id;
+  update order_items set gift_member_id = new.keep_id where gift_member_id = new.dropped_id;
   return null;
 end;
 $$;
@@ -314,10 +382,12 @@ as $$
 begin
   if tg_op = 'DELETE' then
     update gift_cards set member_id = null, updated_at = now() where member_id = old.id;
+    update order_items set gift_member_id = null where gift_member_id = old.id;
     return old;
   end if;
   if new.erased_at is not null and old.erased_at is null then
     update gift_cards set member_id = null, updated_at = now() where member_id = new.id;
+    update order_items set gift_member_id = null where gift_member_id = new.id;
   end if;
   return new;
 end;

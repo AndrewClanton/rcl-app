@@ -91,5 +91,22 @@ check("My Account shows the member's cards", /memberGiftCards\(member\.id\)/.tes
 check("both tables: RLS on, service role only", /alter table gift_cards enable row level security/.test(mig) && /alter table gift_card_transactions enable row level security/.test(mig) && !/to anon|to authenticated/.test(mig.replace(/from public, anon, authenticated/g, "")));
 check("Indy's gift cards aren't touched", !/indy/i.test(mig.replace(/^--.*$/gm, "")));
 
+// 6. Andrew, 10/9: gift card sales are owed, not revenue; refunds; gaps.
+{
+  const has = (text, s) => text.includes(s);
+  const rep = read("src/lib/data/reports.ts");
+  check("gift cards sold are left out of Collected and what sold", has(rep, "ownerTab.paid - giftCardsSold,") && !has(rep, 'label: "Gift cards sold"'));
+  check(
+    'their own "Gift cards sold (owed)" line in Reports and the nightly email',
+    ["src/app/admin/reports/DayDrill.tsx", "src/app/admin/reports/PeriodView.tsx", "src/lib/email/daily-digest-email.ts"].every((p) => has(read(p), "Gift cards sold (owed")),
+  );
+  check("a full refund with a spent card says to do a partial refund", has(read("src/app/admin/reports/actions.ts"), "Do a partial refund instead"));
+  check("a held order or tab keeps who a gift card goes on", has(actions, "gift_member_id: giftMembers[i]") && has(pos, "giftMemberId: l.gift_member_id") && has(mig, "add column if not exists gift_member_id"));
+  const { ownerOrderTotals } = await import("../src/lib/register-totals.ts");
+  const o = ownerOrderTotals([{ unit: 50, qty: 1, giftCard: true }, { unit: 4, qty: 1 }]);
+  check("the owner rate never taxes a gift card", o.tax === salesTaxOn(4) && has(read("src/lib/owner-rate-server.ts"), "giftCard: isGiftCardLine(l)"), `tax ${o.tax}`);
+  check("points for a card matched later leave gift cards out", has(mig, "- gifts - coalesce(o.tier_discount") && has(read("src/lib/member-cards.ts"), "gift_card_sales: Number(o.gift_card_sales"));
+}
+
 console.log(failures ? `\n${failures} failed` : "\nAll good.");
 process.exit(failures ? 1 : 0);

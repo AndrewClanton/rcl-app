@@ -63,7 +63,7 @@ export async function refundOrder(orderId: string, pin: string, reason?: string)
     const c = spent[0];
     return {
       ok: false,
-      error: `Gift card ${c.code} from this order has been used (${money(Number(c.initial_amount) - Number(c.balance))} spent), so the order can't be refunded whole. Refund part of it instead, and take the rest off the card in Back office, Gift cards.`,
+      error: `Gift card ${c.code} from this order has been used (${money(Number(c.initial_amount) - Number(c.balance))} spent), so this order can't be refunded in full. Do a partial refund instead: enter the amount the customer gets back and tap Give back (not Refund all of it).`,
     };
   }
   if (order.stripe_payment_intent_id) {

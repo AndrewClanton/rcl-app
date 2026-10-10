@@ -201,8 +201,9 @@ export interface SalesSummary {
   vouchers: number;
   // Gift cards (lib/gift-cards.ts): what was spent from them on orders (no
   // money in, like vouchers: the money came in when the card was sold), and
-  // what cards were sold (money in, but not a taxable sale: its own line in
-  // what sold).
+  // what cards were sold: a liability (owed as goods), not revenue, so it's
+  // left out of Collected and what sold, and shown on its own "Gift cards
+  // sold (owed)" line. The sale is counted when a card is spent.
   giftCardsUsed: number;
   giftCardsSold: number;
   cash: number;
@@ -210,7 +211,7 @@ export interface SalesSummary {
   online: number;
   tips: number;
   tax: number; // memberships' tax included
-  collected: number; // cash + card + online + memberships.collected
+  collected: number; // cash + card + online + memberships.collected, less gift cards sold (owed)
   // Insiders+ charges (new, renewals, switches to yearly) and gift
   // memberships, from Stripe: never orders, so never counted twice.
   memberships: MembershipTotals;
@@ -695,7 +696,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     partialRefunds += Number(p.amount) - Number(p.tax_amount);
   }
   // What the orders came to for the goods (the average order is this over the count).
-  const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds;
+  // Gift cards sold aren't sales (they're owed until spent).
+  const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds - giftCardsSold;
 
   // Insiders+ and gift memberships: their own part of the money in (never
   // an order, so nothing here is also counted above), their tax, and a line
@@ -718,8 +720,6 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     { label: CATEGORY_LABEL.coffee, amount: category.coffee },
     { label: CATEGORY_LABEL.liquor, amount: category.liquor },
     { label: BOOTHS_LABEL, amount: boothRevenue },
-    // Not a sale yet (and not taxed): the sale is counted when the card is spent.
-    { label: "Gift cards sold", amount: giftCardsSold, detail: giftCardsSold > 0 ? "not taxed; counted again as sales when spent" : undefined },
     { label: MEMBERSHIPS_LABEL, amount: memberships.sales, detail: membershipsLine || undefined },
     // At what the owners pay, with the menu value it replaced beside it.
     {
@@ -740,7 +740,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     online,
     tips,
     tax,
-    collected: cash + card + online + memberships.collected + ownerTab.paid,
+    // Gift cards sold are owed, not revenue: their own line, not in Collected.
+    collected: cash + card + online + memberships.collected + ownerTab.paid - giftCardsSold,
     memberships,
     sold,
     discounts,

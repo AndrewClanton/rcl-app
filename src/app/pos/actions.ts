@@ -37,7 +37,8 @@ import { issueOrderGiftCards, linkGiftCardRedemption, redeemGiftCard, undoGiftCa
 export interface CheckoutLine {
   menu_item_id: string | null;
   // A gift card being sold (isGiftCardLine): the member it goes on, if
-  // staff picked one. Only on a sale paid now (a held order or tab drops it).
+  // staff picked one. Kept on a held order or tab (order_items.gift_member_id)
+  // so the card attaches when it is paid.
   gift_member_id?: string | null;
   name: string;
   unit_price: number;
@@ -235,11 +236,17 @@ async function replaceOrderItems(
       // Only on a $0 line with no menu item: a reward from Spend points.
       ...(rewardIdOf(l) ? { reward_id: rewardIdOf(l) } : {}),
     }));
-    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
+    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[]; gift_member_id?: string };
     const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
     const withCustoms: Row[] = customs.some(Boolean) ? withRecipes.map((r, i) => (customs[i] ? { ...r, custom_recipe: customs[i]! } : r)) : withRecipes;
+    // A gift card going on a member's account keeps who (a held order or
+    // tab paid later still attaches it): only on such a line, and only once
+    // migration 20261009120000 adds the column.
+    const giftMembers = lines.map((l) => (isGiftCardLine(l) && l.gift_member_id && isUuid(l.gift_member_id) ? l.gift_member_id : null));
+    const withGifts: Row[] = giftMembers.some(Boolean) ? withCustoms.map((r, i) => (giftMembers[i] ? { ...r, gift_member_id: giftMembers[i]! } : r)) : withCustoms;
     const insert = (r: Row[]) => supabase.from("order_items").insert(r).select("id");
-    let { data: added, error: insertErr } = await insert(withCustoms);
+    let { data: added, error: insertErr } = await insert(withGifts);
+    if (insertErr && schemaMissing(insertErr) && withGifts !== withCustoms) ({ data: added, error: insertErr } = await insert(withCustoms));
     // Before migration 20261005010000 adds order_items.custom_recipe, or
     // 20261004030000 adds recipe_id: saved without them, like any custom line.
     if (insertErr && schemaMissing(insertErr) && withCustoms !== withRecipes) ({ data: added, error: insertErr } = await insert(withRecipes));
@@ -1186,12 +1193,14 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
   // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
   // reward_id: a reward line (Spend points), once migration 20261007020000 is in.
-  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id)`);
+  // gift_member_id: a gift card going on a member's account, once migration 20261009120000 is in.
+  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id, gift_member_id)`);
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS})`));
   if (error || !order) throw new Error("That order was already closed on another register.");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null; reward_id?: string | null }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null; reward_id?: string | null; gift_member_id?: string | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -1216,6 +1225,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       ...(i.recipe_id ? { recipe_id: i.recipe_id } : {}),
       ...(Array.isArray(i.custom_recipe) && i.custom_recipe.length ? { custom_recipe: i.custom_recipe } : {}),
       ...(i.reward_id ? { reward_id: i.reward_id } : {}),
+      ...(i.gift_member_id ? { gift_member_id: i.gift_member_id } : {}),
     })),
   };
 }
