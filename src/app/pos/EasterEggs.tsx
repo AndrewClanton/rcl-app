@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { FLOURISHES, type FlourishKey } from "@/lib/print/flourishes";
 import type { RickrollState } from "@/lib/registerChannel";
 import InfoTip from "@/components/help/InfoTip";
+import type { RegisterStation } from "@/lib/print/stations";
+import { memePictureCount, printMeme } from "./meme-actions";
 
 // How long the Rickroll button waits for the customer screen to answer.
 const RICKROLL_ANSWER_MS = 4_000;
@@ -73,12 +75,14 @@ export default function EasterEggs({
   onCelebrate,
   rickroll,
   canPrint,
+  memeStation,
 }: {
   next: FlourishKey | null;
   onPick: (key: FlourishKey | null) => void;
   onCelebrate: () => void;
   rickroll: Rickroll;
   canPrint: boolean; // a printer that auto-prints receipts
+  memeStation: RegisterStation | null; // printing through the website to this station's printer
 }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
@@ -90,6 +94,7 @@ export default function EasterEggs({
   }, [sent]);
 
   const picked = FLOURISHES.find((f) => f.key === next);
+  const meme = useMemePrint(memeStation, open);
 
   return (
     <div className="relative">
@@ -145,6 +150,16 @@ export default function EasterEggs({
             )}
           </div>
           <div>
+            <button className="btn-secondary w-full !py-2.5" onClick={meme.press} disabled={!memeStation || meme.none || meme.busy || meme.coolingDown}>
+              {meme.none ? "Add pictures in Back office first" : meme.busy ? "Printing…" : meme.coolingDown ? "🎲 Sent" : "🎲 Print a meme"}
+            </button>
+            {(meme.note || !memeStation) && (
+              <p className="mt-1 text-xs" role="status" style={{ color: meme.failed ? "var(--danger-text)" : "var(--muted)" }}>
+                {!memeStation ? "Prints through the website to this register's station printer (Devices)." : meme.note}
+              </p>
+            )}
+          </div>
+          <div>
             <div className="eyebrow mb-1.5">Next receipt surprise</div>
             <div className="grid grid-cols-2 gap-1.5">
               {FLOURISHES.map((f) => (
@@ -170,4 +185,61 @@ export default function EasterEggs({
       )}
     </div>
   );
+}
+
+// 🎲 Print a meme (meme-actions.ts): a random picture from Back office →
+// Printers → Easter egg pictures on this station's printer. One every 10
+// seconds; the server holds to that too. How many pictures there are is
+// asked each time the ✨ panel opens.
+const MEME_COOLDOWN_MS = 10_000;
+
+function useMemePrint(station: RegisterStation | null, open: boolean) {
+  const [busy, setBusy] = useState(false);
+  const [coolingDown, setCoolingDown] = useState(false);
+  const [lastId, setLastId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!open || !station) return;
+    let live = true;
+    memePictureCount()
+      .then((n) => live && setCount(n))
+      .catch(() => live && setCount(null));
+    return () => {
+      live = false;
+    };
+  }, [open, station]);
+
+  useEffect(() => {
+    if (!coolingDown) return;
+    const timer = setTimeout(() => setCoolingDown(false), MEME_COOLDOWN_MS);
+    return () => clearTimeout(timer);
+  }, [coolingDown]);
+
+  const press = useCallback(async () => {
+    if (!station || busy || coolingDown) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const r = await printMeme({ station, lastId, pressedAt: Date.now() });
+      setFailed(!r.ok);
+      if (r.ok) {
+        setLastId(r.id);
+        setNote("On its way to the printer.");
+        setCoolingDown(true);
+      } else {
+        if (r.none) setCount(0);
+        setNote(r.none ? null : r.error);
+      }
+    } catch {
+      setFailed(true);
+      setNote("Couldn't reach the website. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }, [station, busy, coolingDown, lastId]);
+
+  return { busy, coolingDown, note, failed, press, none: count === 0 };
 }

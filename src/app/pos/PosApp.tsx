@@ -2433,6 +2433,7 @@ export default function PosApp({
               next={flourish}
               onPick={setFlourish}
               canPrint={!!printTarget && devices.autoPrint}
+              memeStation={printTarget?.via === "station" ? printTarget.station : null}
               onCelebrate={() => registerChannelRef.current?.send({ type: "broadcast", event: "celebrate", payload: {} })}
               rickroll={rickroll}
             />

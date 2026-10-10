@@ -251,6 +251,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
       badge: "printersOffline",
     },
     {
+      href: "/admin/printers/easter-eggs",
+      label: "Easter egg pictures",
+      about: "Pictures the register's ✨ → 🎲 button prints for fun.",
+      keywords: "easter egg memes pictures funny print dice sparkle",
+      min: "admin",
+    },
+    {
       href: "/display",
       label: "Screens & TVs",
       about: "Pick what a tablet or TV shows: kitchen, bar, lobby, ramp.",

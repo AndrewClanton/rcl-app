@@ -335,6 +335,14 @@ export function declineSlipXml(dec: DeclineInfo): string {
   return d.toString();
 }
 
+// Register → ✨ → Print a meme (pos/meme-actions.ts): just the picture
+// (lib/print/easter-egg-pictures.ts) and the cut. Never a drawer kick.
+export function memeXml(picture: Raster): string {
+  const d = new Doc();
+  d.image(picture).raw(`<feed line="1"/><cut type="feed"/>`);
+  return d.toString();
+}
+
 export function drawerXml(): string {
   return new Doc().drawer().toString();
 }
