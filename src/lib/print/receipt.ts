@@ -335,6 +335,16 @@ export function declineSlipXml(dec: DeclineInfo): string {
   return d.toString();
 }
 
+// Register → ✨ → Print a meme (pos/meme-actions.ts): one of the drawn
+// memes (lib/print/meme-rasters.ts), a small line under it, and the cut.
+// Shorter than a receipt, and never a drawer kick.
+export function memeXml(picture: Raster): string {
+  const d = new Doc();
+  d.image(picture).gap(12).align("center").line("Royale Cinema Lounge");
+  d.raw(`<feed line="1"/><cut type="feed"/>`);
+  return d.toString();
+}
+
 export function drawerXml(): string {
   return new Doc().drawer().toString();
 }
