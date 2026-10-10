@@ -29,6 +29,7 @@ export interface KitchenOrder {
   name: string | null;
   tab: boolean;
   station: RegisterStation | null;
+  where?: string | null; // printed instead of the register (a seat order)
   // The order as it stands now. Movie tickets (screening_id) aren't food
   // and are left off.
   lines: { name: string; quantity: number; modifiers: string[]; screening_id?: string | null }[];
@@ -90,7 +91,7 @@ export async function sendKitchenTicket(order: KitchenOrder, when: "hold" | "now
     const since = pendingSince ? new Date(pendingSince).getTime() : now;
     const notBefore = when === "now" ? new Date(now) : new Date(Math.min(now + HOLD_SECONDS * 1000, since + MAX_HOLD_SECONDS * 1000));
     const kind = tickets === 0 ? "order" : "addon";
-    const xml = orderTicketXml({ orderNumber: order.orderNumber, name: order.name, tab: order.tab, station, at: new Date(now).toISOString(), kind, lines: added });
+    const xml = orderTicketXml({ orderNumber: order.orderNumber, name: order.name, tab: order.tab, station, where: order.where ?? null, at: new Date(now).toISOString(), kind, lines: added });
     const [jobId] = await enqueueJobs(printer.id, [
       { kind: "order_ticket", xml, orderId: order.orderId, notBefore, label: `Kitchen #${order.orderNumber}${kind === "addon" ? " add-on" : ""}` },
     ]);
