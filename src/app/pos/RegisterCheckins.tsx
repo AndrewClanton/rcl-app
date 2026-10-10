@@ -463,7 +463,7 @@ export function useRegisterCheckins({
       orderNumber: sale.orderNumber,
       firstName: firstNameOf(m.name),
       earned,
-      balance: Math.round(fresh ? fresh.points : m.points + exact - (sale.points?.rewardUsed ? POINTS_PER_REWARD : 0)),
+      balance: Math.round(fresh ? fresh.points : m.points + exact - (sale.points?.rewardUsed ? (sale.points.rewardPoints ?? POINTS_PER_REWARD) : 0)),
       color: m.flair?.color ?? null,
     };
     send("points-earned", payload);

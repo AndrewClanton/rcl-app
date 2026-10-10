@@ -25,13 +25,16 @@ export function pointsReasonProblem(reason: string): string | null {
   return null;
 }
 
-// "$5 off": what a redemption took off. The register writes the amount
-// first in the note ("5.00 off order #1234"); older rows fall back to the
-// reward rule.
+// "$3.00 off (60 pts)": what a redemption took off and the points it took.
+// The note has the amount first ("$3.00 off order #1234"; older rows say
+// "$5 off"); a row without one falls back to the reward rule (20 points a
+// dollar). The points are the row's own, so a $5 off from before prorating
+// still shows its 100.
 export function rewardOff(note: string | null, delta: number): string {
   const m = note?.match(/^\$?(\d+(?:\.\d+)?) off/);
-  const dollars = m ? Number(m[1]) : (Math.abs(delta) / POINTS_PER_REWARD) * REWARD_VALUE;
-  return `$${Number.isInteger(dollars) ? dollars : dollars.toFixed(2)} off`;
+  const pts = Math.abs(delta);
+  const dollars = m ? Number(m[1]) : (pts / POINTS_PER_REWARD) * REWARD_VALUE;
+  return `$${dollars.toFixed(2)} off (${formatPoints(pts)} pts)`;
 }
 
 // A reward from the catalog (Spend points): its note is "Reward: Personal

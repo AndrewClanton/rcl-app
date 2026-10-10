@@ -641,6 +641,8 @@ export default function SpendPoints({
                               ? ` · until ${new Date(o.until).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
                               : ""}
                             {o.alcohol ? " · 21+" : ""}
+                            {/* A small order takes fewer points (lib/loyalty.ts rewardPointsFor). */}
+                            {o.kind === "discount" ? `${o.description ? " · " : ""}uses only what you need` : ""}
                           </div>
                           )}
                         </div>
