@@ -221,7 +221,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
           beforeText={vs}
           sub={`${r.memberships.collected !== 0 ? `cash, card, online and ${money(r.memberships.collected)} in memberships` : "cash, card, online and memberships"}${
             r.ownerTab.paid !== 0 ? `, plus ${money(r.ownerTab.paid)} of owner tab payments` : ""
-          }, with tax and tips`}
+          }, with tax and tips${r.giftCardsSold > 0 ? `; ${money(r.giftCardsSold)} of gift cards sold is owed, not counted` : ""}`}
           href={to({ show: "collected" })}
         />
         <Stat label="Net sales" value={money(r.netSales)} now={r.netSales} before={before.netSales} href={to({ show: "net" })} />
@@ -237,6 +237,8 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
           subtitle={
             [
               r.vouchers > 0 ? "Vouchers (trivia prizes) paid for goods but brought in no money, so they aren't in Collected." : "",
+              r.giftCardsSold > 0 ? `Gift cards sold (owed): ${money(r.giftCardsSold)}. Card and cash below include it; Collected doesn't, since it's counted as sales when the cards are spent.` : "",
+              r.giftCardsUsed > 0 ? "Gift cards spent brought in no money today (it came in when each card was sold), so they aren't in Collected." : "",
               r.ownerTab.owed > 0 ? `${money(r.ownerTab.owed)} went on owner tabs: it's money in when an owner pays their monthly statement, not before.` : "",
             ]
               .filter(Boolean)
@@ -250,6 +252,7 @@ function DayFigures({ r, before, vs, to, paidOut, trend }: { r: DayReport; befor
               { label: "Online", value: r.online, href: to({ show: "orders", pay: "online" }) },
               { label: "Memberships", value: r.memberships.collected, href: to({ show: "memberships" }) },
               { label: "Vouchers", value: r.vouchers, href: to({ show: "orders", pay: "vouchers" }) },
+              { label: "Gift cards", value: r.giftCardsUsed, href: "/admin/gift-cards" },
               { label: "Owner tab payments", value: r.ownerTab.paid, href: to({ show: "collected" }) },
             ]}
           />

@@ -150,7 +150,7 @@ export interface SaleForCheck {
     total: number;
     tax_included?: boolean;
   };
-  payment?: { cash: number; card: number; voucher?: number };
+  payment?: { cash: number; card: number; voucher?: number; giftCard?: { amount: number } | null };
   tip?: number;
   // The member's points before this sale moved them, for a check that runs
   // after the sale's reward and purchase points have landed (log-only mode):
@@ -419,15 +419,16 @@ async function compareTotals(sale: SaleForCheck): Promise<TotalsCheck> {
   }
 
   // The payment: cash, card (a tip picked on the reader is inside it) and
-  // vouchers cover the total plus the whole tip, whether it was asked on
-  // the register or on the reader.
+  // vouchers (and a gift card) cover the total plus the whole tip, whether
+  // it was asked on the register or on the reader.
   if (sale.payment) {
     const { cash, card, voucher = 0 } = sale.payment;
+    const gift = Number(sale.payment.giftCard?.amount ?? 0);
     const tip = sale.tip ?? 0;
-    if ([cash, card, voucher, tip].some((n) => Number(n) < 0)) problems.push("A payment or tip is negative.");
-    const paid = cents(Number(cash) + Number(card) + Number(voucher));
+    if ([cash, card, voucher, gift, tip].some((n) => Number(n) < 0)) problems.push("A payment or tip is negative.");
+    const paid = cents(Number(cash) + Number(card) + Number(voucher) + gift);
     const due = cents(Number(sale.totals.total) + Number(tip));
-    if (differs(paid, due)) problems.push(`Cash, card and vouchers add up to ${money(paid)}, but the sale (tip included) is ${money(due)}.`);
+    if (differs(paid, due)) problems.push(`Cash, card, vouchers and gift cards add up to ${money(paid)}, but the sale (tip included) is ${money(due)}.`);
   }
 
   return { problems, server, lines, member };

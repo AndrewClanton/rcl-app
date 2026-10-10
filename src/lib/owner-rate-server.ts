@@ -1,6 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cents, isRewardLine, ownerLinePrice, ownerOffMenuPrice, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
+import { cents, isGiftCardLine, isRewardLine, ownerLinePrice, ownerOffMenuPrice, ownerOrderTotals, recipeCost, type OwnerBook, type OwnerPricing } from "@/lib/register-totals";
 import { doubleContext, menuLinePrice, type Group } from "@/lib/register-sale-checks";
 import { bookRecipesFor, customIngredientsFor } from "@/lib/data/barBook";
 import { bookRecipeIdOf, drinkCost, type DrinkCost } from "@/lib/bar/pricing";
@@ -265,7 +265,7 @@ export async function priceOwnerSale(lines: OwnerSaleLine[]): Promise<OwnerPrice
     });
   }
   if (problems.length) return { ok: false, problems };
-  const t = ownerOrderTotals(priced.map((l) => ({ unit: l.unit_price, qty: l.quantity })));
+  const t = ownerOrderTotals(priced.map((l) => ({ unit: l.unit_price, qty: l.quantity, giftCard: isGiftCardLine(l) })));
   const menuValue = cents(priced.reduce((s, l) => s + l.menu_unit_price * l.quantity, 0));
   return { ok: true, lines: priced, totals: { subtotal: t.subtotal, tax: t.tax, total: t.total }, menuValue };
 }

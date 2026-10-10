@@ -32,9 +32,15 @@ import { redeemOrderPoints, type RedeemShort } from "@/lib/rewards-server";
 import type { OrgGroupInput } from "@/lib/orgs";
 import { awardEventBadges } from "@/lib/badges/events";
 import { isTaxExemptReason, TAX_EXEMPT_NOTE_MAX, type TaxExemptMark, type TaxExemptReason } from "@/lib/tax-exempt";
+import { giftRedeemError, normalizeGiftCode, type GiftCardTender, type IssuedGiftCard } from "@/lib/gift-cards";
+import { issueOrderGiftCards, linkGiftCardRedemption, redeemGiftCard, undoGiftCardRedemption } from "@/lib/gift-cards-server";
 
 export interface CheckoutLine {
   menu_item_id: string | null;
+  // A gift card being sold (isGiftCardLine): the member it goes on, if
+  // staff picked one. Kept on a held order or tab (order_items.gift_member_id)
+  // so the card attaches when it is paid.
+  gift_member_id?: string | null;
   name: string;
   unit_price: number;
   quantity: number;
@@ -82,14 +88,18 @@ export interface CheckoutTotals {
 }
 
 export interface CheckoutPayment {
-  // 'voucher' when paper vouchers covered it all; otherwise how the rest was paid.
-  method: "cash" | "card" | "split" | "voucher";
+  // 'voucher' when paper vouchers covered it all, 'gift_card' when a gift
+  // card did; otherwise how the rest was paid.
+  method: "cash" | "card" | "split" | "voucher" | "gift_card";
   cash: number;
   card: number;
   stripePaymentIntentId?: string | null;
   tip?: number; // tip the customer chose on the card reader, already inside `card`
   tendered?: number; // cash handed over, for the change shown and printed (not stored)
   voucher?: number; // paper vouchers (trivia prizes) applied; not cash, not card
+  // A gift card that paid part or all of it (lib/gift-cards.ts). Its
+  // balance comes off when the sale is saved (completeOrder).
+  giftCard?: GiftCardTender | null;
 }
 
 export interface DraftFields {
@@ -220,18 +230,24 @@ async function replaceOrderItems(
       modifiers: l.modifiers,
       is_alcohol: recipeIds[i] ? true : l.is_alcohol || (customs[i] ? customIsAlcohol(customs[i]!.map((c) => ({ name: c.name ?? "", kind: c.kind }))) : false),
       screening_id: l.screening_id ?? null,
-      // Tickets aren't made by the kitchen or bar, so keep them off the prep screens.
-      is_event: !!l.screening_id,
+      // Tickets and gift cards aren't made by the kitchen or bar, so keep them off the prep screens.
+      is_event: !!l.screening_id || isGiftCardLine(l),
       // Only on an owner-rate line, so every other sale saves exactly as before.
       ...(l.owner_pricing ? { menu_unit_price: l.menu_unit_price ?? null, owner_pricing: l.owner_pricing } : {}),
       // Only on a $0 line with no menu item: a reward from Spend points.
       ...(rewardIdOf(l) ? { reward_id: rewardIdOf(l) } : {}),
     }));
-    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[] };
+    type Row = (typeof rows)[number] & { recipe_id?: string; custom_recipe?: CustomRecipeLine[]; gift_member_id?: string };
     const withRecipes: Row[] = recipeIds.some(Boolean) ? rows.map((r, i) => (recipeIds[i] ? { ...r, recipe_id: recipeIds[i]! } : r)) : rows;
     const withCustoms: Row[] = customs.some(Boolean) ? withRecipes.map((r, i) => (customs[i] ? { ...r, custom_recipe: customs[i]! } : r)) : withRecipes;
+    // A gift card going on a member's account keeps who (a held order or
+    // tab paid later still attaches it): only on such a line, and only once
+    // migration 20261009120000 adds the column.
+    const giftMembers = lines.map((l) => (isGiftCardLine(l) && l.gift_member_id && isUuid(l.gift_member_id) ? l.gift_member_id : null));
+    const withGifts: Row[] = giftMembers.some(Boolean) ? withCustoms.map((r, i) => (giftMembers[i] ? { ...r, gift_member_id: giftMembers[i]! } : r)) : withCustoms;
     const insert = (r: Row[]) => supabase.from("order_items").insert(r).select("id");
-    let { data: added, error: insertErr } = await insert(withCustoms);
+    let { data: added, error: insertErr } = await insert(withGifts);
+    if (insertErr && schemaMissing(insertErr) && withGifts !== withCustoms) ({ data: added, error: insertErr } = await insert(withCustoms));
     // Before migration 20261005010000 adds order_items.custom_recipe, or
     // 20261004030000 adds recipe_id: saved without them, like any custom line.
     if (insertErr && schemaMissing(insertErr) && withCustoms !== withRecipes) ({ data: added, error: insertErr } = await insert(withRecipes));
@@ -324,7 +340,8 @@ async function noteCustomItems(
   employeeId: string,
   extras: LineExtras,
 ) {
-  const customLines = lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !bookRecipeOf(l, extras.book));
+  // (A gift card from the Gift card button isn't a custom item.)
+  const customLines = lines.filter((l) => !l.menu_item_id && !l.screening_id && !isRewardLine(l) && !isGiftCardLine(l) && !bookRecipeOf(l, extras.book));
   if (!customLines.length) return;
   // A custom drink says what was in it.
   const items = customLines
@@ -474,13 +491,105 @@ export async function checkBeforePayment(fields: DraftFields, totals: CheckoutTo
 // card: what the card that paid did (linked to the member, or found the
 // member for the points), for the register's card notice; null for nothing
 // to show.
-export type CompleteOrderResult = { ok: true; orderNumber: number; warning?: string; card: CardNotice | null } | { ok: false; error: string; cardCharged: boolean };
+// giftCards: cards the sale sold, with their codes, for the receipt and the
+// slip. giftCardLeft: what's left on the gift card that paid, if one did.
+export type CompleteOrderResult =
+  | { ok: true; orderNumber: number; warning?: string; card: CardNotice | null; giftCards?: IssuedGiftCard[]; giftCardLeft?: { code: string; balance: number } }
+  | { ok: false; error: string; cardCharged: boolean };
 
 // How a paid sale can be paid here. ('owner_tab', the monthly owner tab
 // before 10/5, is gone: an owner-rate order is paid like any other.)
-const PAID_METHODS = ["cash", "card", "split", "voucher"];
+const PAID_METHODS = ["cash", "card", "split", "voucher", "gift_card"];
 
+// A sale, with its gift cards: one spent on it comes off first (in one
+// locked step, all or nothing), then the sale is saved, then any gift cards
+// it sold are made. A sale that doesn't save puts the gift card's money
+// back, unless a card was charged: then the register keeps the sale for
+// Retry saving, which sends the same gift card payment (its key), so the
+// money comes off once.
 export async function completeOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
+  const staff = await assertStaff();
+  const gift = params.payment?.giftCard ?? null;
+  const giftAmount = cents(Number(gift?.amount ?? 0));
+  const sellsCards = (params.lines ?? []).some((l) => isGiftCardLine(l));
+  const charged = !!params.payment?.stripePaymentIntentId;
+  const withoutGift = (p: CompleteOrderInput): CompleteOrderInput => ({ ...p, payment: { ...p.payment, giftCard: null } });
+  if (!gift || !(giftAmount > 0)) {
+    if (params.payment?.method === "gift_card") return { ok: false, error: "No gift card amount came with this payment. Take payment again.", cardCharged: false };
+    return withSoldCards(await saveCompletedOrder(withoutGift(params)), params, staff.employeeId);
+  }
+
+  // Why the gift card can't be used, before anything comes off it.
+  const code = normalizeGiftCode(gift.code);
+  const key = String(gift.key ?? "");
+  const problem = !code
+    ? "That isn't a gift card code."
+    : !/^[A-Za-z0-9-]{8,80}$/.test(key)
+      ? "The gift card payment is missing its check. Take payment again."
+      : sellsCards
+        ? "A gift card can't pay for another gift card. Take payment for this order another way."
+        : giftAmount > cents(Number(params.totals?.total ?? 0)) + 0.001
+          ? "A gift card can pay up to the order's total (not the tip)."
+          : null;
+  const redeemed = !problem && code ? await redeemGiftCard(code, giftAmount, params.employeeId || staff.employeeId, key) : null;
+  if (!redeemed || !redeemed.ok) {
+    const why = problem ?? giftRedeemError(redeemed && !redeemed.ok ? redeemed.error : undefined, redeemed && !redeemed.ok ? redeemed.balance : undefined);
+    if (!charged) return { ok: false, error: `${why} Nothing was taken off the gift card.`, cardCharged: false };
+    // The card is charged: the sale is saved without the gift card part,
+    // and staff are told what's still owed.
+    const res = await withSoldCards(await saveCompletedOrder(withoutGift(params)), params, staff.employeeId);
+    if (!res.ok) return res;
+    const unpaid = `The gift card wasn't used (${why}), so $${giftAmount.toFixed(2)} of this sale is still unpaid: take it with cash or another card payment.`;
+    after(() =>
+      flagSale("totals_mismatch", { orderNumber: res.orderNumber, employeeId: params.employeeId, paymentIntentId: params.payment.stripePaymentIntentId ?? null, details: { summary: `Order #${res.orderNumber}: ${unpaid}`, payment: params.payment } }),
+    );
+    return { ...res, warning: [res.warning, unpaid].filter(Boolean).join(" ") };
+  }
+
+  let res: CompleteOrderResult;
+  try {
+    res = await saveCompletedOrder({ ...params, payment: { ...params.payment, giftCard: { ...gift, code: code as string, amount: giftAmount } } });
+  } catch (e) {
+    if (!charged) await undoGiftCardRedemption(key, staff.employeeId);
+    throw e;
+  }
+  if (!res.ok) {
+    if (!res.cardCharged) await undoGiftCardRedemption(key, staff.employeeId);
+    return res;
+  }
+  const orderId = await orderIdOf(res.orderNumber);
+  if (orderId) await linkGiftCardRedemption(key, orderId);
+  return { ...res, giftCardLeft: { code: code as string, balance: redeemed.balance } };
+}
+
+async function orderIdOf(orderNumber: number): Promise<string | null> {
+  const { data } = await createAdminClient().from("orders").select("id").eq("order_number", orderNumber).neq("status", "voided").limit(1);
+  return (data?.[0]?.id as string | undefined) ?? null;
+}
+
+// The gift cards a saved sale sold: made now (or found again, on a retry),
+// and what they came to kept on the order. A card that couldn't be made is
+// said, so staff don't hand over a slip with no code.
+async function withSoldCards(res: CompleteOrderResult, params: CompleteOrderInput, by: string): Promise<CompleteOrderResult> {
+  if (!res.ok || !(params.lines ?? []).some((l) => isGiftCardLine(l))) return res;
+  const orderId = await orderIdOf(res.orderNumber);
+  if (!orderId) return { ...res, warning: [res.warning, "The gift card on this sale wasn't made (the order couldn't be found). Get a manager."].filter(Boolean).join(" ") };
+  const sold = giftCardSales(params.lines.map((l) => ({ unit: Number(l.unit_price), qty: Number(l.quantity), giftCard: isGiftCardLine(l) })));
+  // Kept apart from the sale itself, so a sale still saves before the
+  // gift cards migration is in.
+  const { error } = await createAdminClient().from("orders").update({ gift_card_sales: sold }).eq("id", orderId);
+  if (error) console.warn("gift_card_sales not saved", res.orderNumber, error.message);
+  const issued = await issueOrderGiftCards({ orderId, employeeId: params.employeeId || by, lines: params.lines });
+  if (issued.failed > 0) {
+    const n = issued.failed;
+    const warn = `${n} gift card${n === 1 ? "" : "s"} on order #${res.orderNumber} didn't get a code, so ${n === 1 ? "it has" : "they have"} no balance yet. Don't hand over a slip without a code: get a manager.`;
+    after(() => flagSale("totals_mismatch", { orderId, orderNumber: res.orderNumber, employeeId: params.employeeId, paymentIntentId: params.payment.stripePaymentIntentId ?? null, details: { summary: warn } }));
+    return { ...res, giftCards: issued.cards, warning: [res.warning, warn].filter(Boolean).join(" ") };
+  }
+  return { ...res, giftCards: issued.cards };
+}
+
+async function saveCompletedOrder(params: CompleteOrderInput): Promise<CompleteOrderResult> {
   const staff = await assertStaff();
   if (params.lines.length === 0) throw new Error("Cart is empty");
   if (!PAID_METHODS.includes(params.payment?.method)) {
@@ -565,6 +674,8 @@ export async function completeOrder(params: CompleteOrderInput): Promise<Complet
     payment_method: params.payment.method,
     payment_cash_amount: params.payment.cash,
     payment_voucher_amount: params.payment.voucher ?? 0,
+    // Only when a gift card paid (its migration is in by then).
+    ...(Number(params.payment.giftCard?.amount ?? 0) > 0 ? { payment_gift_card_amount: cents(Number(params.payment.giftCard?.amount)) } : {}),
     payment_card_amount: params.payment.card,
     stripe_payment_intent_id: params.payment.stripePaymentIntentId ?? null,
     points_redeemed: params.pointsRedeemed,
@@ -1085,12 +1196,14 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
   const ITEM_COLUMNS = "menu_item_id, name, unit_price, quantity, modifiers, is_alcohol, screening_id";
   // custom_recipe: a custom drink's list, once migration 20261005010000 is in.
   // reward_id: a reward line (Spend points), once migration 20261007020000 is in.
-  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id)`);
+  // gift_member_id: a gift card going on a member's account, once migration 20261009120000 is in.
+  let { data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id, gift_member_id)`);
+  if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe, reward_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id, custom_recipe)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS}, recipe_id)`));
   if (error && schemaMissing(error)) ({ data: order, error } = await read(`${ORDER_COLUMNS}, items:order_items(${ITEM_COLUMNS})`));
   if (error || !order) throw new Error("That order was already closed on another register.");
-  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null; reward_id?: string | null }[];
+  const items = order.items as { menu_item_id: string | null; name: string; unit_price: number; quantity: number; modifiers: string[]; is_alcohol: boolean; screening_id: string | null; recipe_id?: string | null; custom_recipe?: CustomRecipeLine[] | null; reward_id?: string | null; gift_member_id?: string | null }[];
   return {
     id: order.id,
     order_name: order.order_name,
@@ -1115,6 +1228,7 @@ export async function loadDraftOrder(id: string): Promise<DraftOrderFull> {
       ...(i.recipe_id ? { recipe_id: i.recipe_id } : {}),
       ...(Array.isArray(i.custom_recipe) && i.custom_recipe.length ? { custom_recipe: i.custom_recipe } : {}),
       ...(i.reward_id ? { reward_id: i.reward_id } : {}),
+      ...(i.gift_member_id ? { gift_member_id: i.gift_member_id } : {}),
     })),
   };
 }

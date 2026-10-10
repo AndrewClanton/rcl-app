@@ -7,7 +7,7 @@ import { businessDay } from "@/lib/ops/time";
 import { sameEmail } from "@/lib/email-match";
 import { currentMemberId } from "@/lib/member-forward";
 import { memberLabel } from "@/lib/member-name";
-import { pointsEarned } from "@/lib/register-totals";
+import { giftCardSales, isGiftCardLine, pointsEarned } from "@/lib/register-totals";
 import {
   CARD_UNDO_MS,
   bookingCreditNote,
@@ -241,6 +241,9 @@ export type SaleOrder = {
   completed_at: string | null;
   payment_card_amount: number | null;
   stripe_payment_intent_id: string | null;
+  // Gift cards sold on it, from its lines (isGiftCardLine): no points for
+  // those. Filled in by loadSaleOrder.
+  gift_card_sales?: number;
 };
 
 export type SalePayment = {
@@ -261,8 +264,9 @@ const SALE_ORDER =
 // The points a sale earns, as completeOrder pays them and credit_card_sale
 // gives them (pointsEarned: 1 per $1 after the member, monthly and reward
 // discounts, before tax and tip).
-export function salePoints(o: Pick<SaleOrder, "subtotal" | "tier_discount" | "monthly_discount" | "redemption_discount">): number {
+export function salePoints(o: Pick<SaleOrder, "subtotal" | "tier_discount" | "monthly_discount" | "redemption_discount" | "gift_card_sales">): number {
   return pointsEarned({
+    gift_card_sales: Number(o.gift_card_sales ?? 0),
     subtotal: Number(o.subtotal),
     tier_discount: Number(o.tier_discount ?? 0),
     monthly_discount: Number(o.monthly_discount ?? 0),
@@ -274,11 +278,14 @@ const SALE_PAYMENT = "id, fingerprint, livemode, brand, last4, wallet, credited_
 
 // A register sale and the card that paid it (null until it's been read).
 export async function loadSaleOrder(db: Db, orderId: string): Promise<{ order: SaleOrder; payment: SalePayment | null } | null> {
-  const [{ data: order }, { data: payment }] = await Promise.all([
+  const [{ data: order }, { data: payment }, { data: items }] = await Promise.all([
     db.from("orders").select(SALE_ORDER).eq("id", orderId).maybeSingle(),
     db.from("card_payments").select(SALE_PAYMENT).eq("order_id", orderId).maybeSingle(),
+    db.from("order_items").select("name, unit_price, quantity, menu_item_id, screening_id").eq("order_id", orderId).is("menu_item_id", null),
   ]);
-  return order ? { order: order as SaleOrder, payment: (payment as SalePayment | null) ?? null } : null;
+  if (!order) return null;
+  const gift_card_sales = giftCardSales(((items ?? []) as { name: string; unit_price: number; quantity: number; menu_item_id: string | null; screening_id: string | null }[]).map((l) => ({ unit: Number(l.unit_price), qty: Number(l.quantity), giftCard: isGiftCardLine(l) })));
+  return { order: { ...(order as SaleOrder), gift_card_sales }, payment: (payment as SalePayment | null) ?? null };
 }
 
 export function storedCard(p: SalePayment): SaleCard {

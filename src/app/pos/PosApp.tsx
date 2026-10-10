@@ -20,6 +20,8 @@ import ItemBuilder, { type BuiltLine } from "./ItemBuilder";
 import PaymentModal, { type CardOnFileLink, type CardOnFileListener } from "./PaymentModal";
 import TipModal from "./TipModal";
 import CustomItemModal from "./CustomItemModal";
+import GiftCardSellModal from "./GiftCardSellModal";
+import { GIFT_CARD_LINE_NAME, giftCodeTail, type IssuedGiftCard } from "@/lib/gift-cards";
 import TabCardModal from "./TabCardModal";
 import InfoTip from "@/components/help/InfoTip";
 import { useOnShift } from "./shift/on-shift-store";
@@ -73,7 +75,7 @@ import type { TaxExemptMark, TaxExemptReason } from "@/lib/tax-exempt";
 import { approvalText } from "@/lib/pin-rules";
 import PromptModal from "@/components/PromptModal";
 import ConfirmModal from "@/components/ConfirmModal";
-import { drawerXml, visitSlipXml, type ReceiptData, type VisitSlip } from "@/lib/print/receipt";
+import { drawerXml, giftCardSlipXml, visitSlipXml, type ReceiptData, type VisitSlip } from "@/lib/print/receipt";
 import VisitSlipNotice from "./VisitSlipNotice";
 import { printTickets, type TicketSale } from "./print-tickets";
 import { useScanner } from "./useScanner";
@@ -174,6 +176,8 @@ interface CartLine {
   rewardId?: string | null;
   rewardPoints?: number;
   rewardMember?: string | null; // whose points: it comes off if they leave the order
+  // A gift card being sold (the Gift card button): the member it goes on.
+  giftMemberId?: string | null;
 }
 
 // "Reward: Personal popcorn (−40 pts)" -> 40, for a reward line loaded back from a tab.
@@ -434,6 +438,7 @@ export default function PosApp({
   const [tabSaveIssue, setTabSaveIssue] = useState<{ tabId: string; stale: boolean } | null>(null);
   const [payOpen, setPayOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
+  const [giftSellOpen, setGiftSellOpen] = useState(false);
   const [tipOpen, setTipOpen] = useState(false);
   const [ageConfirmOpen, setAgeConfirmOpen] = useState(false);
   const [tip, setTip] = useState(0);
@@ -868,7 +873,7 @@ export default function PosApp({
   // At the owner rate, what's charged is the server's owner prices, taxed,
   // with nothing else off.
   const totals = ownerRate
-    ? ownerOrderTotals(ownerRate.lines.map((l) => ({ unit: l.unit_price, qty: l.quantity })))
+    ? ownerOrderTotals(ownerRate.lines.map((l) => ({ unit: l.unit_price, qty: l.quantity, giftCard: isGiftCardLine(l) })))
     : registerTotals(totalsLines, member, monthlyOn, taxFree, pointsRedeemed, coffeeOn, { taxIncluded: !ownerTicked && (orgTaxIncluded || groupTaxIncluded(orgGroup)) });
   const menuSubtotal = cents(cart.reduce((s, l) => s + l.unit * l.qty, 0));
   // Whose comps the manager PIN is for: the group's when they're the
@@ -934,6 +939,7 @@ export default function PosApp({
         ...(l.recipeId ? { recipe_id: l.recipeId } : {}),
         ...(l.customRecipe?.length ? { custom_recipe: l.customRecipe } : {}),
         ...(l.rewardId ? { reward_id: l.rewardId } : {}),
+        ...(l.giftMemberId && isGiftCardLine(l) ? { gift_member_id: l.giftMemberId } : {}),
       })),
     };
   }
@@ -952,6 +958,7 @@ export default function PosApp({
         recipeId: l.recipe_id ?? null,
         customRecipe: l.custom_recipe?.length ? l.custom_recipe.map((c) => ({ ingredient_id: c.ingredient_id, quantity: c.quantity })) : null,
         ...(l.reward_id ? { rewardId: l.reward_id, rewardPoints: rewardPointsOf(l.name), rewardMember: f.member?.id ?? null } : {}),
+        ...(l.gift_member_id ? { giftMemberId: l.gift_member_id } : {}),
       }))
     );
     setOrderName(f.order_name ?? "");
@@ -1594,6 +1601,16 @@ export default function PosApp({
     });
   }
 
+  // A gift card slip for each card sold: printed whatever the receipt
+  // setting (it's what gets handed over). Without a printer, the codes are
+  // in the sale's note on screen.
+  async function printGiftSlips(cards: IssuedGiftCard[], orderNumber: number, at: string) {
+    if (!printTarget || !cards.length) return;
+    const xml = cards.map((c) => giftCardSlipXml({ code: c.code, amount: c.amount, member: c.member, orderNumber, at }));
+    const r = await sendPrint(printTarget, "receipt", xml, `Gift card slip${cards.length === 1 ? "" : "s"} #${orderNumber}`);
+    if (!r.ok) setPrintNote(`Gift card slip didn't print: ${r.error}. The code${cards.length === 1 ? " is" : "s are"} ${cards.map((c) => c.code).join(", ")}.`);
+  }
+
   async function printVisitSlip(slip: VisitSlip, again = false) {
     if (!printTarget) return;
     const r = await sendPrint(printTarget, "receipt", visitSlipXml(slip), `Visit slip #${slip.orderNumber}${again ? " (again)" : ""}`);
@@ -1708,6 +1725,8 @@ export default function PosApp({
     let orderNumber: number;
     let warning: string | undefined;
     let card: CardNotice | null;
+    let soldCards: IssuedGiftCard[] = [];
+    let giftLeft: { code: string; balance: number } | undefined;
     try {
       const r = await completeOrder(order);
       if (!r.ok) {
@@ -1722,6 +1741,8 @@ export default function PosApp({
       orderNumber = r.orderNumber;
       warning = r.warning;
       card = r.card;
+      soldCards = r.giftCards ?? [];
+      giftLeft = r.giftCardLeft;
     } catch (e) {
       const stale = isStaleBuildError(e);
       if (payment.stripePaymentIntentId) {
@@ -1771,7 +1792,16 @@ export default function PosApp({
       // whoever paid takes the receipt, and it may not be their card.
       member: sale.memberName,
       orderName: order.orderName.trim() || null,
-      lines: order.lines.map((l) => ({ name: l.name, qty: l.quantity, unit: l.unit_price, mods: l.modifiers })),
+      // A gift card's line carries its code(s), in the order they were made.
+      lines: (() => {
+        const codes = soldCards.map((c) => c.code);
+        return order.lines.map((l) => ({
+          name: l.name,
+          qty: l.quantity,
+          unit: l.unit_price,
+          mods: isGiftCardLine(l) ? [...l.modifiers, ...codes.splice(0, Math.max(0, Math.round(l.quantity))).map((c) => `Code: ${c}`)] : l.modifiers,
+        }));
+      })(),
       // At the owner rate the lines are at menu prices, and the owner rate is what came off them.
       subtotal: order.ownerRate ? cents(order.lines.reduce((s, l) => s + l.unit_price * l.quantity, 0)) : order.totals.subtotal,
       discounts: [
@@ -1788,6 +1818,8 @@ export default function PosApp({
       total: order.totals.total + allTip,
       payments: [
         { label: "Voucher", amount: payment.voucher ?? 0 },
+        ...(payment.giftCard && payment.giftCard.amount > 0 ? [{ label: `Gift card ..${giftCodeTail(payment.giftCard.code)}`, amount: payment.giftCard.amount }] : []),
+        ...(giftLeft ? [{ label: `Left on gift card ..${giftCodeTail(giftLeft.code)}`, amount: giftLeft.balance }] : []),
         { label: "Cash", amount: payment.cash },
         { label: "Card", amount: payment.card },
         ...(change > 0 ? [{ label: "Cash given", amount: payment.tendered ?? 0 }, { label: "Change", amount: change }] : []),
@@ -1816,11 +1848,13 @@ export default function PosApp({
       return true;
     }
     setVisitSlip(null);
-    void printAfterSale(receipt, payment.cash > 0, tickets);
+    void printAfterSale(receipt, payment.cash > 0, tickets).then(() => printGiftSlips(soldCards, orderNumber, receipt.at));
     const noCharge = Math.abs(order.totals.total + allTip) < 0.005;
     const parts = [noCharge ? `Order #${orderNumber} complete — no charge` : `Order #${orderNumber} complete — ${money(order.totals.total + allTip)} charged (${payment.method})`];
     if (allTip > 0) parts.push(`${money(allTip)} tip`);
     if (payment.voucher && payment.method !== "voucher") parts.push(`${money(payment.voucher)} in vouchers`);
+    if (payment.giftCard && payment.giftCard.amount > 0) parts.push(`${money(payment.giftCard.amount)} on gift card ..${giftCodeTail(payment.giftCard.code)}${giftLeft ? ` (${money(giftLeft.balance)} left on it)` : ""}`);
+    for (const c of soldCards) parts.push(`gift card ${c.code} (${money(c.amount)}) made`);
     if (change > 0) parts.push(`give ${money(change)} change`);
     const notes = [note, warning].filter(Boolean).join(" ");
     setToast(notes ? `${notes} ${parts.join(" — ")}` : parts.join(" — "));
@@ -2548,6 +2582,28 @@ export default function PosApp({
             {customersNote && categoryId !== CUSTOMERS_TAB && <span className="h-2.5 w-2.5 rounded-full" style={{ background: "var(--foreground)" }} aria-hidden />}
           </button>
         </div>
+        {giftSellOpen && (
+          <GiftCardSellModal
+            memberName={member?.name ?? null}
+            onCancel={() => setGiftSellOpen(false)}
+            onAdd={(g) => {
+              setCart((prev) => [
+                ...prev,
+                {
+                  key: `${Date.now()}-${Math.random()}`,
+                  menuItemId: null,
+                  name: GIFT_CARD_LINE_NAME,
+                  unit: g.amount,
+                  qty: 1,
+                  mods: g.toMember && member ? [`On ${member.name}'s account`] : [],
+                  isAlcohol: false,
+                  giftMemberId: g.toMember && member ? member.id : null,
+                },
+              ]);
+              setGiftSellOpen(false);
+            }}
+          />
+        )}
         {customOpen && (
           <CustomItemModal
             onCancel={() => setCustomOpen(false)}
@@ -2659,17 +2715,27 @@ export default function PosApp({
                   })}
                   {/* Anything the menu can't describe; each use files a dev note. */}
                   {i === menuSections.length - 1 && (
-                    <button className="card-flat flex min-h-[84px] items-center justify-center p-3 text-center text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
-                      + Custom item
+                    <>
+                      <button className="card-flat flex min-h-[84px] items-center justify-center p-3 text-center text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
+                        + Custom item
+                      </button>
+                      <button className="card-flat flex min-h-[84px] items-center justify-center p-3 text-center text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setGiftSellOpen(true)}>
+                      Gift card
                     </button>
+                    </>
                   )}
                 </div>
               </section>
             ))}
             {menuSections.length === 0 && (
-              <button className="card-flat flex min-h-[84px] w-40 items-center justify-center p-3 text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
-                + Custom item
-              </button>
+              <div className="flex gap-2">
+                <button className="card-flat flex min-h-[84px] w-40 items-center justify-center p-3 text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setCustomOpen(true)}>
+                  + Custom item
+                </button>
+                <button className="card-flat flex min-h-[84px] w-40 items-center justify-center p-3 text-sm" style={{ borderStyle: "dashed", color: "var(--muted)" }} onClick={() => setGiftSellOpen(true)}>
+                      Gift card
+                    </button>
+              </div>
             )}
           </div>
         )}
@@ -2728,7 +2794,9 @@ export default function PosApp({
         <PaymentModal
           total={cents(totals.total + tip)}
           readerId={readerId}
-          tipEligible={tip > 0 || tipAsked ? null : totals.total - totals.tax}
+          tipEligible={tip > 0 || tipAsked ? null : totals.total - totals.tax - totals.giftCardSales}
+          giftCardOk={!cart.some((l) => isGiftCardLine(l))}
+          giftCardMax={totals.total}
           tipTaken={tipAsked}
           tabCard={activeTab?.card_label ? { tabId: activeTab.id, label: activeTab.card_label } : null}
           tabName={activeTab?.order_name ?? "Tab"}

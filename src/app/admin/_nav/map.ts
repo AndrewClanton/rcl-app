@@ -234,6 +234,13 @@ const PAGES: Record<AreaKey, MapLink[]> = {
     { href: "/admin/reports/box-office", label: "Box office", about: "Admissions and ticket money per movie, for the distributors.", keywords: "distributors film rental admissions tickets print" },
     { href: "/admin/reports/tax", label: "Sales tax", about: "Tax collected, by month or quarter, for the Missouri return.", keywords: "missouri return quarter dor tax" },
     {
+      href: "/admin/gift-cards",
+      label: "Gift cards",
+      about: "Every gift card sold at the register: balances, history, and changing a balance.",
+      keywords: "gift card balance code adjust stored value",
+      min: "manager",
+    },
+    {
       href: "/admin/owner-rate",
       label: "Owner rate",
       about: "Which owners pay cost + 10% at the register, the latest owner-rate orders, and what each item comes to.",

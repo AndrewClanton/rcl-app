@@ -7,6 +7,7 @@ import { getBarPrices } from "./barBook";
 import { businessDay, businessDayWindow, centralDate, recentBusinessDays } from "@/lib/ops/time";
 import { SALES_TAX_PERCENT, SALES_TAX_RATE } from "@/lib/sales-tax";
 import { taxFreeOrders, type TaxFreeOrder, type TaxFreeOrderRow } from "@/lib/tax-exempt";
+import { isGiftCardLine } from "@/lib/register-totals";
 import { attachTaxExemptNames } from "./tax-free-names";
 import { mostRefundable } from "./refund-plan";
 import { BOOTHS_LABEL, CATEGORY_LABEL, MEMBERSHIPS_LABEL, OWNER_TAB_LABEL, TICKETS_LABEL } from "@/lib/report-categories";
@@ -198,12 +199,19 @@ export interface SalesSummary {
   // apart from what was collected. Partial refunds on the day's orders, and
   // membership refunds, are already taken off.
   vouchers: number;
+  // Gift cards (lib/gift-cards.ts): what was spent from them on orders (no
+  // money in, like vouchers: the money came in when the card was sold), and
+  // what cards were sold: a liability (owed as goods), not revenue, so it's
+  // left out of Collected and what sold, and shown on its own "Gift cards
+  // sold (owed)" line. The sale is counted when a card is spent.
+  giftCardsUsed: number;
+  giftCardsSold: number;
   cash: number;
   card: number;
   online: number;
   tips: number;
   tax: number; // memberships' tax included
-  collected: number; // cash + card + online + memberships.collected
+  collected: number; // cash + card + online + memberships.collected, less gift cards sold (owed)
   // Insiders+ charges (new, renewals, switches to yearly) and gift
   // memberships, from Stripe: never orders, so never counted twice.
   memberships: MembershipTotals;
@@ -309,6 +317,8 @@ type DayOrderRow = Omit<TaxFreeOrderRow, "employee"> & {
   payment_cash_amount: number | null;
   payment_card_amount: number | null;
   payment_voucher_amount: number | null;
+  // Gift cards (20261009120000_gift_cards.sql); missing before it.
+  payment_gift_card_amount?: number | null;
   subtotal: number;
   tax: number;
   tax_free: boolean;
@@ -569,6 +579,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
   const boothTax = booths.reduce((s, r) => s + Number(r.tax_amount ?? 0), 0);
 
   let vouchers = 0,
+    giftCardsUsed = 0,
+    giftCardsSold = 0,
     cash = 0,
     card = 0,
     online = 0,
@@ -593,6 +605,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       cash += Number(o.payment_cash_amount ?? 0);
       card += Number(o.payment_card_amount ?? 0);
       vouchers += Number(o.payment_voucher_amount ?? 0);
+      giftCardsUsed += Number(o.payment_gift_card_amount ?? 0);
     } else online += Number(o.total);
     tips += Number(o.tip);
     tax += Number(o.tax);
@@ -637,6 +650,7 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
       // Tickets are counted from their bookings below, not as bar sales.
       if (!l.screening_id) {
         if (owner) ownerTab.sales += amount;
+        else if (isGiftCardLine(l)) giftCardsSold += amount;
         else category[lineBucket(l, bucketByItem)] += amount;
       }
       const it = items.get(l.name) ?? { qty: 0, revenue: 0, options: new Map() };
@@ -682,7 +696,8 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
     partialRefunds += Number(p.amount) - Number(p.tax_amount);
   }
   // What the orders came to for the goods (the average order is this over the count).
-  const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds;
+  // Gift cards sold aren't sales (they're owed until spent).
+  const orderSales = completed.reduce((s, o) => s + Number(o.total) - Number(o.tax) - Number(o.tip), 0) - partialRefunds - giftCardsSold;
 
   // Insiders+ and gift memberships: their own part of the money in (never
   // an order, so nothing here is also counted above), their tax, and a line
@@ -718,12 +733,15 @@ export function summarizeSales(rows: SalesRows, bucketByItem: Buckets): SalesSum
 
   return {
     vouchers,
+    giftCardsUsed,
+    giftCardsSold,
     cash,
     card,
     online,
     tips,
     tax,
-    collected: cash + card + online + memberships.collected + ownerTab.paid,
+    // Gift cards sold are owed, not revenue: their own line, not in Collected.
+    collected: cash + card + online + memberships.collected + ownerTab.paid - giftCardsSold,
     memberships,
     sold,
     discounts,
@@ -1429,7 +1447,10 @@ export async function getSalesTaxReport(period: string): Promise<SalesTaxReport 
   };
 
   for (const o of orders) {
-    const sales = Number(o.total) - Number(o.tax) - Number(o.tip);
+    // Gift cards sold aren't a sale for the tax return (they're taxed when
+    // spent), so they're left out (gift_card_sales, 20261009120000).
+    const giftCards = Number((o as { gift_card_sales?: number | null }).gift_card_sales ?? 0);
+    const sales = Number(o.total) - Number(o.tax) - Number(o.tip) - giftCards;
     add(o.completed_at, isOwnerTab(o) ? "owner" : o.source === "pos" ? "register" : "web", sales, Number(o.tax));
     const m = o.tax_free ? monthOf(o.completed_at) : undefined;
     if (m) m.exempt += sales;

@@ -330,7 +330,8 @@ export function ownerOrderExtras(o: {
 
 // An owner order's totals: the owner prices, taxed like any sale, with
 // nothing else off (no member, no monthly 10%, no reward, no daily coffee).
-export function ownerOrderTotals(lines: { unit: number; qty: number }[]) {
+// A gift card on it is never taxed (giftCard: isGiftCardLine).
+export function ownerOrderTotals(lines: { unit: number; qty: number; giftCard?: boolean }[]) {
   return registerTotals(lines, null, false, false, false, false);
 }
 
